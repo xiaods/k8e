@@ -5,7 +5,7 @@ import (
 	"log"
 	"runtime"
 
-	"github.com/kingdee/myk8s/pkg/etcd"
+	"github.com/xiaode/k8e/pkg/etcd"
 )
 
 var ctx = context.Background()

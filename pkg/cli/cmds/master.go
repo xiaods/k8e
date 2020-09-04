@@ -1,8 +1,8 @@
 package cmds
 
 import (
-	"github.com/kingdee/myk8s/pkg/cli/master"
 	"github.com/spf13/cobra"
+	"github.com/xiaode/k8e/pkg/cli/master"
 )
 
 type masterConfig struct {

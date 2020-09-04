@@ -1,6 +1,6 @@
 package main
 
-import "github.com/kingdee/myk8s/pkg/cli/cmds"
+import "github.com/xiaode/k8e/pkg/cli/cmds"
 
 func main() {
 	cmds.Execute()
