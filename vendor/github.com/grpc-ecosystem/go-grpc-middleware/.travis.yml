@@ -15,6 +15,7 @@ install:
   - dep ensure
 
 script:
+ - make checkdocs
  - make test
  
 after_success:
