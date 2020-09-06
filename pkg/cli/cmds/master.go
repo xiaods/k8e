@@ -2,7 +2,7 @@ package cmds
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/xiaode/k8e/pkg/cli/master"
+	"github.com/xiaods/k8e/pkg/cli/master"
 )
 
 type masterConfig struct {
