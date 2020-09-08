@@ -5,10 +5,13 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/master"
 )
 
-type masterConfig struct {
+type MasterConfig struct {
+	APIServerPort        int
+	APIServerBindAddress string
+	DataDir              string
 }
 
-var MasterConfig masterConfig
+var Master MasterConfig
 
 // cmd/install.go
 func init() {

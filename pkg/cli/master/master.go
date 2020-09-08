@@ -5,6 +5,7 @@ import (
 	"log"
 	"runtime"
 
+	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/etcd"
 )
 
@@ -15,8 +16,10 @@ func Run() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
 	log.Println("start master")
-	runEtcd()
+	runEtcd(&Master)
+}
 
+func run(cfg *cmds.MasterConfig) {
 	<-ctx.Done()
 }
 
