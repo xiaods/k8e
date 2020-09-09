@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
-	"github.com/xiaods/k8e/pkg/etcd"
+	"github.com/xiaods/k8e/pkg/daemons/master"
 	"github.com/xiaods/k8e/pkg/signals"
 )
 
@@ -23,20 +23,7 @@ func Run(cmd *cobra.Command, args []string) {
 
 func run(cfg *cmds.MasterConfig) {
 	ctx := signals.SetupSignalHandler(context.Background())
-	log.Println(cfg.HTTPSPort)
+	//log.Println(cfg.HTTPSPort)
+	master.StartMaster(ctx)
 	<-ctx.Done()
-}
-
-//运行etcd
-func runEtcd() {
-	e := etcd.New()
-	e.Start()
-}
-
-func runApiserver() {
-
-}
-
-func runControlManager() {
-
 }

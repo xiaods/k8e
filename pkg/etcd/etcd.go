@@ -1,7 +1,10 @@
 package etcd
 
 import (
+	"context"
 	"fmt"
+	"time"
+
 	"io/ioutil"
 	"log"
 	"os"
@@ -9,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
+	etcd "go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/embed"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"sigs.k8s.io/yaml"
@@ -65,6 +70,7 @@ type InitialOptions struct {
 }
 
 type ETCD struct {
+	client  *etcd.Client
 	dataDir string
 	name    string
 	address string
@@ -105,6 +111,83 @@ func (e *ETCD) clientURL() string {
 func (e *ETCD) Start() error {
 	return e.newCluster()
 }
+
+const (
+	snapshotPrefix = "etcd-snapshot-"
+	endpoint       = "https://127.0.0.1:2379"
+
+	testTimeout = time.Second * 10
+)
+
+func (e *ETCD) Test(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, testTimeout)
+	defer cancel()
+	status, err := e.client.Status(ctx, endpoint)
+	if err != nil {
+		return err
+	}
+
+	if status.IsLearner {
+		// if err := e.promoteMember(ctx, clientAccessInfo); err != nil {
+		// 	return err
+		// }
+	}
+	members, err := e.client.MemberList(ctx)
+	if err != nil {
+		return err
+	}
+
+	var memberNameUrls []string
+	for _, member := range members.Members {
+		for _, peerURL := range member.PeerURLs {
+			if peerURL == e.peerURL() && e.name == member.Name {
+				return nil
+			}
+		}
+		if len(member.PeerURLs) > 0 {
+			memberNameUrls = append(memberNameUrls, member.Name+"="+member.PeerURLs[0])
+		}
+	}
+	msg := fmt.Sprintf("This server is a not a member of the etcd cluster. Found %v, expect: %s=%s", memberNameUrls, e.name, e.address)
+	logrus.Error(msg)
+	return fmt.Errorf(msg)
+}
+
+// func (e *ETCD) promoteMember(ctx context.Context, clientAccessInfo *clientaccess.Info) error {
+// 	clientURLs, _, err := e.clientURLs(ctx, clientAccessInfo)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	memberPromoted := true
+// 	t := time.NewTicker(5 * time.Second)
+// 	defer t.Stop()
+// 	for range t.C {
+// 		client, err := joinClient(ctx, e.runtime, clientURLs)
+// 		// continue on errors to keep trying to promote member
+// 		// grpc error are shown so no need to re log them
+// 		if err != nil {
+// 			continue
+// 		}
+// 		members, err := client.MemberList(ctx)
+// 		if err != nil {
+// 			continue
+// 		}
+// 		for _, member := range members.Members {
+// 			// only one learner can exist in the cluster
+// 			if !member.IsLearner {
+// 				continue
+// 			}
+// 			if _, err := client.MemberPromote(ctx, member.ID); err != nil {
+// 				memberPromoted = false
+// 				break
+// 			}
+// 		}
+// 		if memberPromoted {
+// 			break
+// 		}
+// 	}
+// 	return nil
+// }
 
 func (e *ETCD) newCluster() error {
 
