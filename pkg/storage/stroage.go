@@ -9,30 +9,34 @@ import (
 	"github.com/xiaods/k8e/pkg/etcd"
 )
 
-type Cluster struct {
+type Storage struct {
 	etcd *etcd.ETCD
 }
 
-func New() *Cluster {
-	return &Cluster{etcd: etcd.New()}
+func New() *Storage {
+	return &Storage{etcd: etcd.New()}
 }
 
-func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
+func (s *Storage) Start(ctx context.Context) (<-chan struct{}, error) {
 	var err error
-	if err = c.start(ctx); err != nil {
+	if err = s.start(ctx); err != nil {
 		return nil, errors.Wrap(err, "start cluster and https")
 	}
-
-	return nil, nil
+	//test db start
+	ready, err := s.testDB(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return ready, nil
 }
 
-func (c *Cluster) start(ctx context.Context) error {
-	return c.etcd.Start()
+func (s *Storage) start(ctx context.Context) error {
+	return s.etcd.Start()
 }
 
-func (c *Cluster) testDB(ctx context.Context) (<-chan struct{}, error) {
+func (s *Storage) testDB(ctx context.Context) (<-chan struct{}, error) {
 	result := make(chan struct{})
-	if c.etcd == nil {
+	if s.etcd == nil {
 		close(result)
 		return result, nil
 	}
@@ -40,7 +44,7 @@ func (c *Cluster) testDB(ctx context.Context) (<-chan struct{}, error) {
 	go func() {
 		defer close(result)
 		for {
-			if err := c.etcd.Test(ctx); err != nil {
+			if err := s.etcd.Test(ctx); err != nil {
 				logrus.Infof("Failed to test data store connection: %v", err)
 			} else {
 				logrus.Infof("Data store connection OK")
