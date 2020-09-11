@@ -1,5 +1,8 @@
 package agent
 
-func Run() {
+import (
+	"os"
+	"path/filepath"
+)
 
-}
+var appName = filepath.Base(os.Args[0])

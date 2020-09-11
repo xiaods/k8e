@@ -19,17 +19,30 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/viper"
+)
+
+var (
+	Debug     bool
+	DebugFlag = cli.BoolFlag{
+		Name:        "debug",
+		Usage:       "(logging) Turn on debug logs",
+		Destination: &Debug,
+		EnvVar:      version.ProgramUpper + "_DEBUG",
+	}
 )
 
 var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
 var RootCmd = &cobra.Command{
-	Use:   "myk8s",
+	Use:   "k8e",
 	Short: "A brief description of your application",
 	Long: `A longer description that spans multiple lines and likely contains
 examples and usage of using your application. For example:
@@ -40,8 +53,24 @@ to quickly create a Cobra application.`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("hello myk8s")
+		fmt.Println("hello k8e")
 	},
+}
+
+func NewApp() *cli.App {
+	app := cli.NewApp()
+	app.Name = "k8e"
+	app.Usage = "Kubernetes, but small and simple"
+	app.Version = fmt.Sprintf("%s (%s)", version.Version, version.GitCommit)
+	cli.VersionPrinter = func(c *cli.Context) {
+		fmt.Printf("%s version %s\n", app.Name, app.Version)
+	}
+	app.Flags = []cli.Flag{
+		DebugFlag,
+	}
+	app.Before = SetupDebug(nil)
+
+	return app
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -90,5 +119,17 @@ func initConfig() {
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
 		fmt.Println("Using config file:", viper.ConfigFileUsed())
+	}
+}
+
+func SetupDebug(next func(ctx *cli.Context) error) func(ctx *cli.Context) error {
+	return func(ctx *cli.Context) error {
+		if Debug {
+			logrus.SetLevel(logrus.DebugLevel)
+		}
+		if next != nil {
+			return next(ctx)
+		}
+		return nil
 	}
 }
