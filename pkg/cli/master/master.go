@@ -24,6 +24,6 @@ func Run(cmd *cobra.Command, args []string) {
 func run(cfg *cmds.MasterConfig) {
 	ctx := signals.SetupSignalHandler(context.Background())
 	//log.Println(cfg.HTTPSPort)
-	master.StartMaster(ctx)
+	master.StartMaster(ctx, cfg)
 	<-ctx.Done()
 }
