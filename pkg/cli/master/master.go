@@ -2,12 +2,13 @@ package master
 
 import (
 	"context"
-	"log"
 	"runtime"
 
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/daemons/master"
+	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/signals"
 )
 
@@ -16,14 +17,16 @@ import (
 //Run start master
 func Run(cmd *cobra.Command, args []string) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	log.SetFlags(log.Lshortfile | log.LstdFlags)
-	log.Println("start master")
+	logrus.Info("start master")
 	run(&cmds.Master)
 }
 
 func run(cfg *cmds.MasterConfig) {
+	datadir, _ := datadir.LocalHome(cfg.DataDir, true)
+	masterConfig := master.Config{}
+	masterConfig.ControlConfig.DataDir = datadir
 	ctx := signals.SetupSignalHandler(context.Background())
 	//log.Println(cfg.HTTPSPort)
-	master.StartMaster(ctx, cfg)
+	master.StartMaster(ctx, &masterConfig.ControlConfig)
 	<-ctx.Done()
 }

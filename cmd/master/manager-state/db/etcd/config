@@ -1,0 +1,21 @@
+advertise-client-urls: http://172.20.158.33:2379
+client-transport-security:
+  cert-file: ""
+  client-cert-auth: false
+  key-file: ""
+  trusted-ca-file: ""
+data-dir: manager-state\db\etcd
+election-timeout: 5000
+heartbeat-interval: 500
+initial-advertise-peer-urls: http://172.20.158.33:2380
+initial-cluster: ZBTS2004-04388-890eb528=http://172.20.158.33:2380
+initial-cluster-state: new
+listen-client-urls: http://172.20.158.33:2379,http://127.0.0.1:2379
+listen-metrics-urls: http://127.0.0.1:2381
+listen-peer-urls: http://172.20.158.33:2380
+name: ZBTS2004-04388-890eb528
+peer-transport-security:
+  cert-file: ""
+  client-cert-auth: false
+  key-file: ""
+  trusted-ca-file: ""

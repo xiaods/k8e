@@ -2,17 +2,19 @@ package etcd
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"time"
 
 	"io/ioutil"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+	certutil "github.com/xiaods/k8e/lib/dynamiclistener/cert"
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	etcd "go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/embed"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
@@ -70,22 +72,49 @@ type InitialOptions struct {
 }
 
 type ETCD struct {
-	client  *etcd.Client
-	dataDir string
+	client *etcd.Client
+	//dataDir string
+	config  *config.Control
 	name    string
 	address string
 }
 
-func New() *ETCD {
+func New(config *config.Control) *ETCD {
 	e := &ETCD{}
-	address, err := getAdvertiseAddress("")
-	if err != nil {
-		return nil
-	}
-	e.dataDir = "./manager-state"
-	e.address = address
-	e.setName()
+	e.config = config
 	return e
+}
+
+func newClient(ctx context.Context, runtime *config.ControlRuntime) (*etcd.Client, error) {
+	// tlsConfig, err := toTLSConfig(runtime)
+	// if err != nil {
+	// 	return nil, err
+	// }
+
+	cfg := etcd.Config{
+		Context:   ctx,
+		Endpoints: []string{endpoint},
+		TLS:       nil,
+	}
+
+	return etcd.New(cfg)
+}
+
+func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
+	clientCert, err := tls.LoadX509KeyPair(runtime.ClientETCDCert, runtime.ClientETCDKey)
+	if err != nil {
+		return nil, err
+	}
+
+	pool, err := certutil.NewPool(runtime.ETCDServerCA)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tls.Config{
+		RootCAs:      pool,
+		Certificates: []tls.Certificate{clientCert},
+	}, nil
 }
 
 func getAdvertiseAddress(advertiseIP string) (string, error) {
@@ -108,13 +137,32 @@ func (e *ETCD) clientURL() string {
 	return fmt.Sprintf("http://%s:2379", e.address)
 }
 
-func (e *ETCD) Start() error {
+func (e *ETCD) InitDB(ctx context.Context) error {
+	return e.Register(ctx)
+}
+
+func (e *ETCD) Register(ctx context.Context) error {
+	client, err := newClient(ctx, e.config.Runtime)
+	if err != nil {
+		return err
+	}
+	e.client = client
+	address, err := getAdvertiseAddress(e.config.AdvertiseIP)
+	if err != nil {
+		return err
+	}
+	e.address = address
+	e.setName()
+	return nil
+}
+
+func (e *ETCD) Start(ctx context.Context) error {
 	return e.newCluster()
 }
 
 const (
 	snapshotPrefix = "etcd-snapshot-"
-	endpoint       = "https://127.0.0.1:2379"
+	endpoint       = "http://127.0.0.1:2379"
 
 	testTimeout = time.Second * 10
 )
@@ -128,6 +176,7 @@ func (e *ETCD) Test(ctx context.Context) error {
 	}
 
 	if status.IsLearner {
+		logrus.Info("is learner")
 		// if err := e.promoteMember(ctx, clientAccessInfo); err != nil {
 		// 	return err
 		// }
@@ -198,7 +247,7 @@ func (e *ETCD) newCluster() error {
 	}
 	config := ETCDConfig{
 		Name:                e.name,
-		DataDir:             dataDir(e.dataDir),
+		DataDir:             dataDir(e.config.DataDir),
 		InitialOptions:      options,
 		ForceNewCluster:     false,
 		ListenClientURLs:    fmt.Sprintf(e.clientURL() + ",http://127.0.0.1:2379"),
@@ -232,7 +281,7 @@ func nameFile(dataDir string) string {
 }
 
 func (e *ETCD) setName() error {
-	fileName := nameFile(e.dataDir)
+	fileName := nameFile(e.config.DataDir)
 	data, err := ioutil.ReadFile(fileName)
 	if os.IsNotExist(err) {
 		h, err := os.Hostname()
@@ -255,28 +304,28 @@ func (e *ETCD) setName() error {
 func (e *ETCD) run(args ETCDConfig) error {
 	configFile, err := args.ToConfigFile()
 	if err != nil {
-		fmt.Println(err)
+		logrus.Error(err)
 		return err
 	}
 	cfg, err := embed.ConfigFromFile(configFile)
 	if err != nil {
-		log.Println(err)
+		logrus.Error(err)
 		return err
 	}
-	log.Println("start etcd...")
-	log.Println("name", cfg.Name)
-	log.Println("data dir", cfg.Dir)
-	log.Println("ListenMetricsUrlsJSON", cfg.ListenMetricsUrlsJSON)
+	logrus.Info("start etcd...")
+	logrus.Info("name", cfg.Name)
+	logrus.Info("data dir", cfg.Dir)
+	logrus.Info("ListenMetricsUrlsJSON", cfg.ListenMetricsUrlsJSON)
 	//cfg.Dir = dataDir(e.dataDir)
 	etcd, err := embed.StartEtcd(cfg)
 	if err != nil {
-		log.Println(err)
+		logrus.Error(err)
 		return nil
 	}
 	go func() {
 		err := <-etcd.Err()
-		log.Println("etcd exited: ", err)
+		logrus.Info("etcd exited: ", err)
 	}()
-	fmt.Println("run etcd success")
+	logrus.Info("run etcd success")
 	return nil
 }
