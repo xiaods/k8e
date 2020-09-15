@@ -1,7 +1,3 @@
-# cloud.google.com/go v0.51.0
-## explicit
-# github.com/Azure/go-autorest/autorest v0.9.6
-## explicit
 # github.com/beorn7/perks v1.0.0
 github.com/beorn7/perks/quantile
 # github.com/coreos/go-semver v0.3.0
@@ -40,7 +36,6 @@ github.com/google/btree
 # github.com/google/gofuzz v1.1.0
 github.com/google/gofuzz
 # github.com/google/uuid v1.1.2
-## explicit
 github.com/google/uuid
 # github.com/gorilla/websocket v1.4.2
 github.com/gorilla/websocket
@@ -76,7 +71,6 @@ github.com/magiconair/properties
 # github.com/matttproud/golang_protobuf_extensions v1.0.1
 github.com/matttproud/golang_protobuf_extensions/pbutil
 # github.com/mitchellh/go-homedir v1.1.0
-## explicit
 github.com/mitchellh/go-homedir
 # github.com/mitchellh/mapstructure v1.1.2
 github.com/mitchellh/mapstructure
@@ -87,7 +81,6 @@ github.com/modern-go/reflect2
 # github.com/pelletier/go-toml v1.2.0
 github.com/pelletier/go-toml
 # github.com/pkg/errors v0.9.1
-## explicit
 github.com/pkg/errors
 # github.com/prometheus/client_golang v1.0.0
 github.com/prometheus/client_golang/prometheus
@@ -103,14 +96,11 @@ github.com/prometheus/common/model
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 # github.com/rancher/dynamiclistener v0.2.1
-## explicit
 github.com/rancher/dynamiclistener/cert
 github.com/rancher/dynamiclistener/factory
 # github.com/rancher/wrangler v0.6.1
-## explicit
 github.com/rancher/wrangler/pkg/data/convert
 # github.com/sirupsen/logrus v1.4.2
-## explicit
 github.com/sirupsen/logrus
 # github.com/soheilhy/cmux v0.1.4
 github.com/soheilhy/cmux
@@ -120,28 +110,24 @@ github.com/spf13/afero/mem
 # github.com/spf13/cast v1.3.0
 github.com/spf13/cast
 # github.com/spf13/cobra v1.0.0
-## explicit
 github.com/spf13/cobra
 # github.com/spf13/jwalterweatherman v1.0.0
 github.com/spf13/jwalterweatherman
 # github.com/spf13/pflag v1.0.5
 github.com/spf13/pflag
 # github.com/spf13/viper v1.7.1
-## explicit
 github.com/spf13/viper
 # github.com/subosito/gotenv v1.2.0
 github.com/subosito/gotenv
 # github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5
 github.com/tmc/grpc-websocket-proxy/wsproxy
 # github.com/urfave/cli v1.20.0
-## explicit
 github.com/urfave/cli
 # github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2
 github.com/xiang90/probing
 # go.etcd.io/bbolt v1.3.3
 go.etcd.io/bbolt
 # go.etcd.io/etcd v0.5.0-alpha.5.0.20200819165624-17cef6e3e9d5
-## explicit
 go.etcd.io/etcd/auth
 go.etcd.io/etcd/auth/authpb
 go.etcd.io/etcd/client
@@ -251,7 +237,6 @@ golang.org/x/text/transform
 golang.org/x/text/unicode/bidi
 golang.org/x/text/unicode/norm
 # golang.org/x/time v0.0.0-20191024005414-555d28b269f0
-## explicit
 golang.org/x/time/rate
 # google.golang.org/genproto v0.0.0-20200526211855-cb27e3aa2013
 google.golang.org/genproto/googleapis/api/httpbody
@@ -341,13 +326,10 @@ gopkg.in/inf.v0
 # gopkg.in/ini.v1 v1.51.0
 gopkg.in/ini.v1
 # gopkg.in/yaml.v2 v2.2.8
-## explicit
 gopkg.in/yaml.v2
 # k8s.io/api v0.19.0
-## explicit
 k8s.io/api/core/v1
 # k8s.io/apimachinery v0.19.0
-## explicit
 k8s.io/apimachinery/pkg/api/resource
 k8s.io/apimachinery/pkg/apis/meta/v1
 k8s.io/apimachinery/pkg/conversion
@@ -374,5 +356,4 @@ k8s.io/klog/v2
 # sigs.k8s.io/structured-merge-diff/v4 v4.0.1
 sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.2.0
-## explicit
 sigs.k8s.io/yaml

@@ -3,8 +3,6 @@ module github.com/xiaods/k8e
 go 1.14
 
 require (
-	cloud.google.com/go v0.51.0 // indirect
-	github.com/Azure/go-autorest/autorest v0.9.6 // indirect
 	github.com/google/uuid v1.1.2
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/pkg/errors v0.9.1
