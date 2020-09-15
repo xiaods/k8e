@@ -3,6 +3,7 @@ package etcd
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -14,9 +15,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 	certutil "github.com/xiaods/k8e/lib/dynamiclistener/cert"
+	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	etcd "go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/embed"
+	"go.etcd.io/etcd/etcdserver/etcdserverpb"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"sigs.k8s.io/yaml"
 )
@@ -167,7 +170,7 @@ const (
 	testTimeout = time.Second * 10
 )
 
-func (e *ETCD) Test(ctx context.Context) error {
+func (e *ETCD) Test(ctx context.Context, clientAccessInfo *clientaccess.Info) error {
 	ctx, cancel := context.WithTimeout(ctx, testTimeout)
 	defer cancel()
 	status, err := e.client.Status(ctx, endpoint)
@@ -177,9 +180,9 @@ func (e *ETCD) Test(ctx context.Context) error {
 
 	if status.IsLearner {
 		logrus.Info("is learner")
-		// if err := e.promoteMember(ctx, clientAccessInfo); err != nil {
-		// 	return err
-		// }
+		if err := e.promoteMember(ctx, clientAccessInfo); err != nil {
+			return err
+		}
 	}
 	members, err := e.client.MemberList(ctx)
 	if err != nil {
@@ -202,41 +205,85 @@ func (e *ETCD) Test(ctx context.Context) error {
 	return fmt.Errorf(msg)
 }
 
-// func (e *ETCD) promoteMember(ctx context.Context, clientAccessInfo *clientaccess.Info) error {
-// 	clientURLs, _, err := e.clientURLs(ctx, clientAccessInfo)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	memberPromoted := true
-// 	t := time.NewTicker(5 * time.Second)
-// 	defer t.Stop()
-// 	for range t.C {
-// 		client, err := joinClient(ctx, e.runtime, clientURLs)
-// 		// continue on errors to keep trying to promote member
-// 		// grpc error are shown so no need to re log them
-// 		if err != nil {
-// 			continue
-// 		}
-// 		members, err := client.MemberList(ctx)
-// 		if err != nil {
-// 			continue
-// 		}
-// 		for _, member := range members.Members {
-// 			// only one learner can exist in the cluster
-// 			if !member.IsLearner {
-// 				continue
-// 			}
-// 			if _, err := client.MemberPromote(ctx, member.ID); err != nil {
-// 				memberPromoted = false
-// 				break
-// 			}
-// 		}
-// 		if memberPromoted {
-// 			break
-// 		}
-// 	}
-// 	return nil
-// }
+//成员
+func (e *ETCD) promoteMember(ctx context.Context, clientAccessInfo *clientaccess.Info) error {
+	clientURLs, _, err := e.clientURLs(ctx, clientAccessInfo)
+	if err != nil {
+		return err
+	}
+	memberPromoted := true
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for range t.C {
+		client, err := joinClient(ctx, e.config.Runtime, clientURLs)
+		// continue on errors to keep trying to promote member
+		// grpc error are shown so no need to re log them
+		if err != nil {
+			continue
+		}
+		members, err := client.MemberList(ctx)
+		if err != nil {
+			continue
+		}
+		for _, member := range members.Members {
+			// only one learner can exist in the cluster
+			if !member.IsLearner {
+				continue
+			}
+			if _, err := client.MemberPromote(ctx, member.ID); err != nil {
+				memberPromoted = false
+				break
+			}
+		}
+		if memberPromoted {
+			break
+		}
+	}
+	return nil
+}
+
+// Members contains a slice that holds all
+// members of the cluster.
+type Members struct {
+	Members []*etcdserverpb.Member `json:"members"`
+}
+
+func (e *ETCD) clientURLs(ctx context.Context, clientAccessInfo *clientaccess.Info) ([]string, Members, error) {
+	var memberList Members
+	resp, err := clientaccess.Get("/db/info", clientAccessInfo)
+	if err != nil {
+		return nil, memberList, err
+	}
+
+	if err := json.Unmarshal(resp, &memberList); err != nil {
+		return nil, memberList, err
+	}
+
+	var clientURLs []string
+	for _, member := range memberList.Members {
+		// excluding learner member from the client list
+		if member.IsLearner {
+			continue
+		}
+		clientURLs = append(clientURLs, member.ClientURLs...)
+	}
+	return clientURLs, memberList, nil
+}
+
+func joinClient(ctx context.Context, runtime *config.ControlRuntime, peers []string) (*etcd.Client, error) {
+	tlsConfig, err := toTLSConfig(runtime)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := etcd.Config{
+		Endpoints: peers,
+		TLS:       tlsConfig,
+		Context:   ctx,
+	}
+
+	return etcd.New(cfg)
+}
 
 func (e *ETCD) newCluster() error {
 

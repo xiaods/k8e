@@ -100,6 +100,10 @@ func prepare(ctx context.Context, config *config.Control) error {
 		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
 	}
 	c := storage.New(config)
+	if _, err = c.ShouldBootstrapLoad(config); err != nil {
+		logrus.Error(err)
+		return err
+	}
 	ready, _ := c.Start(ctx)
 	<-ready
 	logrus.Info("start storage success")

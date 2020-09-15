@@ -2,10 +2,16 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
 )
@@ -13,15 +19,57 @@ import (
 type DB interface {
 	InitDB(ctx context.Context) error
 	Start(ctx context.Context) error
-	Test(context.Context) error
+	Test(context.Context, *clientaccess.Info) error
 }
 
 type Storage struct {
-	db DB
+	clientAccessInfo *clientaccess.Info
+	db               DB
 }
 
 func New(cfg *config.Control) *Storage {
 	return &Storage{db: etcd.New(cfg)}
+}
+
+func (s *Storage) ShouldBootstrapLoad(cfg *config.Control) (bool, error) {
+	if s.db != nil {
+		if cfg.JoinURL == "" {
+			return false, nil
+		}
+
+		token, err := clientaccess.NormalizeAndValidateTokenForUser(cfg.JoinURL, cfg.Token, "server")
+		if err != nil {
+			return false, err
+		}
+
+		info, err := clientaccess.ParseAndValidateToken(cfg.JoinURL, token)
+		if err != nil {
+			return false, err
+		}
+		s.clientAccessInfo = info
+	}
+
+	stamp := s.bootstrapStamp(cfg)
+	if _, err := os.Stat(stamp); err == nil {
+		logrus.Info("Cluster bootstrap already complete")
+		return false, nil
+	}
+
+	if s.db != nil && cfg.Token == "" {
+		return false, fmt.Errorf("K3S_TOKEN is required to join a cluster")
+	}
+
+	return true, nil
+}
+
+func (s *Storage) bootstrapStamp(cfg *config.Control) string {
+	return filepath.Join(cfg.DataDir, "db/joined-"+keyHash(cfg.Token))
+}
+
+func keyHash(passphrase string) string {
+	d := sha256.New()
+	d.Write([]byte(passphrase))
+	return hex.EncodeToString(d.Sum(nil)[:])[:12]
 }
 
 func (s *Storage) Start(ctx context.Context) (<-chan struct{}, error) {
@@ -57,7 +105,7 @@ func (s *Storage) testDB(ctx context.Context) (<-chan struct{}, error) {
 	go func() {
 		defer close(result)
 		for {
-			if err := s.db.Test(ctx); err != nil {
+			if err := s.db.Test(ctx, s.clientAccessInfo); err != nil {
 				logrus.Infof("Failed to test data store connection: %v", err)
 			} else {
 				logrus.Infof("Data store connection OK")
