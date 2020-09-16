@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -55,9 +54,9 @@ func (s *Storage) ShouldBootstrapLoad(cfg *config.Control) (bool, error) {
 		return false, nil
 	}
 
-	if s.db != nil { //&& cfg.Token == ""
-		return false, fmt.Errorf("K3S_TOKEN is required to join a cluster")
-	}
+	// if s.db != nil && cfg.Token == "" {
+	// 	return false, fmt.Errorf("K3S_TOKEN is required to join a cluster")
+	// }
 
 	return true, nil
 }
