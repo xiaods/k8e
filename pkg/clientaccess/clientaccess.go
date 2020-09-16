@@ -113,37 +113,46 @@ func ParseAndValidateToken(server, token string) (*Info, error) {
 	for strings.HasSuffix(url.Path, "/") {
 		url.Path = url.Path[:len(url.Path)-1]
 	}
-
-	parsedToken, err := parseToken(token)
-	if err != nil {
-		return nil, err
-	}
-
-	cacerts, err := GetCACerts(*url)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(cacerts) > 0 && len(parsedToken.caHash) > 0 {
-		if ok, hash, newHash := validateCACerts(cacerts, parsedToken.caHash); !ok {
-			return nil, fmt.Errorf("token does not match the server %s != %s", hash, newHash)
-		}
-	}
-
-	if err := validateToken(*url, cacerts, parsedToken.username, parsedToken.password); err != nil {
-		return nil, err
-	}
-
 	i := &Info{
-		URL:      url.String(),
-		CACerts:  cacerts,
-		username: parsedToken.username,
-		password: parsedToken.password,
-		Token:    token,
+		URL: url.String(),
 	}
+	if url.Scheme == "https" {
+		parsedToken, err := parseToken(token)
+		if err != nil {
+			return nil, err
+		}
+
+		cacerts, err := GetCACerts(*url)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(cacerts) > 0 && len(parsedToken.caHash) > 0 {
+			if ok, hash, newHash := validateCACerts(cacerts, parsedToken.caHash); !ok {
+				return nil, fmt.Errorf("token does not match the server %s != %s", hash, newHash)
+			}
+		}
+
+		if err := validateToken(*url, cacerts, parsedToken.username, parsedToken.password); err != nil {
+			return nil, err
+		}
+		i.CACerts = cacerts
+		i.username = parsedToken.username
+		i.password = parsedToken.password
+		i.Token = token
+		i.Token = i.ToToken()
+	}
+
+	// i := &Info{
+	// 	URL:      url.String(),
+	// 	CACerts:  cacerts,
+	// 	username: parsedToken.username,
+	// 	password: parsedToken.password,
+	// 	Token:    token,
+	// }
 	logrus.Info("get client access success")
 	// normalize token
-	i.Token = i.ToToken()
+
 	return i, nil
 }
 
