@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -99,14 +100,15 @@ func NormalizeAndValidateTokenForUser(server, token, user string) (string, error
 }
 
 func ParseAndValidateToken(server, token string) (*Info, error) {
+
 	url, err := url.Parse(server)
 	if err != nil {
 		return nil, errors.Wrapf(err, "Invalid url, failed to parse %s", server)
 	}
 
-	if url.Scheme != "https" {
-		return nil, fmt.Errorf("only https:// URLs are supported, invalid scheme: %s", server)
-	}
+	// if url.Scheme != "https" {
+	// 	return nil, fmt.Errorf("only https:// URLs are supported, invalid scheme: %s", server)
+	// }
 
 	for strings.HasSuffix(url.Path, "/") {
 		url.Path = url.Path[:len(url.Path)-1]
@@ -139,7 +141,7 @@ func ParseAndValidateToken(server, token string) (*Info, error) {
 		password: parsedToken.password,
 		Token:    token,
 	}
-
+	logrus.Info("get client access success")
 	// normalize token
 	i.Token = i.ToToken()
 	return i, nil

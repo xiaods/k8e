@@ -25,6 +25,7 @@ func run(cfg *cmds.MasterConfig) {
 	datadir, _ := datadir.LocalHome(cfg.DataDir, true)
 	masterConfig := master.Config{}
 	masterConfig.ControlConfig.DataDir = datadir
+	masterConfig.ControlConfig.JoinURL = cfg.ServerURL
 	ctx := signals.SetupSignalHandler(context.Background())
 	//log.Println(cfg.HTTPSPort)
 	master.StartMaster(ctx, &masterConfig.ControlConfig)
