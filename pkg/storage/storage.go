@@ -55,7 +55,7 @@ func (s *Storage) ShouldBootstrapLoad(cfg *config.Control) (bool, error) {
 		return false, nil
 	}
 
-	if s.db != nil && cfg.Token == "" {
+	if s.db != nil { //&& cfg.Token == ""
 		return false, fmt.Errorf("K3S_TOKEN is required to join a cluster")
 	}
 
