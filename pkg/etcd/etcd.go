@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"time"
 
 	"io/ioutil"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	certutil "github.com/xiaods/k8e/lib/dynamiclistener/cert"
 	"github.com/xiaods/k8e/pkg/clientaccess"
@@ -159,8 +161,99 @@ func (e *ETCD) Register(ctx context.Context) error {
 	return nil
 }
 
-func (e *ETCD) Start(ctx context.Context) error {
-	return e.newCluster()
+func (e *ETCD) IsInitialized(ctx context.Context, config *config.Control) (bool, error) {
+	if s, err := os.Stat(walDir(config)); err == nil && s.IsDir() {
+		return true, nil
+	} else if os.IsNotExist(err) {
+		return false, nil
+	} else {
+		return false, errors.Wrapf(err, "failed to test if etcd is initialized")
+	}
+}
+
+func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) error {
+	existingCluster, err := e.IsInitialized(ctx, e.config)
+	if err != nil {
+		return errors.Wrapf(err, "failed to validation")
+	}
+	logrus.Info("existing etcd cluster ", existingCluster)
+	if existingCluster {
+		return e.cluster(InitialOptions{})
+	}
+	if clientAccessInfo == nil {
+		logrus.Info("new cluster")
+		return e.newCluster()
+	}
+	//
+	logrus.Debug("join cluster")
+	return e.join(ctx, clientAccessInfo)
+}
+
+func (e *ETCD) join(ctx context.Context, clientAccessInfo *clientaccess.Info) error {
+	clientURLs, memberList, err := e.clientURLs(ctx, clientAccessInfo)
+	if err != nil {
+		return err
+	}
+
+	client, err := joinClient(ctx, e.config.Runtime, clientURLs)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	var (
+		cluster []string
+		add     = true
+	)
+
+	members, err := client.MemberList(ctx)
+	if err != nil {
+		logrus.Errorf("failed to get member list from cluster, will assume this member is already added")
+		members = &etcd.MemberListResponse{
+			Members: append(memberList.Members, &etcdserverpb.Member{
+				Name:     e.name,
+				PeerURLs: []string{e.peerURL()},
+			}),
+		}
+		add = false
+	}
+
+	for _, member := range members.Members {
+		for _, peer := range member.PeerURLs {
+			u, err := url.Parse(peer)
+			if err != nil {
+				return err
+			}
+			// An uninitialized member won't have a name
+			if u.Hostname() == e.address && (member.Name == e.name || member.Name == "") {
+				add = false
+			}
+			if member.Name == "" && u.Hostname() == e.address {
+				member.Name = e.name
+			}
+			if len(member.PeerURLs) > 0 {
+				cluster = append(cluster, fmt.Sprintf("%s=%s", member.Name, member.PeerURLs[0]))
+			}
+		}
+	}
+
+	if add {
+		logrus.Infof("Adding %s to etcd cluster %v", e.peerURL(), cluster)
+		if _, err = client.MemberAddAsLearner(ctx, []string{e.peerURL()}); err != nil {
+			return err
+		}
+		cluster = append(cluster, fmt.Sprintf("%s=%s", e.name, e.peerURL()))
+	}
+
+	go e.promoteMember(ctx, clientAccessInfo)
+
+	logrus.Infof("Starting etcd for cluster %v", cluster)
+	return e.cluster(InitialOptions{
+		Cluster: strings.Join(cluster, ","),
+		State:   "existing",
+	})
 }
 
 const (
@@ -286,12 +379,15 @@ func joinClient(ctx context.Context, runtime *config.ControlRuntime, peers []str
 }
 
 func (e *ETCD) newCluster() error {
-
 	options := InitialOptions{
 		AdvertisePeerURL: fmt.Sprintf("http://%s:2380", e.address),
 		Cluster:          fmt.Sprintf("%s=http://%s:2380", e.name, e.address),
 		State:            "new",
 	}
+	return e.cluster(options)
+}
+
+func (e *ETCD) cluster(options InitialOptions) error {
 	config := ETCDConfig{
 		Name:                e.name,
 		DataDir:             dataDir(e.config.DataDir),
@@ -317,6 +413,10 @@ func (e *ETCD) newCluster() error {
 		HeartbeatInterval: 500,
 	}
 	return e.run(config)
+}
+
+func walDir(config *config.Control) string {
+	return filepath.Join(dataDir(config.DataDir), "member", "wal")
 }
 
 func dataDir(dataDir string) string {

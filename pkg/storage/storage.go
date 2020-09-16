@@ -18,7 +18,7 @@ import (
 
 type DB interface {
 	InitDB(ctx context.Context) error
-	Start(ctx context.Context) error
+	Start(context.Context, *clientaccess.Info) error
 	Test(context.Context, *clientaccess.Info) error
 }
 
@@ -33,7 +33,7 @@ func New(cfg *config.Control) *Storage {
 
 func (s *Storage) ShouldBootstrapLoad(cfg *config.Control) (bool, error) {
 	if s.db != nil {
-		if cfg.JoinURL == "" {
+		if cfg.JoinURL == "" { //集群server url
 			return false, nil
 		}
 
@@ -92,7 +92,7 @@ func (s *Storage) Start(ctx context.Context) (<-chan struct{}, error) {
 }
 
 func (s *Storage) start(ctx context.Context) error {
-	return s.db.Start(ctx)
+	return s.db.Start(ctx, s.clientAccessInfo)
 }
 
 func (s *Storage) testDB(ctx context.Context) (<-chan struct{}, error) {
