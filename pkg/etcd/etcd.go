@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"time"
 
@@ -142,23 +143,48 @@ func (e *ETCD) clientURL() string {
 	return fmt.Sprintf("http://%s:2379", e.address)
 }
 
-func (e *ETCD) InitDB(ctx context.Context) error {
+func (e *ETCD) InitDB(ctx context.Context) (http.Handler, error) {
 	return e.Register(ctx)
 }
 
-func (e *ETCD) Register(ctx context.Context) error {
+func (e *ETCD) Register(ctx context.Context) (http.Handler, error) {
 	client, err := newClient(ctx, e.config.Runtime)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	e.client = client
 	address, err := getAdvertiseAddress(e.config.AdvertiseIP)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	e.address = address
 	e.setName()
-	return nil
+	return e.infoHandler(), nil
+}
+
+func (e *ETCD) infoHandler() http.Handler {
+	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
+		defer cancel()
+
+		members, err := e.client.MemberList(ctx)
+		if err != nil {
+			json.NewEncoder(rw).Encode(&Members{
+				Members: []*etcdserverpb.Member{
+					{
+						Name:       e.name,
+						PeerURLs:   []string{e.peerURL()},
+						ClientURLs: []string{e.clientURL()},
+					},
+				},
+			})
+			return
+		}
+		rw.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(rw).Encode(&Members{
+			Members: members.Members,
+		})
+	})
 }
 
 func (e *ETCD) IsInitialized(ctx context.Context, config *config.Control) (bool, error) {

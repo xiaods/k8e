@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/storage"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -99,12 +99,17 @@ func prepare(ctx context.Context, config *config.Control) error {
 	if config.EncryptSecrets {
 		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
 	}
-	c := storage.New(config)
-	if _, err = c.ShouldBootstrapLoad(config); err != nil {
+	c := cluster.New(config)
+	err = c.BootstrapLoad(config)
+	if err != nil {
 		logrus.Error(err)
 		return err
 	}
-	ready, _ := c.Start(ctx)
+	ready, err := c.Start(ctx)
+	if err != nil {
+		logrus.Error(err)
+		return err
+	}
 	<-ready
 	logrus.Info("start storage success")
 	//	e := etcd.New()

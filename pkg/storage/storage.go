@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -16,7 +17,7 @@ import (
 )
 
 type DB interface {
-	InitDB(ctx context.Context) error
+	InitDB(ctx context.Context) (http.Handler, error)
 	Start(context.Context, *clientaccess.Info) error
 	Test(context.Context, *clientaccess.Info) error
 }
@@ -71,12 +72,12 @@ func keyHash(passphrase string) string {
 	return hex.EncodeToString(d.Sum(nil)[:])[:12]
 }
 
+func (s *Storage) InitDB(ctx context.Context) (http.Handler, error) {
+	return s.db.InitDB(ctx)
+}
+
 func (s *Storage) Start(ctx context.Context) (<-chan struct{}, error) {
 	var err error
-	if err = s.db.InitDB(ctx); err != nil {
-		logrus.Error(err)
-		return nil, err
-	}
 	if err = s.start(ctx); err != nil {
 		logrus.Error(err)
 		return nil, errors.Wrap(err, "start cluster and https")
