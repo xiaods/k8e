@@ -390,14 +390,15 @@ func (e *ETCD) clientURLs(ctx context.Context, clientAccessInfo *clientaccess.In
 }
 
 func joinClient(ctx context.Context, runtime *config.ControlRuntime, peers []string) (*etcd.Client, error) {
-	tlsConfig, err := toTLSConfig(runtime)
-	if err != nil {
-		return nil, err
-	}
+	//先不认证
+	// tlsConfig, err := toTLSConfig(runtime)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	cfg := etcd.Config{
 		Endpoints: peers,
-		TLS:       tlsConfig,
+		TLS:       nil,
 		Context:   ctx,
 	}
 
