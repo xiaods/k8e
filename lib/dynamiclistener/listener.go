@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/xiaods/k8e/cert"
-	"github.com/xiaods/k8e/factory"
+	"github.com/xiaods/k8e/lib/dynamiclistener/cert"
+	"github.com/xiaods/k8e/lib/dynamiclistener/factory"
 	v1 "k8s.io/api/core/v1"
 )
 
