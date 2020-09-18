@@ -2,7 +2,6 @@ package etcd
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	certutil "github.com/xiaods/k8e/lib/dynamiclistener/cert"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	etcd "go.etcd.io/etcd/clientv3"
@@ -106,22 +104,22 @@ func newClient(ctx context.Context, runtime *config.ControlRuntime) (*etcd.Clien
 	return etcd.New(cfg)
 }
 
-func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
-	clientCert, err := tls.LoadX509KeyPair(runtime.ClientETCDCert, runtime.ClientETCDKey)
-	if err != nil {
-		return nil, err
-	}
+// func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
+// 	clientCert, err := tls.LoadX509KeyPair(runtime.ClientETCDCert, runtime.ClientETCDKey)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	pool, err := certutil.NewPool(runtime.ETCDServerCA)
-	if err != nil {
-		return nil, err
-	}
+// 	pool, err := certutil.NewPool(runtime.ETCDServerCA)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return &tls.Config{
-		RootCAs:      pool,
-		Certificates: []tls.Certificate{clientCert},
-	}, nil
-}
+// 	return &tls.Config{
+// 		RootCAs:      pool,
+// 		Certificates: []tls.Certificate{clientCert},
+// 	}, nil
+// }
 
 func getAdvertiseAddress(advertiseIP string) (string, error) {
 	ip := advertiseIP
