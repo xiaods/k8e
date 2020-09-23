@@ -105,6 +105,7 @@ func prepare(ctx context.Context, config *config.Control) error {
 		logrus.Error(err)
 		return err
 	}
+
 	ready, err := c.Start(ctx)
 	if err != nil {
 		logrus.Error(err)
@@ -156,4 +157,19 @@ func defaults(config *config.Control) {
 	if config.DataDir == "" {
 		config.DataDir = "./management-state"
 	}
+}
+
+//generate certificate
+func genCerts() {
+
+}
+
+//generate etcd certificate
+func genETCDCerts() {
+
+}
+
+//generate
+func createCACert() {
+
 }
