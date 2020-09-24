@@ -2,11 +2,13 @@ package master
 
 import (
 	"context"
+	"crypto/x509"
 	"net"
 	"os"
 	"path/filepath"
 
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/lib/tcplistener/cert"
 	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
@@ -106,6 +108,12 @@ func prepare(ctx context.Context, config *config.Control) error {
 		return err
 	}
 
+	err = genCerts(config)
+	if err != nil {
+		logrus.Error(err)
+		return err
+	}
+
 	ready, err := c.Start(ctx)
 	if err != nil {
 		logrus.Error(err)
@@ -160,13 +168,58 @@ func defaults(config *config.Control) {
 }
 
 //generate certificate
-func genCerts() {
+func genCerts(config *config.Control) error {
+	err := genETCDCerts(config)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
+func addSANs(altNames *cert.AltNames, sans []string) {
+	for _, san := range sans {
+		ip := net.ParseIP(san)
+		if ip == nil {
+			altNames.DNSNames = append(altNames.DNSNames, san)
+		} else {
+			altNames.IPs = append(altNames.IPs, ip)
+		}
+	}
 }
 
 //generate etcd certificate
-func genETCDCerts() {
+func genETCDCerts(config *config.Control) error {
+	runtime := config.Runtime
+	//创建CA证书
+	regen, err := cert.CreateCACertKey("etcd-server", runtime.ETCDServerCA, runtime.ETCDServerCAKey)
+	if err != nil {
+		return nil
+	}
+	altNames := &cert.AltNames{
+		DNSNames: []string{"localhost"},
+	}
+	addSANs(altNames, config.SANs)
+	_, err = cert.CreateClientCertKey(regen, "etcd-server", nil, altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		runtime.ETCDServerCA, runtime.ETCDServerCAKey, runtime.ServerETCDCert, runtime.ServerETCDKey)
+	if err != nil {
+		return err
+	}
+	_, err = cert.CreateClientCertKey(regen, "etcd-client", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		runtime.ETCDServerCA, runtime.ETCDServerCAKey, runtime.ClientETCDCert, runtime.ClientETCDKey)
+	if err != nil {
+		return err
+	}
 
+	regen, err = cert.CreateCACertKey("etcd-peer", runtime.ETCDPeerCA, runtime.ETCDPeerCAKey)
+	if err != nil {
+		return nil
+	}
+	_, err = cert.CreateClientCertKey(regen, "etcd-peer", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		runtime.ETCDPeerCA, runtime.ETCDPeerCAKey, runtime.PeerServerClientETCDCert, runtime.PeerServerClientETCDKey)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 //generate

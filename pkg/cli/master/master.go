@@ -10,6 +10,7 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/master"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/signals"
+	"k8s.io/apimachinery/pkg/util/net"
 )
 
 //var ctx = context.Background()
@@ -26,8 +27,18 @@ func run(cfg *cmds.MasterConfig) {
 	masterConfig := master.Config{}
 	masterConfig.ControlConfig.DataDir = datadir
 	masterConfig.ControlConfig.JoinURL = cfg.ServerURL
+	masterConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
 	ctx := signals.SetupSignalHandler(context.Background())
 	//log.Println(cfg.HTTPSPort)
 	master.StartMaster(ctx, &masterConfig.ControlConfig)
 	<-ctx.Done()
+}
+
+func knownIPs(ips []string) []string {
+	ips = append(ips, "127.0.0.1")
+	ip, err := net.ChooseHostInterface()
+	if err == nil {
+		ips = append(ips, ip.String())
+	}
+	return ips
 }

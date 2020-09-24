@@ -2,6 +2,7 @@ package etcd
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/lib/tcplistener/cert"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	etcd "go.etcd.io/etcd/clientv3"
@@ -90,36 +92,36 @@ func New(config *config.Control) *ETCD {
 }
 
 func newClient(ctx context.Context, runtime *config.ControlRuntime) (*etcd.Client, error) {
-	// tlsConfig, err := toTLSConfig(runtime)
-	// if err != nil {
-	// 	return nil, err
-	// }
+	tlsConfig, err := toTLSConfig(runtime)
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := etcd.Config{
 		Context:   ctx,
 		Endpoints: []string{endpoint},
-		TLS:       nil,
+		TLS:       tlsConfig,
 	}
 
 	return etcd.New(cfg)
 }
 
-// func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
-// 	clientCert, err := tls.LoadX509KeyPair(runtime.ClientETCDCert, runtime.ClientETCDKey)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
+	clientCert, err := tls.LoadX509KeyPair(runtime.ClientETCDCert, runtime.ClientETCDKey)
+	if err != nil {
+		return nil, err
+	}
 
-// 	pool, err := certutil.NewPool(runtime.ETCDServerCA)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+	pool, err := cert.NewPool(runtime.ETCDServerCA)
+	if err != nil {
+		return nil, err
+	}
 
-// 	return &tls.Config{
-// 		RootCAs:      pool,
-// 		Certificates: []tls.Certificate{clientCert},
-// 	}, nil
-// }
+	return &tls.Config{
+		RootCAs:      pool,
+		Certificates: []tls.Certificate{clientCert},
+	}, nil
+}
 
 func getAdvertiseAddress(advertiseIP string) (string, error) {
 	ip := advertiseIP
@@ -134,11 +136,11 @@ func getAdvertiseAddress(advertiseIP string) (string, error) {
 }
 
 func (e *ETCD) peerURL() string {
-	return fmt.Sprintf("http://%s:2380", e.address)
+	return fmt.Sprintf("https://%s:2380", e.address)
 }
 
 func (e *ETCD) clientURL() string {
-	return fmt.Sprintf("http://%s:2379", e.address)
+	return fmt.Sprintf("https://%s:2379", e.address)
 }
 
 func (e *ETCD) InitDB(ctx context.Context) (http.Handler, error) {
@@ -282,7 +284,7 @@ func (e *ETCD) join(ctx context.Context, clientAccessInfo *clientaccess.Info) er
 
 const (
 	snapshotPrefix = "etcd-snapshot-"
-	endpoint       = "http://127.0.0.1:2379"
+	endpoint       = "https://127.0.0.1:2379"
 
 	testTimeout = time.Second * 10
 )
@@ -405,8 +407,8 @@ func joinClient(ctx context.Context, runtime *config.ControlRuntime, peers []str
 
 func (e *ETCD) newCluster() error {
 	options := InitialOptions{
-		AdvertisePeerURL: fmt.Sprintf("http://%s:2380", e.address),
-		Cluster:          fmt.Sprintf("%s=http://%s:2380", e.name, e.address),
+		AdvertisePeerURL: fmt.Sprintf("https://%s:2380", e.address),
+		Cluster:          fmt.Sprintf("%s=https://%s:2380", e.name, e.address),
 		State:            "new",
 	}
 	return e.cluster(options)
@@ -418,22 +420,22 @@ func (e *ETCD) cluster(options InitialOptions) error {
 		DataDir:             dataDir(e.config.DataDir),
 		InitialOptions:      options,
 		ForceNewCluster:     false,
-		ListenClientURLs:    fmt.Sprintf(e.clientURL() + ",http://127.0.0.1:2379"),
-		ListenMetricsUrls:   fmt.Sprintf("http://127.0.0.1:2381"),
+		ListenClientURLs:    fmt.Sprintf(e.clientURL() + ",https://127.0.0.1:2379"),
+		ListenMetricsUrls:   fmt.Sprintf("https://127.0.0.1:2381"),
 		ListenPeerURLs:      e.peerURL(),
 		AdvertiseClientURLs: e.clientURL(),
-		// ServerTrust: executor.ServerTrust{
-		// 	CertFile:       e.config.Runtime.ServerETCDCert,
-		// 	KeyFile:        e.config.Runtime.ServerETCDKey,
-		// 	ClientCertAuth: true,
-		// 	TrustedCAFile:  e.config.Runtime.ETCDServerCA,
-		// },
-		// PeerTrust: executor.PeerTrust{
-		// 	CertFile:       e.config.Runtime.PeerServerClientETCDCert,
-		// 	KeyFile:        e.config.Runtime.PeerServerClientETCDKey,
-		// 	ClientCertAuth: true,
-		// 	TrustedCAFile:  e.config.Runtime.ETCDPeerCA,
-		// },
+		ServerTrust: ServerTrust{
+			CertFile:       e.config.Runtime.ServerETCDCert,
+			KeyFile:        e.config.Runtime.ServerETCDKey,
+			ClientCertAuth: true,
+			TrustedCAFile:  e.config.Runtime.ETCDServerCA,
+		},
+		PeerTrust: PeerTrust{
+			CertFile:       e.config.Runtime.PeerServerClientETCDCert,
+			KeyFile:        e.config.Runtime.PeerServerClientETCDKey,
+			ClientCertAuth: true,
+			TrustedCAFile:  e.config.Runtime.ETCDPeerCA,
+		},
 		ElectionTimeout:   5000,
 		HeartbeatInterval: 500,
 	}

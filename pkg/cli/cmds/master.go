@@ -11,6 +11,7 @@ type MasterConfig struct {
 	APIServerBindAddress string
 	DataDir              string
 	ServerURL            string
+	TLSSan               []string
 }
 
 var Master MasterConfig
