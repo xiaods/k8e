@@ -211,7 +211,7 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 		return e.newCluster()
 	}
 	//
-	logrus.Debug("join cluster")
+	logrus.Info("join cluster")
 	return e.join(ctx, clientAccessInfo)
 }
 
@@ -421,7 +421,7 @@ func (e *ETCD) cluster(options InitialOptions) error {
 		InitialOptions:      options,
 		ForceNewCluster:     false,
 		ListenClientURLs:    fmt.Sprintf(e.clientURL() + ",https://127.0.0.1:2379"),
-		ListenMetricsUrls:   fmt.Sprintf("https://127.0.0.1:2381"),
+		ListenMetricsUrls:   "http://127.0.0.1:2381",
 		ListenPeerURLs:      e.peerURL(),
 		AdvertiseClientURLs: e.clientURL(),
 		ServerTrust: ServerTrust{
