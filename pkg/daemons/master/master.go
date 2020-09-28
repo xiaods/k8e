@@ -214,7 +214,7 @@ func genETCDCerts(config *config.Control) error {
 	if err != nil {
 		return nil
 	}
-	_, err = cert.CreateClientCertKey(regen, "etcd-peer", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+	_, err = cert.CreateClientCertKey(regen, "etcd-peer", nil, altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		runtime.ETCDPeerCA, runtime.ETCDPeerCAKey, runtime.PeerServerClientETCDCert, runtime.PeerServerClientETCDKey)
 	if err != nil {
 		return err
