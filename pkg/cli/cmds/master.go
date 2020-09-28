@@ -25,9 +25,12 @@ func NewMasterCommand(run func(cmd *cobra.Command, args []string)) *cobra.Comman
 	cmd.Flags().IntVar(&Master.HTTPSPort, "https-listen-port", 6443, "(listener) IP address that apiserver uses to advertise to members of the cluster (default: node-external-ip/node-ip)")
 	cmd.Flags().StringVarP(&Master.DataDir, "data-dir", "d", "", "(data) Folder to hold state default /var/lib/k8e/"+version.Program+" or ${HOME}/.k8e/"+version.Program+" if not root")
 	cmd.Flags().StringVarP(&Master.ServerURL, "server", "s", "", "(experimental/cluster) Server to connect to, used to join a cluster")
+	cmd.Flags().StringSliceVar(&Master.TLSSan, "tls-san", nil, "(listener) Add additional hostname or IP as a Subject Alternative Name in the TLS cert")
+
 	viper.BindPFlag("https-listen-port", cmd.Flags().Lookup("https-listen-port"))
 	viper.BindPFlag("data-dir", cmd.Flags().Lookup("data-dir"))
 	viper.BindPFlag("server", cmd.Flags().Lookup("server"))
+	viper.BindPFlag("tls-san", cmd.Flags().Lookup("tls-san"))
 	return cmd
 }
 
