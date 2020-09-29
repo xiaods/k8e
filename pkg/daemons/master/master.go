@@ -22,7 +22,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	app2 "k8s.io/kubernetes/cmd/controller-manager/app"
-	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"  
+	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
 )
 
 var (
@@ -176,35 +176,35 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	argsMap["cert-dir"] = certDir
 	argsMap["allow-privileged"] = "true"
 	argsMap["authorization-mode"] = strings.Join([]string{modes.ModeNode, modes.ModeRBAC}, ",")
-	argsMap["service-account-signing-key-file"] = runtime.ServiceKey
+	//argsMap["service-account-signing-key-file"] = runtime.ServiceKey
 	argsMap["service-cluster-ip-range"] = cfg.ServiceIPRange.String()
 	argsMap["advertise-port"] = strconv.Itoa(cfg.AdvertisePort)
 	if cfg.AdvertiseIP != "" {
 		argsMap["advertise-address"] = cfg.AdvertiseIP
 	}
-	argsMap["insecure-port"] = "0"
+	argsMap["insecure-port"] = "8080"
 	argsMap["secure-port"] = strconv.Itoa(cfg.APIServerPort)
 	if cfg.APIServerBindAddress == "" {
 		argsMap["bind-address"] = localhostIP.String()
 	} else {
 		argsMap["bind-address"] = cfg.APIServerBindAddress
 	}
-	argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
-	argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
-	argsMap["service-account-key-file"] = runtime.ServiceKey
-	argsMap["service-account-issuer"] = version.Program
-	argsMap["api-audiences"] = "unknown"
-	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
-	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
-	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
-	argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
-	argsMap["requestheader-allowed-names"] = requestHeaderCN
-	argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
-	argsMap["proxy-client-key-file"] = runtime.ClientAuthProxyKey
+	// argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
+	// argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
+	// argsMap["service-account-key-file"] = runtime.ServiceKey
+	// argsMap["service-account-issuer"] = version.Program
+	// argsMap["api-audiences"] = "unknown"
+	// argsMap["kubelet-certificate-authority"] = runtime.ServerCA
+	// argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
+	// argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
+	// argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
+	// argsMap["requestheader-allowed-names"] = requestHeaderCN
+	// argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
+	// argsMap["proxy-client-key-file"] = runtime.ClientAuthProxyKey
 	argsMap["requestheader-extra-headers-prefix"] = "X-Remote-Extra-"
 	argsMap["requestheader-group-headers"] = "X-Remote-Group"
 	argsMap["requestheader-username-headers"] = "X-Remote-User"
-	argsMap["client-ca-file"] = runtime.ClientCA
+	//argsMap["client-ca-file"] = runtime.ClientCA
 	argsMap["enable-admission-plugins"] = "NodeRestriction"
 	argsMap["anonymous-auth"] = "false"
 	argsMap["profiling"] = "false"
