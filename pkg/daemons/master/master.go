@@ -3,15 +3,52 @@ package master
 import (
 	"context"
 	"crypto/x509"
+	"html/template"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/lib/tcplistener/cert"
 	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/version"
+	"k8s.io/apiserver/pkg/authentication/authenticator"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
+	app2 "k8s.io/kubernetes/cmd/controller-manager/app"
+	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"  
+)
+
+var (
+	localhostIP        = net.ParseIP("127.0.0.1")
+	requestHeaderCN    = "system:auth-proxy"
+	kubeconfigTemplate = template.Must(template.New("kubeconfig").Parse(`apiVersion: v1
+clusters:
+- cluster:
+    server: {{.URL}}
+    certificate-authority: {{.CACert}}
+  name: local
+contexts:
+- context:
+    cluster: local
+    namespace: default
+    user: user
+  name: Default
+current-context: Default
+kind: Config
+preferences: {}
+users:
+- name: user
+  user:
+    client-certificate: {{.ClientCert}}
+    client-key: {{.ClientKey}}
+`))
 )
 
 func StartMaster(ctx context.Context, cfg *config.Control) error {
@@ -30,8 +67,15 @@ func master(ctx context.Context, cfg *config.Control) error {
 	if err = prepare(ctx, cfg); err != nil {
 		return err
 	}
-
-	return err
+	_, _, err = apiServer(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err = waitForAPIServerInBackground(ctx, runtime); err != nil {
+		return err
+	}
+	logrus.Info("api server start success")
+	return nil
 }
 
 func prepare(ctx context.Context, config *config.Control) error {
@@ -119,20 +163,65 @@ func prepare(ctx context.Context, config *config.Control) error {
 		logrus.Error(err)
 		return err
 	}
-	<-ready
-	logrus.Info("start storage success")
-	//	e := etcd.New()
-	//	e.Start()
+	runtime.ETCDReady = ready
 	return nil
 }
 
-func apiServer(ctx context.Context, cfg *config.Control) {
+func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request, http.Handler, error) {
 	argsMap := make(map[string]string)
+	setEtcdStorageBackend(argsMap, cfg)
 	certDir := filepath.Join(cfg.DataDir, "tls", "temporary-certs")
 	os.MkdirAll(certDir, 0700)
-	argsMap["cert-dir"] = certDir        //存放 TLS 证书的目录。如果提供了 --tls-cert-file 和 --tls-private-key-file 选项，该标志将被忽略。（默认值 "/var/run/kubernetes"）
-	argsMap["allow-privileged"] = "true" // 如果为 true, 将允许特权容器
-	argsMap[""] = ""
+	runtime := cfg.Runtime
+	argsMap["cert-dir"] = certDir
+	argsMap["allow-privileged"] = "true"
+	argsMap["authorization-mode"] = strings.Join([]string{modes.ModeNode, modes.ModeRBAC}, ",")
+	argsMap["service-account-signing-key-file"] = runtime.ServiceKey
+	argsMap["service-cluster-ip-range"] = cfg.ServiceIPRange.String()
+	argsMap["advertise-port"] = strconv.Itoa(cfg.AdvertisePort)
+	if cfg.AdvertiseIP != "" {
+		argsMap["advertise-address"] = cfg.AdvertiseIP
+	}
+	argsMap["insecure-port"] = "0"
+	argsMap["secure-port"] = strconv.Itoa(cfg.APIServerPort)
+	if cfg.APIServerBindAddress == "" {
+		argsMap["bind-address"] = localhostIP.String()
+	} else {
+		argsMap["bind-address"] = cfg.APIServerBindAddress
+	}
+	argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
+	argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
+	argsMap["service-account-key-file"] = runtime.ServiceKey
+	argsMap["service-account-issuer"] = version.Program
+	argsMap["api-audiences"] = "unknown"
+	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
+	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
+	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
+	argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
+	argsMap["requestheader-allowed-names"] = requestHeaderCN
+	argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
+	argsMap["proxy-client-key-file"] = runtime.ClientAuthProxyKey
+	argsMap["requestheader-extra-headers-prefix"] = "X-Remote-Extra-"
+	argsMap["requestheader-group-headers"] = "X-Remote-Group"
+	argsMap["requestheader-username-headers"] = "X-Remote-User"
+	argsMap["client-ca-file"] = runtime.ClientCA
+	argsMap["enable-admission-plugins"] = "NodeRestriction"
+	argsMap["anonymous-auth"] = "false"
+	argsMap["profiling"] = "false"
+	if cfg.EncryptSecrets {
+		argsMap["encryption-provider-config"] = runtime.EncryptionConfig
+	}
+	args := config.GetArgsList(argsMap, cfg.ExtraAPIArgs)
+	logrus.Infof("Running kube-apiserver %s", config.ArgString(args))
+	return executor.APIServer(ctx, runtime.ETCDReady, args)
+}
+
+func setEtcdStorageBackend(argsMap map[string]string, cfg *config.Control) {
+	argsMap["storage-backend"] = "etcd3"
+	argsMap["etcd-servers"] = cfg.Datastore.Endpoint
+	argsMap["etcd-cafile"] = cfg.Datastore.CAFile
+	argsMap["etcd-certfile"] = cfg.Datastore.CertFile
+	argsMap["etcd-keyfile"] = cfg.Datastore.KeyFile
 }
 
 func defaults(config *config.Control) {
@@ -222,7 +311,58 @@ func genETCDCerts(config *config.Control) error {
 	return nil
 }
 
-//generate
-func createCACert() {
+func waitForAPIServerInBackground(ctx context.Context, runtime *config.ControlRuntime) error {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", runtime.KubeConfigAdmin)
+	if err != nil {
+		return err
+	}
 
+	k8sClient, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return err
+	}
+
+	done := make(chan struct{})
+	runtime.APIServerReady = done
+
+	go func() {
+		defer close(done)
+
+	etcdLoop:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-runtime.ETCDReady:
+				break etcdLoop
+			case <-time.After(30 * time.Second):
+				logrus.Infof("Waiting for etcd server to become available")
+			}
+		}
+
+		logrus.Infof("Waiting for API server to become available")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err := <-promise(func() error { return app2.WaitForAPIServer(k8sClient, 30*time.Second) }):
+				if err != nil {
+					logrus.Infof("Waiting for API server to become available")
+					continue
+				}
+				return
+			}
+		}
+	}()
+
+	return nil
+}
+
+func promise(f func() error) <-chan error {
+	c := make(chan error, 1)
+	go func() {
+		c <- f()
+		close(c)
+	}()
+	return c
 }

@@ -2,8 +2,13 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
+	"sort"
+	"strings"
+
+	"google.golang.org/grpc"
 )
 
 type Control struct {
@@ -14,21 +19,21 @@ type Control struct {
 	// The port which custom k3s API runs on
 	SupervisorPort int
 	// The port which kube-apiserver runs on
-	APIServerPort        int
-	APIServerBindAddress string
-	AgentToken           string `json:"-"`
-	Token                string `json:"-"`
-	ClusterIPRange       *net.IPNet
-	ServiceIPRange       *net.IPNet
-	ClusterDNS           net.IP
-	ClusterDomain        string
-	NoCoreDNS            bool
-	KubeConfigOutput     string
-	KubeConfigMode       string
-	DataDir              string
-	Skips                map[string]bool
-	Disables             map[string]bool
-	//Datastore                endpoint.Config
+	APIServerPort            int
+	APIServerBindAddress     string
+	AgentToken               string `json:"-"`
+	Token                    string `json:"-"`
+	ClusterIPRange           *net.IPNet
+	ServiceIPRange           *net.IPNet
+	ClusterDNS               net.IP
+	ClusterDomain            string
+	NoCoreDNS                bool
+	KubeConfigOutput         string
+	KubeConfigMode           string
+	DataDir                  string
+	Skips                    map[string]bool
+	Disables                 map[string]bool
+	Datastore                DataConfig
 	NoScheduler              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
@@ -57,6 +62,20 @@ type Control struct {
 	SANs        []string
 
 	Runtime *ControlRuntime `json:"-"`
+}
+
+type DataConfig struct {
+	GRPCServer *grpc.Server
+	Listener   string
+	Endpoint   string
+
+	TlsConfig
+}
+
+type TlsConfig struct {
+	CAFile   string
+	CertFile string
+	KeyFile  string
 }
 
 type ControlRuntimeBootstrap struct {
@@ -126,4 +145,36 @@ type ControlRuntime struct {
 	PeerServerClientETCDKey  string
 	ClientETCDCert           string
 	ClientETCDKey            string
+}
+
+type ArgString []string
+
+func (a ArgString) String() string {
+	b := strings.Builder{}
+	for _, s := range a {
+		if b.Len() > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(s)
+	}
+	return b.String()
+}
+
+func GetArgsList(argsMap map[string]string, extraArgs []string) []string {
+	// add extra args to args map to override any default option
+	for _, arg := range extraArgs {
+		splitArg := strings.SplitN(arg, "=", 2)
+		if len(splitArg) < 2 {
+			argsMap[splitArg[0]] = "true"
+			continue
+		}
+		argsMap[splitArg[0]] = splitArg[1]
+	}
+	var args []string
+	for arg, value := range argsMap {
+		cmd := fmt.Sprintf("--%s=%s", arg, value)
+		args = append(args, cmd)
+	}
+	sort.Strings(args)
+	return args
 }

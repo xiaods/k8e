@@ -159,6 +159,10 @@ func (e *ETCD) Register(ctx context.Context) (http.Handler, error) {
 	}
 	e.address = address
 	e.setName()
+	e.config.Datastore.Endpoint = endpoint
+	e.config.Datastore.TlsConfig.CAFile = e.config.Runtime.ETCDServerCA
+	e.config.Datastore.TlsConfig.CertFile = e.config.Runtime.ClientETCDCert
+	e.config.Datastore.TlsConfig.KeyFile = e.config.Runtime.ClientETCDKey
 	return e.infoHandler(), nil
 }
 
@@ -202,16 +206,15 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 	if err != nil {
 		return errors.Wrapf(err, "failed to validation")
 	}
-	logrus.Info("existing etcd cluster ", existingCluster)
+	//logrus.Info("existing etcd cluster ", existingCluster)
 	if existingCluster {
 		return e.cluster(InitialOptions{})
 	}
 	if clientAccessInfo == nil {
-		logrus.Info("new cluster")
+		//logrus.Info("new cluster")
 		return e.newCluster()
 	}
-	//
-	logrus.Info("join cluster")
+	//logrus.Info("join cluster")
 	return e.join(ctx, clientAccessInfo)
 }
 
