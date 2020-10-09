@@ -7,6 +7,8 @@ import (
 	"github.com/sirupsen/logrus"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
+	cmapp "k8s.io/kubernetes/cmd/kube-controller-manager/app"
+	sapp "k8s.io/kubernetes/cmd/kube-scheduler/app"
 )
 
 func init() {
@@ -23,7 +25,30 @@ func (Embedded) APIServer(ctx context.Context, etcdReady <-chan struct{}, args [
 	go func() {
 		logrus.Fatalf("apiserver exited: %v", command.Execute())
 	}()
-
+	logrus.Info("<-app.StartupConfig")
 	startupConfig := <-app.StartupConfig
+	logrus.Info("<-app.StartupConfig done")
 	return startupConfig.Authenticator, startupConfig.Handler, nil
+}
+
+func (Embedded) Scheduler(apiReady <-chan struct{}, args []string) error {
+	command := sapp.NewSchedulerCommand()
+	command.SetArgs(args)
+	go func() {
+		<-apiReady
+		logrus.Fatalf("scheduler exited: %v", command.Execute())
+	}()
+	return nil
+}
+
+func (Embedded) ControllerManager(apiReady <-chan struct{}, args []string) error {
+	command := cmapp.NewControllerManagerCommand()
+	command.SetArgs(args)
+
+	go func() {
+		<-apiReady
+		logrus.Fatalf("controller-manager exited: %v", command.Execute())
+	}()
+
+	return nil
 }

@@ -42,3 +42,4 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 	}
 	return c.s.Start(ctx)
 }
+

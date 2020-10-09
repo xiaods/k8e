@@ -110,6 +110,7 @@ github.com/clusterhq/flocker-go v0.0.0-20160920122132-2b8b7259d313/go.mod h1:P1w
 github.com/cockroachdb/datadriven v0.0.0-20190809214429-80d97fb3cbaa h1:OaNxuTZr7kxeODyLWsRMC+OD03aFUH+mW6r2d+MWa5Y=
 github.com/cockroachdb/datadriven v0.0.0-20190809214429-80d97fb3cbaa/go.mod h1:zn76sxSg3SzpJ0PPJaLDCu+Bu0Lg3sKTORVIj19EIF8=
 github.com/codegangsta/negroni v1.0.0/go.mod h1:v0y3T5G7Y1UlFfyxFn/QLRU4a2EuNau2iZY63YTKWo0=
+github.com/container-storage-interface/spec v1.2.0 h1:bD9KIVgaVKKkQ/UbVUY9kCaH/CJbhNxe0eeB4JeJV2s=
 github.com/container-storage-interface/spec v1.2.0/go.mod h1:6URME8mwIBbpVyZV93Ce5St17xBiQJQY67NDsuohiy4=
 github.com/containerd/cgroups v0.0.0-20200531161412-0dbf7f05ba59/go.mod h1:pA0z1pT8KYB3TCXK/ocprsh7MAkoW8bZVzPdih9snmM=
 github.com/containerd/console v0.0.0-20180822173158-c12b1e7919c1/go.mod h1:Tj/on1eG8kiEhd0+fhSDzsPAFESxzBBvdyEgyryXffw=
@@ -587,18 +588,23 @@ github.com/rancher/kubernetes/staging/src/k8s.io/cluster-bootstrap v1.19.1-k3s1/
 github.com/rancher/kubernetes/staging/src/k8s.io/code-generator v1.19.1-k3s1/go.mod h1:CqfZDv+BcdomYCAbV0kiIw9wyBW1Fnf/iDHBd0jEWW8=
 github.com/rancher/kubernetes/staging/src/k8s.io/component-base v1.19.1-k3s1 h1:HPteDThWXK34OfECSskAsG2nFULQx9yqAPRM0jaepA0=
 github.com/rancher/kubernetes/staging/src/k8s.io/component-base v1.19.1-k3s1/go.mod h1:jR+bJp7erYNUmcS7lWDm404aFVonltWE56LV8CuqKyg=
+github.com/rancher/kubernetes/staging/src/k8s.io/cri-api v1.19.1-k3s1 h1:gT9TAGQ+KL5DkofEfXsI4IJuqZJW9zK8vtb9pFiIg8Q=
 github.com/rancher/kubernetes/staging/src/k8s.io/cri-api v1.19.1-k3s1/go.mod h1:5fTlfaqG0oYYb80kk4fHpqinBBSFEZb3EqHwdvNdiGQ=
 github.com/rancher/kubernetes/staging/src/k8s.io/csi-translation-lib v1.19.1-k3s1 h1:HY3ry2WdLE3ZyBQ3MuAH4bZldn8Kk3TqIRF3q/KeOKY=
 github.com/rancher/kubernetes/staging/src/k8s.io/csi-translation-lib v1.19.1-k3s1/go.mod h1:adA9bBHXD+K7tPn7kTpjQ3VcUzK6PFgAdNEofr4fEx4=
 github.com/rancher/kubernetes/staging/src/k8s.io/kube-aggregator v1.19.1-k3s1 h1:qPcXnuOa9hQxFnCWSNm13L+fMhdmQ5J/GLLXmAeepBI=
 github.com/rancher/kubernetes/staging/src/k8s.io/kube-aggregator v1.19.1-k3s1/go.mod h1:2k5w33TDDiX5MW45QFLk1KqByb4Su/g73InDkoC1xls=
+github.com/rancher/kubernetes/staging/src/k8s.io/kube-controller-manager v1.19.1-k3s1 h1:8x95dYRs1h2a2ExEBeAj2STSSbc0tobdL1CQ4Ij+a0o=
 github.com/rancher/kubernetes/staging/src/k8s.io/kube-controller-manager v1.19.1-k3s1/go.mod h1:6CzB8GMVD+ZlCXZjHiqccHpC9FFlRTCz+rHd176Lxfc=
 github.com/rancher/kubernetes/staging/src/k8s.io/kube-proxy v1.19.1-k3s1/go.mod h1:PWMBqO9xuXWJS8REJ8QWiouJzbiOwVVVT81ZTwYb2Nk=
+github.com/rancher/kubernetes/staging/src/k8s.io/kube-scheduler v1.19.1-k3s1 h1:1qrmm1wQu3yx7Ck692/4AQE8Dx+iK3fCm4x20aAU+14=
 github.com/rancher/kubernetes/staging/src/k8s.io/kube-scheduler v1.19.1-k3s1/go.mod h1:23iT4D9thFRxYGZ9DOa7zQ4ZyrFHyp+Bz5dXiruHNwI=
+github.com/rancher/kubernetes/staging/src/k8s.io/kubectl v1.19.1-k3s1 h1:/k2HfeWVSNdrRA5rxqv96aWnQtDcAymPBKkzFHd2LPI=
 github.com/rancher/kubernetes/staging/src/k8s.io/kubectl v1.19.1-k3s1/go.mod h1:jF57QafZUIyhkboHp3NUlPdpozl8NA4uvyG5FdjbEbU=
 github.com/rancher/kubernetes/staging/src/k8s.io/kubelet v1.19.1-k3s1/go.mod h1:xgsxxK8T8eljLwrh87vAyytjDFMbBsrM95vgHrf1OUg=
 github.com/rancher/kubernetes/staging/src/k8s.io/legacy-cloud-providers v1.19.1-k3s1 h1:iJ1fW/X086Kgrl8uAWjIDqu+js5g6hFVCbKtdm2dLz8=
 github.com/rancher/kubernetes/staging/src/k8s.io/legacy-cloud-providers v1.19.1-k3s1/go.mod h1:iv4u51XYDkRdyvp7BBP+KuQ+ZHjEjoCECFVzMJBDGZA=
+github.com/rancher/kubernetes/staging/src/k8s.io/metrics v1.19.1-k3s1 h1:S9Wn6Y/tXmiCuRrKNi/W8tr5PatUs2DFmOlmbXjXftY=
 github.com/rancher/kubernetes/staging/src/k8s.io/metrics v1.19.1-k3s1/go.mod h1:HZHgmugH8oA4ZxTPt9R8HYJBWEeLDegmaGoPo3HDK3I=
 github.com/rancher/kubernetes/staging/src/k8s.io/sample-apiserver v1.19.1-k3s1/go.mod h1:tl3x2SPSVsIqnioD4z87jXFemilbRh1EYDm3KirMsjI=
 github.com/rancher/wrangler v0.1.4/go.mod h1:EYP7cqpg42YqElaCm+U9ieSrGQKAXxUH5xsr+XGpWyE=
@@ -908,6 +914,7 @@ golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543 h1:E7g+9GITq07hpfrRu66IV
 golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 gonum.org/v1/gonum v0.0.0-20180816165407-929014505bf4/go.mod h1:Y+Yx5eoAFn32cQvJDxZx5Dpnq+c3wtXuadVZAcxbbBo=
 gonum.org/v1/gonum v0.0.0-20190331200053-3d26580ed485/go.mod h1:2ltnJ7xHfj0zHS40VVPYEAAMTa3ZGguvHGBSJeRWqE0=
+gonum.org/v1/gonum v0.6.2 h1:4r+yNT0+8SWcOkXP+63H2zQbN+USnC73cjGUxnDF94Q=
 gonum.org/v1/gonum v0.6.2/go.mod h1:9mxDZsDKxgMAuccQkewq682L+0eCu4dCN2yonUJTCLU=
 gonum.org/v1/netlib v0.0.0-20190313105609-8cb42192e0e0/go.mod h1:wa6Ws7BG/ESfp6dHfk7C6KdzKA7wR7u/rKwOGE66zvw=
 gonum.org/v1/netlib v0.0.0-20190331212654-76723241ea4e/go.mod h1:kS+toOQn6AQKjmKJ7gzohV1XkqsFehRA2FbsbkopSuQ=
@@ -1021,6 +1028,7 @@ k8s.io/gengo v0.0.0-20190327210449-e17681d19d3a/go.mod h1:ezvh/TsK7cY6rbqRK0oQQ8
 k8s.io/gengo v0.0.0-20200114144118-36b2048a9120/go.mod h1:ezvh/TsK7cY6rbqRK0oQQ8IAqLxYwwyPxAX1Pzy0ii0=
 k8s.io/gengo v0.0.0-20200413195148-3a45101e95ac/go.mod h1:ezvh/TsK7cY6rbqRK0oQQ8IAqLxYwwyPxAX1Pzy0ii0=
 k8s.io/gengo v0.0.0-20200428234225-8167cfdcfc14/go.mod h1:ezvh/TsK7cY6rbqRK0oQQ8IAqLxYwwyPxAX1Pzy0ii0=
+k8s.io/heapster v1.2.0-beta.1 h1:lUsE/AHOMHpi3MLlBEkaU8Esxm5QhdyCrv1o7ot0s84=
 k8s.io/heapster v1.2.0-beta.1/go.mod h1:h1uhptVXMwC8xtZBYsPXKVi8fpdlYkTs6k949KozGrM=
 k8s.io/klog v0.0.0-20181102134211-b9b56d5dfc92/go.mod h1:Gq+BEi5rUBO/HRz0bTSXDUcqjScdoY3a9IHpCEIOOfk=
 k8s.io/klog v0.3.0 h1:0VPpR+sizsiivjIfIAQH/rl8tan6jvWkS7lU+0di3lE=

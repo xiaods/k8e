@@ -13,8 +13,18 @@ var (
 
 type Executor interface {
 	APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) (authenticator.Request, http.Handler, error)
+	Scheduler(apiReady <-chan struct{}, args []string) error
+	ControllerManager(apiReady <-chan struct{}, args []string) error
 }
 
 func APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) (authenticator.Request, http.Handler, error) {
 	return executor.APIServer(ctx, etcdReady, args)
+}
+
+func Scheduler(apiReady <-chan struct{}, args []string) error {
+	return executor.Scheduler(apiReady, args)
+}
+
+func ControllerManager(apiReady <-chan struct{}, args []string) error {
+	return executor.ControllerManager(apiReady, args)
 }
