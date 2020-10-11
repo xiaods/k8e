@@ -10,11 +10,8 @@ LDFLAGS := "-s -w -X main.VERSION=${VERSION} -X main.COMMIT=${COMMIT} -X main.BR
 
 .PHONY: build
 build:
-	go build
-
-.PHONY: fmtcheck
-fmt: ## Checks for style violation using gofmt
-	@gofmt -l -s $(SOURCE_DIRS) | grep ".*\.go"; if [ "$$?" = "0" ]; then echo "Run gofmt -w -s ./path" && exit 1; fi
+	mkdir -p bin
+	go build -o bin/k8e
 
 .PHONY: test
 test:
