@@ -40,7 +40,6 @@ func MakeVersion() *cobra.Command {
 }
 
 const k8eFigletStr = `
-
 /$$        /$$$$$$           
 | $$       /$$__  $$          
 | $$   /$$| $$  \ $$  /$$$$$$ 
@@ -50,5 +49,5 @@ const k8eFigletStr = `
 | $$ \  $$|  $$$$$$/|  $$$$$$$
 |__/  \__/ \______/  \_______/
                               
-Get Kubernetes cluster the easy way
+Get Kubernetes cluster the easy way.
 `

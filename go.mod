@@ -3,6 +3,10 @@ module github.com/xiaods/k8e
 go 1.14
 
 replace (
+	// to avoid the `github.com/golang/protobuf/protoc-gen-go/generator` deprecation warning
+	// (see https://github.com/golang/protobuf/issues/1104)
+	github.com/grpc-ecosystem/grpc-gateway => github.com/grpc-ecosystem/grpc-gateway v1.14.8
+	google.golang.org/grpc => google.golang.org/grpc v1.26.0
 	k8s.io/api => github.com/rancher/kubernetes/staging/src/k8s.io/api v1.19.1-k3s1
 	k8s.io/apiextensions-apiserver => github.com/rancher/kubernetes/staging/src/k8s.io/apiextensions-apiserver v1.19.1-k3s1
 	k8s.io/apimachinery => github.com/rancher/kubernetes/staging/src/k8s.io/apimachinery v1.19.1-k3s1
@@ -42,7 +46,7 @@ require (
 	github.com/spf13/viper v1.7.1
 	github.com/urfave/cli v1.22.2
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200819165624-17cef6e3e9d5
-	google.golang.org/grpc v1.27.0
+	google.golang.org/grpc v1.31.1
 	gopkg.in/yaml.v2 v2.2.8
 	k8s.io/api v0.19.0
 	k8s.io/apimachinery v0.19.0
