@@ -85,19 +85,11 @@ func master(ctx context.Context, cfg *config.Control) error {
 	if err = controllerManager(ctx, cfg); err != nil {
 		return err
 	}
+	logrus.Info("start master done")
 	return nil
 }
 
-func prepare(ctx context.Context, config *config.Control) error {
-	var err error
-	defaults(config)
-	config.DataDir, err = filepath.Abs(config.DataDir)
-	if err != nil {
-		return err
-	}
-
-	os.MkdirAll(filepath.Join(config.DataDir, "tls"), 0700)
-	os.MkdirAll(filepath.Join(config.DataDir, "cred"), 0700)
+func initTLSCredPath(config *config.Control) {
 	runtime := config.Runtime
 	runtime.ClientCA = filepath.Join(config.DataDir, "tls", "client-ca.crt")
 	runtime.ClientCAKey = filepath.Join(config.DataDir, "tls", "client-ca.key")
@@ -155,6 +147,21 @@ func prepare(ctx context.Context, config *config.Control) error {
 	if config.EncryptSecrets {
 		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
 	}
+}
+
+func prepare(ctx context.Context, config *config.Control) error {
+	var err error
+	defaults(config)
+	config.DataDir, err = filepath.Abs(config.DataDir)
+	if err != nil {
+		return err
+	}
+
+	os.MkdirAll(filepath.Join(config.DataDir, "tls"), 0700)
+	os.MkdirAll(filepath.Join(config.DataDir, "cred"), 0700)
+
+	initTLSCredPath(config)
+
 	c := cluster.New(config)
 	err = c.BootstrapLoad(config)
 	if err != nil {
@@ -173,7 +180,7 @@ func prepare(ctx context.Context, config *config.Control) error {
 		logrus.Error(err)
 		return err
 	}
-	runtime.ETCDReady = ready
+	config.Runtime.ETCDReady = ready
 	return nil
 }
 
@@ -247,19 +254,19 @@ func scheduler(ctx context.Context, cfg *config.Control) error {
 func controllerManager(ctx context.Context, cfg *config.Control) error {
 	runtime := cfg.Runtime
 	argsMap := map[string]string{
-		"kubeconfig":                       runtime.KubeConfigController,
-		"service-account-private-key-file": runtime.ServiceKey,
-		"allocate-node-cidrs":              "true",
-		"cluster-cidr":                     cfg.ClusterIPRange.String(),
-		"root-ca-file":                     runtime.ServerCA,
-		"port":                             "10252",
-		"profiling":                        "false",
-		"address":                          localhostIP.String(),
-		"bind-address":                     localhostIP.String(),
-		"secure-port":                      "0",
-		"use-service-account-credentials":  "true",
-		"cluster-signing-cert-file":        runtime.ClientCA,
-		"cluster-signing-key-file":         runtime.ClientCAKey,
+		"kubeconfig": runtime.KubeConfigController,
+		//	"service-account-private-key-file": runtime.ServiceKey,
+		"allocate-node-cidrs": "true",
+		"cluster-cidr":        cfg.ClusterIPRange.String(),
+		//"root-ca-file":                     runtime.ServerCA,
+		"port":                            "10252",
+		"profiling":                       "false",
+		"address":                         localhostIP.String(),
+		"bind-address":                    localhostIP.String(),
+		"secure-port":                     "0",
+		"use-service-account-credentials": "false",
+		//	"cluster-signing-cert-file":        runtime.ClientCA,
+		//	"cluster-signing-key-file":         runtime.ClientCAKey,
 	}
 	if cfg.NoLeaderElect {
 		argsMap["leader-elect"] = "false"
@@ -335,9 +342,16 @@ func addSANs(altNames *cert.AltNames, sans []string) {
 }
 
 func genClientCerts(config *config.Control) error {
+	var err error
 	runtime := config.Runtime
-	apiEndpoint := fmt.Sprintf("https://127.0.0.1:%d", config.APIServerPort)
-	if err := KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, runtime.ServerCA, runtime.ClientAdminCert, runtime.ClientAdminKey); err != nil {
+	apiEndpoint := fmt.Sprintf("http://127.0.0.1:%d", 8080)
+	if err := KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, "", "", ""); err != nil {
+		return err
+	}
+	if err = KubeConfig(runtime.KubeConfigController, apiEndpoint, "", "", ""); err != nil {
+		return err
+	}
+	if err := KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, "", "", ""); err != nil {
 		return err
 	}
 	return nil
@@ -401,12 +415,10 @@ func genETCDCerts(config *config.Control) error {
 }
 
 func waitForAPIServerInBackground(ctx context.Context, runtime *config.ControlRuntime) error {
-	logrus.Info("BuildConfigFromFlags")
 	restConfig, err := clientcmd.BuildConfigFromFlags("", runtime.KubeConfigAdmin)
 	if err != nil {
 		return err
 	}
-	logrus.Info("NewForConfig")
 	k8sClient, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
 		return err
@@ -414,7 +426,6 @@ func waitForAPIServerInBackground(ctx context.Context, runtime *config.ControlRu
 
 	done := make(chan struct{})
 	runtime.APIServerReady = done
-	logrus.Info("Waiting for API server to become available")
 	go func() {
 		defer close(done)
 
@@ -437,7 +448,7 @@ func waitForAPIServerInBackground(ctx context.Context, runtime *config.ControlRu
 				return
 			case err := <-promise(func() error { return app2.WaitForAPIServer(k8sClient, 30*time.Second) }):
 				if err != nil {
-					logrus.Info("Waiting for API server to become available")
+					logrus.Info("Waiting for API server to become available", err)
 					continue
 				}
 				return
