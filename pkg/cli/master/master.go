@@ -22,7 +22,7 @@ func Run(cmd *cobra.Command, args []string) {
 	run(&cmds.Master)
 }
 
-func run(cfg *cmds.MasterConfig) {
+func run(cfg *cmds.MasterConfig) error {
 	datadir, _ := datadir.LocalHome(cfg.DataDir, true)
 	masterConfig := master.Config{}
 	masterConfig.ControlConfig.DataDir = datadir
@@ -30,8 +30,15 @@ func run(cfg *cmds.MasterConfig) {
 	masterConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
 	ctx := signals.SetupSignalHandler(context.Background())
 	//log.Println(cfg.HTTPSPort)
-	master.StartMaster(ctx, &masterConfig.ControlConfig)
-	<-ctx.Done()
+	if err := master.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
+		return err
+	}
+	if cfg.DisableAgent {
+		<-ctx.Done()
+		return nil
+	}
+
+	return nil
 }
 
 func knownIPs(ips []string) []string {

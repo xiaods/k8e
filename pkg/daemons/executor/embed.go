@@ -52,3 +52,10 @@ func (Embedded) ControllerManager(apiReady <-chan struct{}, args []string) error
 
 	return nil
 }
+
+func (Embedded) Kubelet(args []string) error {
+	return nil
+}
+func (Embedded) KubeProxy(args []string) error {
+	return nil
+}

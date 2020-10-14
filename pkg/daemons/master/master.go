@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
-	"html/template"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"github.com/xiaods/k8e/lib/tcplistener/cert"
 	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/daemons/control"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
@@ -27,29 +27,8 @@ import (
 )
 
 var (
-	localhostIP        = net.ParseIP("127.0.0.1")
-	requestHeaderCN    = "system:auth-proxy"
-	kubeconfigTemplate = template.Must(template.New("kubeconfig").Parse(`apiVersion: v1
-clusters:
-- cluster:
-    server: {{.URL}}
-    certificate-authority: {{.CACert}}
-  name: local
-contexts:
-- context:
-    cluster: local
-    namespace: default
-    user: user
-  name: Default
-current-context: Default
-kind: Config
-preferences: {}
-users:
-- name: user
-  user:
-    client-certificate: {{.ClientCert}}
-    client-key: {{.ClientKey}}
-`))
+	localhostIP     = net.ParseIP("127.0.0.1")
+	requestHeaderCN = "system:auth-proxy"
 )
 
 func StartMaster(ctx context.Context, cfg *config.Control) error {
@@ -345,38 +324,16 @@ func genClientCerts(config *config.Control) error {
 	var err error
 	runtime := config.Runtime
 	apiEndpoint := fmt.Sprintf("http://127.0.0.1:%d", 8080)
-	if err := KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, "", "", ""); err != nil {
+	if err := control.KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, "", "", ""); err != nil {
 		return err
 	}
-	if err = KubeConfig(runtime.KubeConfigController, apiEndpoint, "", "", ""); err != nil {
+	if err = control.KubeConfig(runtime.KubeConfigController, apiEndpoint, "", "", ""); err != nil {
 		return err
 	}
-	if err := KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, "", "", ""); err != nil {
+	if err := control.KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, "", "", ""); err != nil {
 		return err
 	}
 	return nil
-}
-
-func KubeConfig(dest, url, caCert, clientCert, clientKey string) error {
-	data := struct {
-		URL        string
-		CACert     string
-		ClientCert string
-		ClientKey  string
-	}{
-		URL:        url,
-		CACert:     caCert,
-		ClientCert: clientCert,
-		ClientKey:  clientKey,
-	}
-
-	output, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer output.Close()
-
-	return kubeconfigTemplate.Execute(output, &data)
 }
 
 //generate etcd certificate

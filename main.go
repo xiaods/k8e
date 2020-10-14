@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/cli/master"
 	"github.com/xiaods/k8e/pkg/version"
@@ -24,6 +25,7 @@ func main() {
 
 	rootCmd.AddCommand(cmdVersion)
 	rootCmd.AddCommand(cmds.NewMasterCommand(master.Run))
+	rootCmd.AddCommand(cmds.NewAgentCommand(agent.Run))
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

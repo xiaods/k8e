@@ -12,6 +12,7 @@ type MasterConfig struct {
 	DataDir              string
 	ServerURL            string
 	TLSSan               []string
+	DisableAgent         bool
 }
 
 var Master MasterConfig
@@ -26,10 +27,12 @@ func NewMasterCommand(run func(cmd *cobra.Command, args []string)) *cobra.Comman
 	cmd.Flags().StringVarP(&Master.DataDir, "data-dir", "d", "", "(data) Folder to hold state default /var/lib/k8e/"+version.Program+" or ${HOME}/.k8e/"+version.Program+" if not root")
 	cmd.Flags().StringVarP(&Master.ServerURL, "server", "s", "", "(experimental/cluster) Server to connect to, used to join a cluster")
 	cmd.Flags().StringArrayVar(&Master.TLSSan, "tls-san", nil, "(listener) Add additional hostname or IP as a Subject Alternative Name in the TLS cert")
+	cmd.Flags().BoolVar(&Master.DisableAgent, "disable-agent", true, "Do not run a local agent and register a local kubelet")
 	viper.BindPFlag("https-listen-port", cmd.Flags().Lookup("https-listen-port"))
 	viper.BindPFlag("data-dir", cmd.Flags().Lookup("data-dir"))
 	viper.BindPFlag("server", cmd.Flags().Lookup("server"))
 	viper.BindPFlag("tls-san", cmd.Flags().Lookup("tls-san"))
+	viper.BindPFlag("disable-agent", cmd.Flags().Lookup("disable-agent"))
 	return cmd
 }
 

@@ -1,8 +1,59 @@
 package agent
 
 import (
+	"context"
+	"io/ioutil"
 	"os"
-	"path/filepath"
+
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
+	"github.com/xiaods/k8e/pkg/cli/cmds"
+	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/datadir"
+	"github.com/xiaods/k8e/pkg/signals"
 )
 
-var appName = filepath.Base(os.Args[0])
+const (
+	dockershimSock = "unix:///var/run/dockershim.sock"
+	containerdSock = "unix:///run/k3s/containerd/containerd.sock"
+)
+
+func Run(cmd *cobra.Command, args []string) {
+	logrus.Info("start master")
+	ctx := signals.SetupSignalHandler(context.Background())
+	InternlRun(ctx, &cmds.AgentConfig)
+}
+
+func InternlRun(ctx context.Context, cfg *cmds.Agent) error {
+	nodeConfig := &config.Node{}
+	nodeConfig.Docker = cfg.Docker
+	nodeConfig.ContainerRuntimeEndpoint = cfg.ContainerRuntimeEndpoint
+	var err error
+	if err = setupCriCtlConfig(cfg); err != nil {
+		return err
+	}
+	<-ctx.Done()
+	return nil
+}
+
+func setupCriCtlConfig(cfg *cmds.Agent) error {
+	cre := cfg.ContainerRuntimeEndpoint
+	if cre == "" {
+		switch {
+		case cfg.Docker:
+			cre = dockershimSock
+		default:
+			cre = containerdSock
+		}
+	}
+
+	agentConfDir := datadir.DefaultDataDir + "/agent/etc"
+	if _, err := os.Stat(agentConfDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(agentConfDir, 0755); err != nil {
+			return err
+		}
+	}
+
+	crp := "runtime-endpoint: " + cre + "\n"
+	return ioutil.WriteFile(agentConfDir+"/crictl.yaml", []byte(crp), 0600)
+}

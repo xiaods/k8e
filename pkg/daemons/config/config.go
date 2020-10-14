@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -62,6 +63,72 @@ type Control struct {
 	SANs        []string
 
 	Runtime *ControlRuntime `json:"-"`
+}
+
+type Node struct {
+	Docker                   bool
+	ContainerRuntimeEndpoint string
+	NoFlannel                bool
+	SELinux                  bool
+	FlannelBackend           string
+	FlannelConf              string
+	FlannelConfOverride      bool
+	FlannelIface             *net.Interface
+	Containerd               Containerd
+	Images                   string
+	AgentConfig              Agent
+	CACerts                  []byte
+	Certificate              *tls.Certificate
+}
+
+type Containerd struct {
+	Address  string
+	Log      string
+	Root     string
+	State    string
+	Config   string
+	Opt      string
+	Template string
+	SELinux  bool
+}
+
+type Agent struct {
+	PodManifests            string
+	NodeName                string
+	NodeConfigPath          string
+	ServingKubeletCert      string
+	ServingKubeletKey       string
+	ClusterCIDR             net.IPNet
+	ClusterDNS              net.IP
+	ClusterDomain           string
+	ResolvConf              string
+	RootDir                 string
+	DataDir                 string
+	KubeConfigKubelet       string
+	KubeConfigKubeProxy     string
+	KubeConfigK3sController string
+	NodeIP                  string
+	NodeExternalIP          string
+	RuntimeSocket           string
+	ListenAddress           string
+	ClientCA                string
+	CNIBinDir               string
+	CNIConfDir              string
+	ExtraKubeletArgs        []string
+	ExtraKubeProxyArgs      []string
+	PauseImage              string
+	Snapshotter             string
+	CNIPlugin               bool
+	NodeTaints              []string
+	NodeLabels              []string
+	IPSECPSK                string
+	StrongSwanDir           string
+	PrivateRegistry         string
+	DisableCCM              bool
+	DisableNPC              bool
+	DisableKubeProxy        bool
+	Rootless                bool
+	ProtectKernelDefaults   bool
 }
 
 type DataConfig struct {
