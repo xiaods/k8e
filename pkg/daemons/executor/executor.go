@@ -34,3 +34,7 @@ func ControllerManager(apiReady <-chan struct{}, args []string) error {
 func Kubelet(args []string) error {
 	return executor.Kubelet(args)
 }
+
+func KubeProxy(args []string) error {
+	return executor.KubeProxy(args)
+}

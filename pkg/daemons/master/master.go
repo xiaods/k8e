@@ -68,6 +68,33 @@ func master(ctx context.Context, cfg *config.Control) error {
 	return nil
 }
 
+func ApiServer(ctx context.Context, cfg *config.Control) error {
+	//start apiserver
+	var err error
+	_, _, err = apiServer(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	if err = waitForAPIServerInBackground(ctx, cfg.Runtime); err != nil {
+		return err
+	}
+	return nil
+}
+
+func Scheduler(ctx context.Context, cfg *config.Control) error {
+	if err := scheduler(ctx, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ControllerManager(ctx context.Context, cfg *config.Control) error {
+	if err := controllerManager(ctx, cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
 func initTLSCredPath(config *config.Control) {
 	runtime := config.Runtime
 	runtime.ClientCA = filepath.Join(config.DataDir, "tls", "client-ca.crt")
@@ -128,6 +155,10 @@ func initTLSCredPath(config *config.Control) {
 	}
 }
 
+func Prepare(ctx context.Context, config *config.Control) error {
+	return prepare(ctx, config)
+}
+
 func prepare(ctx context.Context, config *config.Control) error {
 	var err error
 	defaults(config)
@@ -144,19 +175,16 @@ func prepare(ctx context.Context, config *config.Control) error {
 	c := cluster.New(config)
 	err = c.BootstrapLoad(config)
 	if err != nil {
-		logrus.Error(err)
 		return err
 	}
-
+	//创建证书
 	err = genCerts(config)
 	if err != nil {
-		logrus.Error(err)
 		return err
 	}
 
 	ready, err := c.Start(ctx)
 	if err != nil {
-		logrus.Error(err)
 		return err
 	}
 	config.Runtime.ETCDReady = ready

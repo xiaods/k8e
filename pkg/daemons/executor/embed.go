@@ -8,7 +8,9 @@ import (
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	cmapp "k8s.io/kubernetes/cmd/kube-controller-manager/app"
+	proxy "k8s.io/kubernetes/cmd/kube-proxy/app"
 	sapp "k8s.io/kubernetes/cmd/kube-scheduler/app"
+	kubelet "k8s.io/kubernetes/cmd/kubelet/app"
 )
 
 func init() {
@@ -54,8 +56,23 @@ func (Embedded) ControllerManager(apiReady <-chan struct{}, args []string) error
 }
 
 func (Embedded) Kubelet(args []string) error {
+	command := kubelet.NewKubeletCommand(context.Background())
+	command.SetArgs(args)
+
+	go func() {
+		logrus.Fatalf("kubelet exited: %v", command.Execute())
+	}()
+
 	return nil
 }
+
 func (Embedded) KubeProxy(args []string) error {
+	command := proxy.NewProxyCommand()
+	command.SetArgs(args)
+
+	go func() {
+		logrus.Fatalf("kube-proxy exited: %v", command.Execute())
+	}()
+
 	return nil
 }

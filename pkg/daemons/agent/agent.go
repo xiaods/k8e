@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/daemons/control"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
 )
@@ -18,20 +20,44 @@ func StartAgent(config *config.Agent) error {
 }
 
 func agent(config *config.Agent) error {
-
+	var err error
+	if err = prepare(config); err != nil {
+		return err
+	}
+	if err = kubelet(config); err != nil {
+		return nil
+	}
 	return nil
 }
 
-func prepare(config *config.Agent) {
+func prepare(config *config.Agent) error {
 	os.MkdirAll(filepath.Join(config.DataDir, "cred"), 0700)
 	initTLSCredPath(config)
+	var err error
+	err = genCerts(config)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func genCerts(config *config.Agent) error {
+	var err error
+	if err = genClientCerts(config); err != nil {
+		return err
+	}
 	return nil
 }
 
 func genClientCerts(config *config.Agent) error {
+	apiEndpoint := config.APIServerURL
+	if err := control.KubeConfig(config.KubeConfigKubelet, apiEndpoint, "", "", ""); err != nil {
+		return err
+	}
+	if err := control.KubeConfig(config.KubeConfigKubeProxy, apiEndpoint, "", "", ""); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -55,6 +81,25 @@ func kubelet(cfg *config.Agent) error {
 		"anonymous-auth":               "false",
 		"authorization-mode":           modes.ModeWebhook}
 
+	argsMap["container-runtime"] = "docker"
+
 	args := config.GetArgsList(argsMap, cfg.ExtraKubeletArgs)
+	logrus.Infof("Running kubelet %s", config.ArgString(args))
 	return executor.Kubelet(args)
+}
+
+func kubeProxy(cfg *config.Agent) error {
+	argsMap := map[string]string{
+		"proxy-mode":           "iptables", // ipvs
+		"healthz-bind-address": "127.0.0.1",
+		"kubeconfig":           cfg.KubeConfigKubeProxy,
+		"cluster-cidr":         cfg.ClusterCIDR.String(),
+	}
+	if cfg.NodeName != "" {
+		argsMap["hostname-override"] = cfg.NodeName
+	}
+
+	args := config.GetArgsList(argsMap, cfg.ExtraKubeProxyArgs)
+	logrus.Infof("Running kube-proxy %s", config.ArgString(args))
+	return executor.KubeProxy(args)
 }

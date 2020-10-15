@@ -59,10 +59,10 @@ type Control struct {
 	EtcdSnapshotCron         string
 	EtcdSnapshotRetention    int
 
-	BindAddress string
-	SANs        []string
-
-	Runtime *ControlRuntime `json:"-"`
+	BindAddress   string
+	SANs          []string
+	DBInfoHandler http.Handler
+	Runtime       *ControlRuntime `json:"-"`
 }
 
 type Node struct {
@@ -104,6 +104,7 @@ type Agent struct {
 	ResolvConf              string
 	RootDir                 string
 	DataDir                 string
+	APIServerURL            string
 	KubeConfigKubelet       string
 	KubeConfigKubeProxy     string
 	KubeConfigK3sController string

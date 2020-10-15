@@ -2,19 +2,20 @@ package cluster
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/storage"
 )
 
 type Cluster struct {
-	s *storage.Storage
+	s   *storage.Storage
+	cfg *config.Control
 }
 
 func New(cfg *config.Control) *Cluster {
 	c := &Cluster{}
 	c.s = storage.New(cfg)
+	c.cfg = cfg
 	return c
 }
 
@@ -23,8 +24,7 @@ func (c *Cluster) initHttp(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	http.Handle("/db/info", h)
-	go http.ListenAndServe(":8081", nil)
+	c.cfg.DBInfoHandler = h
 	return nil
 }
 
@@ -42,4 +42,3 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 	}
 	return c.s.Start(ctx)
 }
-

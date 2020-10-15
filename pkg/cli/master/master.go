@@ -7,6 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
+	"github.com/xiaods/k8e/pkg/daemons"
 	"github.com/xiaods/k8e/pkg/daemons/master"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/signals"
@@ -29,10 +30,14 @@ func run(cfg *cmds.MasterConfig) error {
 	masterConfig.ControlConfig.JoinURL = cfg.ServerURL
 	masterConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
 	ctx := signals.SetupSignalHandler(context.Background())
-	//log.Println(cfg.HTTPSPort)
-	if err := master.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
+	daemon := &daemons.Daemon{}
+	if err := daemon.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
 		return err
 	}
+	//log.Println(cfg.HTTPSPort)
+	// if err := master.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
+	// 	return err
+	// }
 	if cfg.DisableAgent {
 		<-ctx.Done()
 		return nil
