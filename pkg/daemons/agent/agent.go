@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -66,11 +67,11 @@ func initTLSCredPath(config *config.Agent) {
 	config.KubeConfigKubeProxy = filepath.Join(config.DataDir, "cred", "kubeproxy.kubeconfig")
 }
 
-func Kubelet(cfg *config.Agent) error {
+func Kubelet(ctx context.Context, cfg *config.Agent) error {
 	return kubelet(cfg)
 }
 
-func KubeProxy(cfg *config.Agent) error {
+func KubeProxy(ctx context.Context, cfg *config.Agent) error {
 	return kubeProxy(cfg)
 }
 

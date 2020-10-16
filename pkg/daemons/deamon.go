@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/xiaods/k8e/pkg/daemons/agent"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/master"
 )
@@ -16,7 +17,7 @@ func init() {
 
 type MasterComponent func(ctx context.Context, cfg *config.Control) error
 
-type NodeComponent func(ctx context.Context, cfg *config.Node) error
+type NodeComponent func(ctx context.Context, cfg *config.Agent) error
 
 type Daemon struct{}
 
@@ -51,10 +52,12 @@ func (d *Daemon) startMaster(ctx context.Context, cfg *config.Control, funcs ...
 }
 
 func (d *Daemon) StartAgent(ctx context.Context, cfg *config.Node) error {
-	return d.startAgent(ctx, cfg)
+	return d.startAgent(ctx, &cfg.AgentConfig,
+		agent.Kubelet,
+		agent.KubeProxy)
 }
 
-func (d *Daemon) startAgent(ctx context.Context, cfg *config.Node, funcs ...NodeComponent) error {
+func (d *Daemon) startAgent(ctx context.Context, cfg *config.Agent, funcs ...NodeComponent) error {
 	for _, f := range funcs {
 		err := f(ctx, cfg)
 		if err != nil {
