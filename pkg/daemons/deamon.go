@@ -8,7 +8,15 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/master"
 )
 
+var D *Daemon
+
+func init() {
+	D = &Daemon{}
+}
+
 type MasterComponent func(ctx context.Context, cfg *config.Control) error
+
+type NodeComponent func(ctx context.Context, cfg *config.Node) error
 
 type Daemon struct{}
 
@@ -42,6 +50,16 @@ func (d *Daemon) startMaster(ctx context.Context, cfg *config.Control, funcs ...
 	return nil
 }
 
-func (d *Daemon) StartAgent() {
+func (d *Daemon) StartAgent(ctx context.Context, cfg *config.Node) error {
+	return d.startAgent(ctx, cfg)
+}
 
+func (d *Daemon) startAgent(ctx context.Context, cfg *config.Node, funcs ...NodeComponent) error {
+	for _, f := range funcs {
+		err := f(ctx, cfg)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

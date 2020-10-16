@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
+	"github.com/xiaods/k8e/pkg/daemons"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/signals"
@@ -32,6 +33,7 @@ func InternlRun(ctx context.Context, cfg *cmds.Agent) error {
 	if err = setupCriCtlConfig(cfg); err != nil {
 		return err
 	}
+	daemons.D.StartAgent(ctx, nodeConfig)
 	<-ctx.Done()
 	return nil
 }

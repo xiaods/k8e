@@ -66,6 +66,14 @@ func initTLSCredPath(config *config.Agent) {
 	config.KubeConfigKubeProxy = filepath.Join(config.DataDir, "cred", "kubeproxy.kubeconfig")
 }
 
+func Kubelet(cfg *config.Agent) error {
+	return kubelet(cfg)
+}
+
+func KubeProxy(cfg *config.Agent) error {
+	return kubeProxy(cfg)
+}
+
 func kubelet(cfg *config.Agent) error {
 	argsMap := map[string]string{
 		"healthz-bind-address":     "127.0.0.1",

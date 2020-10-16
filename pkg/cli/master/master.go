@@ -2,10 +2,12 @@ package master
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/daemons"
 	"github.com/xiaods/k8e/pkg/daemons/master"
@@ -30,20 +32,22 @@ func run(cfg *cmds.MasterConfig) error {
 	masterConfig.ControlConfig.JoinURL = cfg.ServerURL
 	masterConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
 	ctx := signals.SetupSignalHandler(context.Background())
-	daemon := &daemons.Daemon{}
-	if err := daemon.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
+	//daemon := &daemons.Daemon{}
+	if err := daemons.D.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
 		return err
 	}
-	//log.Println(cfg.HTTPSPort)
-	// if err := master.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
-	// 	return err
-	// }
 	if cfg.DisableAgent {
 		<-ctx.Done()
 		return nil
 	}
-
-	return nil
+	ip := masterConfig.ControlConfig.BindAddress
+	if ip == "" {
+		ip = "127.0.0.1"
+	}
+	url := fmt.Sprintf("http://%s:%d", ip, 8080)
+	agentConfig := cmds.AgentConfig
+	agentConfig.ServerURL = url
+	return agent.InternlRun(ctx, &agentConfig)
 }
 
 func knownIPs(ips []string) []string {
