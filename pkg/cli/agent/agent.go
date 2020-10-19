@@ -33,7 +33,10 @@ func InternlRun(ctx context.Context, cfg *cmds.Agent) error {
 	if err = setupCriCtlConfig(cfg); err != nil {
 		return err
 	}
-	daemons.D.StartAgent(ctx, nodeConfig)
+	err := daemons.D.StartAgent(ctx, nodeConfig)
+	if err != nil {
+		return err
+	}
 	<-ctx.Done()
 	return nil
 }
