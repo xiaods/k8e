@@ -53,6 +53,7 @@ func (d *Daemon) startMaster(ctx context.Context, cfg *config.Control, funcs ...
 
 func (d *Daemon) StartAgent(ctx context.Context, cfg *config.Node) error {
 	return d.startAgent(ctx, &cfg.AgentConfig,
+		agent.Prepare,
 		agent.Kubelet,
 		agent.KubeProxy)
 }

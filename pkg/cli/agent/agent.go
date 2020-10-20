@@ -5,6 +5,8 @@ import (
 	"io/ioutil"
 	"os"
 
+	net2 "net"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
@@ -26,10 +28,13 @@ func Run(cmd *cobra.Command, args []string) {
 }
 
 func InternlRun(ctx context.Context, cfg *cmds.Agent) error {
+	var err error
 	nodeConfig := &config.Node{}
 	nodeConfig.Docker = cfg.Docker
 	nodeConfig.ContainerRuntimeEndpoint = cfg.ContainerRuntimeEndpoint
-	var err error
+	nodeConfig.AgentConfig.DataDir = cfg.DataDir
+	nodeConfig.AgentConfig.APIServerURL = cfg.ServerURL
+	_, nodeConfig.AgentConfig.ClusterCIDR, err = net2.ParseCIDR(cfg.ClusterCIDR)
 	if err = setupCriCtlConfig(cfg); err != nil {
 		return err
 	}

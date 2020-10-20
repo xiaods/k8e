@@ -30,6 +30,9 @@ func agent(config *config.Agent) error {
 	}
 	return nil
 }
+func Prepare(ctx context.Context, config *config.Agent) error {
+	return prepare(config)
+}
 
 func prepare(config *config.Agent) error {
 	os.MkdirAll(filepath.Join(config.DataDir, "cred"), 0700)

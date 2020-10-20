@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"runtime"
 
+	net2 "net"
+
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/xiaods/k8e/pkg/cli/agent"
@@ -26,14 +28,19 @@ func Run(cmd *cobra.Command, args []string) {
 }
 
 func run(cfg *cmds.MasterConfig) error {
+	var err error
 	datadir, _ := datadir.LocalHome(cfg.DataDir, true)
 	masterConfig := master.Config{}
 	masterConfig.ControlConfig.DataDir = datadir
 	masterConfig.ControlConfig.JoinURL = cfg.ServerURL
 	masterConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
+	_, masterConfig.ControlConfig.ClusterIPRange, err = net2.ParseCIDR(cfg.ClusterCIDR)
+	if err != nil {
+		return err
+	}
 	ctx := signals.SetupSignalHandler(context.Background())
 	//daemon := &daemons.Daemon{}
-	if err := daemons.D.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
+	if err = daemons.D.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
 		return err
 	}
 	if cfg.DisableAgent {
@@ -47,6 +54,8 @@ func run(cfg *cmds.MasterConfig) error {
 	url := fmt.Sprintf("http://%s:%d", ip, 8080)
 	agentConfig := cmds.AgentConfig
 	agentConfig.ServerURL = url
+	agentConfig.DataDir = datadir
+	agentConfig.ClusterCIDR = cfg.ClusterCIDR
 	return agent.InternlRun(ctx, &agentConfig)
 }
 

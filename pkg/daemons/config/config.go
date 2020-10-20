@@ -98,7 +98,7 @@ type Agent struct {
 	NodeConfigPath          string
 	ServingKubeletCert      string
 	ServingKubeletKey       string
-	ClusterCIDR             net.IPNet
+	ClusterCIDR             *net.IPNet
 	ClusterDNS              net.IP
 	ClusterDomain           string
 	ResolvConf              string

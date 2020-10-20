@@ -38,6 +38,7 @@ type Agent struct {
 	Labels             cli.StringSlice
 	Taints             cli.StringSlice
 	PrivateRegistry    string
+	ClusterCIDR        string
 }
 
 type AgentShared struct {
