@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -22,6 +23,8 @@ import (
 )
 
 const (
+	rsaKeySize = 2048
+
 	// ECPrivateKeyBlockType is a possible value for pem.Block.Type.
 	ECPrivateKeyBlockType = "EC PRIVATE KEY"
 	// RSAPrivateKeyBlockType is a possible value for pem.Block.Type.
@@ -52,6 +55,11 @@ type Config struct {
 	Usages       []x509.ExtKeyUsage
 }
 
+// NewPrivateKey creates an RSA private key
+func NewPrivateKey() (*rsa.PrivateKey, error) {
+	return rsa.GenerateKey(rand.Reader, rsaKeySize)
+}
+
 func NewSelfSignedCACert(cfg Config, key crypto.Signer) (*x509.Certificate, error) {
 	now := time.Now()
 	tmpl := x509.Certificate{
@@ -64,7 +72,7 @@ func NewSelfSignedCACert(cfg Config, key crypto.Signer) (*x509.Certificate, erro
 		NotAfter:              now.Add(duration365d * 10).UTC(), //10 year cert
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		BasicConstraintsValid: true,
-		IsCA:                  true,
+		IsCA: true,
 	}
 
 	certDERBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, key.Public(), key)
@@ -387,4 +395,13 @@ func IsCertExpired(cert *x509.Certificate, days int) bool {
 		return true
 	}
 	return false
+}
+
+// EncodePrivateKeyPEM returns PEM-encoded private key data
+func EncodePrivateKeyPEM(key *rsa.PrivateKey) []byte {
+	block := pem.Block{
+		Type:  RSAPrivateKeyBlockType,
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}
+	return pem.EncodeToMemory(&block)
 }

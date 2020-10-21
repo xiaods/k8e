@@ -183,6 +183,11 @@ func prepare(ctx context.Context, config *config.Control) error {
 		return err
 	}
 
+	err = genServiceAccount(config.Runtime)
+	if err != nil {
+		return err
+	}
+
 	ready, err := c.Start(ctx)
 	if err != nil {
 		return err
@@ -191,6 +196,7 @@ func prepare(ctx context.Context, config *config.Control) error {
 	return nil
 }
 
+//--service-account-signing-key-file, --service-account-issuer, and --api-audiences should be specified together
 func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request, http.Handler, error) {
 	argsMap := make(map[string]string)
 	setEtcdStorageBackend(argsMap, cfg)
@@ -200,7 +206,7 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	argsMap["cert-dir"] = certDir
 	argsMap["allow-privileged"] = "true"
 	argsMap["authorization-mode"] = strings.Join([]string{modes.ModeNode, modes.ModeRBAC}, ",")
-	//argsMap["service-account-signing-key-file"] = runtime.ServiceKey
+	argsMap["service-account-signing-key-file"] = runtime.ServiceKey
 	argsMap["service-cluster-ip-range"] = cfg.ServiceIPRange.String()
 	argsMap["advertise-port"] = strconv.Itoa(cfg.AdvertisePort)
 	if cfg.AdvertiseIP != "" {
@@ -213,11 +219,12 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	} else {
 		argsMap["bind-address"] = cfg.APIServerBindAddress
 	}
+	//argsMap["admission-control"] = "NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContextDeny,ResourceQuota"
 	// argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
 	// argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
-	// argsMap["service-account-key-file"] = runtime.ServiceKey
-	// argsMap["service-account-issuer"] = version.Program
-	// argsMap["api-audiences"] = "unknown"
+	argsMap["service-account-key-file"] = runtime.ServiceKey
+	argsMap["service-account-issuer"] = version.Program
+	argsMap["api-audiences"] = "unknown"
 	// argsMap["kubelet-certificate-authority"] = runtime.ServerCA
 	// argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
 	// argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
@@ -261,10 +268,10 @@ func scheduler(ctx context.Context, cfg *config.Control) error {
 func controllerManager(ctx context.Context, cfg *config.Control) error {
 	runtime := cfg.Runtime
 	argsMap := map[string]string{
-		"kubeconfig": runtime.KubeConfigController,
-		//	"service-account-private-key-file": runtime.ServiceKey,
-		"allocate-node-cidrs": "true",
-		"cluster-cidr":        cfg.ClusterIPRange.String(),
+		"kubeconfig":                       runtime.KubeConfigController,
+		"service-account-private-key-file": runtime.ServiceKey,
+		"allocate-node-cidrs":              "true",
+		"cluster-cidr":                     cfg.ClusterIPRange.String(),
 		//"root-ca-file":                     runtime.ServerCA,
 		"port":                            "10252",
 		"profiling":                       "false",
@@ -335,6 +342,20 @@ func genCerts(config *config.Control) error {
 		return err
 	}
 	return nil
+}
+
+func genServiceAccount(runtime *config.ControlRuntime) error {
+	_, keyErr := os.Stat(runtime.ServiceKey)
+	if keyErr == nil {
+		return nil
+	}
+
+	key, err := cert.NewPrivateKey()
+	if err != nil {
+		return err
+	}
+
+	return cert.WriteKey(runtime.ServiceKey, cert.EncodePrivateKeyPEM(key))
 }
 
 func addSANs(altNames *cert.AltNames, sans []string) {

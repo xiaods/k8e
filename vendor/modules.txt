@@ -444,6 +444,7 @@ github.com/opencontainers/go-digest
 github.com/opencontainers/image-spec/specs-go
 github.com/opencontainers/image-spec/specs-go/v1
 # github.com/opencontainers/runc v1.0.0-rc91.0.20200707015106-819fcc687efb
+## explicit
 github.com/opencontainers/runc/libcontainer
 github.com/opencontainers/runc/libcontainer/apparmor
 github.com/opencontainers/runc/libcontainer/cgroups
@@ -712,6 +713,7 @@ golang.org/x/crypto/ssh
 golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
 golang.org/x/crypto/ssh/terminal
 # golang.org/x/net v0.0.0-20200707034311-ab3426394381
+## explicit
 golang.org/x/net/bpf
 golang.org/x/net/context
 golang.org/x/net/context/ctxhttp
@@ -739,6 +741,7 @@ golang.org/x/oauth2/jwt
 # golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 golang.org/x/sync/singleflight
 # golang.org/x/sys v0.0.0-20200622214017-ed371f2e16b4
+## explicit
 golang.org/x/sys/cpu
 golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix
@@ -1484,6 +1487,7 @@ k8s.io/csi-translation-lib/plugins
 # k8s.io/heapster v1.2.0-beta.1
 k8s.io/heapster/metrics/api/v1/types
 # k8s.io/klog/v2 v2.2.0
+## explicit
 k8s.io/klog/v2
 # k8s.io/kube-aggregator v0.0.0 => github.com/rancher/kubernetes/staging/src/k8s.io/kube-aggregator v1.19.1-k3s1
 k8s.io/kube-aggregator/pkg/apis/apiregistration
