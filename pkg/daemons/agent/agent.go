@@ -3,46 +3,82 @@ package agent
 import (
 	"bufio"
 	"context"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/opencontainers/runc/libcontainer/system"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/daemons/agent/containerd"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
+	"github.com/xiaods/k8e/pkg/datadir"
 	"k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
 )
 
-func StartAgent(config *config.Agent) error {
-	var err error
-	if err = agent(config); err != nil {
-		return err
+const (
+	dockershimSock = "unix:///var/run/dockershim.sock"
+	containerdSock = "unix:///run/k8e/containerd/containerd.sock"
+)
+
+// func StartAgent(config *config.Agent) error {
+// 	var err error
+// 	if err = agent(config); err != nil {
+// 		return err
+// 	}
+// 	return nil
+// }
+
+// func agent(config *config.Agent) error {
+// 	var err error
+// 	if err = prepare(config); err != nil {
+// 		return err
+// 	}
+// 	if err = kubelet(config); err != nil {
+// 		return nil
+// 	}
+// 	return nil
+// }
+
+// setupCriCtlConfig creates the crictl config file and populates it
+// with the given data from config.
+func setupCriCtlConfig(nodeConfig *config.Node) error {
+	cre := nodeConfig.ContainerRuntimeEndpoint
+	if cre == "" {
+		cre = containerdSock
 	}
-	return nil
+
+	agentConfDir := datadir.DefaultDataDir + "/agent/etc"
+	if _, err := os.Stat(agentConfDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(agentConfDir, 0755); err != nil {
+			return err
+		}
+	}
+
+	crp := "runtime-endpoint: " + cre + "\n"
+	return ioutil.WriteFile(agentConfDir+"/crictl.yaml", []byte(crp), 0600)
 }
 
-func agent(config *config.Agent) error {
-	var err error
-	if err = prepare(config); err != nil {
-		return err
-	}
-	if err = kubelet(config); err != nil {
-		return nil
-	}
-	return nil
-}
-func Prepare(ctx context.Context, config *config.Agent) error {
+func Prepare(ctx context.Context, config *config.Node) error {
 	return prepare(config)
 }
 
-func prepare(config *config.Agent) error {
-	os.MkdirAll(filepath.Join(config.DataDir, "cred"), 0700)
+func Containerd(ctx context.Context, config *config.Node) error {
+	return containerd.Run(ctx, config)
+}
+
+func prepare(config *config.Node) error {
+	os.MkdirAll(filepath.Join(config.AgentConfig.DataDir, "cred"), 0700)
 	initTLSCredPath(config)
 	var err error
-	err = genCerts(config)
+	err = setupCriCtlConfig(config)
+	if err != nil {
+		return err
+	}
+	err = genCerts(&config.AgentConfig)
 	if err != nil {
 		return err
 	}
@@ -69,17 +105,24 @@ func genClientCerts(config *config.Agent) error {
 	return nil
 }
 
-func initTLSCredPath(config *config.Agent) {
-	config.KubeConfigKubelet = filepath.Join(config.DataDir, "cred", "kubelet.kubeconfig")
-	config.KubeConfigKubeProxy = filepath.Join(config.DataDir, "cred", "kubeproxy.kubeconfig")
+func initTLSCredPath(nodeConfig *config.Node) {
+	dataDir := nodeConfig.AgentConfig.DataDir
+	nodeConfig.AgentConfig.KubeConfigKubelet = filepath.Join(dataDir, "cred", "kubelet.kubeconfig")
+	nodeConfig.AgentConfig.KubeConfigKubeProxy = filepath.Join(dataDir, "cred", "kubeproxy.kubeconfig")
+	nodeConfig.Containerd.Config = filepath.Join(dataDir, "etc/containerd/config.toml")
+	nodeConfig.Containerd.Root = filepath.Join(dataDir, "containerd")
+	nodeConfig.Containerd.Opt = filepath.Join(dataDir, "containerd")
+	nodeConfig.Containerd.State = "/run/k3s/containerd"
+	nodeConfig.Containerd.Address = filepath.Join(nodeConfig.Containerd.State, "containerd.sock")
+	nodeConfig.Containerd.Template = filepath.Join(dataDir, "etc/containerd/config.toml.tmpl")
 }
 
-func Kubelet(ctx context.Context, cfg *config.Agent) error {
-	return kubelet(cfg)
+func Kubelet(ctx context.Context, cfg *config.Node) error {
+	return kubelet(&cfg.AgentConfig)
 }
 
-func KubeProxy(ctx context.Context, cfg *config.Agent) error {
-	return kubeProxy(cfg)
+func KubeProxy(ctx context.Context, cfg *config.Node) error {
+	return kubeProxy(&cfg.AgentConfig)
 }
 
 func kubelet(cfg *config.Agent) error {
@@ -97,8 +140,13 @@ func kubelet(cfg *config.Agent) error {
 		"anonymous-auth":               "false",
 		"authorization-mode":           modes.ModeWebhook}
 
-	argsMap["container-runtime"] = "docker"
-
+	//	argsMap["container-runtime"] = "docker"
+	if cfg.RuntimeSocket != "" {
+		argsMap["container-runtime"] = "remote"
+		argsMap["container-runtime-endpoint"] = cfg.RuntimeSocket
+		argsMap["containerd"] = cfg.RuntimeSocket
+		argsMap["serialize-image-pulls"] = "false"
+	}
 	if cfg.NodeName != "" {
 		argsMap["hostname-override"] = cfg.NodeName
 	}
@@ -129,10 +177,11 @@ func kubelet(cfg *config.Agent) error {
 	if len(cfg.NodeTaints) > 0 {
 		argsMap["register-with-taints"] = strings.Join(cfg.NodeTaints, ",")
 	}
+	//--cloud-provider=external 的 kubelet 将被添加一个 node.cloudprovider.kubernetes.io/uninitialized 的污点，导致其在初始化过程中不可调度（NoSchedule）
 	if !cfg.DisableCCM {
 		argsMap["cloud-provider"] = "external"
 	}
-
+	//设置 kubelet 的默认内核调整行为。如果已设置该参数，当任何内核可调参数与 kubelet 默认值不同时，kubelet 都会出错
 	if cfg.ProtectKernelDefaults {
 		argsMap["protect-kernel-defaults"] = "true"
 	}

@@ -14,6 +14,7 @@ type MasterConfig struct {
 	TLSSan               []string
 	DisableAgent         bool
 	ClusterCIDR          string
+	DisableCCM           bool
 }
 
 var Master MasterConfig
@@ -30,12 +31,15 @@ func NewMasterCommand(run func(cmd *cobra.Command, args []string)) *cobra.Comman
 	cmd.Flags().StringArrayVar(&Master.TLSSan, "tls-san", nil, "(listener) Add additional hostname or IP as a Subject Alternative Name in the TLS cert")
 	cmd.Flags().BoolVar(&Master.DisableAgent, "disable-agent", true, "Do not run a local agent and register a local kubelet")
 	cmd.Flags().StringVar(&Master.ClusterCIDR, "cluster-cidr", "10.42.0.0/16", "(networking) Network CIDR to use for pod IPs")
+	cmd.Flags().BoolVar(&Master.DisableCCM, "disable-cloud-controller", true, "(components) Disable "+version.Program+" default cloud controller manager")
+
 	viper.BindPFlag("https-listen-port", cmd.Flags().Lookup("https-listen-port"))
 	viper.BindPFlag("data-dir", cmd.Flags().Lookup("data-dir"))
 	viper.BindPFlag("server", cmd.Flags().Lookup("server"))
 	viper.BindPFlag("tls-san", cmd.Flags().Lookup("tls-san"))
 	viper.BindPFlag("disable-agent", cmd.Flags().Lookup("disable-agent"))
 	viper.BindPFlag("cluster-cidr", cmd.Flags().Lookup("cluster-cidr"))
+	viper.BindPFlag("disable-cloud-controller", cmd.Flags().Lookup("disable-cloud-controller"))
 	return cmd
 }
 

@@ -438,6 +438,9 @@ github.com/mrunalp/fileutils
 github.com/munnerz/goautoneg
 # github.com/mxk/go-flowrate v0.0.0-20140419014527-cca7078d478f
 github.com/mxk/go-flowrate/flowrate
+# github.com/natefinch/lumberjack v2.0.0+incompatible
+## explicit
+github.com/natefinch/lumberjack
 # github.com/opencontainers/go-digest v1.0.0-rc1
 github.com/opencontainers/go-digest
 # github.com/opencontainers/image-spec v1.0.1
@@ -469,6 +472,7 @@ github.com/opencontainers/runc/types
 # github.com/opencontainers/runtime-spec v1.0.3-0.20200520003142-237cc4f519e2
 github.com/opencontainers/runtime-spec/specs-go
 # github.com/opencontainers/selinux v1.5.2
+## explicit
 github.com/opencontainers/selinux/go-selinux
 github.com/opencontainers/selinux/go-selinux/label
 github.com/opencontainers/selinux/pkg/pwalk
@@ -498,7 +502,6 @@ github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
 # github.com/rancher/dynamiclistener v0.2.1
 ## explicit
-github.com/rancher/dynamiclistener/cert
 # github.com/rancher/wrangler v0.6.1
 ## explicit
 github.com/rancher/wrangler/pkg/data/convert

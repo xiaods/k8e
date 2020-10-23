@@ -38,26 +38,28 @@ require (
 	github.com/google/uuid v1.1.2
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/morikuni/aec v1.0.0
+	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/opencontainers/runc v1.0.0-rc91.0.20200707015106-819fcc687efb
+	github.com/opencontainers/selinux v1.5.2
 	github.com/pkg/errors v0.9.1
-	github.com/rancher/dynamiclistener v0.2.1
+	github.com/rancher/dynamiclistener v0.2.1 // indirect
 	github.com/rancher/wrangler v0.6.1
 	github.com/sirupsen/logrus v1.6.0
 	github.com/spf13/cobra v1.0.0
 	github.com/spf13/viper v1.7.1
 	github.com/urfave/cli v1.22.2
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200819165624-17cef6e3e9d5
-	golang.org/x/net v0.0.0-20200707034311-ab3426394381
-	golang.org/x/sys v0.0.0-20200622214017-ed371f2e16b4
+	golang.org/x/net v0.0.0-20200707034311-ab3426394381 // indirect
+	golang.org/x/sys v0.0.0-20200622214017-ed371f2e16b4 // indirect
 	google.golang.org/grpc v1.31.1
 	gopkg.in/yaml.v2 v2.2.8
-	k8s.io/api v0.19.0
+	k8s.io/api v0.19.0 // indirect
 	k8s.io/apimachinery v0.19.0
 	k8s.io/apiserver v0.19.0
 	k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
 	k8s.io/component-base v0.19.0 // indirect
-	k8s.io/cri-api v0.19.0 // indirect
-	k8s.io/klog/v2 v2.2.0
+	k8s.io/cri-api v0.19.0
+	k8s.io/klog/v2 v2.2.0 // indirect
 	k8s.io/kubernetes v1.19.0
 	sigs.k8s.io/yaml v1.2.0
 )

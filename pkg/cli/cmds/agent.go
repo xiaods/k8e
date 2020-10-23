@@ -38,7 +38,9 @@ type Agent struct {
 	Labels             cli.StringSlice
 	Taints             cli.StringSlice
 	PrivateRegistry    string
+
 	ClusterCIDR        string
+	DisableCCM bool
 }
 
 type AgentShared struct {

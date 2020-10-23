@@ -34,6 +34,7 @@ func InternlRun(ctx context.Context, cfg *cmds.Agent) error {
 	nodeConfig.ContainerRuntimeEndpoint = cfg.ContainerRuntimeEndpoint
 	nodeConfig.AgentConfig.DataDir = cfg.DataDir
 	nodeConfig.AgentConfig.APIServerURL = cfg.ServerURL
+	nodeConfig.AgentConfig.DisableCCM = cfg.DisableCCM
 	_, nodeConfig.AgentConfig.ClusterCIDR, err = net2.ParseCIDR(cfg.ClusterCIDR)
 	if err = setupCriCtlConfig(cfg); err != nil {
 		return err

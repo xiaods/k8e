@@ -17,7 +17,7 @@ func init() {
 
 type MasterComponent func(ctx context.Context, cfg *config.Control) error
 
-type NodeComponent func(ctx context.Context, cfg *config.Agent) error
+type NodeComponent func(ctx context.Context, cfg *config.Node) error
 
 type Daemon struct{}
 
@@ -52,13 +52,14 @@ func (d *Daemon) startMaster(ctx context.Context, cfg *config.Control, funcs ...
 }
 
 func (d *Daemon) StartAgent(ctx context.Context, cfg *config.Node) error {
-	return d.startAgent(ctx, &cfg.AgentConfig,
+	return d.startAgent(ctx, cfg,
 		agent.Prepare,
+		agent.Containerd,
 		agent.Kubelet,
 		agent.KubeProxy)
 }
 
-func (d *Daemon) startAgent(ctx context.Context, cfg *config.Agent, funcs ...NodeComponent) error {
+func (d *Daemon) startAgent(ctx context.Context, cfg *config.Node, funcs ...NodeComponent) error {
 	for _, f := range funcs {
 		err := f(ctx, cfg)
 		if err != nil {

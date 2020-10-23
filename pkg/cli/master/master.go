@@ -34,6 +34,7 @@ func run(cfg *cmds.MasterConfig) error {
 	masterConfig.ControlConfig.DataDir = datadir
 	masterConfig.ControlConfig.JoinURL = cfg.ServerURL
 	masterConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
+	masterConfig.ControlConfig.DisableCCM = cfg.DisableCCM
 	_, masterConfig.ControlConfig.ClusterIPRange, err = net2.ParseCIDR(cfg.ClusterCIDR)
 	if err != nil {
 		return err
@@ -56,6 +57,7 @@ func run(cfg *cmds.MasterConfig) error {
 	agentConfig.ServerURL = url
 	agentConfig.DataDir = datadir
 	agentConfig.ClusterCIDR = cfg.ClusterCIDR
+	agentConfig.DisableCCM = cfg.DisableCCM
 	return agent.InternlRun(ctx, &agentConfig)
 }
 
