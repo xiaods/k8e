@@ -9,8 +9,8 @@ LDFLAGS := "-s -w -X main.VERSION=${VERSION} -X main.COMMIT=${COMMIT} -X main.BR
 
 .PHONY: build
 build:
-	mkdir -p bin
-  GO111MODULE=on CGO_ENABLED=0 GOOS=darwin go build -o bin/k8e
+	@mkdir -p bin
+	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -o bin/k8e
 
 .PHONY: test
 test:
@@ -18,9 +18,7 @@ test:
 
 .PHONY: dist
 dist:
-	mkdir -p bin
-	GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e
-	GO111MODULE=on CGO_ENABLED=0 GOOS=darwin go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e-darwin
-	GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=6 go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e-armhf
-	GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e-arm64
-	GO111MODULE=on CGO_ENABLED=0 GOOS=windows go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e.exe
+	@mkdir -p bin
+	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e
+	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e-arm64
+	@GO111MODULE=on CGO_ENABLED=0 GOOS=windows go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e.exe
