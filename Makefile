@@ -1,4 +1,3 @@
-#!/bin/bash
 COMMIT=$(shell git rev-parse HEAD)
 BRANCH=$(shell git rev-parse --abbrev-ref HEAD)
 VERSION_K8S=$(grep k8s.io/kubernetes go.mod | head -n1 | awk '{print $4}' | sed -e 's/[-+].*//')
@@ -11,7 +10,7 @@ LDFLAGS := "-s -w -X main.VERSION=${VERSION} -X main.COMMIT=${COMMIT} -X main.BR
 .PHONY: build
 build:
 	mkdir -p bin
-	go build -o bin/k8e
+  GO111MODULE=on CGO_ENABLED=0 GOOS=darwin go build -o bin/k8e
 
 .PHONY: test
 test:

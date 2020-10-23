@@ -18,8 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/net"
 )
 
-//var ctx = context.Background()
-
 //Run start master
 func Run(cmd *cobra.Command, args []string) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -40,7 +38,6 @@ func run(cfg *cmds.MasterConfig) error {
 		return err
 	}
 	ctx := signals.SetupSignalHandler(context.Background())
-	//daemon := &daemons.Daemon{}
 	if err = daemons.D.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
 		return err
 	}
