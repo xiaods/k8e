@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/master"
@@ -45,6 +46,7 @@ func (d *Daemon) startMaster(ctx context.Context, cfg *config.Control, funcs ...
 	for _, f := range funcs {
 		err := f(ctx, cfg)
 		if err != nil {
+			logrus.Error(err)
 			return err
 		}
 	}
@@ -56,13 +58,15 @@ func (d *Daemon) StartAgent(ctx context.Context, cfg *config.Node) error {
 		agent.Prepare,
 		agent.Containerd,
 		agent.Kubelet,
-		agent.KubeProxy)
+		agent.KubeProxy,
+		agent.NetWorkCNI)
 }
 
 func (d *Daemon) startAgent(ctx context.Context, cfg *config.Node, funcs ...NodeComponent) error {
 	for _, f := range funcs {
 		err := f(ctx, cfg)
 		if err != nil {
+			logrus.Error("start agent module fail", err)
 			return err
 		}
 	}

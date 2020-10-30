@@ -5,17 +5,23 @@ import (
 	"context"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/opencontainers/runc/libcontainer/system"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/agent/containerd"
+	"github.com/xiaods/k8e/pkg/daemons/agent/flannel"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
+	"github.com/xiaods/k8e/pkg/daemons/syssetup"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"k8s.io/apimachinery/pkg/util/net"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
 )
 
@@ -63,23 +69,64 @@ func setupCriCtlConfig(nodeConfig *config.Node) error {
 }
 
 func Prepare(ctx context.Context, config *config.Node) error {
-	return prepare(config)
+	return prepare(ctx, config)
 }
 
 func Containerd(ctx context.Context, config *config.Node) error {
 	return containerd.Run(ctx, config)
 }
 
-func prepare(config *config.Node) error {
+func NetWorkCNI(ctx context.Context, config *config.Node) error {
+	return networkCNI(ctx, config)
+}
+
+func Kubelet(ctx context.Context, cfg *config.Node) error {
+	return kubelet(&cfg.AgentConfig)
+}
+
+func KubeProxy(ctx context.Context, cfg *config.Node) error {
+	return kubeProxy(&cfg.AgentConfig)
+}
+
+func networkCNI(ctx context.Context, config *config.Node) error {
+	logrus.Info("start networkcni")
+	coreClient, err := coreClient(config.AgentConfig.KubeConfigKubelet)
+	if err != nil {
+		return err
+	}
+	if err := flannel.Run(ctx, config, coreClient.CoreV1().Nodes()); err != nil {
+		return err
+	}
+	return nil
+}
+
+func coreClient(cfg string) (kubernetes.Interface, error) {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return kubernetes.NewForConfig(restConfig)
+}
+
+func prepare(ctx context.Context, config *config.Node) error {
+	syssetup.Configure()
 	os.MkdirAll(filepath.Join(config.AgentConfig.DataDir, "cred"), 0700)
-	initTLSCredPath(config)
 	var err error
+	err = initTLSCredPath(config)
+	if err != nil {
+		return err
+	}
 	err = setupCriCtlConfig(config)
 	if err != nil {
 		return err
 	}
 	err = genCerts(&config.AgentConfig)
 	if err != nil {
+		return err
+	}
+	config.FlannelBackend = "vxlan"
+	if err := flannel.Prepare(ctx, config); err != nil {
 		return err
 	}
 	return nil
@@ -105,24 +152,74 @@ func genClientCerts(config *config.Agent) error {
 	return nil
 }
 
-func initTLSCredPath(nodeConfig *config.Node) {
+func initTLSCredPath(nodeConfig *config.Node) error {
 	dataDir := nodeConfig.AgentConfig.DataDir
 	nodeConfig.AgentConfig.KubeConfigKubelet = filepath.Join(dataDir, "cred", "kubelet.kubeconfig")
 	nodeConfig.AgentConfig.KubeConfigKubeProxy = filepath.Join(dataDir, "cred", "kubeproxy.kubeconfig")
 	nodeConfig.Containerd.Config = filepath.Join(dataDir, "etc/containerd/config.toml")
 	nodeConfig.Containerd.Root = filepath.Join(dataDir, "containerd")
 	nodeConfig.Containerd.Opt = filepath.Join(dataDir, "containerd")
-	nodeConfig.Containerd.State = "/run/k3s/containerd"
+	nodeConfig.Containerd.State = "/run/k8e/containerd"
 	nodeConfig.Containerd.Address = filepath.Join(nodeConfig.Containerd.State, "containerd.sock")
 	nodeConfig.Containerd.Template = filepath.Join(dataDir, "etc/containerd/config.toml.tmpl")
+	nodeConfig.AgentConfig.RuntimeSocket = containerdSock
+	nodeName, nodeIP, err := getHostnameAndIP(&nodeConfig.AgentConfig)
+	if err != nil {
+		return err
+	}
+	// if envInfo.WithNodeID {
+	// 	nodeID, err := ensureNodeID(filepath.Join(nodeConfigPath, "id"))
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// 	nodeName += "-" + nodeID
+	// }
+	nodeConfig.AgentConfig.NodeName = nodeName
+	nodeConfig.AgentConfig.NodeIP = nodeIP
+	os.Setenv("NODE_NAME", nodeConfig.AgentConfig.NodeName)
+	nodeConfig.NoFlannel = false
+	if !nodeConfig.NoFlannel {
+		hostLocal, err := exec.LookPath("host-local")
+		if err != nil {
+			return errors.Wrapf(err, "failed to find host-local")
+		}
+
+		//if envInfo.FlannelConf == "" {
+		nodeConfig.FlannelConf = filepath.Join(dataDir, "etc/flannel/net-conf.json")
+		// } else {
+		// 	nodeConfig.FlannelConf = envInfo.FlannelConf
+		// 	nodeConfig.FlannelConfOverride = true
+		// }
+		nodeConfig.AgentConfig.CNIBinDir = filepath.Dir(hostLocal)
+		nodeConfig.AgentConfig.CNIConfDir = filepath.Join(dataDir, "etc/cni/net.d")
+	}
+	return nil
 }
 
-func Kubelet(ctx context.Context, cfg *config.Node) error {
-	return kubelet(&cfg.AgentConfig)
-}
+func getHostnameAndIP(info *config.Agent) (string, string, error) {
+	ip := info.NodeIP
+	if ip == "" {
+		hostIP, err := net.ChooseHostInterface()
+		if err != nil {
+			return "", "", err
+		}
+		ip = hostIP.String()
+	}
 
-func KubeProxy(ctx context.Context, cfg *config.Node) error {
-	return kubeProxy(&cfg.AgentConfig)
+	name := info.NodeName
+	if name == "" {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return "", "", err
+		}
+		name = hostname
+	}
+
+	// Use lower case hostname to comply with kubernetes constraint:
+	// https://github.com/kubernetes/kubernetes/issues/71140
+	name = strings.ToLower(name)
+
+	return name, ip, nil
 }
 
 func kubelet(cfg *config.Agent) error {
@@ -141,6 +238,8 @@ func kubelet(cfg *config.Agent) error {
 		"authorization-mode":           modes.ModeWebhook}
 
 	//	argsMap["container-runtime"] = "docker"
+	argsMap["network-plugin"] = "cni"
+	logrus.Info("RuntimeSocket", cfg.RuntimeSocket)
 	if cfg.RuntimeSocket != "" {
 		argsMap["container-runtime"] = "remote"
 		argsMap["container-runtime-endpoint"] = cfg.RuntimeSocket

@@ -113,10 +113,15 @@ github.com/aws/aws-sdk-go/service/elbv2
 github.com/aws/aws-sdk-go/service/kms
 github.com/aws/aws-sdk-go/service/sts
 github.com/aws/aws-sdk-go/service/sts/stsiface
+# github.com/benmoss/go-powershell v0.0.0-00010101000000-000000000000 => github.com/rancher/go-powershell v0.0.0-20200701184732-233247d45373
+github.com/benmoss/go-powershell
+github.com/benmoss/go-powershell/backend
 # github.com/beorn7/perks v1.0.1
 github.com/beorn7/perks/quantile
 # github.com/blang/semver v3.5.0+incompatible
 github.com/blang/semver
+# github.com/bronze1man/goStrongswanVici v0.0.0-20171013065002-4d72634a2f11
+github.com/bronze1man/goStrongswanVici
 # github.com/cespare/xxhash/v2 v2.1.1
 github.com/cespare/xxhash/v2
 # github.com/checkpoint-restore/go-criu/v4 v4.0.2
@@ -144,6 +149,8 @@ github.com/containerd/containerd/containers
 github.com/containerd/containerd/errdefs
 github.com/containerd/containerd/namespaces
 github.com/containerd/containerd/pkg/dialer
+# github.com/containerd/cri v1.11.1-0.20200820101445-b0cc07999aa5
+## explicit
 # github.com/containerd/ttrpc v1.0.0
 github.com/containerd/ttrpc
 # github.com/containernetworking/cni v0.8.0
@@ -154,6 +161,19 @@ github.com/containernetworking/cni/pkg/types/020
 github.com/containernetworking/cni/pkg/types/current
 github.com/containernetworking/cni/pkg/utils
 github.com/containernetworking/cni/pkg/version
+# github.com/coreos/flannel v0.12.0 => github.com/rancher/flannel v0.12.0-k3s1
+## explicit
+github.com/coreos/flannel/backend
+github.com/coreos/flannel/backend/extension
+github.com/coreos/flannel/backend/hostgw
+github.com/coreos/flannel/backend/ipsec
+github.com/coreos/flannel/backend/vxlan
+github.com/coreos/flannel/network
+github.com/coreos/flannel/pkg/ip
+github.com/coreos/flannel/subnet
+github.com/coreos/flannel/subnet/kube
+# github.com/coreos/go-iptables v0.4.0
+github.com/coreos/go-iptables/iptables
 # github.com/coreos/go-oidc v2.1.0+incompatible
 github.com/coreos/go-oidc
 # github.com/coreos/go-semver v0.3.0
@@ -498,6 +518,12 @@ github.com/prometheus/common/model
 github.com/prometheus/procfs
 github.com/prometheus/procfs/internal/fs
 github.com/prometheus/procfs/internal/util
+# github.com/rakelkar/gonetsh v0.0.0-20190930180311-e5c5ffe4bdf0
+github.com/rakelkar/gonetsh/netroute
+github.com/rakelkar/gonetsh/netsh
+# github.com/rancher/go-powershell v0.0.0-20200701182037-6845e6fcfa79
+github.com/rancher/go-powershell/backend
+github.com/rancher/go-powershell/utils
 # github.com/rancher/wrangler v0.6.1
 ## explicit
 github.com/rancher/wrangler/pkg/data/convert
@@ -712,6 +738,7 @@ golang.org/x/crypto/ssh
 golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
 golang.org/x/crypto/ssh/terminal
 # golang.org/x/net v0.0.0-20200707034311-ab3426394381
+## explicit
 golang.org/x/net/bpf
 golang.org/x/net/context
 golang.org/x/net/context/ctxhttp
@@ -1483,6 +1510,9 @@ k8s.io/csi-translation-lib
 k8s.io/csi-translation-lib/plugins
 # k8s.io/heapster v1.2.0-beta.1
 k8s.io/heapster/metrics/api/v1/types
+# k8s.io/klog v1.0.0
+## explicit
+k8s.io/klog
 # k8s.io/klog/v2 v2.2.0
 k8s.io/klog/v2
 # k8s.io/kube-aggregator v0.0.0 => github.com/rancher/kubernetes/staging/src/k8s.io/kube-aggregator v1.19.1-k3s1
@@ -2349,6 +2379,8 @@ sigs.k8s.io/structured-merge-diff/v4/value
 # sigs.k8s.io/yaml v1.2.0
 ## explicit
 sigs.k8s.io/yaml
+# github.com/benmoss/go-powershell => github.com/rancher/go-powershell v0.0.0-20200701184732-233247d45373
+# github.com/coreos/flannel => github.com/rancher/flannel v0.12.0-k3s1
 # github.com/grpc-ecosystem/grpc-gateway => github.com/grpc-ecosystem/grpc-gateway v1.14.8
 # google.golang.org/grpc => google.golang.org/grpc v1.26.0
 # k8s.io/api => github.com/rancher/kubernetes/staging/src/k8s.io/api v1.19.1-k3s1

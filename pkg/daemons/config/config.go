@@ -12,6 +12,15 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	FlannelBackendNone      = "none"
+	FlannelBackendVXLAN     = "vxlan"
+	FlannelBackendHostGW    = "host-gw"
+	FlannelBackendIPSEC     = "ipsec"
+	FlannelBackendWireguard = "wireguard"
+	CertificateRenewDays    = 90
+)
+
 type Control struct {
 	AdvertisePort int
 	AdvertiseIP   string
