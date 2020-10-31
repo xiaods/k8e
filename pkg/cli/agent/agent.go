@@ -22,7 +22,7 @@ const (
 )
 
 func Run(cmd *cobra.Command, args []string) {
-	logrus.Info("start master")
+	logrus.Info("start agent")
 	ctx := signals.SetupSignalHandler(context.Background())
 	InternlRun(ctx, &cmds.AgentConfig)
 }
