@@ -10,10 +10,10 @@ import (
 )
 
 var (
-	DefaultDataDir     = "/var/lib/k8e/" + version.Program
+	DefaultDataDir     = "/var/lib/" + version.Program
 	DefaultHomeDataDir = "${HOME}/.k8e/" + version.Program
 	HomeConfig         = "${HOME}/.kube/" + version.Program + ".yaml"
-	GlobalConfig       = "/etc/k8e/" + version.Program + "/" + version.Program + ".yaml"
+	GlobalConfig       = "/etc/" + version.Program + "/" + version.Program + ".yaml"
 )
 
 func LocalHome(dataDir string, forceLocal bool) (string, error) {
