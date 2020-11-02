@@ -1,4 +1,4 @@
-package master
+package server
 
 import (
 	"context"
@@ -31,15 +31,15 @@ var (
 	requestHeaderCN = "system:auth-proxy"
 )
 
-func StartMaster(ctx context.Context, cfg *config.Control) error {
+func StartServer(ctx context.Context, cfg *config.Control) error {
 	var err error
-	if err = master(ctx, cfg); err != nil {
+	if err = server(ctx, cfg); err != nil {
 		return err
 	}
 	return nil
 }
 
-func master(ctx context.Context, cfg *config.Control) error {
+func server(ctx context.Context, cfg *config.Control) error {
 	var err error
 	runtime := &config.ControlRuntime{}
 	cfg.Runtime = runtime
@@ -64,7 +64,7 @@ func master(ctx context.Context, cfg *config.Control) error {
 	if err = controllerManager(ctx, cfg); err != nil {
 		return err
 	}
-	logrus.Info("start master done")
+	logrus.Info("start server done")
 	return nil
 }
 

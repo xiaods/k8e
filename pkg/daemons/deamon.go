@@ -7,7 +7,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/daemons/master"
+	"github.com/xiaods/k8e/pkg/daemons/server"
 )
 
 var D *Daemon
@@ -16,7 +16,7 @@ func init() {
 	D = &Daemon{}
 }
 
-type MasterComponent func(ctx context.Context, cfg *config.Control) error
+type ServerComponent func(ctx context.Context, cfg *config.Control) error
 
 type NodeComponent func(ctx context.Context, cfg *config.Node) error
 
@@ -27,14 +27,14 @@ func (d *Daemon) daemon(cfg *config.Control) {
 	go http.ListenAndServe(":8081", nil)
 }
 
-func (d *Daemon) StartMaster(ctx context.Context, cfg *config.Control) error {
+func (d *Daemon) StartServer(ctx context.Context, cfg *config.Control) error {
 	runtime := &config.ControlRuntime{}
 	cfg.Runtime = runtime
-	err := d.startMaster(ctx, cfg,
-		master.Prepare,
-		master.ApiServer,
-		master.Scheduler,
-		master.ControllerManager)
+	err := d.startServer(ctx, cfg,
+		server.Prepare,
+		server.ApiServer,
+		server.Scheduler,
+		server.ControllerManager)
 	if err != nil {
 		return err
 	}
@@ -42,7 +42,7 @@ func (d *Daemon) StartMaster(ctx context.Context, cfg *config.Control) error {
 	return nil
 }
 
-func (d *Daemon) startMaster(ctx context.Context, cfg *config.Control, funcs ...MasterComponent) error {
+func (d *Daemon) startServer(ctx context.Context, cfg *config.Control, funcs ...ServerComponent) error {
 	for _, f := range funcs {
 		err := f(ctx, cfg)
 		if err != nil {

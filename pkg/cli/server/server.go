@@ -1,4 +1,4 @@
-package master
+package server
 
 import (
 	"context"
@@ -12,40 +12,40 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/daemons"
-	"github.com/xiaods/k8e/pkg/daemons/master"
+	"github.com/xiaods/k8e/pkg/daemons/server"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/signals"
 	"k8s.io/apimachinery/pkg/util/net"
 )
 
-//Run start master
+//Run start server
 func Run(cmd *cobra.Command, args []string) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
-	logrus.Info("start master")
-	run(&cmds.Master)
+	logrus.Info("start server")
+	run(&cmds.Server)
 }
 
-func run(cfg *cmds.MasterConfig) error {
+func run(cfg *cmds.ServerConfig) error {
 	var err error
 	datadir, _ := datadir.LocalHome(cfg.DataDir, true)
-	masterConfig := master.Config{}
-	masterConfig.ControlConfig.DataDir = datadir
-	masterConfig.ControlConfig.JoinURL = cfg.ServerURL
-	masterConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
-	masterConfig.ControlConfig.DisableCCM = cfg.DisableCCM
-	_, masterConfig.ControlConfig.ClusterIPRange, err = net2.ParseCIDR(cfg.ClusterCIDR)
+	serverConfig := server.Config{}
+	serverConfig.ControlConfig.DataDir = datadir
+	serverConfig.ControlConfig.JoinURL = cfg.ServerURL
+	serverConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
+	serverConfig.ControlConfig.DisableCCM = cfg.DisableCCM
+	_, serverConfig.ControlConfig.ClusterIPRange, err = net2.ParseCIDR(cfg.ClusterCIDR)
 	if err != nil {
 		return err
 	}
 	ctx := signals.SetupSignalHandler(context.Background())
-	if err = daemons.D.StartMaster(ctx, &masterConfig.ControlConfig); err != nil {
+	if err = daemons.D.StartServer(ctx, &serverConfig.ControlConfig); err != nil {
 		return err
 	}
 	if cfg.DisableAgent {
 		<-ctx.Done()
 		return nil
 	}
-	ip := masterConfig.ControlConfig.BindAddress
+	ip := serverConfig.ControlConfig.BindAddress
 	if ip == "" {
 		ip = "127.0.0.1"
 	}
