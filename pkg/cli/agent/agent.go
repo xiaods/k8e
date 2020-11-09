@@ -24,10 +24,10 @@ const (
 func Run(cmd *cobra.Command, args []string) {
 	logrus.Info("start agent")
 	ctx := signals.SetupSignalHandler(context.Background())
-	InternlRun(ctx, &cmds.AgentConfig)
+	InternlRun(ctx, &cmds.Agent)
 }
 
-func InternlRun(ctx context.Context, cfg *cmds.Agent) error {
+func InternlRun(ctx context.Context, cfg *cmds.AgentConfig) error {
 	var err error
 	nodeConfig := &config.Node{}
 	nodeConfig.Docker = cfg.Docker
@@ -47,7 +47,7 @@ func InternlRun(ctx context.Context, cfg *cmds.Agent) error {
 	return nil
 }
 
-func setupCriCtlConfig(cfg *cmds.Agent) error {
+func setupCriCtlConfig(cfg *cmds.AgentConfig) error {
 	cre := cfg.ContainerRuntimeEndpoint
 	if cre == "" {
 		switch {

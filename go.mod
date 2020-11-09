@@ -40,6 +40,7 @@ require (
 	github.com/containerd/cri v1.11.1-0.20200820101445-b0cc07999aa5 // indirect
 	github.com/coreos/flannel v0.12.0
 	github.com/google/uuid v1.1.2
+	github.com/gorilla/mux v1.7.4
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/morikuni/aec v1.0.0
 	github.com/natefinch/lumberjack v2.0.0+incompatible
@@ -63,6 +64,7 @@ require (
 	k8s.io/cri-api v0.19.0
 	k8s.io/klog v1.0.0
 	k8s.io/kubernetes v1.19.0
+	k8s.io/utils v0.0.0-20200729134348-d5654de09c73
 	sigs.k8s.io/yaml v1.2.0
 
 )

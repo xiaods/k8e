@@ -33,6 +33,9 @@ func run(cfg *cmds.ServerConfig) error {
 	serverConfig.ControlConfig.JoinURL = cfg.ServerURL
 	serverConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
 	serverConfig.ControlConfig.DisableCCM = cfg.DisableCCM
+	serverConfig.ControlConfig.AdvertisePort = cfg.HTTPSPort
+	serverConfig.ControlConfig.AdvertiseIP = cfg.AdvertiseIP
+
 	_, serverConfig.ControlConfig.ClusterIPRange, err = net2.ParseCIDR(cfg.ClusterCIDR)
 	if err != nil {
 		return err
@@ -49,8 +52,8 @@ func run(cfg *cmds.ServerConfig) error {
 	if ip == "" {
 		ip = "127.0.0.1"
 	}
-	url := fmt.Sprintf("http://%s:%d", ip, 8080)
-	agentConfig := cmds.AgentConfig
+	url := fmt.Sprintf("https://%s:%d", ip, serverConfig.ControlConfig.APIServerPort)
+	agentConfig := cmds.Agent
 	agentConfig.ServerURL = url
 	agentConfig.DataDir = datadir
 	agentConfig.ClusterCIDR = cfg.ClusterCIDR

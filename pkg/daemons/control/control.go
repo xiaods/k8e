@@ -4,6 +4,8 @@ import (
 	"net"
 	"os"
 	"text/template"
+	"crypto/x509"
+	"github.com/xiaods/k8e/lib/tcplistener/cert"
 )
 
 var (
@@ -34,7 +36,7 @@ users:
 
 func KubeConfig(dest, url, caCert, clientCert, clientKey string) error {
 	data := struct {
-		URL        string
+		URL        string  
 		CACert     string
 		ClientCert string
 		ClientKey  string
@@ -51,5 +53,18 @@ func KubeConfig(dest, url, caCert, clientCert, clientKey string) error {
 	}
 	defer output.Close()
 
-	return kubeconfigTemplate.Execute(output, &data)
+	return kubeconfigTemplate.Execute(output, &data)    
 }
+
+
+type signedCertFactory = func(commonName string, organization []string, certFile, keyFile string) (bool, error)
+
+func GetSigningCertFactory(regen bool, altNames *cert.AltNames, extKeyUsage []x509.ExtKeyUsage, caCertFile, caKeyFile string) signedCertFactory {
+	return func(commonName string, organization []string, certFile, keyFile string) (bool, error) {
+		return cert.CreateClientCertKey(regen, commonName, organization, altNames, extKeyUsage, caCertFile, caKeyFile, certFile, keyFile)  
+	}  
+}
+
+
+
+

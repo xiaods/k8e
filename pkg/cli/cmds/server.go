@@ -15,13 +15,14 @@ type ServerConfig struct {
 	DisableAgent         bool
 	ClusterCIDR          string
 	DisableCCM           bool
+	AdvertiseIP          string
 }
 
 var Server ServerConfig
 
 func NewServerCommand(run func(cmd *cobra.Command, args []string)) *cobra.Command {
 	cmd := &cobra.Command{}
-	cmd.Use = "Server"
+	cmd.Use = "server"
 	cmd.Short = "Run management Server"
 	cmd.Long = "Run management Server"
 	cmd.Run = run
@@ -32,6 +33,7 @@ func NewServerCommand(run func(cmd *cobra.Command, args []string)) *cobra.Comman
 	cmd.Flags().BoolVar(&Server.DisableAgent, "disable-agent", true, "Do not run a local agent and register a local kubelet")
 	cmd.Flags().StringVar(&Server.ClusterCIDR, "cluster-cidr", "10.42.0.0/16", "(networking) Network CIDR to use for pod IPs")
 	cmd.Flags().BoolVar(&Server.DisableCCM, "disable-cloud-controller", true, "(components) Disable "+version.Program+" default cloud controller manager")
+	cmd.Flags().StringVar(&Server.AdvertiseIP, "advertise-address", "", "(listener) IP address that apiserver uses to advertise to members of the cluster (default: node-external-ip/node-ip)")
 
 	viper.BindPFlag("https-listen-port", cmd.Flags().Lookup("https-listen-port"))
 	viper.BindPFlag("data-dir", cmd.Flags().Lookup("data-dir"))
@@ -40,6 +42,7 @@ func NewServerCommand(run func(cmd *cobra.Command, args []string)) *cobra.Comman
 	viper.BindPFlag("disable-agent", cmd.Flags().Lookup("disable-agent"))
 	viper.BindPFlag("cluster-cidr", cmd.Flags().Lookup("cluster-cidr"))
 	viper.BindPFlag("disable-cloud-controller", cmd.Flags().Lookup("disable-cloud-controller"))
+	viper.BindPFlag("advertise-address", cmd.Flags().Lookup("advertise-address"))
 	return cmd
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -22,9 +23,27 @@ type NodeComponent func(ctx context.Context, cfg *config.Node) error
 
 type Daemon struct{}
 
-func (d *Daemon) daemon(cfg *config.Control) {
-	http.Handle("/db/info", cfg.DBInfoHandler)
-	go http.ListenAndServe(":8081", nil)
+func (d *Daemon) daemon(ctx context.Context, cfg *config.Control) {
+	// http.Handle("/db/info", cfg.DBInfoHandler) //用于获取etcd集群信息
+
+	// http.ListenAndServe(":8081", nil)
+	server := http.Server{}
+	server.Addr = ":8081"
+	server.Handler = router(cfg)
+	go func() {
+		logrus.Fatalf("server stopped: %v", server.ListenAndServe())
+	}()
+	go func() {
+		<-ctx.Done()
+		server.Shutdown(context.Background())
+	}()
+}
+
+func router(cfg *config.Control) http.Handler {
+	//prefix := "/v1-" + version.Program
+	router := mux.NewRouter()
+	router.Path("/db/info").Handler(cfg.DBInfoHandler)
+	return router
 }
 
 func (d *Daemon) StartServer(ctx context.Context, cfg *config.Control) error {
@@ -38,7 +57,7 @@ func (d *Daemon) StartServer(ctx context.Context, cfg *config.Control) error {
 	if err != nil {
 		return err
 	}
-	d.daemon(cfg)
+	d.daemon(ctx, cfg)
 	return nil
 }
 

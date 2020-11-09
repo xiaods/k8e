@@ -5,10 +5,12 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
-type Agent struct {
+type AgentConfig struct {
 	Token                    string
 	TokenFile                string
 	ClusterSecret            string
@@ -39,8 +41,8 @@ type Agent struct {
 	Taints             cli.StringSlice
 	PrivateRegistry    string
 
-	ClusterCIDR        string
-	DisableCCM bool
+	ClusterCIDR string
+	DisableCCM  bool
 }
 
 type AgentShared struct {
@@ -48,8 +50,8 @@ type AgentShared struct {
 }
 
 var (
-	appName     = filepath.Base(os.Args[0])
-	AgentConfig Agent
+	appName = filepath.Base(os.Args[0])
+	Agent   AgentConfig
 )
 
 func NewAgentCommand(run func(cmd *cobra.Command, args []string)) *cobra.Command {
@@ -58,5 +60,12 @@ func NewAgentCommand(run func(cmd *cobra.Command, args []string)) *cobra.Command
 	cmd.Short = "Run node agent"
 	cmd.Long = "Run node agent"
 	cmd.Run = run
+
+	cmd.Flags().IntVar(&Server.HTTPSPort, "https-listen-port", 6443, "(listener) IP address that apiserver uses to advertise to members of the cluster (default: node-external-ip/node-ip)")
+	cmd.Flags().StringVarP(&Server.DataDir, "data-dir", "d", "", "(data) Folder to hold state default /var/lib/k8e/"+version.Program+" or ${HOME}/.k8e/"+version.Program+" if not root")
+
+	viper.BindPFlag("https-listen-port", cmd.Flags().Lookup("https-listen-port"))
+	viper.BindPFlag("data-dir", cmd.Flags().Lookup("data-dir"))
+
 	return cmd
 }

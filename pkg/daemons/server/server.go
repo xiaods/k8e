@@ -22,8 +22,14 @@ import (
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog"
 	app2 "k8s.io/kubernetes/cmd/controller-manager/app"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
+	"k8s.io/kubernetes/pkg/master"
+	"k8s.io/utils/integer"
+
+	kubeoptions "k8s.io/kubernetes/pkg/kubeapiserver/options"
+	utilnet "k8s.io/utils/net"
 )
 
 var (
@@ -31,42 +37,42 @@ var (
 	requestHeaderCN = "system:auth-proxy"
 )
 
-func StartServer(ctx context.Context, cfg *config.Control) error {
-	var err error
-	if err = server(ctx, cfg); err != nil {
-		return err
-	}
-	return nil
-}
+// func StartServer(ctx context.Context, cfg *config.Control) error {
+// 	var err error
+// 	if err = server(ctx, cfg); err != nil {
+// 		return err
+// 	}
+// 	return nil
+// }
 
-func server(ctx context.Context, cfg *config.Control) error {
-	var err error
-	runtime := &config.ControlRuntime{}
-	cfg.Runtime = runtime
+// func server(ctx context.Context, cfg *config.Control) error {
+// 	var err error
+// 	runtime := &config.ControlRuntime{}
+// 	cfg.Runtime = runtime
 
-	if err = prepare(ctx, cfg); err != nil {
-		return err
-	}
-	//start apiserver
-	_, _, err = apiServer(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	if err = waitForAPIServerInBackground(ctx, runtime); err != nil {
-		return err
-	}
-	logrus.Info("api server start success")
+// 	if err = prepare(ctx, cfg); err != nil {
+// 		return err
+// 	}
+// 	//start apiserver
+// 	_, _, err = apiServer(ctx, cfg)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	if err = waitForAPIServerInBackground(ctx, runtime); err != nil {
+// 		return err
+// 	}
+// 	logrus.Info("api server start success")
 
-	if err = scheduler(ctx, cfg); err != nil {
-		return err
-	}
+// 	if err = scheduler(ctx, cfg); err != nil {
+// 		return err
+// 	}
 
-	if err = controllerManager(ctx, cfg); err != nil {
-		return err
-	}
-	logrus.Info("start server done")
-	return nil
-}
+// 	if err = controllerManager(ctx, cfg); err != nil {
+// 		return err
+// 	}
+// 	logrus.Info("start server done")
+// 	return nil
+// }
 
 func ApiServer(ctx context.Context, cfg *config.Control) error {
 	//start apiserver
@@ -203,11 +209,12 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	certDir := filepath.Join(cfg.DataDir, "tls", "temporary-certs")
 	os.MkdirAll(certDir, 0700)
 	runtime := cfg.Runtime
+	//存放 TLS 证书的目录。如果提供了 --tls-cert-file 和 --tls-private-key-file 选项，该标志将被忽略。（默认值 "/var/run/kubernetes"）
 	argsMap["cert-dir"] = certDir
 	argsMap["allow-privileged"] = "true"
 	argsMap["authorization-mode"] = strings.Join([]string{modes.ModeNode, modes.ModeRBAC}, ",")
 	argsMap["service-account-signing-key-file"] = runtime.ServiceKey
-	argsMap["service-cluster-ip-range"] = cfg.ServiceIPRange.String()
+	argsMap["service-cluster-ip-range"] = cfg.ServiceIPRange.String() //CIDR表示的IP范围，服务的clusterip将从中分配。一定不要和分配给nodes和pods的IP范围产生重叠
 	argsMap["advertise-port"] = strconv.Itoa(cfg.AdvertisePort)
 	if cfg.AdvertiseIP != "" {
 		argsMap["advertise-address"] = cfg.AdvertiseIP
@@ -219,14 +226,13 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	} else {
 		argsMap["bind-address"] = cfg.APIServerBindAddress
 	}
-	//argsMap["admission-control"] = "NamespaceLifecycle,NamespaceExists,LimitRanger,SecurityContextDeny,ResourceQuota"
-	// argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
-	// argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
+	argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
+	argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
 	argsMap["service-account-key-file"] = runtime.ServiceKey
 	argsMap["service-account-issuer"] = version.Program
 	argsMap["api-audiences"] = "unknown"
-	// argsMap["kubelet-certificate-authority"] = runtime.ServerCA
-	// argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
+	//argsMap["kubelet-certificate-authority"] = runtime.ServerCA
+	//argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
 	// argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
 	// argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
 	// argsMap["requestheader-allowed-names"] = requestHeaderCN
@@ -235,7 +241,7 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	argsMap["requestheader-extra-headers-prefix"] = "X-Remote-Extra-"
 	argsMap["requestheader-group-headers"] = "X-Remote-Group"
 	argsMap["requestheader-username-headers"] = "X-Remote-User"
-	//argsMap["client-ca-file"] = runtime.ClientCA
+	argsMap["client-ca-file"] = runtime.ClientCA
 	argsMap["enable-admission-plugins"] = "NodeRestriction"
 	argsMap["anonymous-auth"] = "false"
 	argsMap["profiling"] = "false"
@@ -272,15 +278,15 @@ func controllerManager(ctx context.Context, cfg *config.Control) error {
 		"service-account-private-key-file": runtime.ServiceKey,
 		"allocate-node-cidrs":              "true",
 		"cluster-cidr":                     cfg.ClusterIPRange.String(),
-		//"root-ca-file":                     runtime.ServerCA,
-		"port":                            "10252",
-		"profiling":                       "false",
-		"address":                         localhostIP.String(),
-		"bind-address":                    localhostIP.String(),
-		"secure-port":                     "0",
-		"use-service-account-credentials": "false",
-		//	"cluster-signing-cert-file":        runtime.ClientCA,
-		//	"cluster-signing-key-file":         runtime.ClientCAKey,
+		"root-ca-file":                     runtime.ServerCA,
+		"port":                             "10252",
+		"profiling":                        "false",
+		"address":                          localhostIP.String(),
+		"bind-address":                     localhostIP.String(),
+		"secure-port":                      "0",
+		"use-service-account-credentials":  "false",
+		"cluster-signing-cert-file":        runtime.ClientCA,
+		"cluster-signing-key-file":         runtime.ClientCAKey,
 	}
 	if cfg.NoLeaderElect {
 		argsMap["leader-elect"] = "false"
@@ -338,6 +344,9 @@ func genCerts(config *config.Control) error {
 	if err = genClientCerts(config); err != nil {
 		return err
 	}
+	if err = genServerCerts(config); err != nil {
+		return err
+	}
 	if err = genETCDCerts(config); err != nil {
 		return err
 	}
@@ -369,20 +378,92 @@ func addSANs(altNames *cert.AltNames, sans []string) {
 	}
 }
 
+// type signedCertFactory = func(commonName string, organization []string, certFile, keyFile string) (bool, error)
+
+// func getSigningCertFactory(regen bool, altNames *cert.AltNames, extKeyUsage []x509.ExtKeyUsage, caCertFile, caKeyFile string) signedCertFactory {
+// 	return func(commonName string, organization []string, certFile, keyFile string) (bool, error) {
+// 		return cert.CreateClientCertKey(regen, commonName, organization, altNames, extKeyUsage, caCertFile, caKeyFile, certFile, keyFile)
+// 	}
+// }
+
 func genClientCerts(config *config.Control) error {
 	var err error
 	runtime := config.Runtime
-	apiEndpoint := fmt.Sprintf("http://127.0.0.1:%d", 8080)
-	if err := control.KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, "", "", ""); err != nil {
+	//创建客户端的CA证书
+	regen, err := cert.CreateCACertKey(version.Program+"-client", runtime.ClientCA, runtime.ClientCAKey)
+	if err != nil {
 		return err
 	}
-	if err = control.KubeConfig(runtime.KubeConfigController, apiEndpoint, "", "", ""); err != nil {
+	//用clientCA 创建客户端证书
+	factory := control.GetSigningCertFactory(regen, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, runtime.ClientCA, runtime.ClientCAKey)
+	//是否需要重新创建证书
+	var certGen bool
+	apiEndpoint := fmt.Sprintf("https://127.0.0.1:%d", config.APIServerPort)
+
+	certGen, err = factory("system:admin", []string{"system:masters"}, runtime.ClientAdminCert, runtime.ClientAdminKey)
+	if err != nil {
 		return err
 	}
-	if err := control.KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, "", "", ""); err != nil {
+
+	if certGen {
+		if err = control.KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, runtime.ServerCA, runtime.ClientAdminCert, runtime.ClientAdminKey); err != nil {
+			return err
+		}
+	}
+
+	certGen, err = factory("system:kube-controller-manager", nil, runtime.ClientControllerCert, runtime.ClientControllerKey)
+	if err != nil {
+		return err
+	}
+	if certGen {
+		if err = control.KubeConfig(runtime.KubeConfigController, apiEndpoint, runtime.ServerCA, runtime.ClientControllerCert, runtime.ClientControllerKey); err != nil {
+			return err
+		}
+	}
+	certGen, err = factory("system:kube-scheduler", nil, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey)
+	if err != nil {
+		return err
+	}
+	if certGen {
+		if err = control.KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, runtime.ServerCA, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey); err != nil {
+			return err
+		}
+	}
+	if _, err = factory("system:kube-proxy", nil, runtime.ClientKubeProxyCert, runtime.ClientKubeProxyKey); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func genServerCerts(config *config.Control) error {
+	runtime := config.Runtime
+	var err error
+	//创建服务端的CA证书
+	regen, err := cert.CreateCACertKey(version.Program+"-server", runtime.ServerCA, runtime.ServerCAKey)
+	if err != nil {
+		return err
+	}
+	_, apiServerServiceIP, err := master.ServiceIPRange(*config.ServiceIPRange)
+	if err != nil {
+		return err
+	}
+	altNames := &cert.AltNames{
+		DNSNames: []string{"kubernetes.default.svc", "kubernetes.default", "kubernetes", "localhost"},
+		IPs:      []net.IP{apiServerServiceIP},
+	}
+	addSANs(altNames, config.SANs)
+	if _, err := cert.CreateClientCertKey(regen, "kube-apiserver", nil,
+		altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		runtime.ServerCA, runtime.ServerCAKey,
+		runtime.ServingKubeAPICert, runtime.ServingKubeAPIKey); err != nil {
+		return err
+	}
+	if _, err := cert.LoadOrGenerateKeyFile(runtime.ServingKubeletKey, regen); err != nil {
 		return err
 	}
 	return nil
+
 }
 
 //generate etcd certificate
@@ -391,7 +472,7 @@ func genETCDCerts(config *config.Control) error {
 	//创建CA证书
 	regen, err := cert.CreateCACertKey("etcd-server", runtime.ETCDServerCA, runtime.ETCDServerCAKey)
 	if err != nil {
-		return nil
+		return err
 	}
 	altNames := &cert.AltNames{
 		DNSNames: []string{"localhost"},
@@ -472,4 +553,30 @@ func promise(f func() error) <-chan error {
 		close(c)
 	}()
 	return c
+}
+
+// ServiceIPRange checks if the serviceClusterIPRange flag is nil, raising a warning if so and
+// setting service ip range to the default value in kubeoptions.DefaultServiceIPCIDR
+// for now until the default is removed per the deprecation timeline guidelines.
+// Returns service ip range, api server service IP, and an error
+func ServiceIPRange(passedServiceClusterIPRange net.IPNet) (net.IPNet, net.IP, error) {
+	serviceClusterIPRange := passedServiceClusterIPRange
+	if passedServiceClusterIPRange.IP == nil {
+		klog.Warningf("No CIDR for service cluster IPs specified. Default value which was %s is deprecated and will be removed in future releases. Please specify it using --service-cluster-ip-range on kube-apiserver.", kubeoptions.DefaultServiceIPCIDR.String())
+		serviceClusterIPRange = kubeoptions.DefaultServiceIPCIDR
+	}
+
+	size := integer.Int64Min(utilnet.RangeSize(&serviceClusterIPRange), 1<<16)
+	if size < 8 {
+		return net.IPNet{}, net.IP{}, fmt.Errorf("the service cluster IP range must be at least %d IP addresses", 8)
+	}
+
+	// Select the first valid IP from ServiceClusterIPRange to use as the GenericAPIServer service IP.
+	apiServerServiceIP, err := utilnet.GetIndexedIP(&serviceClusterIPRange, 1)
+	if err != nil {
+		return net.IPNet{}, net.IP{}, err
+	}
+	klog.V(4).Infof("Setting service IP to %q (read-write).", apiServerServiceIP)
+
+	return serviceClusterIPRange, apiServerServiceIP, nil
 }

@@ -141,6 +141,7 @@ func genCerts(config *config.Agent) error {
 }
 
 func genClientCerts(config *config.Agent) error {
+
 	apiEndpoint := config.APIServerURL
 	if err := control.KubeConfig(config.KubeConfigKubelet, apiEndpoint, "", "", ""); err != nil {
 		return err
