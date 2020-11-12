@@ -189,14 +189,14 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	} else {
 		argsMap["bind-address"] = cfg.APIServerBindAddress
 	}
-	//argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
-	//argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
-	//	argsMap["service-account-key-file"] = runtime.ServiceKey
+	argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
+	argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
+	argsMap["service-account-key-file"] = runtime.ServiceKey
 	argsMap["service-account-issuer"] = version.Program
 	argsMap["api-audiences"] = "unknown"
-	//	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
-	//	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
-	//	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
+	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
+	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
+	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
 	// argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
 	// argsMap["requestheader-allowed-names"] = requestHeaderCN
 	// argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
@@ -204,7 +204,7 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	argsMap["requestheader-extra-headers-prefix"] = "X-Remote-Extra-"
 	argsMap["requestheader-group-headers"] = "X-Remote-Group"
 	argsMap["requestheader-username-headers"] = "X-Remote-User"
-	//argsMap["client-ca-file"] = runtime.ClientCA
+	argsMap["client-ca-file"] = runtime.ClientCA
 	argsMap["enable-admission-plugins"] = "NodeRestriction"
 	argsMap["anonymous-auth"] = "false"
 	argsMap["profiling"] = "false"
@@ -347,13 +347,13 @@ func addSANs(altNames *cert.AltNames, sans []string) {
 	}
 }
 
-// type signedCertFactory = func(commonName string, organization []string, certFile, keyFile string) (bool, error)
+type signedCertFactory = func(commonName string, organization []string, certFile, keyFile string) (bool, error)
 
-// func getSigningCertFactory(regen bool, altNames *cert.AltNames, extKeyUsage []x509.ExtKeyUsage, caCertFile, caKeyFile string) signedCertFactory {
-// 	return func(commonName string, organization []string, certFile, keyFile string) (bool, error) {
-// 		return cert.CreateClientCertKey(regen, commonName, organization, altNames, extKeyUsage, caCertFile, caKeyFile, certFile, keyFile)
-// 	}
-// }
+func getSigningCertFactory(regen bool, altNames *cert.AltNames, extKeyUsage []x509.ExtKeyUsage, caCertFile, caKeyFile string) signedCertFactory {
+	return func(commonName string, organization []string, certFile, keyFile string) (bool, error) {
+		return cert.CreateClientCertKey(regen, commonName, organization, altNames, extKeyUsage, caCertFile, caKeyFile, certFile, keyFile)
+	}
+}
 
 func genClientCerts(config *config.Control) error {
 	var err error
@@ -364,10 +364,10 @@ func genClientCerts(config *config.Control) error {
 		return err
 	}
 	//用clientCA 创建客户端证书
-	factory := control.GetSigningCertFactory(regen, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, runtime.ClientCA, runtime.ClientCAKey)
+	factory := getSigningCertFactory(regen, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, runtime.ClientCA, runtime.ClientCAKey)
 	//是否需要重新创建证书
 	var certGen bool
-	apiEndpoint := fmt.Sprintf("http://127.0.0.1:%d", 8080) //config.APIServerPort)
+	apiEndpoint := fmt.Sprintf("http://127.0.0.1:%d", 8080) //)
 
 	certGen, err = factory("system:admin", []string{"system:masters"}, runtime.ClientAdminCert, runtime.ClientAdminKey)
 	if err != nil {
@@ -375,31 +375,31 @@ func genClientCerts(config *config.Control) error {
 	}
 
 	if certGen {
-		if err = control.KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, "", "", ""); err != nil { //runtime.ServerCA, runtime.ClientAdminCert, runtime.ClientAdminKey
+		if err = control.KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, runtime.ServerCA, runtime.ClientAdminCert, runtime.ClientAdminKey); err != nil { //
 			return err
 		}
 	}
 
-	certGen, err = factory("system:kube-controller-manager", nil, runtime.ClientControllerCert, runtime.ClientControllerKey)
+	certGen, err = factory("system:kube-controller-manager", []string{"system:kube-controller-manager"}, runtime.ClientControllerCert, runtime.ClientControllerKey)
 	if err != nil {
 		return err
 	}
 	if certGen {
-		if err = control.KubeConfig(runtime.KubeConfigController, apiEndpoint, "", "", ""); err != nil { //runtime.ServerCA, runtime.ClientControllerCert, runtime.ClientControllerKey
+		if err = control.KubeConfig(runtime.KubeConfigController, apiEndpoint, runtime.ServerCA, runtime.ClientControllerCert, runtime.ClientControllerKey); err != nil { //
 			return err
 		}
 	}
-	certGen, err = factory("system:kube-scheduler", nil, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey)
+	certGen, err = factory("system:kube-scheduler", []string{"system:kube-scheduler "}, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey)
 	if err != nil {
 		return err
 	}
 	if certGen {
-		if err = control.KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, "", "", ""); err != nil { //runtime.ServerCA, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey
+		if err = control.KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, runtime.ServerCA, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey); err != nil { //
 			return err
 		}
 	}
 
-	certGen, err = factory("kube-apiserver", []string{"system:masters"}, runtime.ClientKubeAPICert, runtime.ClientKubeAPIKey)
+	certGen, err = factory("kube-apiserver", nil, runtime.ClientKubeAPICert, runtime.ClientKubeAPIKey)
 	if err != nil {
 		return err
 	}
