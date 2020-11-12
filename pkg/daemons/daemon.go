@@ -9,6 +9,7 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/server"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 var D *Daemon
@@ -40,9 +41,12 @@ func (d *Daemon) daemon(ctx context.Context, cfg *config.Control) {
 }
 
 func router(cfg *config.Control) http.Handler {
-	//prefix := "/v1-" + version.Program
+	prefix := "/v1-" + version.Program
 	router := mux.NewRouter()
 	router.Path("/db/info").Handler(cfg.DBInfoHandler)
+	router.Path(prefix + "/client-ca.crt").Handler(fileHandler(cfg.Runtime.ClientCA))
+	router.Path(prefix + "/server-ca.crt").Handler(fileHandler(cfg.Runtime.ServerCA))
+	router.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(cfg, cfg.Runtime.ClientKubeletKey))
 	return router
 }
 

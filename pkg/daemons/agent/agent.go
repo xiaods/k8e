@@ -12,6 +12,7 @@ import (
 	"github.com/opencontainers/runc/libcontainer/system"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/agent/containerd"
 	"github.com/xiaods/k8e/pkg/daemons/agent/flannel"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -142,11 +143,32 @@ func genCerts(config *config.Agent) error {
 
 func genClientCerts(config *config.Agent) error {
 
-	apiEndpoint := config.APIServerURL
-	if err := control.KubeConfig(config.KubeConfigKubelet, apiEndpoint, "", "", ""); err != nil {
+	nodeName, nodeIP, err := getHostnameAndIP(config)
+	if err != nil {
 		return err
 	}
-	if err := control.KubeConfig(config.KubeConfigKubeProxy, apiEndpoint, "", "", ""); err != nil {
+
+	info, err := clientaccess.ParseAndValidateToken(config.ServerURL, "")
+	clientCAFile := filepath.Join(config.DataDir, "client-ca.crt")
+	if err = getHostFile(clientCAFile, "", info); err != nil {
+		return err
+	}
+
+	serverCAFile := filepath.Join(config.DataDir, "server-ca.crt")
+	if err = getHostFile(serverCAFile, "", info); err != nil {
+		return err
+	}
+
+	clientKubeletCert := filepath.Join(config.DataDir, "client-kubelet.crt")
+	clientKubeletKey := filepath.Join(config.DataDir, "client-kubelet.key")
+	if err = getNodeNamedHostFile(clientKubeletCert, clientKubeletKey, nodeName, nodeIP, "", info); err != nil {
+		return err
+	}
+	apiEndpoint := config.APIServerURL
+	if err = control.KubeConfig(config.KubeConfigKubelet, apiEndpoint, "", "", ""); err != nil {
+		return err
+	}
+	if err = control.KubeConfig(config.KubeConfigKubeProxy, apiEndpoint, "", "", ""); err != nil {
 		return err
 	}
 

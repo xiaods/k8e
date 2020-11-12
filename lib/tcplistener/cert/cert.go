@@ -254,14 +254,6 @@ func WriteCert(certPath string, data []byte) error {
 	return ioutil.WriteFile(certPath, data, os.FileMode(0644))
 }
 
-func EncodeCertPEM(cert *x509.Certificate) []byte {
-	block := pem.Block{
-		Type:  CertificateBlockType,
-		Bytes: cert.Raw,
-	}
-	return pem.EncodeToMemory(&block)
-}
-
 func MakeEllipticPrivateKeyPEM(privateKey *ecdsa.PrivateKey) ([]byte, error) {
 	derBytes, err := x509.MarshalECPrivateKey(privateKey)
 	if err != nil {
@@ -402,6 +394,14 @@ func EncodePrivateKeyPEM(key *rsa.PrivateKey) []byte {
 	block := pem.Block{
 		Type:  RSAPrivateKeyBlockType,
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}
+	return pem.EncodeToMemory(&block)
+}
+
+func EncodeCertPEM(cert *x509.Certificate) []byte {
+	block := pem.Block{
+		Type:  CertificateBlockType,
+		Bytes: cert.Raw,
 	}
 	return pem.EncodeToMemory(&block)
 }

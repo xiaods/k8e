@@ -139,6 +139,7 @@ type Agent struct {
 	DisableKubeProxy        bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
+	ServerURL               string
 }
 
 type DataConfig struct {
