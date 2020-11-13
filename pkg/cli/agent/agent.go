@@ -32,7 +32,8 @@ func InternlRun(ctx context.Context, cfg *cmds.AgentConfig) error {
 	nodeConfig := &config.Node{}
 	nodeConfig.Docker = cfg.Docker
 	nodeConfig.ContainerRuntimeEndpoint = cfg.ContainerRuntimeEndpoint
-	nodeConfig.AgentConfig.DataDir = cfg.DataDir
+	datadir, _ := datadir.LocalHome(cfg.DataDir, true)
+	nodeConfig.AgentConfig.DataDir = datadir
 	nodeConfig.AgentConfig.APIServerURL = cfg.ServerURL
 	nodeConfig.AgentConfig.DisableCCM = cfg.DisableCCM
 	_, nodeConfig.AgentConfig.ClusterCIDR, err = net2.ParseCIDR(cfg.ClusterCIDR)

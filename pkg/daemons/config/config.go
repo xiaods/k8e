@@ -72,6 +72,7 @@ type Control struct {
 	SANs          []string
 	DBInfoHandler http.Handler
 	Runtime       *ControlRuntime `json:"-"`
+	DisableAgent  bool
 }
 
 type Node struct {

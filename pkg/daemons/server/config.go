@@ -7,7 +7,7 @@ import (
 )
 
 type Config struct {
-	DisableAgent     bool
+	//DisableAgent     bool
 	DisableServiceLB bool
 	ControlConfig    config.Control
 	Rootless         bool

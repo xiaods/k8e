@@ -13,22 +13,26 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/lib/fileutil"
 	"github.com/xiaods/k8e/lib/tcplistener/cert"
+	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
+	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/version"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/client-go/kubernetes"
+	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 	app2 "k8s.io/kubernetes/cmd/controller-manager/app"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
+	kubeoptions "k8s.io/kubernetes/pkg/kubeapiserver/options"
 	"k8s.io/kubernetes/pkg/master"
 	"k8s.io/utils/integer"
-
-	kubeoptions "k8s.io/kubernetes/pkg/kubeapiserver/options"
 	utilnet "k8s.io/utils/net"
 )
 
@@ -36,6 +40,8 @@ var (
 	localhostIP     = net.ParseIP("127.0.0.1")
 	requestHeaderCN = "system:auth-proxy"
 )
+
+const MasterRoleLabelKey = "node-role.kubernetes.io/master"
 
 func ApiServer(ctx context.Context, cfg *config.Control) error {
 	//start apiserver
@@ -64,7 +70,11 @@ func ControllerManager(ctx context.Context, cfg *config.Control) error {
 	return nil
 }
 
-func initTLSCredPath(config *config.Control) {
+func Kubectl(ctx context.Context, cfg *config.Control) error {
+	return writeKubeConfig(cfg)
+}
+
+func initTLSCredPath(config *config.Control) error {
 	runtime := config.Runtime
 	runtime.ClientCA = filepath.Join(config.DataDir, "tls", "client-ca.crt")
 	runtime.ClientCAKey = filepath.Join(config.DataDir, "tls", "client-ca.key")
@@ -118,10 +128,15 @@ func initTLSCredPath(config *config.Control) {
 	runtime.PeerServerClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "peer-server-client.key")
 	runtime.ClientETCDCert = filepath.Join(config.DataDir, "tls", "etcd", "client.crt")
 	runtime.ClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "client.key")
-
+	nodeName, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+	os.Setenv("NODE_NAME", nodeName)
 	if config.EncryptSecrets {
 		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
 	}
+	return nil
 }
 
 func Prepare(ctx context.Context, config *config.Control) error {
@@ -259,6 +274,66 @@ func controllerManager(ctx context.Context, cfg *config.Control) error {
 	logrus.Infof("Running kube-controller-manager %s", config.ArgString(args))
 
 	return executor.ControllerManager(runtime.APIServerReady, args)
+}
+
+func StartWrangler(ctx context.Context, cfg *config.Control) error {
+	return startWrangler(ctx, cfg)
+}
+
+func startWrangler(ctx context.Context, cfg *config.Control) error {
+
+	// sc, err := newContext(ctx, controlConfig.Runtime.KubeConfigAdmin)
+	// if err != nil {
+	// 	return err
+	// }
+	coreClient, err := coreClient(cfg.Runtime.KubeConfigAdmin)
+	if err != nil {
+		return err
+	}
+	if cfg.DisableAgent {
+		go setMasterRoleLabel(ctx, coreClient.CoreV1().Nodes())
+	}
+	return nil
+}
+
+func coreClient(cfg string) (kubernetes.Interface, error) {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return kubernetes.NewForConfig(restConfig)
+}
+
+func setMasterRoleLabel(ctx context.Context, nodes v1.NodeInterface) error {
+	for {
+		nodeName := os.Getenv("NODE_NAME")
+
+		node, err := nodes.Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			logrus.Infof("Waiting for master node %s startup: %v", nodeName, err)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		if v, ok := node.Labels[MasterRoleLabelKey]; ok && v == "true" {
+			break
+		}
+		if node.Labels == nil {
+			node.Labels = make(map[string]string)
+		}
+		node.Labels[MasterRoleLabelKey] = "true"
+		_, err = nodes.Update(ctx, node, metav1.UpdateOptions{})
+		if err == nil {
+			logrus.Infof("master role label has been set successfully on node: %s", nodeName)
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return nil
 }
 
 func setEtcdStorageBackend(argsMap map[string]string, cfg *config.Control) {
@@ -562,4 +637,59 @@ func ServiceIPRange(passedServiceClusterIPRange net.IPNet) (net.IPNet, net.IP, e
 	klog.V(4).Infof("Setting service IP to %q (read-write).", apiServerServiceIP)
 
 	return serviceClusterIPRange, apiServerServiceIP, nil
+}
+
+func writeKubeConfig(config *config.Control) error {
+	ip := config.BindAddress
+	if ip == "" {
+		ip = "127.0.0.1"
+	}
+	url := fmt.Sprintf("https://%s:%d", ip, config.APIServerPort)
+	kubeConfig, err := datadir.HomeKubeConfig(true, true)
+	def := true
+	if err != nil {
+		kubeConfig = filepath.Join(config.DataDir, "kubeconfig-"+version.Program+".yaml")
+		def = false
+	}
+	// kubeConfigSymlink := kubeConfig
+	// if config.ControlConfig.KubeConfigOutput != "" {
+	// 	kubeConfig = config.ControlConfig.KubeConfigOutput
+	// }
+
+	// if isSymlink(kubeConfigSymlink) {
+	// 	if err := os.Remove(kubeConfigSymlink); err != nil {
+	// 		logrus.Errorf("failed to remove kubeconfig symlink")
+	// 	}
+	// }
+
+	if err = clientaccess.WriteClientKubeConfig(kubeConfig, url, config.Runtime.ServerCA, config.Runtime.ClientAdminCert,
+		config.Runtime.ClientAdminKey); err == nil {
+		logrus.Infof("Wrote kubeconfig %s", kubeConfig)
+	} else {
+		logrus.Errorf("Failed to generate kubeconfig: %v", err)
+		return err
+	}
+
+	if config.KubeConfigMode != "" {
+		mode, err := strconv.ParseInt(config.KubeConfigMode, 8, 0)
+		if err == nil {
+			fileutil.SetFileModeForPath(kubeConfig, os.FileMode(mode))
+		} else {
+			logrus.Errorf("failed to set %s to mode %s: %v", kubeConfig, os.FileMode(mode), err)
+		}
+	} else {
+		fileutil.SetFileModeForPath(kubeConfig, os.FileMode(0600))
+	}
+
+	// if kubeConfigSymlink != kubeConfig {
+	// 	if err := writeConfigSymlink(kubeConfig, kubeConfigSymlink); err != nil {
+	// 		logrus.Errorf("failed to write kubeconfig symlink: %v", err)
+	// 	}
+	// }
+
+	if def {
+		logrus.Infof("Run: %s kubectl", filepath.Base(os.Args[0]))
+	}
+
+	return nil
 }

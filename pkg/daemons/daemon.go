@@ -57,7 +57,9 @@ func (d *Daemon) StartServer(ctx context.Context, cfg *config.Control) error {
 		server.Prepare,
 		server.ApiServer,
 		server.Scheduler,
-		server.ControllerManager)
+		server.ControllerManager,
+		server.StartWrangler,
+		server.Kubectl)
 	if err != nil {
 		return err
 	}

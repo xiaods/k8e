@@ -33,6 +33,21 @@ func LocalHome(dataDir string, forceLocal bool) (string, error) {
 	return filepath.Abs(dataDir)
 }
 
+func HomeKubeConfig(write, rootless bool) (string, error) {
+	if write {
+		if os.Getuid() == 0 && !rootless {
+			return GlobalConfig, nil
+		}
+		return Resolve(HomeConfig)
+	}
+
+	if _, err := os.Stat(GlobalConfig); err == nil {
+		return GlobalConfig, nil
+	}
+
+	return Resolve(HomeConfig)
+}
+
 var (
 	homes = []string{"$HOME", "${HOME}", "~"}
 )
