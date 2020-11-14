@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"google.golang.org/grpc"
+	"k8s.io/apiserver/pkg/authentication/authenticator"
 )
 
 const (
@@ -199,7 +200,7 @@ type ControlRuntime struct {
 	AgentToken         string
 	Handler            http.Handler
 	Tunnel             http.Handler
-	//Authenticator      authenticator.Request
+	Authenticator      authenticator.Request
 
 	ClientAuthProxyCert string
 	ClientAuthProxyKey  string

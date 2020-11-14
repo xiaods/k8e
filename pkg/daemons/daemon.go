@@ -2,14 +2,11 @@ package daemons
 
 import (
 	"context"
-	"net/http"
 
-	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/server"
-	"github.com/xiaods/k8e/pkg/version"
 )
 
 var D *Daemon
@@ -24,32 +21,6 @@ type NodeComponent func(ctx context.Context, cfg *config.Node) error
 
 type Daemon struct{}
 
-func (d *Daemon) daemon(ctx context.Context, cfg *config.Control) {
-	// http.Handle("/db/info", cfg.DBInfoHandler) //用于获取etcd集群信息
-
-	// http.ListenAndServe(":8081", nil)
-	server := http.Server{}
-	server.Addr = ":8081"
-	server.Handler = router(cfg)
-	go func() {
-		logrus.Fatalf("server stopped: %v", server.ListenAndServe())
-	}()
-	go func() {
-		<-ctx.Done()
-		server.Shutdown(context.Background())
-	}()
-}
-
-func router(cfg *config.Control) http.Handler {
-	prefix := "/v1-" + version.Program
-	router := mux.NewRouter()
-	router.Path("/db/info").Handler(cfg.DBInfoHandler)
-	router.Path(prefix + "/client-ca.crt").Handler(fileHandler(cfg.Runtime.ClientCA))
-	router.Path(prefix + "/server-ca.crt").Handler(fileHandler(cfg.Runtime.ServerCA))
-	router.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(cfg, cfg.Runtime.ClientKubeletKey))
-	return router
-}
-
 func (d *Daemon) StartServer(ctx context.Context, cfg *config.Control) error {
 	runtime := &config.ControlRuntime{}
 	cfg.Runtime = runtime
@@ -63,7 +34,6 @@ func (d *Daemon) StartServer(ctx context.Context, cfg *config.Control) error {
 	if err != nil {
 		return err
 	}
-	d.daemon(ctx, cfg)
 	return nil
 }
 

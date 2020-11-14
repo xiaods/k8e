@@ -8,9 +8,9 @@ import (
 	"regexp"
 	"sync"
 
-	"github.com/pkg/errors"
 	"github.com/rancher/go-powershell/backend"
 	"github.com/rancher/go-powershell/utils"
+	"github.com/pkg/errors"
 )
 
 const newline = "\r\n"

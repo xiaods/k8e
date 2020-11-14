@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	certutil "github.com/rancher/dynamiclistener/cert"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/lib/fileutil"
 	"github.com/xiaods/k8e/lib/tcplistener/cert"
@@ -22,16 +25,16 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/version"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/client-go/kubernetes"
-	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog"
 	app2 "k8s.io/kubernetes/cmd/controller-manager/app"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
 	kubeoptions "k8s.io/kubernetes/pkg/kubeapiserver/options"
 	"k8s.io/kubernetes/pkg/master"
+	"k8s.io/kubernetes/pkg/proxy/util"
 	"k8s.io/utils/integer"
 	utilnet "k8s.io/utils/net"
 )
@@ -128,11 +131,7 @@ func initTLSCredPath(config *config.Control) error {
 	runtime.PeerServerClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "peer-server-client.key")
 	runtime.ClientETCDCert = filepath.Join(config.DataDir, "tls", "etcd", "client.crt")
 	runtime.ClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "client.key")
-	nodeName, err := os.Hostname()
-	if err != nil {
-		return err
-	}
-	os.Setenv("NODE_NAME", nodeName)
+
 	if config.EncryptSecrets {
 		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
 	}
@@ -145,7 +144,13 @@ func Prepare(ctx context.Context, config *config.Control) error {
 
 func prepare(ctx context.Context, config *config.Control) error {
 	var err error
+
 	defaults(config)
+
+	if err := os.MkdirAll(config.DataDir, 0700); err != nil {
+		return err
+	}
+
 	config.DataDir, err = filepath.Abs(config.DataDir)
 	if err != nil {
 		return err
@@ -156,8 +161,9 @@ func prepare(ctx context.Context, config *config.Control) error {
 
 	initTLSCredPath(config)
 
-	c := cluster.New(config)
-	err = c.BootstrapLoad(config)
+	cluster := cluster.New(config)
+
+	err = cluster.BootstrapLoad(config)
 	if err != nil {
 		return err
 	}
@@ -172,11 +178,16 @@ func prepare(ctx context.Context, config *config.Control) error {
 		return err
 	}
 
-	ready, err := c.Start(ctx)
+	ready, err := cluster.Start(ctx)
 	if err != nil {
 		return err
 	}
 	config.Runtime.ETCDReady = ready
+
+	// setup tunnel
+	config.Runtime.Tunnel = setupTunnel()
+	util.DisableProxyHostnameCheck = true
+
 	return nil
 }
 
@@ -212,10 +223,10 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
 	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
 	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
-	// argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
-	// argsMap["requestheader-allowed-names"] = requestHeaderCN
-	// argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
-	// argsMap["proxy-client-key-file"] = runtime.ClientAuthProxyKey
+	argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
+	argsMap["requestheader-allowed-names"] = requestHeaderCN
+	argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
+	argsMap["proxy-client-key-file"] = runtime.ClientAuthProxyKey
 	argsMap["requestheader-extra-headers-prefix"] = "X-Remote-Extra-"
 	argsMap["requestheader-group-headers"] = "X-Remote-Group"
 	argsMap["requestheader-username-headers"] = "X-Remote-User"
@@ -281,67 +292,44 @@ func StartWrangler(ctx context.Context, cfg *config.Control) error {
 }
 
 func startWrangler(ctx context.Context, cfg *config.Control) error {
+	var (
+		err error
+	)
 
-	// sc, err := newContext(ctx, controlConfig.Runtime.KubeConfigAdmin)
-	// if err != nil {
-	// 	return err
-	// }
-	coreClient, err := coreClient(cfg.Runtime.KubeConfigAdmin)
+	ca, err := ioutil.ReadFile(cfg.Runtime.ServerCA)
 	if err != nil {
 		return err
 	}
-	if cfg.DisableAgent {
-		go setMasterRoleLabel(ctx, coreClient.CoreV1().Nodes())
-	}
-	return nil
-}
 
-func coreClient(cfg string) (kubernetes.Interface, error) {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", cfg)
-	if err != nil {
-		return nil, err
-	}
+	cfg.Runtime.Handler = router(cfg, cfg.Runtime.Tunnel, ca)
 
-	return kubernetes.NewForConfig(restConfig)
-}
-
-func setMasterRoleLabel(ctx context.Context, nodes v1.NodeInterface) error {
-	for {
-		nodeName := os.Getenv("NODE_NAME")
-
-		node, err := nodes.Get(ctx, nodeName, metav1.GetOptions{})
-		if err != nil {
-			logrus.Infof("Waiting for master node %s startup: %v", nodeName, err)
-			time.Sleep(1 * time.Second)
-			continue
-		}
-		if v, ok := node.Labels[MasterRoleLabelKey]; ok && v == "true" {
-			break
-		}
-		if node.Labels == nil {
-			node.Labels = make(map[string]string)
-		}
-		node.Labels[MasterRoleLabelKey] = "true"
-		_, err = nodes.Update(ctx, node, metav1.UpdateOptions{})
-		if err == nil {
-			logrus.Infof("master role label has been set successfully on node: %s", nodeName)
-			break
-		}
+	// Start in background
+	go func() {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Second):
+			return
 		}
-	}
+	}()
+
 	return nil
 }
 
 func setEtcdStorageBackend(argsMap map[string]string, cfg *config.Control) {
 	argsMap["storage-backend"] = "etcd3"
-	argsMap["etcd-servers"] = cfg.Datastore.Endpoint
-	argsMap["etcd-cafile"] = cfg.Datastore.CAFile
-	argsMap["etcd-certfile"] = cfg.Datastore.CertFile
-	argsMap["etcd-keyfile"] = cfg.Datastore.KeyFile
+	// specify the endpoints
+	if len(cfg.Datastore.Endpoint) > 0 {
+		argsMap["etcd-servers"] = cfg.Datastore.Endpoint
+	}
+	// storage backend tls configuration
+	if len(cfg.Datastore.CAFile) > 0 {
+		argsMap["etcd-cafile"] = cfg.Datastore.CAFile
+	}
+	if len(cfg.Datastore.CertFile) > 0 {
+		argsMap["etcd-certfile"] = cfg.Datastore.CertFile
+	}
+	if len(cfg.Datastore.KeyFile) > 0 {
+		argsMap["etcd-keyfile"] = cfg.Datastore.KeyFile
+	}
 }
 
 func defaults(config *config.Control) {
@@ -383,6 +371,9 @@ func genCerts(config *config.Control) error {
 		return err
 	}
 	if err = genServerCerts(config); err != nil {
+		return err
+	}
+	if err := genRequestHeaderCerts(config); err != nil {
 		return err
 	}
 	if err = genETCDCerts(config); err != nil {
@@ -557,6 +548,186 @@ func genETCDCerts(config *config.Control) error {
 		return err
 	}
 	return nil
+}
+
+func genRequestHeaderCerts(config *config.Control) error {
+	runtime := config.Runtime
+
+	regen, err := createSigningCertKey(version.Program+"-request-header", runtime.RequestHeaderCA, runtime.RequestHeaderCAKey)
+	if err != nil {
+		return err
+	}
+
+	if _, err := createClientCertKey(regen, requestHeaderCN, nil,
+		nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		runtime.RequestHeaderCA, runtime.RequestHeaderCAKey,
+		runtime.ClientAuthProxyCert, runtime.ClientAuthProxyKey); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func createClientCertKey(regen bool, commonName string, organization []string, altNames *certutil.AltNames, extKeyUsage []x509.ExtKeyUsage, caCertFile, caKeyFile, certFile, keyFile string) (bool, error) {
+	caBytes, err := ioutil.ReadFile(caCertFile)
+	if err != nil {
+		return false, err
+	}
+
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(caBytes)
+
+	// check for certificate expiration
+	if !regen {
+		regen = expired(certFile, pool)
+	}
+
+	if !regen {
+		regen = sansChanged(certFile, altNames)
+	}
+
+	if !regen {
+		if exists(certFile, keyFile) {
+			return false, nil
+		}
+	}
+
+	caKeyBytes, err := ioutil.ReadFile(caKeyFile)
+	if err != nil {
+		return false, err
+	}
+
+	caKey, err := certutil.ParsePrivateKeyPEM(caKeyBytes)
+	if err != nil {
+		return false, err
+	}
+
+	caCert, err := certutil.ParseCertsPEM(caBytes)
+	if err != nil {
+		return false, err
+	}
+
+	keyBytes, _, err := certutil.LoadOrGenerateKeyFile(keyFile, regen)
+	if err != nil {
+		return false, err
+	}
+
+	key, err := certutil.ParsePrivateKeyPEM(keyBytes)
+	if err != nil {
+		return false, err
+	}
+
+	cfg := certutil.Config{
+		CommonName:   commonName,
+		Organization: organization,
+		Usages:       extKeyUsage,
+	}
+	if altNames != nil {
+		cfg.AltNames = *altNames
+	}
+	cert, err := certutil.NewSignedCert(cfg, key.(crypto.Signer), caCert[0], caKey.(crypto.Signer))
+	if err != nil {
+		return false, err
+	}
+
+	return true, certutil.WriteCert(certFile, append(certutil.EncodeCertPEM(cert), certutil.EncodeCertPEM(caCert[0])...))
+}
+
+func exists(files ...string) bool {
+	for _, file := range files {
+		if _, err := os.Stat(file); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func createSigningCertKey(prefix, certFile, keyFile string) (bool, error) {
+	if exists(certFile, keyFile) {
+		return false, nil
+	}
+
+	caKeyBytes, _, err := certutil.LoadOrGenerateKeyFile(keyFile, false)
+	if err != nil {
+		return false, err
+	}
+
+	caKey, err := certutil.ParsePrivateKeyPEM(caKeyBytes)
+	if err != nil {
+		return false, err
+	}
+
+	cfg := certutil.Config{
+		CommonName: fmt.Sprintf("%s-ca@%d", prefix, time.Now().Unix()),
+	}
+
+	cert, err := certutil.NewSelfSignedCACert(cfg, caKey.(crypto.Signer))
+	if err != nil {
+		return false, err
+	}
+
+	if err := certutil.WriteCert(certFile, certutil.EncodeCertPEM(cert)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func sansChanged(certFile string, sans *certutil.AltNames) bool {
+	if sans == nil {
+		return false
+	}
+
+	certBytes, err := ioutil.ReadFile(certFile)
+	if err != nil {
+		return false
+	}
+
+	certificates, err := certutil.ParseCertsPEM(certBytes)
+	if err != nil {
+		return false
+	}
+
+	if len(certificates) == 0 {
+		return false
+	}
+
+	if !sets.NewString(certificates[0].DNSNames...).HasAll(sans.DNSNames...) {
+		return true
+	}
+
+	ips := sets.NewString()
+	for _, ip := range certificates[0].IPAddresses {
+		ips.Insert(ip.String())
+	}
+
+	for _, ip := range sans.IPs {
+		if !ips.Has(ip.String()) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func expired(certFile string, pool *x509.CertPool) bool {
+	certBytes, err := ioutil.ReadFile(certFile)
+	if err != nil {
+		return false
+	}
+	certificates, err := certutil.ParseCertsPEM(certBytes)
+	if err != nil {
+		return false
+	}
+	_, err = certificates[0].Verify(x509.VerifyOptions{
+		Roots: pool,
+		KeyUsages: []x509.ExtKeyUsage{
+			x509.ExtKeyUsageAny,
+		},
+	})
+	if err != nil {
+		return true
+	}
+	return certutil.IsCertExpired(certificates[0], config.CertificateRenewDays)
 }
 
 func waitForAPIServerInBackground(ctx context.Context, runtime *config.ControlRuntime) error {

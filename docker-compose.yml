@@ -1,16 +1,15 @@
-
 version: '3'
 services:
   server:
     build: .
     image: k8e-server
-    command: /k8e master
+    command: /k8e server
     privileged: true
     ports:
-      - 6445:6443
+      - 6444:6444
+      - 8080:8080
 
   agent:
-    build: .
     image: k8e-server
-    command: /k8e agent --master=http://server:6445
+    command: /k8e agent --server=https://server:6444
     privileged: true
