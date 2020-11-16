@@ -43,7 +43,7 @@ func testKubeAPI() error {
 		},
 	}
 	client := &http.Client{Transport: tr}
-	resp, err := client.Get("https://127.0.0.1:6444")
+	resp, err := client.Get("https://127.0.0.1:6443")
 	if err != nil {
 		return err
 	}

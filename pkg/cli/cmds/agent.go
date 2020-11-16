@@ -6,7 +6,6 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -35,10 +34,10 @@ type AgentConfig struct {
 	EnableSELinux            bool
 	ProtectKernelDefaults    bool
 	AgentShared
-	ExtraKubeletArgs   cli.StringSlice
-	ExtraKubeProxyArgs cli.StringSlice
-	Labels             cli.StringSlice
-	Taints             cli.StringSlice
+	ExtraKubeletArgs   []string
+	ExtraKubeProxyArgs []string
+	Labels             []string
+	Taints             []string
 	PrivateRegistry    string
 
 	ClusterCIDR string
