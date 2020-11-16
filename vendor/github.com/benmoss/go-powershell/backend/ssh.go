@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	be "github.com/rancher/go-powershell/backend"
 )
 
 // sshSession exists so we don't create a hard dependency on crypto/ssh.
@@ -25,7 +26,7 @@ type SSH struct {
 	Session sshSession
 }
 
-func (b *SSH) StartProcess(cmd string, args ...string) (Waiter, io.Writer, io.Reader, io.Reader, error) {
+func (b *SSH) StartProcess(cmd string, args ...string) (be.Waiter, io.Writer, io.Reader, io.Reader, error) {
 	stdin, err := b.Session.StdinPipe()
 	if err != nil {
 		return nil, nil, nil, nil, errors.Wrap(err, "Could not get hold of the SSH session's stdin stream")
