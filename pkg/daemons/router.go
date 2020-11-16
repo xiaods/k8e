@@ -3,6 +3,7 @@ package daemons
 import (
 	"crypto"
 	"crypto/x509"
+	"encoding/json"
 	"errors"
 	"io/ioutil"
 	"net/http"
@@ -13,6 +14,18 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
 )
+
+func configHandler(server *config.Control) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		// if req.TLS == nil {
+		// 	resp.WriteHeader(http.StatusNotFound)
+		// 	return
+		// }
+		resp.Header().Set("Content-Type", "application/json")
+
+		json.NewEncoder(resp).Encode(server)
+	})
+}
 
 func fileHandler(fileName ...string) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {

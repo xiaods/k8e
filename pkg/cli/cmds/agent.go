@@ -43,6 +43,9 @@ type AgentConfig struct {
 
 	ClusterCIDR string
 	DisableCCM  bool
+	DaemonURL   string
+	Internal    bool //是否内嵌
+
 }
 
 type AgentShared struct {
@@ -61,12 +64,14 @@ func NewAgentCommand(run func(cmd *cobra.Command, args []string)) *cobra.Command
 	cmd.Long = "Run node agent"
 	cmd.Run = run
 
-	cmd.Flags().IntVar(&Server.HTTPSPort, "https-listen-port", 6443, "(listener) IP address that apiserver uses to advertise to members of the cluster (default: node-external-ip/node-ip)")
-	cmd.Flags().StringVarP(&Server.DataDir, "data-dir", "d", "", "(data) Folder to hold state default /var/lib/k8e/"+version.Program+" or ${HOME}/.k8e/"+version.Program+" if not root")
-	cmd.Flags().StringVarP(&Server.ServerURL, "server", "s", "", "(experimental/cluster) Server to connect to, used to join a cluster")
+	cmd.Flags().StringVarP(&Agent.DataDir, "data-dir", "d", "", "(data) Folder to hold state default /var/lib/k8e/"+version.Program+" or ${HOME}/.k8e/"+version.Program+" if not root")
+	cmd.Flags().StringVarP(&Agent.ServerURL, "server", "s", "", "(experimental/cluster) Server to connect to, used to join a cluster")
+	cmd.Flags().BoolVar(&Agent.DisableCCM, "disable-cloud-controller", true, "(components) Disable "+version.Program+" default cloud controller manager")
+	cmd.Flags().StringVar(&Agent.DaemonURL, "daemon", "", "")
 
-	viper.BindPFlag("https-listen-port", cmd.Flags().Lookup("https-listen-port"))
 	viper.BindPFlag("data-dir", cmd.Flags().Lookup("data-dir"))
+	viper.BindPFlag("disable-cloud-controller", cmd.Flags().Lookup("disable-cloud-controller"))
 	viper.BindPFlag("server", cmd.Flags().Lookup("server"))
+	viper.BindPFlag("daemon", cmd.Flags().Lookup("daemon"))
 	return cmd
 }

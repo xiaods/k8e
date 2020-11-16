@@ -128,11 +128,6 @@ func initTLSCredPath(config *config.Control) error {
 	runtime.PeerServerClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "peer-server-client.key")
 	runtime.ClientETCDCert = filepath.Join(config.DataDir, "tls", "etcd", "client.crt")
 	runtime.ClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "client.key")
-	nodeName, err := os.Hostname()
-	if err != nil {
-		return err
-	}
-	os.Setenv("NODE_NAME", nodeName)
 	if config.EncryptSecrets {
 		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
 	}
@@ -201,8 +196,10 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	argsMap["secure-port"] = strconv.Itoa(cfg.APIServerPort)
 	if cfg.APIServerBindAddress == "" {
 		argsMap["bind-address"] = localhostIP.String()
+
 	} else {
 		argsMap["bind-address"] = cfg.APIServerBindAddress
+		argsMap["insecure-bind-address"] = cfg.APIServerBindAddress
 	}
 	argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
 	argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
@@ -290,7 +287,7 @@ func startWrangler(ctx context.Context, cfg *config.Control) error {
 	if err != nil {
 		return err
 	}
-	if cfg.DisableAgent {
+	if !cfg.DisableAgent {
 		go setMasterRoleLabel(ctx, coreClient.CoreV1().Nodes())
 	}
 	return nil
@@ -442,7 +439,7 @@ func genClientCerts(config *config.Control) error {
 	factory := getSigningCertFactory(regen, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, runtime.ClientCA, runtime.ClientCAKey)
 	//是否需要重新创建证书
 	var certGen bool
-	apiEndpoint := fmt.Sprintf("http://127.0.0.1:%d", 8080) //)
+	apiEndpoint := fmt.Sprintf("http://%s:%d", config.APIServerBindAddress, 8080) //)
 
 	certGen, err = factory("system:admin", []string{"system:masters"}, runtime.ClientAdminCert, runtime.ClientAdminKey)
 	if err != nil {
@@ -640,7 +637,7 @@ func ServiceIPRange(passedServiceClusterIPRange net.IPNet) (net.IPNet, net.IP, e
 }
 
 func writeKubeConfig(config *config.Control) error {
-	ip := config.BindAddress
+	ip := config.APIServerBindAddress
 	if ip == "" {
 		ip = "127.0.0.1"
 	}

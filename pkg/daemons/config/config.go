@@ -22,7 +22,7 @@ const (
 )
 
 type Control struct {
-	AdvertisePort int
+	AdvertisePort int `json:"advertise_port"`
 	AdvertiseIP   string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
@@ -70,7 +70,7 @@ type Control struct {
 
 	BindAddress   string
 	SANs          []string
-	DBInfoHandler http.Handler
+	DBInfoHandler http.Handler    `json:"-"`
 	Runtime       *ControlRuntime `json:"-"`
 	DisableAgent  bool
 }
@@ -141,6 +141,8 @@ type Agent struct {
 	Rootless                bool
 	ProtectKernelDefaults   bool
 	ServerURL               string
+	DaemonURL               string
+	Internal                bool //是否内嵌
 }
 
 type DataConfig struct {

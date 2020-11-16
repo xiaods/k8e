@@ -36,6 +36,15 @@ func run(cfg *cmds.ServerConfig) error {
 	serverConfig.ControlConfig.AdvertisePort = cfg.HTTPSPort
 	serverConfig.ControlConfig.AdvertiseIP = cfg.AdvertiseIP
 	serverConfig.ControlConfig.DisableAgent = cfg.DisableAgent
+	if cfg.APIServerBindAddress == "" {
+		ip, err := net.ChooseHostInterface()
+		if err != nil {
+			return err
+		}
+		serverConfig.ControlConfig.APIServerBindAddress = ip.String()
+	} else {
+		serverConfig.ControlConfig.APIServerBindAddress = cfg.APIServerBindAddress
+	}
 
 	_, serverConfig.ControlConfig.ClusterIPRange, err = net2.ParseCIDR(cfg.ClusterCIDR)
 	if err != nil {
@@ -49,7 +58,7 @@ func run(cfg *cmds.ServerConfig) error {
 		<-ctx.Done()
 		return nil
 	}
-	ip := serverConfig.ControlConfig.BindAddress
+	ip := serverConfig.ControlConfig.APIServerBindAddress
 	if ip == "" {
 		ip = "127.0.0.1"
 	}
@@ -59,6 +68,7 @@ func run(cfg *cmds.ServerConfig) error {
 	agentConfig.DataDir = datadir
 	agentConfig.ClusterCIDR = cfg.ClusterCIDR
 	agentConfig.DisableCCM = cfg.DisableCCM
+	agentConfig.Internal = true
 	return agent.InternlRun(ctx, &agentConfig)
 }
 

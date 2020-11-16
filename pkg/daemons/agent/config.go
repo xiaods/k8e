@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io/ioutil"
@@ -11,8 +12,19 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/xiaods/k8e/pkg/clientaccess"
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
 )
+
+func getServerConfig(info *clientaccess.Info) (*config.Control, error) {
+	data, err := clientaccess.Get("/v1-"+version.Program+"/config", info)
+	if err != nil {
+		return nil, err
+	}
+
+	controlControl := &config.Control{}
+	return controlControl, json.Unmarshal(data, controlControl)
+}
 
 func getHostFile(filename, keyFile string, info *clientaccess.Info) error {
 	basename := filepath.Base(filename)

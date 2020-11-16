@@ -47,6 +47,7 @@ func router(cfg *config.Control) http.Handler {
 	router.Path(prefix + "/client-ca.crt").Handler(fileHandler(cfg.Runtime.ClientCA))
 	router.Path(prefix + "/server-ca.crt").Handler(fileHandler(cfg.Runtime.ServerCA))
 	router.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(cfg, cfg.Runtime.ClientKubeletKey))
+	router.Path(prefix + "/config").Handler(configHandler(cfg))
 	return router
 }
 
