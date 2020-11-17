@@ -62,7 +62,7 @@ func run(cfg *cmds.ServerConfig) error {
 	if ip == "" {
 		ip = "127.0.0.1"
 	}
-	url := fmt.Sprintf("http://%s:%d", ip, 8080)
+	url := fmt.Sprintf("https://%s:%d", ip, serverConfig.ControlConfig.APIServerPort)
 	agentConfig := cmds.Agent
 	agentConfig.ServerURL = url
 	agentConfig.DataDir = datadir

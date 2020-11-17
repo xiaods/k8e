@@ -154,24 +154,24 @@ func genClientCerts(config *config.Agent) error {
 		config.ClusterCIDR = controlConfig.ClusterIPRange
 		//config.ServerURL
 	}
-	// nodeName, nodeIP, err := getHostnameAndIP(config)
-	// if err != nil {
-	// 	return err
-	// }
-	// clientCAFile := filepath.Join(config.DataDir, "client-ca.crt")
-	// if err = getHostFile(clientCAFile, "", info); err != nil {
-	// 	return err
-	// }
-	// serverCAFile := filepath.Join(config.DataDir, "server-ca.crt")
-	// if err = getHostFile(serverCAFile, "", info); err != nil {
-	// 	return err
-	// }
+	nodeName, nodeIP, err := getHostnameAndIP(config)
+	if err != nil {
+		return err
+	}
+	clientCAFile := filepath.Join(config.DataDir, "client-ca.crt")
+	if err = getHostFile(clientCAFile, "", info); err != nil {
+		return err
+	}
+	serverCAFile := filepath.Join(config.DataDir, "server-ca.crt")
+	if err = getHostFile(serverCAFile, "", info); err != nil {
+		return err
+	}
 
-	// clientKubeletCert := filepath.Join(config.DataDir, "client-kubelet.crt")
-	// clientKubeletKey := filepath.Join(config.DataDir, "client-kubelet.key")
-	// if err = getNodeNamedHostFile(clientKubeletCert, clientKubeletKey, nodeName, nodeIP, "", info); err != nil {
-	// 	return err
-	// }
+	clientKubeletCert := filepath.Join(config.DataDir, "client-kubelet.crt")
+	clientKubeletKey := filepath.Join(config.DataDir, "client-kubelet.key")
+	if err = getNodeNamedHostFile(clientKubeletCert, clientKubeletKey, nodeName, nodeIP, "", info); err != nil {
+		return err
+	}
 
 	apiEndpoint := config.APIServerURL
 	if err = control.KubeConfig(config.KubeConfigKubelet, apiEndpoint, "", "", ""); err != nil {

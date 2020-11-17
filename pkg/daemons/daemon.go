@@ -6,6 +6,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/server"
@@ -48,6 +49,7 @@ func router(cfg *config.Control) http.Handler {
 	router.Path(prefix + "/server-ca.crt").Handler(fileHandler(cfg.Runtime.ServerCA))
 	router.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(cfg, cfg.Runtime.ClientKubeletKey))
 	router.Path(prefix + "/config").Handler(configHandler(cfg))
+	router.Path(prefix + "/server-bootstrap").Handler(bootstrap.Handler(&cfg.Runtime.ControlRuntimeBootstrap))
 	return router
 }
 

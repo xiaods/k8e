@@ -72,7 +72,7 @@ func NewSelfSignedCACert(cfg Config, key crypto.Signer) (*x509.Certificate, erro
 		NotAfter:              now.Add(duration365d * 10).UTC(), //10 year cert
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		BasicConstraintsValid: true,
-		IsCA: true,
+		IsCA:                  true,
 	}
 
 	certDERBytes, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, key.Public(), key)
@@ -177,6 +177,11 @@ func CreateClientCertKey(regen bool, commonName string, organization []string, a
 	//not regenerate check certificate expiration
 	if !regen {
 		regen = expiredCert(certFile, pool)
+	}
+	if !regen {
+		if exists(certFile, keyFile) {
+			return false, nil
+		}
 	}
 	caKeyBytes, err := ioutil.ReadFile(caKeyFile)
 	if err != nil {

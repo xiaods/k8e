@@ -362,9 +362,9 @@ func defaults(config *config.Control) {
 
 	if config.APIServerPort == 0 {
 		if config.HTTPSPort != 0 {
-			config.APIServerPort = config.HTTPSPort + 1
+			config.APIServerPort = config.HTTPSPort - 1
 		} else {
-			config.APIServerPort = 6444
+			config.APIServerPort = 6443
 		}
 	}
 
@@ -439,7 +439,7 @@ func genClientCerts(config *config.Control) error {
 	factory := getSigningCertFactory(regen, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, runtime.ClientCA, runtime.ClientCAKey)
 	//是否需要重新创建证书
 	var certGen bool
-	apiEndpoint := fmt.Sprintf("http://%s:%d", config.APIServerBindAddress, 8080) //)
+	apiEndpoint := fmt.Sprintf("https://%s:%d", config.APIServerBindAddress, config.APIServerPort) //)
 
 	certGen, err = factory("system:admin", []string{"system:masters"}, runtime.ClientAdminCert, runtime.ClientAdminKey)
 	if err != nil {
