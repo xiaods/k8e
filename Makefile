@@ -7,6 +7,11 @@ LDFLAGS := "-s -w -X main.VERSION=${VERSION} -X main.COMMIT=${COMMIT} -X main.BR
 
 .PHONY: all
 
+.PHONY: deps 
+deps:
+	@go mod vendor
+	@go mod tidy
+
 .PHONY: build
 build:
 	@mkdir -p bin

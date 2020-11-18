@@ -2,9 +2,7 @@
 
 package backend
 
-import (
-	"io"
-)
+import "io"
 
 type Waiter interface {
 	Wait() error
