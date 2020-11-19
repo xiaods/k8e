@@ -34,7 +34,7 @@ func InternlRun(ctx context.Context, cfg *cmds.AgentConfig) error {
 	var err error
 	nodeConfig := &config.Node{}
 	nodeConfig.Docker = cfg.Docker
-	nodeConfig.ContainerRuntimeEndpoint = cfg.ContainerRuntimeEndpoint 
+	nodeConfig.ContainerRuntimeEndpoint = cfg.ContainerRuntimeEndpoint
 	datadir, _ := datadir.LocalHome(cfg.DataDir, true)
 	nodeConfig.AgentConfig.DataDir = datadir
 	nodeConfig.AgentConfig.APIServerURL = cfg.ServerURL
@@ -42,8 +42,12 @@ func InternlRun(ctx context.Context, cfg *cmds.AgentConfig) error {
 	if err != nil {
 		return err
 	}
-	port, _ := strconv.Atoi(u.Port())
+	port, err := strconv.Atoi(u.Port())
+	if err != nil {
+		return err
+	}
 	nodeConfig.AgentConfig.DaemonURL = fmt.Sprintf("http://%s:%d", u.Host, port+1)
+	logrus.Info("DaemonURL--->", DaemonURL)
 	nodeConfig.AgentConfig.DisableCCM = cfg.DisableCCM
 	nodeConfig.AgentConfig.Internal = cfg.Internal
 	_, nodeConfig.AgentConfig.ClusterCIDR, err = net2.ParseCIDR(cfg.ClusterCIDR)

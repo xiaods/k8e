@@ -157,10 +157,10 @@ func genClientCerts(config *config.Agent) error {
 	clientCAFile := filepath.Join(config.DataDir, "tls", "client-ca.crt")
 	serverCAFile := filepath.Join(config.DataDir, "tls", "server-ca.crt")
 	controlConfig, err := getServerConfig(info)
-	config.ClusterCIDR = controlConfig.ClusterIPRange
 	if err != nil {
 		return err
 	}
+	config.ClusterCIDR = controlConfig.ClusterIPRange
 	if !config.Internal { //非内嵌
 
 		if err = getHostFile(serverCAFile, "", info); err != nil {
