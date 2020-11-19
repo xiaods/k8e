@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
+	"net/url"
 	"os"
+	"strconv"
 
 	net2 "net"
 
@@ -31,11 +34,16 @@ func InternlRun(ctx context.Context, cfg *cmds.AgentConfig) error {
 	var err error
 	nodeConfig := &config.Node{}
 	nodeConfig.Docker = cfg.Docker
-	nodeConfig.ContainerRuntimeEndpoint = cfg.ContainerRuntimeEndpoint
+	nodeConfig.ContainerRuntimeEndpoint = cfg.ContainerRuntimeEndpoint 
 	datadir, _ := datadir.LocalHome(cfg.DataDir, true)
 	nodeConfig.AgentConfig.DataDir = datadir
 	nodeConfig.AgentConfig.APIServerURL = cfg.ServerURL
-	nodeConfig.AgentConfig.DaemonURL = cfg.DaemonURL
+	u, err := url.Parse(cfg.ServerURL)
+	if err != nil {
+		return err
+	}
+	port, _ := strconv.Atoi(u.Port())
+	nodeConfig.AgentConfig.DaemonURL = fmt.Sprintf("http://%s:%d", u.Host, port+1)
 	nodeConfig.AgentConfig.DisableCCM = cfg.DisableCCM
 	nodeConfig.AgentConfig.Internal = cfg.Internal
 	_, nodeConfig.AgentConfig.ClusterCIDR, err = net2.ParseCIDR(cfg.ClusterCIDR)

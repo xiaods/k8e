@@ -7,11 +7,12 @@ import (
 	"os/exec"
 
 	"github.com/pkg/errors"
+	be "github.com/rancher/go-powershell/backend"
 )
 
 type Local struct{}
 
-func (b *Local) StartProcess(cmd string, args ...string) (Waiter, io.Writer, io.Reader, io.Reader, error) {
+func (b *Local) StartProcess(cmd string, args ...string) (be.Waiter, io.Writer, io.Reader, io.Reader, error) {
 	command := exec.Command(cmd, args...)
 
 	stdin, err := command.StdinPipe()

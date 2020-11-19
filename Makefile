@@ -15,7 +15,7 @@ deps:
 .PHONY: build
 build:
 	@mkdir -p bin
-	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -o bin/k8e
+	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -o -mod=readonly bin/k8e 
 
 .PHONY: test
 test:
