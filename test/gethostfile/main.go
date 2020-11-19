@@ -28,7 +28,6 @@ func testGetHostFileClientCA() error {
 }
 
 func testGetHostFileKubelet() error {
-
 	hostIP, err := net.ChooseHostInterface()
 	if err != nil {
 		return err
@@ -50,11 +49,36 @@ func testGetHostFileKubelet() error {
 	return nil
 }
 
+func testGetHostFileKubeProxy() error {
+	hostIP, err := net.ChooseHostInterface()
+	if err != nil {
+		return err
+	}
+
+	hostname, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+
+	info, err := clientaccess.ParseAndValidateToken("http://127.0.0.1:8081", "")
+	fileBytes, err := agent.Request("/v1-"+version.Program+"/"+"client-kube-proxy.crt", info, agent.GetNodeNamedCrt(hostname, hostIP.String(), ""))
+	if err != nil {
+		return err
+	}
+	fileBytes, keyBytes := agent.SplitCertKeyPEM(fileBytes)
+	fmt.Println(string(fileBytes))
+	fmt.Println(string(keyBytes))
+	return nil
+}
+
 func main() {
 	fmt.Println("get client ca")
 	fmt.Println(testGetHostFileClientCA())
 	fmt.Println("----------------------------")
 	fmt.Println("get client kubelet cert")
 	fmt.Println(testGetHostFileKubelet())
+	fmt.Println("----------------------------")
+	fmt.Println("get client kube-proxy cert")
+	fmt.Println(testGetHostFileKubeProxy())
 
 }

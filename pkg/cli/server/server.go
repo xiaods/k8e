@@ -50,6 +50,12 @@ func run(cfg *cmds.ServerConfig) error {
 	if err != nil {
 		return err
 	}
+	// _, apiServerServiceIP, err := master.ServiceIPRange(*serverConfig.ControlConfig.ServiceIPRange)
+	// if err != nil {
+	// 	return err
+	// }
+	// serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, apiServerServiceIP.String())
+
 	ctx := signals.SetupSignalHandler(context.Background())
 	if err = daemons.D.StartServer(ctx, &serverConfig.ControlConfig); err != nil {
 		return err
@@ -63,9 +69,11 @@ func run(cfg *cmds.ServerConfig) error {
 		ip = "127.0.0.1"
 	}
 	url := fmt.Sprintf("https://%s:%d", ip, serverConfig.ControlConfig.APIServerPort)
+	daemonURL := fmt.Sprintf("http://%s:%d", ip, serverConfig.ControlConfig.APIServerPort+1)
 	agentConfig := cmds.Agent
 	agentConfig.ServerURL = url
 	agentConfig.DataDir = datadir
+	agentConfig.DaemonURL = daemonURL
 	agentConfig.ClusterCIDR = cfg.ClusterCIDR
 	agentConfig.DisableCCM = cfg.DisableCCM
 	agentConfig.Internal = true

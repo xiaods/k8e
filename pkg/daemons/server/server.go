@@ -192,7 +192,7 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	if cfg.AdvertiseIP != "" {
 		argsMap["advertise-address"] = cfg.AdvertiseIP
 	}
-	argsMap["insecure-port"] = "8080"
+	argsMap["insecure-port"] = "0"
 	argsMap["secure-port"] = strconv.Itoa(cfg.APIServerPort)
 	if cfg.APIServerBindAddress == "" {
 		argsMap["bind-address"] = localhostIP.String()
@@ -209,8 +209,8 @@ func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request,
 	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
 	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
 	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
-	// argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
-	// argsMap["requestheader-allowed-names"] = requestHeaderCN
+	argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
+	argsMap["requestheader-allowed-names"] = requestHeaderCN
 	// argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
 	// argsMap["proxy-client-key-file"] = runtime.ClientAuthProxyKey
 	argsMap["requestheader-extra-headers-prefix"] = "X-Remote-Extra-"
@@ -362,7 +362,7 @@ func defaults(config *config.Control) {
 
 	if config.APIServerPort == 0 {
 		if config.HTTPSPort != 0 {
-			config.APIServerPort = config.HTTPSPort - 1
+			config.APIServerPort = config.HTTPSPort
 		} else {
 			config.APIServerPort = 6443
 		}
@@ -380,6 +380,9 @@ func genCerts(config *config.Control) error {
 		return err
 	}
 	if err = genServerCerts(config); err != nil {
+		return err
+	}
+	if err = genRequestHeaderCerts(config); err != nil {
 		return err
 	}
 	if err = genETCDCerts(config); err != nil {
@@ -452,7 +455,7 @@ func genClientCerts(config *config.Control) error {
 		}
 	}
 
-	certGen, err = factory("system:kube-controller-manager", []string{"system:kube-controller-manager"}, runtime.ClientControllerCert, runtime.ClientControllerKey)
+	certGen, err = factory("system:kube-controller-manager", []string{"system:masters"}, runtime.ClientControllerCert, runtime.ClientControllerKey)
 	if err != nil {
 		return err
 	}
@@ -461,7 +464,7 @@ func genClientCerts(config *config.Control) error {
 			return err
 		}
 	}
-	certGen, err = factory("system:kube-scheduler", []string{"system:kube-scheduler "}, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey)
+	certGen, err = factory("system:kube-scheduler", nil, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey)
 	if err != nil {
 		return err
 	}
@@ -471,7 +474,7 @@ func genClientCerts(config *config.Control) error {
 		}
 	}
 
-	certGen, err = factory("kube-apiserver", nil, runtime.ClientKubeAPICert, runtime.ClientKubeAPIKey)
+	certGen, err = factory("kube-apiserver", []string{"system:masters"}, runtime.ClientKubeAPICert, runtime.ClientKubeAPIKey)
 	if err != nil {
 		return err
 	}
@@ -485,6 +488,23 @@ func genClientCerts(config *config.Control) error {
 		return err
 	}
 	if _, err := cert.LoadOrGenerateKeyFile(runtime.ClientKubeletKey, regen); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func genRequestHeaderCerts(config *config.Control) error {
+	runtime := config.Runtime
+	regen, err := cert.CreateCACertKey(version.Program+"-request-header", runtime.RequestHeaderCA, runtime.RequestHeaderCAKey)
+	if err != nil {
+		return err
+	}
+
+	if _, err := cert.CreateClientCertKey(regen, requestHeaderCN, nil,
+		nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		runtime.RequestHeaderCA, runtime.RequestHeaderCAKey,
+		runtime.ClientAuthProxyCert, runtime.ClientAuthProxyKey); err != nil {
 		return err
 	}
 

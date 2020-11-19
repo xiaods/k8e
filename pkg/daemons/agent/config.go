@@ -81,8 +81,10 @@ func getNodeNamedHostFile(filename, keyFile, nodeName, nodeIP, nodePasswordFile 
 	if err := ioutil.WriteFile(filename, fileBytes, 0600); err != nil {
 		return errors.Wrapf(err, "failed to write cert %s", filename)
 	}
-	if err := ioutil.WriteFile(keyFile, keyBytes, 0600); err != nil {
-		return errors.Wrapf(err, "failed to write key %s", filename)
+	if keyFile != "" {
+		if err := ioutil.WriteFile(keyFile, keyBytes, 0600); err != nil {
+			return errors.Wrapf(err, "failed to write key %s", filename)
+		}
 	}
 	return nil
 }

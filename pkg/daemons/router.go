@@ -75,7 +75,7 @@ func clientKubeletCert(server *config.Control, keyFile string) http.Handler {
 			sendError(err, resp)
 			return
 		}
-
+		logrus.Info("nodeName------------->", nodeName)
 		certSign, err := cert.NewSignedCert(cert.Config{
 			CommonName:   "system:node:" + nodeName,
 			Organization: []string{"system:nodes"},
@@ -99,14 +99,14 @@ func clientKubeletCert(server *config.Control, keyFile string) http.Handler {
 
 func getNodeInfo(req *http.Request) (string, string, error) {
 	nodeName := req.Header.Get(version.Program + "-Node-Name")
-	if nodeName == "" {
+	if strings.TrimSpace(nodeName) == "" {
 		return "", "", errors.New("node name not set")
 	}
 
 	nodePassword := req.Header.Get(version.Program + "-Node-Password")
-	if nodePassword == "" {
-		return "", "", nil //errors.New("node password not set")
-	}
+	// if nodePassword == "" {
+	// 	return "", "", errors.New("node password not set")
+	// }
 
 	return strings.ToLower(nodeName), nodePassword, nil
 }

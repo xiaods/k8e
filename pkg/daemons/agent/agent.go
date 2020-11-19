@@ -113,6 +113,7 @@ func coreClient(cfg string) (kubernetes.Interface, error) {
 func prepare(ctx context.Context, config *config.Node) error {
 	syssetup.Configure()
 	os.MkdirAll(filepath.Join(config.AgentConfig.DataDir, "cred"), 0700)
+	os.MkdirAll(filepath.Join(config.AgentConfig.DataDir, "tls"), 0700)
 	var err error
 	err = initTLSCredPath(config)
 	if err != nil {
@@ -145,39 +146,46 @@ func genClientCerts(config *config.Agent) error {
 	var err error
 
 	info, err := clientaccess.ParseAndValidateToken(config.DaemonURL, "")
-
-	if !config.Internal { //非内嵌
-		controlConfig, err := getServerConfig(info)
-		if err != nil {
-			return err
-		}
-		config.ClusterCIDR = controlConfig.ClusterIPRange
-		//config.ServerURL
-	}
 	nodeName, nodeIP, err := getHostnameAndIP(config)
 	if err != nil {
 		return err
 	}
-	clientCAFile := filepath.Join(config.DataDir, "client-ca.crt")
-	if err = getHostFile(clientCAFile, "", info); err != nil {
+	clientKubeletCert := filepath.Join(config.DataDir, "tls", "client-kubelet.crt")
+	clientKubeletKey := filepath.Join(config.DataDir, "tls", "client-kubelet.key")
+	clientKubeProxyCert := filepath.Join(config.DataDir, "tls", "client-kube-proxy.crt")
+	clientKubeProxyKey := filepath.Join(config.DataDir, "tls", "client-kube-proxy.key")
+	clientCAFile := filepath.Join(config.DataDir, "tls", "client-ca.crt")
+	serverCAFile := filepath.Join(config.DataDir, "tls", "server-ca.crt")
+	controlConfig, err := getServerConfig(info)
+	config.ClusterCIDR = controlConfig.ClusterIPRange
+	if err != nil {
 		return err
 	}
-	serverCAFile := filepath.Join(config.DataDir, "server-ca.crt")
-	if err = getHostFile(serverCAFile, "", info); err != nil {
-		return err
+	if !config.Internal { //非内嵌
+
+		if err = getHostFile(serverCAFile, "", info); err != nil {
+			return err
+		}
+		if err = getHostFile(clientCAFile, "", info); err != nil {
+			return err
+		}
+		if err = getNodeNamedHostFile(clientKubeletCert, clientKubeletKey, nodeName, nodeIP, "", info); err != nil {
+			return err
+		}
+		if err = getHostFile(clientKubeProxyCert, clientKubeProxyKey, info); err != nil {
+			return err
+		}
 	}
 
-	clientKubeletCert := filepath.Join(config.DataDir, "client-kubelet.crt")
-	clientKubeletKey := filepath.Join(config.DataDir, "client-kubelet.key")
-	if err = getNodeNamedHostFile(clientKubeletCert, clientKubeletKey, nodeName, nodeIP, "", info); err != nil {
+	if err = getNodeNamedHostFile(clientKubeletCert, "", nodeName, nodeIP, "", info); err != nil {
 		return err
 	}
-
 	apiEndpoint := config.APIServerURL
-	if err = control.KubeConfig(config.KubeConfigKubelet, apiEndpoint, "", "", ""); err != nil {
+	if err = control.KubeConfig(config.KubeConfigKubelet, apiEndpoint, serverCAFile, clientKubeletCert, clientKubeletKey); err != nil {
 		return err
 	}
-	if err = control.KubeConfig(config.KubeConfigKubeProxy, apiEndpoint, "", "", ""); err != nil {
+
+	if err = control.KubeConfig(config.KubeConfigKubeProxy, apiEndpoint, serverCAFile, clientKubeProxyCert, clientKubeProxyKey); err != nil {
 		return err
 	}
 

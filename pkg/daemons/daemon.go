@@ -2,6 +2,7 @@ package daemons
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/gorilla/mux"
@@ -30,9 +31,10 @@ func (d *Daemon) daemon(ctx context.Context, cfg *config.Control) {
 
 	// http.ListenAndServe(":8081", nil)
 	server := http.Server{}
-	server.Addr = ":8081"
+	server.Addr = ":" + fmt.Sprint(cfg.APIServerPort+1)
 	server.Handler = router(cfg)
 	go func() {
+		logrus.Info("Listen daemon", server.Addr)
 		logrus.Fatalf("server stopped: %v", server.ListenAndServe())
 	}()
 	go func() {
@@ -48,6 +50,7 @@ func router(cfg *config.Control) http.Handler {
 	router.Path(prefix + "/client-ca.crt").Handler(fileHandler(cfg.Runtime.ClientCA))
 	router.Path(prefix + "/server-ca.crt").Handler(fileHandler(cfg.Runtime.ServerCA))
 	router.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(cfg, cfg.Runtime.ClientKubeletKey))
+	router.Path(prefix + "/client-kube-proxy.crt").Handler(fileHandler(cfg.Runtime.ClientKubeProxyCert, cfg.Runtime.ClientKubeProxyKey))
 	router.Path(prefix + "/config").Handler(configHandler(cfg))
 	router.Path(prefix + "/server-bootstrap").Handler(bootstrap.Handler(&cfg.Runtime.ControlRuntimeBootstrap))
 	return router
