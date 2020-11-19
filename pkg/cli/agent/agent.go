@@ -46,8 +46,8 @@ func InternlRun(ctx context.Context, cfg *cmds.AgentConfig) error {
 	if err != nil {
 		return err
 	}
-	nodeConfig.AgentConfig.DaemonURL = fmt.Sprintf("http://%s:%d", u.Host, port+1)
-	logrus.Info("DaemonURL--->", DaemonURL)
+	nodeConfig.AgentConfig.DaemonURL = fmt.Sprintf("http://%s:%d", u.Hostname(), port+1)
+	logrus.Info("DaemonURL--->", nodeConfig.AgentConfig.DaemonURL)
 	nodeConfig.AgentConfig.DisableCCM = cfg.DisableCCM
 	nodeConfig.AgentConfig.Internal = cfg.Internal
 	_, nodeConfig.AgentConfig.ClusterCIDR, err = net2.ParseCIDR(cfg.ClusterCIDR)
