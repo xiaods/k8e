@@ -1,0 +1,96 @@
+#!/bin/bash
+set -e -x
+
+cd $(dirname $0)/..
+
+. ./hack/version.sh
+
+GO=${GO-go}
+
+buildDate=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+PKG="github.com/xiaods/k8e"
+PKG_CONTAINERD="github.com/containerd/containerd"
+PKG_RANCHER_CONTAINERD="github.com/rancher/containerd"
+PKG_CRICTL="github.com/kubernetes-sigs/cri-tools"
+
+VENDOR_PREFIX="${PKG}/vendor/"
+VERSIONFLAGS="
+    -X ${PKG}/pkg/version.Version=${VERSION}
+    -X ${PKG}/pkg/version.GitCommit=${COMMIT:0:8}
+
+    -X ${VENDOR_PREFIX}k8s.io/client-go/pkg/version.gitVersion=${VERSION}
+    -X ${VENDOR_PREFIX}k8s.io/client-go/pkg/version.gitCommit=${COMMIT}
+    -X ${VENDOR_PREFIX}k8s.io/client-go/pkg/version.gitTreeState=${TREE_STATE}
+    -X ${VENDOR_PREFIX}k8s.io/client-go/pkg/version.buildDate=${buildDate}
+
+    -X ${VENDOR_PREFIX}k8s.io/component-base/version.gitVersion=${VERSION}
+    -X ${VENDOR_PREFIX}k8s.io/component-base/version.gitCommit=${COMMIT}
+    -X ${VENDOR_PREFIX}k8s.io/component-base/version.gitTreeState=${TREE_STATE}
+    -X ${VENDOR_PREFIX}k8s.io/component-base/version.buildDate=${buildDate}
+
+    -X ${VENDOR_PREFIX}${PKG_CONTAINERD}/version.Version=${VERSION_CONTAINERD}
+    -X ${VENDOR_PREFIX}${PKG_CONTAINERD}/version.Package=${PKG_RANCHER_CONTAINERD}
+    -X ${VENDOR_PREFIX}${PKG_CRICTL}/pkg/version.Version=${VERSION_CRICTL}
+"
+
+LDFLAGS="
+    -w -s"
+STATIC="
+    -extldflags '-static'
+"
+
+TAGS="ctrd apparmor seccomp no_btrfs netcgo osusergo providerless"
+RUNC_TAGS="apparmor seccomp"
+RUNC_STATIC="static"
+
+if [ "$SELINUX" = "true" ]; then
+    TAGS="$TAGS selinux"
+    RUNC_TAGS="$RUNC_TAGS selinux"
+fi
+
+if [ "$STATIC_BUILD" != "true" ]; then
+    STATIC="
+"
+    RUNC_STATIC=""
+else
+    TAGS="static_build $TAGS"
+fi
+
+mkdir -p bin
+
+if [ -z "$GOARM" ] && [ "arm" = "$("${GO}" env GOARCH)" ]; then
+    GOARM=7
+fi
+
+rm -f \
+    bin/runc \
+    bin/containerd-shim \
+    bin/containerd-shim-runc-v1 \
+    bin/containerd-shim-runc-v2 \
+    bin/kubectl \
+    bin/crictl \
+    bin/ctr
+
+cleanup() {
+    exit_status=$?
+    sudo rm -rf $TMPDIR
+    exit ${exit_status}
+}
+
+
+INSTALLBIN=$(pwd)/bin
+if [ ! -x ${INSTALLBIN}/cni ]; then
+(
+    echo Building cni
+    TMPDIR=$(mktemp -d)
+    trap cleanup EXIT
+    WORKDIR=$TMPDIR/src/github.com/containernetworking/plugins
+    git clone -b $VERSION_CNIPLUGINS https://github.com/rancher/plugins.git $WORKDIR
+    cd $WORKDIR
+    git switch -c $VERSION_CNIPLUGINS
+    GOPATH=$TMPDIR CGO_ENABLED=0 "${GO}" build -tags "$TAGS" -ldflags "$LDFLAGS $STATIC" -o $INSTALLBIN/cni
+)
+fi
+
+
