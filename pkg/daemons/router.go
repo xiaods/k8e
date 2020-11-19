@@ -75,7 +75,6 @@ func clientKubeletCert(server *config.Control, keyFile string) http.Handler {
 			sendError(err, resp)
 			return
 		}
-		logrus.Info("nodeName------------->", nodeName)
 		certSign, err := cert.NewSignedCert(cert.Config{
 			CommonName:   "system:node:" + nodeName,
 			Organization: []string{"system:nodes"},
