@@ -86,7 +86,7 @@ if [ ! -x ${INSTALLBIN}/cni ]; then
     TMPDIR=$(mktemp -d)
     trap cleanup EXIT
     WORKDIR=$TMPDIR/src/github.com/containernetworking/plugins
-    git clone -b $VERSION_CNIPLUGINS https://github.com/containernetworking/plugins.git $WORKDIR
+    git clone -b $VERSION_CNIPLUGINS https://github.com/rancher/plugins.git $WORKDIR
     cd $WORKDIR
     git switch -c $VERSION_CNIPLUGINS
     GOPATH=$TMPDIR CGO_ENABLED=0 "${GO}" build -tags "$TAGS" -ldflags "$LDFLAGS $STATIC" -o $INSTALLBIN/cni
