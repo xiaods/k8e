@@ -17,6 +17,9 @@ build:
 	@mkdir -p bin
 	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -o bin/k8e 
 
+generate: 
+	go generate
+
 .PHONY: test
 test:
 	CGO_ENABLED=0 go test $(shell go list ./... | grep -v /vendor/|xargs echo) -cover

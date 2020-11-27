@@ -6,3 +6,5 @@ lib/tcplistener/cert/etcd-ca.crt
 lib/tcplistener/cert/etcd-ca.key
 lib/tcplistener/cert/etcd-server.crt
 lib/tcplistener/cert/etcd-server.key
+build/*
+pkg/data/*

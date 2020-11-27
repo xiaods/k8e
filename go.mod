@@ -65,5 +65,6 @@ require (
 	k8s.io/kubernetes v1.19.0
 	k8s.io/utils v0.0.0-20200729134348-d5654de09c73
 	sigs.k8s.io/yaml v1.2.0
+	github.com/go-bindata/go-bindata v3.1.2+incompatible
 
 )

@@ -236,6 +236,9 @@ github.com/euank/go-kmsg-parser/kmsgparser
 github.com/evanphx/json-patch
 # github.com/fsnotify/fsnotify v1.4.9
 github.com/fsnotify/fsnotify
+# github.com/go-bindata/go-bindata v3.1.2+incompatible
+## explicit
+github.com/go-bindata/go-bindata
 # github.com/go-logr/logr v0.2.0
 github.com/go-logr/logr
 # github.com/go-openapi/analysis v0.19.5
