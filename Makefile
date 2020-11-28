@@ -19,7 +19,7 @@ build:
 
 .PHONY: generate
 generate: build/data 
-	./hack/download
+	@bash ./hack/download
 	@go generate
 
 build/data:
