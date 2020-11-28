@@ -17,8 +17,13 @@ build:
 	@mkdir -p bin
 	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -o bin/k8e 
 
-generate: 
-	go generate
+.PHONY: generate
+generate: build/data 
+	./hack/download
+	@go generate
+
+build/data:
+	mkdir -p $@
 
 .PHONY: test
 test:

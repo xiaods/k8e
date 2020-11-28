@@ -1,0 +1,9 @@
+#!/bin/bash
+
+cd $(dirname $0)/..
+
+. ./scripts/version.sh
+
+ROOT_VERSION=v0.6.0-rc3
+
+curl --compressed -sfL https://github.com/rancher/k3s-root/releases/download/${ROOT_VERSION}/k3s-root-${ARCH}.tar | tar xf -
