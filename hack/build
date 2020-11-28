@@ -111,27 +111,27 @@ if [ ! -x ${INSTALLBIN}/runc ]; then
     git clone -b $VERSION_RUNC https://github.com/opencontainers/runc.git $WORKDIR
     cd $WORKDIR
     git switch -c $VERSION_RUNC
-    make EXTRA_LDFLAGS="-w -s" BUILDTAGS="$RUNC_TAGS" $RUNC_STATIC
-    cp -f ./runc $INSTALLBIN/runc
+    GOPATH=$TMPDIR make EXTRA_LDFLAGS="-w -s" BUILDTAGS="$RUNC_TAGS" $RUNC_STATIC
+    cp -f $WORKDIR/runc $INSTALLBIN/runc
 )
 fi
 
 
 INSTALLBIN=$(pwd)/bin
-VERSION_CONTAINERD=v1.4.2
-if [ ! -x ${INSTALLBIN}/runc ]; then
+if [ ! -x ${INSTALLBIN}/containerd-shim ]; then
 (
     echo Building containerd-shim
     TMPDIR=$(mktemp -d)
     trap cleanup EXIT
     WORKDIR=$TMPDIR/src/github.com/containerd/containerd
-    git clone -b $VERSION_CONTAINERD https://github.com/containerd/containerd.git $WORKDIR
+    git clone -b master https://github.com/containerd/containerd.git $WORKDIR
     cd $WORKDIR
-    git switch -c $VERSION_CONTAINERD
-    make bin/containerd-shim
-    cp -f ./containerd-shim $INSTALLBIN/containerd-shim
+    GOPATH=$TMPDIR make bin/containerd-shim
+    cp -f $WORKDIR/bin/containerd-shim $INSTALLBIN/containerd-shim
     echo Building containerd-shim-runc-v2
-    make bin/containerd-shim-runc-v2
-    cp -f ./containerd-shim-runc-v2 $INSTALLBIN/containerd-shim-runc-v2
+    GOPATH=$TMPDIR make bin/containerd-shim-runc-v2
+    cp -f $WORKDIR/bin/containerd-shim-runc-v2 $INSTALLBIN/containerd-shim-runc-v2
 )
 fi
+
+ls -s $INSTALLBIN
