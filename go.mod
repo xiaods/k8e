@@ -38,6 +38,7 @@ replace (
 
 require (
 	github.com/coreos/flannel v0.12.0
+	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/google/uuid v1.1.2
 	github.com/gorilla/mux v1.7.4
 	github.com/imdario/mergo v0.3.7 // indirect
@@ -65,6 +66,5 @@ require (
 	k8s.io/kubernetes v1.19.0
 	k8s.io/utils v0.0.0-20200729134348-d5654de09c73
 	sigs.k8s.io/yaml v1.2.0
-	github.com/go-bindata/go-bindata v3.1.2+incompatible
 
 )
