@@ -2,7 +2,7 @@
 
 cd $(dirname $0)/..
 
-. ./scripts/version.sh
+. ./hack/version.sh
 
 ROOT_VERSION=v0.6.0-rc3
 

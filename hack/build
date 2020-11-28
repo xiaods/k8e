@@ -50,8 +50,7 @@ if [ "$SELINUX" = "true" ]; then
 fi
 
 if [ "$STATIC_BUILD" != "true" ]; then
-    STATIC="
-"
+    STATIC=""
     RUNC_STATIC=""
 else
     TAGS="static_build $TAGS"
@@ -93,4 +92,46 @@ if [ ! -x ${INSTALLBIN}/cni ]; then
 )
 fi
 
+echo Building server
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS" -o bin/containerd
+ln -s containerd ./bin/k3s-agent
+ln -s containerd ./bin/k3s-server
+ln -s containerd ./bin/kubectl
+ln -s containerd ./bin/crictl
+ln -s containerd ./bin/ctr
 
+INSTALLBIN=$(pwd)/bin
+VERSION_RUNC=v1.0.0-rc92
+if [ ! -x ${INSTALLBIN}/runc ]; then
+(
+    echo Building runc
+    TMPDIR=$(mktemp -d)
+    trap cleanup EXIT
+    WORKDIR=$TMPDIR/src/github.com/opencontainers/runc
+    git clone -b $VERSION_RUNC https://github.com/opencontainers/runc.git $WORKDIR
+    cd $WORKDIR
+    git switch -c $VERSION_RUNC
+    make EXTRA_LDFLAGS="-w -s" BUILDTAGS="$RUNC_TAGS" $RUNC_STATIC
+    cp -f ./runc $INSTALLBIN/runc
+)
+fi
+
+
+INSTALLBIN=$(pwd)/bin
+VERSION_CONTAINERD=v1.4.2
+if [ ! -x ${INSTALLBIN}/runc ]; then
+(
+    echo Building containerd-shim
+    TMPDIR=$(mktemp -d)
+    trap cleanup EXIT
+    WORKDIR=$TMPDIR/src/github.com/containerd/containerd
+    git clone -b $VERSION_CONTAINERD https://github.com/containerd/containerd.git $WORKDIR
+    cd $WORKDIR
+    git switch -c $VERSION_CONTAINERD
+    make bin/containerd-shim
+    cp -f ./containerd-shim $INSTALLBIN/containerd-shim
+    echo Building containerd-shim-runc-v2
+    make bin/containerd-shim-runc-v2
+    cp -f ./containerd-shim-runc-v2 $INSTALLBIN/containerd-shim-runc-v2
+)
+fi

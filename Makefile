@@ -7,18 +7,17 @@ LDFLAGS := "-s -w -X main.VERSION=${VERSION} -X main.COMMIT=${COMMIT} -X main.BR
 
 .PHONY: all
 
-.PHONY: deps 
+.PHONY: deps
 deps:
 	@go mod vendor
 	@go mod tidy
 
 .PHONY: build
-build:
-	@mkdir -p bin
-	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -o bin/k8e 
+build: 
+	@bash ./hack/build
 
 .PHONY: generate
-generate: build/data 
+generate: build/data
 	@bash ./hack/download
 	@go generate
 
@@ -29,9 +28,3 @@ build/data:
 test:
 	CGO_ENABLED=0 go test $(shell go list ./... | grep -v /vendor/|xargs echo) -cover
 
-.PHONY: dist
-dist:
-	@mkdir -p bin
-	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e
-	@GO111MODULE=on CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e-arm64
-	@GO111MODULE=on CGO_ENABLED=0 GOOS=windows go build -ldflags $(LDFLAGS) -a -installsuffix cgo -o bin/k8e.exe

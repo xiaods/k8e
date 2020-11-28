@@ -8,6 +8,7 @@ replace (
 	// to avoid the `github.com/golang/protobuf/protoc-gen-go/generator` deprecation warning
 	// (see https://github.com/golang/protobuf/issues/1104)
 	github.com/grpc-ecosystem/grpc-gateway => github.com/grpc-ecosystem/grpc-gateway v1.14.8
+	github.com/opencontainers/runc => github.com/opencontainers/runc v1.0.0-rc92
 	google.golang.org/grpc => google.golang.org/grpc v1.26.0
 	k8s.io/api => github.com/rancher/kubernetes/staging/src/k8s.io/api v1.19.1-k3s1
 	k8s.io/apiextensions-apiserver => github.com/rancher/kubernetes/staging/src/k8s.io/apiextensions-apiserver v1.19.1-k3s1
@@ -44,8 +45,8 @@ require (
 	github.com/imdario/mergo v0.3.7 // indirect
 	github.com/morikuni/aec v1.0.0
 	github.com/natefinch/lumberjack v2.0.0+incompatible
-	github.com/opencontainers/runc v1.0.0-rc91.0.20200707015106-819fcc687efb
-	github.com/opencontainers/selinux v1.5.2
+	github.com/opencontainers/runc v1.0.0-rc92
+	github.com/opencontainers/selinux v1.6.0
 	github.com/pkg/errors v0.9.1
 	github.com/rancher/remotedialer v0.2.5
 	github.com/rancher/wrangler v0.6.1

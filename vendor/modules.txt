@@ -124,7 +124,7 @@ github.com/blang/semver
 github.com/bronze1man/goStrongswanVici
 # github.com/cespare/xxhash/v2 v2.1.1
 github.com/cespare/xxhash/v2
-# github.com/checkpoint-restore/go-criu/v4 v4.0.2
+# github.com/checkpoint-restore/go-criu/v4 v4.1.0
 github.com/checkpoint-restore/go-criu/v4
 github.com/checkpoint-restore/go-criu/v4/rpc
 # github.com/cilium/ebpf v0.0.0-20200702112145-1c8d4c9ef775
@@ -466,7 +466,7 @@ github.com/opencontainers/go-digest
 # github.com/opencontainers/image-spec v1.0.1
 github.com/opencontainers/image-spec/specs-go
 github.com/opencontainers/image-spec/specs-go/v1
-# github.com/opencontainers/runc v1.0.0-rc91.0.20200707015106-819fcc687efb
+# github.com/opencontainers/runc v1.0.0-rc92 => github.com/opencontainers/runc v1.0.0-rc92
 ## explicit
 github.com/opencontainers/runc/libcontainer
 github.com/opencontainers/runc/libcontainer/apparmor
@@ -489,9 +489,9 @@ github.com/opencontainers/runc/libcontainer/system
 github.com/opencontainers/runc/libcontainer/user
 github.com/opencontainers/runc/libcontainer/utils
 github.com/opencontainers/runc/types
-# github.com/opencontainers/runtime-spec v1.0.3-0.20200520003142-237cc4f519e2
+# github.com/opencontainers/runtime-spec v1.0.3-0.20200728170252-4d89ac9fbff6
 github.com/opencontainers/runtime-spec/specs-go
-# github.com/opencontainers/selinux v1.5.2
+# github.com/opencontainers/selinux v1.6.0
 ## explicit
 github.com/opencontainers/selinux/go-selinux
 github.com/opencontainers/selinux/go-selinux/label
@@ -600,6 +600,8 @@ github.com/vmware/govmomi/vim25/progress
 github.com/vmware/govmomi/vim25/soap
 github.com/vmware/govmomi/vim25/types
 github.com/vmware/govmomi/vim25/xml
+# github.com/willf/bitset v1.1.11-0.20200630133818-d5bec3311243
+github.com/willf/bitset
 # github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2
 github.com/xiang90/probing
 # go.etcd.io/bbolt v1.3.5
@@ -765,7 +767,7 @@ golang.org/x/oauth2/jws
 golang.org/x/oauth2/jwt
 # golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 golang.org/x/sync/singleflight
-# golang.org/x/sys v0.0.0-20200622214017-ed371f2e16b4
+# golang.org/x/sys v0.0.0-20200728102440-3e129f6d46b1
 golang.org/x/sys/cpu
 golang.org/x/sys/internal/unsafeheader
 golang.org/x/sys/unix
@@ -2383,6 +2385,7 @@ sigs.k8s.io/yaml
 # github.com/benmoss/go-powershell => github.com/rancher/go-powershell v0.0.0-20200701184732-233247d45373
 # github.com/coreos/flannel => github.com/rancher/flannel v0.12.0-k3s1
 # github.com/grpc-ecosystem/grpc-gateway => github.com/grpc-ecosystem/grpc-gateway v1.14.8
+# github.com/opencontainers/runc => github.com/opencontainers/runc v1.0.0-rc92
 # google.golang.org/grpc => google.golang.org/grpc v1.26.0
 # k8s.io/api => github.com/rancher/kubernetes/staging/src/k8s.io/api v1.19.1-k3s1
 # k8s.io/apiextensions-apiserver => github.com/rancher/kubernetes/staging/src/k8s.io/apiextensions-apiserver v1.19.1-k3s1
