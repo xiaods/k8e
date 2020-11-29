@@ -94,8 +94,8 @@ fi
 
 echo Building server
 CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS" -o bin/containerd
-ln -s containerd ./bin/k3s-agent
-ln -s containerd ./bin/k3s-server
+ln -s containerd ./bin/k8e-agent
+ln -s containerd ./bin/k8e-server
 ln -s containerd ./bin/kubectl
 ln -s containerd ./bin/crictl
 ln -s containerd ./bin/ctr

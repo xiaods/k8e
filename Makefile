@@ -13,7 +13,7 @@ deps:
 	@go mod tidy
 
 .PHONY: build
-build: 
+build:
 	@bash ./hack/build
 
 .PHONY: generate
@@ -23,6 +23,10 @@ generate: build/data
 
 build/data:
 	mkdir -p $@
+
+.PHONY: package
+package:
+	@bash ./hack/package
 
 .PHONY: test
 test:
