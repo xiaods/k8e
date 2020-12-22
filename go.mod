@@ -1,14 +1,14 @@
 module github.com/xiaods/k8e
 
-go 1.14
+go 1.15
 
 replace (
-	github.com/kubernetes-sigs/cri-tools => github.com/k3s-io/cri-tools v1.19.0-k3s1
 	github.com/benmoss/go-powershell => github.com/rancher/go-powershell v0.0.0-20200701184732-233247d45373
 	github.com/coreos/flannel => github.com/rancher/flannel v0.12.0-k3s1
 	// to avoid the `github.com/golang/protobuf/protoc-gen-go/generator` deprecation warning
 	// (see https://github.com/golang/protobuf/issues/1104)
 	github.com/grpc-ecosystem/grpc-gateway => github.com/grpc-ecosystem/grpc-gateway v1.14.8
+	github.com/kubernetes-sigs/cri-tools => github.com/k3s-io/cri-tools v1.19.0-k3s1
 	github.com/opencontainers/runc => github.com/opencontainers/runc v1.0.0-rc92
 	google.golang.org/grpc => google.golang.org/grpc v1.26.0
 	k8s.io/api => github.com/k3s-io/kubernetes/staging/src/k8s.io/api v1.19.4-k3s1
