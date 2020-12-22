@@ -3,7 +3,23 @@
 GO=${GO-go}
 ARCH=${ARCH:-$("${GO}" env GOARCH)}
 SUFFIX="-${ARCH}"
+TREE_STATE=clean
 COMMIT=$(git rev-parse HEAD)
+
+if [ -d .git ]; then
+    if [ -z "$GIT_TAG" ]; then
+        GIT_TAG=$(git tag -l --contains HEAD | head -n 1)
+    fi
+    if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+        DIRTY="-dirty"
+        TREE_STATE=dirty
+    fi
+
+    COMMIT=$(git log -n3 --pretty=format:"%H %ae"| cut -f1 -d\  | head -1)
+    if [ -z "${COMMIT}" ]; then
+    COMMIT=$(git rev-parse HEAD || true)
+    fi
+fi
 
 VERSION_CRICTL=$(grep github.com/kubernetes-sigs/cri-tools go.mod | head -n1 | awk '{print $4}')
 if [ -z "$VERSION_CRICTL" ]; then
