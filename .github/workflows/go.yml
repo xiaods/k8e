@@ -22,7 +22,7 @@ jobs:
       uses: actions/checkout@v2
     
     - name: check depends
-      run: sudo apt-get install -y libseccomp-dev && make generate
+      run: sudo apt-get install -y libseccomp-dev
 
     - name: Build
       run: make build
