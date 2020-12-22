@@ -69,7 +69,9 @@ rm -f \
     bin/containerd-shim-runc-v2 \
     bin/kubectl \
     bin/crictl \
-    bin/ctr
+    bin/ctr \
+    bin/k8e-agent \
+    bin/k8e-server
 
 cleanup() {
     exit_status=$?
