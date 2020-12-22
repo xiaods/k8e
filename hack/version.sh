@@ -5,11 +5,6 @@ ARCH=${ARCH:-$("${GO}" env GOARCH)}
 SUFFIX="-${ARCH}"
 COMMIT=$(git rev-parse HEAD)
 
-VERSION_CONTAINERD=$(grep github.com/containerd/containerd go.mod | head -n1 | awk '{print $4}')
-if [ -z "$VERSION_CONTAINERD" ]; then
-    VERSION_CONTAINERD="v0.0.0"
-fi
-
 VERSION_CRICTL=$(grep github.com/kubernetes-sigs/cri-tools go.mod | head -n1 | awk '{print $4}')
 if [ -z "$VERSION_CRICTL" ]; then
     VERSION_CRICTL="v0.0.0"
@@ -21,7 +16,6 @@ if [ -z "$VERSION_K8S" ]; then
 fi
 
 VERSION_CNIPLUGINS="v0.8.6-k3s1"
-
 
 VERSION="$VERSION_K8S+k8e-${COMMIT:0:8}$DIRTY"
 
