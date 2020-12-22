@@ -16,17 +16,6 @@ deps:
 build:
 	@bash ./hack/build
 
-.PHONY: generate
-generate: build/data
-	@go generate
-
-build/data:
-	mkdir -p $@
-
-.PHONY: package
-package:
-	@bash ./hack/package
-
 .PHONY: clean
 clean:
 	@bash ./hack/clean

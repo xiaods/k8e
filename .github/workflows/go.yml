@@ -26,9 +26,6 @@ jobs:
 
     - name: Build
       run: make build
-      
-    - name: package bin
-      run: make package
-      
+
     - name: Test
       run: go test -v .
