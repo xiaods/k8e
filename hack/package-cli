@@ -33,7 +33,7 @@ mkdir -p dist/artifacts
     set -x
 )
 
-tar cvzf ./build/out/data.tar.gz --exclude ./bin ./etc
+tar cvzf ./build/out/data.tar.gz ./bin
 HASH=$(sha256sum ./build/out/data.tar.gz | awk '{print $1}')
 
 cp ./build/out/data.tar.gz ./build/data/${HASH}.tgz

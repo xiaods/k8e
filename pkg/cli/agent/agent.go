@@ -29,7 +29,7 @@ import (
 
 const (
 	dockershimSock = "unix:///var/run/dockershim.sock"
-	containerdSock = "unix:///run/k3s/containerd/containerd.sock"
+	containerdSock = "unix:///run/k8e/containerd/containerd.sock"
 )
 
 func Run(cmd *cobra.Command, args []string) {

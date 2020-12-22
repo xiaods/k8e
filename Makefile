@@ -5,6 +5,7 @@ VERSION="${VERSION_K8S}+k8e-${COMMIT:0:8}"
 SOURCE_DIRS = cmd pkg lib main.go
 LDFLAGS := "-s -w -X main.VERSION=${VERSION} -X main.COMMIT=${COMMIT} -X main.BRANCH=${BRANCH}"
 
+all: clean deps build
 .PHONY: all
 
 .PHONY: deps
@@ -27,6 +28,10 @@ build/data:
 .PHONY: package
 package:
 	@bash ./hack/package
+
+.PHONY: clean
+clean:
+	@bash ./hack/clean
 
 .PHONY: test
 test:
