@@ -13,8 +13,12 @@ deps:
 	@go mod tidy
 
 .PHONY: build
-build:
+build: generate
 	@bash ./hack/build
+
+.PHONY: generate
+generate:
+	@bash ./hack/generate
 
 .PHONY: clean
 clean:
