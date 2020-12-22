@@ -18,7 +18,6 @@ build:
 
 .PHONY: generate
 generate: build/data
-	@bash ./hack/download
 	@go generate
 
 build/data:
@@ -28,6 +27,10 @@ build/data:
 package:
 	@bash ./hack/package
 
+.PHONY: clean
+clean:
+	@bash ./hack/clean
+	
 .PHONY: test
 test:
 	CGO_ENABLED=0 go test $(shell go list ./... | grep -v /vendor/|xargs echo) -cover
