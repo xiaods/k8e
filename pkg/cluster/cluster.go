@@ -1,133 +1,97 @@
 package cluster
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"os"
-	"path/filepath"
+	"strings"
 
-	"github.com/sirupsen/logrus"
-	"github.com/xiaods/k8e/pkg/bootstrap"
+	"github.com/pkg/errors"
+	"github.com/rancher/kine/pkg/client"
+	"github.com/rancher/kine/pkg/endpoint"
 	"github.com/xiaods/k8e/pkg/clientaccess"
+	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/storage"
-	"github.com/xiaods/k8e/pkg/version"
 )
 
 type Cluster struct {
-	s                *storage.Storage
 	clientAccessInfo *clientaccess.Info
-	cfg              *config.Control
+	config           *config.Control
+	runtime          *config.ControlRuntime
+	managedDB        managed.Driver
 	shouldBootstrap  bool
+	storageStarted   bool
+	etcdConfig       endpoint.ETCDConfig
+	joining          bool
+	saveBootstrap    bool
+	storageClient    client.Client
 }
 
-func New(cfg *config.Control) *Cluster {
-	c := &Cluster{}
-	c.s = storage.New(cfg)
-	c.cfg = cfg
-	return c
-}
+// Start creates the dynamic tls listener, http request handler,
+// handles starting and writing/reading bootstrap data, and returns a channel
+// that will be closed when datastore is ready.
+func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
+	// Set up the dynamiclistener and http request handlers
+	if err := c.initClusterAndHTTPS(ctx); err != nil {
+		return nil, errors.Wrap(err, "init cluster datastore and https")
+	}
 
-func (c *Cluster) initHTTP(ctx context.Context) error {
-	h, err := c.s.InitDB(ctx)
+	// start managed database (if necessary)
+	if err := c.start(ctx); err != nil {
+		return nil, errors.Wrap(err, "start managed database")
+	}
+
+	// get the wait channel for testing managed database readiness
+	ready, err := c.testClusterDB(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	c.cfg.DBInfoHandler = h
-	return nil
-}
 
-func (c *Cluster) BootstrapLoad(config *config.Control) error {
-	shouldBootstrap, err := c.ShouldBootstrapLoad(config)
-	if err != nil {
-		return err
-	}
-	c.shouldBootstrap = shouldBootstrap
-	if shouldBootstrap {
-		return c.bootstrap()
-	}
-	return nil
-}
-
-func (c *Cluster) ShouldBootstrapLoad(cfg *config.Control) (bool, error) {
-	if c.s != nil {
-		if cfg.JoinURL == "" { //集群server url
-			return false, nil
+	// if necessary, store bootstrap data to datastore
+	if c.saveBootstrap {
+		if err := c.save(ctx); err != nil {
+			return nil, err
 		}
+	}
 
-		token, err := clientaccess.NormalizeAndValidateTokenForUser(cfg.JoinURL, cfg.Token, "server")
-		if err != nil {
-			return false, err
+	// if necessary, record successful bootstrap
+	if c.shouldBootstrap {
+		if err := c.bootstrapped(); err != nil {
+			return nil, err
 		}
-
-		info, err := clientaccess.ParseAndValidateToken(cfg.JoinURL, token)
-		if err != nil {
-			return false, err
-		}
-		c.clientAccessInfo = info
 	}
 
-	stamp := c.bootstrapStamp()
-	if _, err := os.Stat(stamp); err == nil {
-		logrus.Info("Cluster bootstrap already complete")
-		return false, nil
-	}
-
-	// if s.db != nil && cfg.Token == "" {
-	// 	return false, fmt.Errorf("K3S_TOKEN is required to join a cluster")
-	// }
-
-	return true, nil
+	return ready, c.startStorage(ctx)
 }
 
-func (c *Cluster) bootstrapStamp() string {
-	return filepath.Join(c.cfg.DataDir, "db/joined-"+keyHash(c.cfg.Token))
-}
-
-func keyHash(passphrase string) string {
-	d := sha256.New()
-	d.Write([]byte(passphrase))
-	return hex.EncodeToString(d.Sum(nil)[:])[:12]
-}
-
-func (c *Cluster) bootstrap() error {
-	content, err := clientaccess.Get("/v1-"+version.Program+"/server-bootstrap", c.clientAccessInfo)
-	if err != nil {
-		return err
-	}
-	runtime := c.cfg.Runtime
-	return bootstrap.Read(bytes.NewBuffer(content), &runtime.ControlRuntimeBootstrap)
-}
-
-func (c *Cluster) bootstrapped() error {
-	if err := os.MkdirAll(filepath.Dir(c.bootstrapStamp()), 0700); err != nil {
-		return err
-	}
-
-	if _, err := os.Stat(c.bootstrapStamp()); err == nil {
+// startStorage starts the kine listener and configures the endpoints, if necessary.
+// This calls into the kine endpoint code, which sets up the database client
+// and unix domain socket listener if using an external database. In the case of an etcd
+// backend it just returns the user-provided etcd endpoints and tls config.
+func (c *Cluster) startStorage(ctx context.Context) error {
+	if c.storageStarted {
 		return nil
 	}
+	c.storageStarted = true
 
-	f, err := os.Create(c.bootstrapStamp())
+	// start listening on the kine socket as an etcd endpoint, or return the external etcd endpoints
+	etcdConfig, err := endpoint.Listen(ctx, c.config.Datastore)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "creating storage endpoint")
 	}
 
-	return f.Close()
+	// Persist the returned etcd configuration. We decide if we're doing leader election for embedded controllers
+	// based on what the kine wrapper tells us about the datastore. Single-node datastores like sqlite don't require
+	// leader election, while basically all others (etcd, external database, etc) do since they allow multiple servers.
+	c.etcdConfig = etcdConfig
+	c.config.Datastore.Config = etcdConfig.TLSConfig
+	c.config.Datastore.Endpoint = strings.Join(etcdConfig.Endpoints, ",")
+	c.config.NoLeaderElect = !etcdConfig.LeaderElect
+	return nil
 }
 
-func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
-	if err := c.initHTTP(ctx); err != nil {
-		return nil, err
+// New creates an initial cluster using the provided configuration
+func New(config *config.Control) *Cluster {
+	return &Cluster{
+		config:  config,
+		runtime: config.Runtime,
 	}
-	ch, err := c.s.Start(ctx, c.clientAccessInfo)
-	if err != nil {
-		return nil, err
-	}
-	if c.shouldBootstrap {
-		return ch, c.bootstrapped()
-	}
-	return ch, nil
 }

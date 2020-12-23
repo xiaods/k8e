@@ -10,7 +10,7 @@ import (
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/daemons/server"
+	"github.com/xiaods/k8e/pkg/server"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -27,9 +27,6 @@ type NodeComponent func(ctx context.Context, cfg *config.Node) error
 type Daemon struct{}
 
 func (d *Daemon) daemon(ctx context.Context, cfg *config.Control) {
-	// http.Handle("/db/info", cfg.DBInfoHandler) //用于获取etcd集群信息
-
-	// http.ListenAndServe(":8081", nil)
 	server := http.Server{}
 	server.Addr = ":" + fmt.Sprint(cfg.APIServerPort+1)
 	server.Handler = router(cfg)
@@ -46,7 +43,6 @@ func (d *Daemon) daemon(ctx context.Context, cfg *config.Control) {
 func router(cfg *config.Control) http.Handler {
 	prefix := "/v1-" + version.Program
 	router := mux.NewRouter()
-	router.Path("/db/info").Handler(cfg.DBInfoHandler)
 	router.Path(prefix + "/client-ca.crt").Handler(fileHandler(cfg.Runtime.ClientCA))
 	router.Path(prefix + "/server-ca.crt").Handler(fileHandler(cfg.Runtime.ServerCA))
 	router.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(cfg, cfg.Runtime.ClientKubeletKey))

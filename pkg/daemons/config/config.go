@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rancher/kine/pkg/endpoint"
 	"google.golang.org/grpc"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 )
@@ -23,7 +24,7 @@ const (
 )
 
 type Control struct {
-	AdvertisePort int `json:"advertise_port"`
+	AdvertisePort int
 	AdvertiseIP   string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
@@ -44,7 +45,7 @@ type Control struct {
 	DataDir                  string
 	Skips                    map[string]bool
 	Disables                 map[string]bool
-	Datastore                DataConfig
+	Datastore                endpoint.Config
 	NoScheduler              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
@@ -69,11 +70,10 @@ type Control struct {
 	EtcdSnapshotCron         string
 	EtcdSnapshotRetention    int
 
-	BindAddress   string
-	SANs          []string
-	DBInfoHandler http.Handler    `json:"-"`
-	Runtime       *ControlRuntime `json:"-"`
-	DisableAgent  bool
+	BindAddress string
+	SANs        []string
+	PrivateIP   string
+	Runtime     *ControlRuntime `json:"-"`
 }
 
 type Node struct {

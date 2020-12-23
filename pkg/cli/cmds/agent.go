@@ -9,7 +9,7 @@ import (
 	"github.com/xiaods/k8e/pkg/version"
 )
 
-type AgentConfig struct {
+type Agent struct {
 	Token                    string
 	TokenFile                string
 	ClusterSecret            string
@@ -52,8 +52,8 @@ type AgentShared struct {
 }
 
 var (
-	appName = filepath.Base(os.Args[0])
-	Agent   AgentConfig
+	appName     = filepath.Base(os.Args[0])
+	AgentConfig Agent
 )
 
 func NewAgentCommand(run func(cmd *cobra.Command, args []string)) *cobra.Command {
