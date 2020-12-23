@@ -63,48 +63,56 @@ replace (
 require (
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/bronze1man/goStrongswanVici v0.0.0-20190828090544-27d02f80ba40 // indirect
-	github.com/containerd/containerd v1.4.0 // indirect
+	github.com/containerd/containerd v1.4.0
+	github.com/containerd/cri v1.11.1-0.20200820101445-b0cc07999aa5
 	github.com/coreos/flannel v0.12.0
-	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f // indirect
-	github.com/docker/docker v17.12.0-ce-rc1.0.20200916142827-bd33bbf0497b+incompatible // indirect
-	github.com/erikdubbelboer/gspt v0.0.0-20201015204752-6cb2489021da
+	github.com/coreos/go-iptables v0.4.5
+	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f
+	github.com/docker/docker v17.12.0-ce-rc1.0.20200916142827-bd33bbf0497b+incompatible
+	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
+	github.com/frankban/quicktest v1.10.2 // indirect
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
-	github.com/google/go-cmp v0.5.2 // indirect
-	github.com/google/uuid v1.1.2
-	github.com/gorilla/mux v1.8.0
-	github.com/gorilla/websocket v1.4.1 // indirect
-	github.com/hashicorp/golang-lru v0.5.3 // indirect
+	github.com/go-sql-driver/mysql v1.4.1
+	github.com/google/tcpproxy v0.0.0-20180808230851-dfa16c61dad2
+	github.com/google/uuid v1.1.1
+	github.com/gorilla/mux v1.7.4
+	github.com/gorilla/websocket v1.4.1
+	github.com/kubernetes-sigs/cri-tools v0.0.0-00010101000000-000000000000
+	github.com/lib/pq v1.8.0
+	github.com/mattn/go-sqlite3 v1.14.4
 	github.com/morikuni/aec v1.0.0
 	github.com/natefinch/lumberjack v2.0.0+incompatible
-	github.com/onsi/ginkgo v1.14.0 // indirect
 	github.com/opencontainers/runc v1.0.0-rc92
 	github.com/opencontainers/selinux v1.6.0
+	github.com/pierrec/lz4 v2.5.2+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/rancher/dynamiclistener v0.2.1
+	github.com/rancher/helm-controller v0.7.3
 	github.com/rancher/kine v0.5.1
 	github.com/rancher/remotedialer v0.2.0
 	github.com/rancher/wrangler v0.6.1
-	github.com/rancher/wrangler-api v0.2.0
+	github.com/rancher/wrangler-api v0.6.0
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/rootless-containers/rootlesskit v0.11.1
-	github.com/sirupsen/logrus v1.7.0
-	github.com/spf13/cobra v1.0.0
-	github.com/spf13/viper v1.4.0
+	github.com/rootless-containers/rootlesskit v0.10.0
+	github.com/sirupsen/logrus v1.6.0
+	github.com/spf13/pflag v1.0.5
+	github.com/stretchr/testify v1.6.1
+	github.com/tchap/go-patricia v2.3.0+incompatible // indirect
+	github.com/urfave/cli v1.22.2
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200819165624-17cef6e3e9d5
 	golang.org/x/crypto v0.0.0-20201002170205-7f63de1d35b0
 	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
 	golang.org/x/sys v0.0.0-20201112073958-5cba982894dd
 	google.golang.org/grpc v1.31.1
 	gopkg.in/yaml.v2 v2.3.0
-	gopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776 // indirect
 	k8s.io/api v0.19.0
 	k8s.io/apimachinery v0.19.0
 	k8s.io/apiserver v0.19.0
 	k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
-	k8s.io/component-base v0.19.0 // indirect
+	k8s.io/cloud-provider v0.0.0
+	k8s.io/component-base v0.19.0
 	k8s.io/cri-api v0.19.0
 	k8s.io/klog v1.0.0
-	k8s.io/kube-aggregator v0.18.0 // indirect
 	k8s.io/kubernetes v1.19.5
-	k8s.io/utils v0.0.0-20200729134348-d5654de09c73
+	sigs.k8s.io/yaml v1.2.0
 )

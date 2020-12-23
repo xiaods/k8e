@@ -20,6 +20,7 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/rancher/wrangler/pkg/generic"
 	v1 "k8s.io/api/core/v1"
@@ -40,20 +41,15 @@ import (
 type EndpointsHandler func(string, *v1.Endpoints) (*v1.Endpoints, error)
 
 type EndpointsController interface {
+	generic.ControllerMeta
 	EndpointsClient
 
 	OnChange(ctx context.Context, name string, sync EndpointsHandler)
 	OnRemove(ctx context.Context, name string, sync EndpointsHandler)
 	Enqueue(namespace, name string)
+	EnqueueAfter(namespace, name string, duration time.Duration)
 
 	Cache() EndpointsCache
-
-	Informer() cache.SharedIndexInformer
-	GroupVersionKind() schema.GroupVersionKind
-
-	AddGenericHandler(ctx context.Context, name string, handler generic.Handler)
-	AddGenericRemoveHandler(ctx context.Context, name string, handler generic.Handler)
-	Updater() generic.Updater
 }
 
 type EndpointsClient interface {
@@ -118,26 +114,21 @@ func (c *endpointsController) Updater() generic.Updater {
 	}
 }
 
-func UpdateEndpointsOnChange(updater generic.Updater, handler EndpointsHandler) EndpointsHandler {
-	return func(key string, obj *v1.Endpoints) (*v1.Endpoints, error) {
-		if obj == nil {
-			return handler(key, nil)
-		}
-
-		copyObj := obj.DeepCopy()
-		newObj, err := handler(key, copyObj)
-		if newObj != nil {
-			copyObj = newObj
-		}
-		if obj.ResourceVersion == copyObj.ResourceVersion && !equality.Semantic.DeepEqual(obj, copyObj) {
-			newObj, err := updater(copyObj)
-			if newObj != nil && err == nil {
-				copyObj = newObj.(*v1.Endpoints)
-			}
-		}
-
-		return copyObj, err
+func UpdateEndpointsDeepCopyOnChange(client EndpointsClient, obj *v1.Endpoints, handler func(obj *v1.Endpoints) (*v1.Endpoints, error)) (*v1.Endpoints, error) {
+	if obj == nil {
+		return obj, nil
 	}
+
+	copyObj := obj.DeepCopy()
+	newObj, err := handler(copyObj)
+	if newObj != nil {
+		copyObj = newObj
+	}
+	if obj.ResourceVersion == copyObj.ResourceVersion && !equality.Semantic.DeepEqual(obj, copyObj) {
+		return client.Update(copyObj)
+	}
+
+	return copyObj, err
 }
 
 func (c *endpointsController) AddGenericHandler(ctx context.Context, name string, handler generic.Handler) {
@@ -162,6 +153,10 @@ func (c *endpointsController) Enqueue(namespace, name string) {
 	c.controllerManager.Enqueue(c.gvk, c.informer.Informer(), namespace, name)
 }
 
+func (c *endpointsController) EnqueueAfter(namespace, name string, duration time.Duration) {
+	c.controllerManager.EnqueueAfter(c.gvk, c.informer.Informer(), namespace, name, duration)
+}
+
 func (c *endpointsController) Informer() cache.SharedIndexInformer {
 	return c.informer.Informer()
 }
@@ -178,31 +173,34 @@ func (c *endpointsController) Cache() EndpointsCache {
 }
 
 func (c *endpointsController) Create(obj *v1.Endpoints) (*v1.Endpoints, error) {
-	return c.clientGetter.Endpoints(obj.Namespace).Create(obj)
+	return c.clientGetter.Endpoints(obj.Namespace).Create(context.TODO(), obj, metav1.CreateOptions{})
 }
 
 func (c *endpointsController) Update(obj *v1.Endpoints) (*v1.Endpoints, error) {
-	return c.clientGetter.Endpoints(obj.Namespace).Update(obj)
+	return c.clientGetter.Endpoints(obj.Namespace).Update(context.TODO(), obj, metav1.UpdateOptions{})
 }
 
 func (c *endpointsController) Delete(namespace, name string, options *metav1.DeleteOptions) error {
-	return c.clientGetter.Endpoints(namespace).Delete(name, options)
+	if options == nil {
+		options = &metav1.DeleteOptions{}
+	}
+	return c.clientGetter.Endpoints(namespace).Delete(context.TODO(), name, *options)
 }
 
 func (c *endpointsController) Get(namespace, name string, options metav1.GetOptions) (*v1.Endpoints, error) {
-	return c.clientGetter.Endpoints(namespace).Get(name, options)
+	return c.clientGetter.Endpoints(namespace).Get(context.TODO(), name, options)
 }
 
 func (c *endpointsController) List(namespace string, opts metav1.ListOptions) (*v1.EndpointsList, error) {
-	return c.clientGetter.Endpoints(namespace).List(opts)
+	return c.clientGetter.Endpoints(namespace).List(context.TODO(), opts)
 }
 
 func (c *endpointsController) Watch(namespace string, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.clientGetter.Endpoints(namespace).Watch(opts)
+	return c.clientGetter.Endpoints(namespace).Watch(context.TODO(), opts)
 }
 
 func (c *endpointsController) Patch(namespace, name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.Endpoints, err error) {
-	return c.clientGetter.Endpoints(namespace).Patch(name, pt, data, subresources...)
+	return c.clientGetter.Endpoints(namespace).Patch(context.TODO(), name, pt, data, metav1.PatchOptions{}, subresources...)
 }
 
 type endpointsCache struct {
@@ -231,6 +229,7 @@ func (c *endpointsCache) GetByIndex(indexName, key string) (result []*v1.Endpoin
 	if err != nil {
 		return nil, err
 	}
+	result = make([]*v1.Endpoints, 0, len(objs))
 	for _, obj := range objs {
 		result = append(result, obj.(*v1.Endpoints))
 	}

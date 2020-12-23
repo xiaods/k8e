@@ -20,6 +20,7 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/rancher/wrangler/pkg/generic"
 	v1 "k8s.io/api/core/v1"
@@ -40,20 +41,15 @@ import (
 type ServiceAccountHandler func(string, *v1.ServiceAccount) (*v1.ServiceAccount, error)
 
 type ServiceAccountController interface {
+	generic.ControllerMeta
 	ServiceAccountClient
 
 	OnChange(ctx context.Context, name string, sync ServiceAccountHandler)
 	OnRemove(ctx context.Context, name string, sync ServiceAccountHandler)
 	Enqueue(namespace, name string)
+	EnqueueAfter(namespace, name string, duration time.Duration)
 
 	Cache() ServiceAccountCache
-
-	Informer() cache.SharedIndexInformer
-	GroupVersionKind() schema.GroupVersionKind
-
-	AddGenericHandler(ctx context.Context, name string, handler generic.Handler)
-	AddGenericRemoveHandler(ctx context.Context, name string, handler generic.Handler)
-	Updater() generic.Updater
 }
 
 type ServiceAccountClient interface {
@@ -118,26 +114,21 @@ func (c *serviceAccountController) Updater() generic.Updater {
 	}
 }
 
-func UpdateServiceAccountOnChange(updater generic.Updater, handler ServiceAccountHandler) ServiceAccountHandler {
-	return func(key string, obj *v1.ServiceAccount) (*v1.ServiceAccount, error) {
-		if obj == nil {
-			return handler(key, nil)
-		}
-
-		copyObj := obj.DeepCopy()
-		newObj, err := handler(key, copyObj)
-		if newObj != nil {
-			copyObj = newObj
-		}
-		if obj.ResourceVersion == copyObj.ResourceVersion && !equality.Semantic.DeepEqual(obj, copyObj) {
-			newObj, err := updater(copyObj)
-			if newObj != nil && err == nil {
-				copyObj = newObj.(*v1.ServiceAccount)
-			}
-		}
-
-		return copyObj, err
+func UpdateServiceAccountDeepCopyOnChange(client ServiceAccountClient, obj *v1.ServiceAccount, handler func(obj *v1.ServiceAccount) (*v1.ServiceAccount, error)) (*v1.ServiceAccount, error) {
+	if obj == nil {
+		return obj, nil
 	}
+
+	copyObj := obj.DeepCopy()
+	newObj, err := handler(copyObj)
+	if newObj != nil {
+		copyObj = newObj
+	}
+	if obj.ResourceVersion == copyObj.ResourceVersion && !equality.Semantic.DeepEqual(obj, copyObj) {
+		return client.Update(copyObj)
+	}
+
+	return copyObj, err
 }
 
 func (c *serviceAccountController) AddGenericHandler(ctx context.Context, name string, handler generic.Handler) {
@@ -162,6 +153,10 @@ func (c *serviceAccountController) Enqueue(namespace, name string) {
 	c.controllerManager.Enqueue(c.gvk, c.informer.Informer(), namespace, name)
 }
 
+func (c *serviceAccountController) EnqueueAfter(namespace, name string, duration time.Duration) {
+	c.controllerManager.EnqueueAfter(c.gvk, c.informer.Informer(), namespace, name, duration)
+}
+
 func (c *serviceAccountController) Informer() cache.SharedIndexInformer {
 	return c.informer.Informer()
 }
@@ -178,31 +173,34 @@ func (c *serviceAccountController) Cache() ServiceAccountCache {
 }
 
 func (c *serviceAccountController) Create(obj *v1.ServiceAccount) (*v1.ServiceAccount, error) {
-	return c.clientGetter.ServiceAccounts(obj.Namespace).Create(obj)
+	return c.clientGetter.ServiceAccounts(obj.Namespace).Create(context.TODO(), obj, metav1.CreateOptions{})
 }
 
 func (c *serviceAccountController) Update(obj *v1.ServiceAccount) (*v1.ServiceAccount, error) {
-	return c.clientGetter.ServiceAccounts(obj.Namespace).Update(obj)
+	return c.clientGetter.ServiceAccounts(obj.Namespace).Update(context.TODO(), obj, metav1.UpdateOptions{})
 }
 
 func (c *serviceAccountController) Delete(namespace, name string, options *metav1.DeleteOptions) error {
-	return c.clientGetter.ServiceAccounts(namespace).Delete(name, options)
+	if options == nil {
+		options = &metav1.DeleteOptions{}
+	}
+	return c.clientGetter.ServiceAccounts(namespace).Delete(context.TODO(), name, *options)
 }
 
 func (c *serviceAccountController) Get(namespace, name string, options metav1.GetOptions) (*v1.ServiceAccount, error) {
-	return c.clientGetter.ServiceAccounts(namespace).Get(name, options)
+	return c.clientGetter.ServiceAccounts(namespace).Get(context.TODO(), name, options)
 }
 
 func (c *serviceAccountController) List(namespace string, opts metav1.ListOptions) (*v1.ServiceAccountList, error) {
-	return c.clientGetter.ServiceAccounts(namespace).List(opts)
+	return c.clientGetter.ServiceAccounts(namespace).List(context.TODO(), opts)
 }
 
 func (c *serviceAccountController) Watch(namespace string, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.clientGetter.ServiceAccounts(namespace).Watch(opts)
+	return c.clientGetter.ServiceAccounts(namespace).Watch(context.TODO(), opts)
 }
 
 func (c *serviceAccountController) Patch(namespace, name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.ServiceAccount, err error) {
-	return c.clientGetter.ServiceAccounts(namespace).Patch(name, pt, data, subresources...)
+	return c.clientGetter.ServiceAccounts(namespace).Patch(context.TODO(), name, pt, data, metav1.PatchOptions{}, subresources...)
 }
 
 type serviceAccountCache struct {
@@ -231,6 +229,7 @@ func (c *serviceAccountCache) GetByIndex(indexName, key string) (result []*v1.Se
 	if err != nil {
 		return nil, err
 	}
+	result = make([]*v1.ServiceAccount, 0, len(objs))
 	for _, obj := range objs {
 		result = append(result, obj.(*v1.ServiceAccount))
 	}

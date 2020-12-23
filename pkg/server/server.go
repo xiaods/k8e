@@ -2,311 +2,431 @@ package server
 
 import (
 	"context"
-	"crypto/x509"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
-	"net"
-	"net/http"
+	"io/ioutil"
+	net2 "net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/sirupsen/logrus"
-	"github.com/xiaods/k8e/lib/fileutil"
-	"github.com/xiaods/k8e/lib/tcplistener/cert"
+	corev1 "k8s.io/api/core/v1"
+
+	"github.com/pkg/errors"
+	"github.com/rancher/helm-controller/pkg/helm"
 	"github.com/xiaods/k8e/pkg/clientaccess"
-	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control"
-	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/datadir"
+	"github.com/xiaods/k8e/pkg/deploy"
+	"github.com/xiaods/k8e/pkg/node"
+	"github.com/xiaods/k8e/pkg/rootlessports"
+	"github.com/xiaods/k8e/pkg/servicelb"
+	"github.com/xiaods/k8e/pkg/static"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	v1 "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	"github.com/rancher/wrangler/pkg/leader"
+	"github.com/rancher/wrangler/pkg/resolvehome"
+	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apiserver/pkg/authentication/authenticator"
-	"k8s.io/client-go/kubernetes"
-	v1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog"
-	app2 "k8s.io/kubernetes/cmd/controller-manager/app"
-	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
-	kubeoptions "k8s.io/kubernetes/pkg/kubeapiserver/options"
-	"k8s.io/kubernetes/pkg/master"
-	"k8s.io/utils/integer"
-	utilnet "k8s.io/utils/net"
-)
-
-var (
-	localhostIP     = net.ParseIP("127.0.0.1")
-	requestHeaderCN = "system:auth-proxy"
+	"k8s.io/apimachinery/pkg/util/net"
 )
 
 const MasterRoleLabelKey = "node-role.kubernetes.io/master"
 
-func ApiServer(ctx context.Context, cfg *config.Control) error {
-	//start apiserver
-	var err error
-	_, _, err = apiServer(ctx, cfg)
+func resolveDataDir(dataDir string) (string, error) {
+	dataDir, err := datadir.Resolve(dataDir)
+	return filepath.Join(dataDir, "server"), err
+}
+
+func StartServer(ctx context.Context, config *Config) error {
+	if err := setupDataDirAndChdir(&config.ControlConfig); err != nil {
+		return err
+	}
+
+	if err := setNoProxyEnv(&config.ControlConfig); err != nil {
+		return err
+	}
+
+	if err := control.Server(ctx, &config.ControlConfig); err != nil {
+		return errors.Wrap(err, "starting kubernetes")
+	}
+
+	if err := startWrangler(ctx, config); err != nil {
+		return errors.Wrap(err, "starting tls server")
+	}
+
+	for _, hook := range config.StartupHooks {
+		if err := hook(ctx, config.ControlConfig.Runtime.APIServerReady, config.ControlConfig.Runtime.KubeConfigAdmin); err != nil {
+			return errors.Wrap(err, "startup hook")
+		}
+	}
+
+	ip := net2.ParseIP(config.ControlConfig.BindAddress)
+	if ip == nil {
+		hostIP, err := net.ChooseHostInterface()
+		if err == nil {
+			ip = hostIP
+		} else {
+			ip = net2.ParseIP("127.0.0.1")
+		}
+	}
+
+	if err := printTokens(ip.String(), &config.ControlConfig); err != nil {
+		return err
+	}
+
+	return writeKubeConfig(config.ControlConfig.Runtime.ServerCA, config)
+}
+
+func startWrangler(ctx context.Context, config *Config) error {
+	var (
+		err           error
+		controlConfig = &config.ControlConfig
+	)
+
+	ca, err := ioutil.ReadFile(config.ControlConfig.Runtime.ServerCA)
 	if err != nil {
 		return err
 	}
-	if err = waitForAPIServerInBackground(ctx, cfg.Runtime); err != nil {
-		return err
-	}
+
+	controlConfig.Runtime.Handler = router(controlConfig, controlConfig.Runtime.Tunnel, ca)
+
+	// Start in background
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-config.ControlConfig.Runtime.APIServerReady:
+			if err := runControllers(ctx, config); err != nil {
+				logrus.Fatalf("failed to start controllers: %v", err)
+			}
+		}
+	}()
+
 	return nil
 }
 
-func Scheduler(ctx context.Context, cfg *config.Control) error {
-	if err := scheduler(ctx, cfg); err != nil {
-		return err
-	}
-	return nil
-}
+func runControllers(ctx context.Context, config *Config) error {
+	controlConfig := &config.ControlConfig
 
-func ControllerManager(ctx context.Context, cfg *config.Control) error {
-	if err := controllerManager(ctx, cfg); err != nil {
-		return err
-	}
-	return nil
-}
-
-func Kubectl(ctx context.Context, cfg *config.Control) error {
-	return writeKubeConfig(cfg)
-}
-
-func initTLSCredPath(config *config.Control) error {
-	runtime := config.Runtime
-	runtime.ClientCA = filepath.Join(config.DataDir, "tls", "client-ca.crt")
-	runtime.ClientCAKey = filepath.Join(config.DataDir, "tls", "client-ca.key")
-	runtime.ServerCA = filepath.Join(config.DataDir, "tls", "server-ca.crt")
-	runtime.ServerCAKey = filepath.Join(config.DataDir, "tls", "server-ca.key")
-	runtime.RequestHeaderCA = filepath.Join(config.DataDir, "tls", "request-header-ca.crt")
-	runtime.RequestHeaderCAKey = filepath.Join(config.DataDir, "tls", "request-header-ca.key")
-	runtime.IPSECKey = filepath.Join(config.DataDir, "cred", "ipsec.psk")
-
-	runtime.ServiceKey = filepath.Join(config.DataDir, "tls", "service.key")
-	runtime.PasswdFile = filepath.Join(config.DataDir, "cred", "passwd")
-	runtime.NodePasswdFile = filepath.Join(config.DataDir, "cred", "node-passwd")
-
-	runtime.KubeConfigAdmin = filepath.Join(config.DataDir, "cred", "admin.kubeconfig")
-	runtime.KubeConfigController = filepath.Join(config.DataDir, "cred", "controller.kubeconfig")
-	runtime.KubeConfigScheduler = filepath.Join(config.DataDir, "cred", "scheduler.kubeconfig")
-	runtime.KubeConfigAPIServer = filepath.Join(config.DataDir, "cred", "api-server.kubeconfig")
-	runtime.KubeConfigCloudController = filepath.Join(config.DataDir, "cred", "cloud-controller.kubeconfig")
-
-	runtime.ClientAdminCert = filepath.Join(config.DataDir, "tls", "client-admin.crt")
-	runtime.ClientAdminKey = filepath.Join(config.DataDir, "tls", "client-admin.key")
-	runtime.ClientControllerCert = filepath.Join(config.DataDir, "tls", "client-controller.crt")
-	runtime.ClientControllerKey = filepath.Join(config.DataDir, "tls", "client-controller.key")
-	runtime.ClientCloudControllerCert = filepath.Join(config.DataDir, "tls", "client-cloud-controller.crt")
-	runtime.ClientCloudControllerKey = filepath.Join(config.DataDir, "tls", "client-cloud-controller.key")
-	runtime.ClientSchedulerCert = filepath.Join(config.DataDir, "tls", "client-scheduler.crt")
-	runtime.ClientSchedulerKey = filepath.Join(config.DataDir, "tls", "client-scheduler.key")
-	runtime.ClientKubeAPICert = filepath.Join(config.DataDir, "tls", "client-kube-apiserver.crt")
-	runtime.ClientKubeAPIKey = filepath.Join(config.DataDir, "tls", "client-kube-apiserver.key")
-	runtime.ClientKubeProxyCert = filepath.Join(config.DataDir, "tls", "client-kube-proxy.crt")
-	runtime.ClientKubeProxyKey = filepath.Join(config.DataDir, "tls", "client-kube-proxy.key")
-	runtime.ClientK3sControllerCert = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-controller.crt")
-	runtime.ClientK3sControllerKey = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-controller.key")
-
-	runtime.ServingKubeAPICert = filepath.Join(config.DataDir, "tls", "serving-kube-apiserver.crt")
-	runtime.ServingKubeAPIKey = filepath.Join(config.DataDir, "tls", "serving-kube-apiserver.key")
-
-	runtime.ClientKubeletKey = filepath.Join(config.DataDir, "tls", "client-kubelet.key")
-	runtime.ServingKubeletKey = filepath.Join(config.DataDir, "tls", "serving-kubelet.key")
-
-	runtime.ClientAuthProxyCert = filepath.Join(config.DataDir, "tls", "client-auth-proxy.crt")
-	runtime.ClientAuthProxyKey = filepath.Join(config.DataDir, "tls", "client-auth-proxy.key")
-
-	runtime.ETCDServerCA = filepath.Join(config.DataDir, "tls", "etcd", "server-ca.crt")
-	runtime.ETCDServerCAKey = filepath.Join(config.DataDir, "tls", "etcd", "server-ca.key")
-	runtime.ETCDPeerCA = filepath.Join(config.DataDir, "tls", "etcd", "peer-ca.crt")
-	runtime.ETCDPeerCAKey = filepath.Join(config.DataDir, "tls", "etcd", "peer-ca.key")
-	runtime.ServerETCDCert = filepath.Join(config.DataDir, "tls", "etcd", "server-client.crt")
-	runtime.ServerETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "server-client.key")
-	runtime.PeerServerClientETCDCert = filepath.Join(config.DataDir, "tls", "etcd", "peer-server-client.crt")
-	runtime.PeerServerClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "peer-server-client.key")
-	runtime.ClientETCDCert = filepath.Join(config.DataDir, "tls", "etcd", "client.crt")
-	runtime.ClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "client.key")
-	if config.EncryptSecrets {
-		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
-	}
-	return nil
-}
-
-func Prepare(ctx context.Context, config *config.Control) error {
-	return prepare(ctx, config)
-}
-
-func prepare(ctx context.Context, config *config.Control) error {
-	var err error
-	defaults(config)
-	config.DataDir, err = filepath.Abs(config.DataDir)
+	sc, err := newContext(ctx, controlConfig.Runtime.KubeConfigAdmin)
 	if err != nil {
 		return err
 	}
 
-	os.MkdirAll(filepath.Join(config.DataDir, "tls"), 0700)
-	os.MkdirAll(filepath.Join(config.DataDir, "cred"), 0700)
-
-	initTLSCredPath(config)
-
-	c := cluster.New(config)
-	err = c.BootstrapLoad(config)
-	if err != nil {
-		return err
-	}
-	//创建证书
-	err = genCerts(config)
-	if err != nil {
+	if err := stageFiles(ctx, sc, controlConfig); err != nil {
 		return err
 	}
 
-	err = genServiceAccount(config.Runtime)
-	if err != nil {
+	controlConfig.Runtime.Core = sc.Core
+	if config.ControlConfig.Runtime.ClusterControllerStart != nil {
+		if err := config.ControlConfig.Runtime.ClusterControllerStart(ctx); err != nil {
+			return errors.Wrapf(err, "starting cluster controllers")
+		}
+	}
+
+	if err := sc.Start(ctx); err != nil {
 		return err
 	}
 
-	ready, err := c.Start(ctx)
-	if err != nil {
-		return err
+	start := func(ctx context.Context) {
+		if err := masterControllers(ctx, sc, config); err != nil {
+			panic(err)
+		}
+		if err := sc.Start(ctx); err != nil {
+			panic(err)
+		}
 	}
-	config.Runtime.ETCDReady = ready
-	return nil
-}
-
-//--service-account-signing-key-file, --service-account-issuer, and --api-audiences should be specified together
-func apiServer(ctx context.Context, cfg *config.Control) (authenticator.Request, http.Handler, error) {
-	argsMap := make(map[string]string)
-	setEtcdStorageBackend(argsMap, cfg)
-	certDir := filepath.Join(cfg.DataDir, "tls", "temporary-certs")
-	os.MkdirAll(certDir, 0700)
-	runtime := cfg.Runtime
-	//存放 TLS 证书的目录。如果提供了 --tls-cert-file 和 --tls-private-key-file 选项，该标志将被忽略。（默认值 "/var/run/kubernetes"）
-	argsMap["cert-dir"] = certDir
-	argsMap["allow-privileged"] = "true"
-	argsMap["authorization-mode"] = strings.Join([]string{modes.ModeNode, modes.ModeRBAC}, ",")
-	argsMap["service-account-signing-key-file"] = runtime.ServiceKey
-	argsMap["service-cluster-ip-range"] = cfg.ServiceIPRange.String() //CIDR表示的IP范围，服务的clusterip将从中分配。一定不要和分配给nodes和pods的IP范围产生重叠
-	argsMap["advertise-port"] = strconv.Itoa(cfg.AdvertisePort)
-	if cfg.AdvertiseIP != "" {
-		argsMap["advertise-address"] = cfg.AdvertiseIP
+	if !config.DisableAgent {
+		go setMasterRoleLabel(ctx, sc.Core.Core().V1().Node())
 	}
-	argsMap["insecure-port"] = "0"
-	argsMap["secure-port"] = strconv.Itoa(cfg.APIServerPort)
-	if cfg.APIServerBindAddress == "" {
-		argsMap["bind-address"] = localhostIP.String()
 
+	go setClusterDNSConfig(ctx, config, sc.Core.Core().V1().ConfigMap())
+
+	if controlConfig.NoLeaderElect {
+		go func() {
+			start(ctx)
+			<-ctx.Done()
+			logrus.Fatal("controllers exited")
+		}()
 	} else {
-		argsMap["bind-address"] = cfg.APIServerBindAddress
-		argsMap["insecure-bind-address"] = cfg.APIServerBindAddress
+		go leader.RunOrDie(ctx, "", version.Program, sc.K8s, start)
 	}
-	argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
-	argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
-	argsMap["service-account-key-file"] = runtime.ServiceKey
-	argsMap["service-account-issuer"] = version.Program
-	argsMap["api-audiences"] = "unknown"
-	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
-	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
-	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
-	argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
-	argsMap["requestheader-allowed-names"] = requestHeaderCN
-	// argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
-	// argsMap["proxy-client-key-file"] = runtime.ClientAuthProxyKey
-	argsMap["requestheader-extra-headers-prefix"] = "X-Remote-Extra-"
-	argsMap["requestheader-group-headers"] = "X-Remote-Group"
-	argsMap["requestheader-username-headers"] = "X-Remote-User"
-	argsMap["client-ca-file"] = runtime.ClientCA
-	argsMap["enable-admission-plugins"] = "NodeRestriction"
-	argsMap["anonymous-auth"] = "false"
-	argsMap["profiling"] = "false"
-	if cfg.EncryptSecrets {
-		argsMap["encryption-provider-config"] = runtime.EncryptionConfig
-	}
-	args := config.GetArgsList(argsMap, cfg.ExtraAPIArgs)
-	logrus.Infof("Running kube-apiserver %s", config.ArgString(args))
-	return executor.APIServer(ctx, runtime.ETCDReady, args)
+
+	return nil
 }
 
-func scheduler(ctx context.Context, cfg *config.Control) error {
-	runtime := cfg.Runtime
-	argsMap := map[string]string{
-		"kubeconfig":   cfg.Runtime.KubeConfigScheduler,
-		"port":         "10251",
-		"address":      "127.0.0.1",
-		"bind-address": "127.0.0.1",
-		"secure-port":  "0",
-		"profiling":    "false",
+func masterControllers(ctx context.Context, sc *Context, config *Config) error {
+	if !config.ControlConfig.Skips["coredns"] {
+		if err := node.Register(ctx, sc.Core.Core().V1().ConfigMap(), sc.Core.Core().V1().Node()); err != nil {
+			return err
+		}
 	}
-	if cfg.NoLeaderElect {
-		argsMap["leader-elect"] = "false" //是否进行选主逻辑
+
+	helm.Register(ctx, sc.Apply,
+		sc.Helm.Helm().V1().HelmChart(),
+		sc.Helm.Helm().V1().HelmChartConfig(),
+		sc.Batch.Batch().V1().Job(),
+		sc.Auth.Rbac().V1().ClusterRoleBinding(),
+		sc.Core.Core().V1().ServiceAccount(),
+		sc.Core.Core().V1().ConfigMap())
+	if err := servicelb.Register(ctx,
+		sc.K8s,
+		sc.Apply,
+		sc.Apps.Apps().V1().DaemonSet(),
+		sc.Apps.Apps().V1().Deployment(),
+		sc.Core.Core().V1().Node(),
+		sc.Core.Core().V1().Pod(),
+		sc.Core.Core().V1().Service(),
+		sc.Core.Core().V1().Endpoints(),
+		!config.DisableServiceLB, config.Rootless); err != nil {
+		return err
 	}
-	args := config.GetArgsList(argsMap, cfg.ExtraSchedulerAPIArgs)
-	logrus.Infof("Running kube-scheduler %s", config.ArgString(args))
-	return executor.Scheduler(runtime.APIServerReady, args)
+
+	if config.Rootless {
+		return rootlessports.Register(ctx, sc.Core.Core().V1().Service(), !config.DisableServiceLB, config.ControlConfig.HTTPSPort)
+	}
+
+	return nil
 }
 
-func controllerManager(ctx context.Context, cfg *config.Control) error {
-	runtime := cfg.Runtime
-	argsMap := map[string]string{
-		"kubeconfig":                       runtime.KubeConfigController,
-		"service-account-private-key-file": runtime.ServiceKey,
-		"allocate-node-cidrs":              "true",
-		"cluster-cidr":                     cfg.ClusterIPRange.String(),
-		"root-ca-file":                     runtime.ServerCA,
-		"port":                             "10252",
-		"profiling":                        "false",
-		"address":                          localhostIP.String(),
-		"bind-address":                     localhostIP.String(),
-		"secure-port":                      "0",
-		"use-service-account-credentials":  "false",
-		"cluster-signing-cert-file":        runtime.ClientCA,
-		"cluster-signing-key-file":         runtime.ClientCAKey,
-	}
-	if cfg.NoLeaderElect {
-		argsMap["leader-elect"] = "false"
+func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control) error {
+	dataDir := filepath.Join(controlConfig.DataDir, "static")
+	if err := static.Stage(dataDir); err != nil {
+		return err
 	}
 
-	args := config.GetArgsList(argsMap, cfg.ExtraControllerArgs)
-	logrus.Infof("Running kube-controller-manager %s", config.ArgString(args))
+	dataDir = filepath.Join(controlConfig.DataDir, "manifests")
+	templateVars := map[string]string{
+		"%{CLUSTER_DNS}%":                controlConfig.ClusterDNS.String(),
+		"%{CLUSTER_DOMAIN}%":             controlConfig.ClusterDomain,
+		"%{DEFAULT_LOCAL_STORAGE_PATH}%": controlConfig.DefaultLocalStoragePath,
+	}
 
-	return executor.ControllerManager(runtime.APIServerReady, args)
+	if err := deploy.Stage(dataDir, templateVars, controlConfig.Skips); err != nil {
+		return err
+	}
+
+	return deploy.WatchFiles(ctx, sc.Apply, sc.K3s.K3s().V1().Addon(), controlConfig.Disables, dataDir)
 }
 
-func StartWrangler(ctx context.Context, cfg *config.Control) error {
-	return startWrangler(ctx, cfg)
+func HomeKubeConfig(write, rootless bool) (string, error) {
+	if write {
+		if os.Getuid() == 0 && !rootless {
+			return datadir.GlobalConfig, nil
+		}
+		return resolvehome.Resolve(datadir.HomeConfig)
+	}
+
+	if _, err := os.Stat(datadir.GlobalConfig); err == nil {
+		return datadir.GlobalConfig, nil
+	}
+
+	return resolvehome.Resolve(datadir.HomeConfig)
 }
 
-func startWrangler(ctx context.Context, cfg *config.Control) error {
+func printTokens(advertiseIP string, config *config.Control) error {
+	var (
+		nodeFile string
+	)
 
-	// sc, err := newContext(ctx, controlConfig.Runtime.KubeConfigAdmin)
-	// if err != nil {
-	// 	return err
-	// }
-	coreClient, err := coreClient(cfg.Runtime.KubeConfigAdmin)
+	if advertiseIP == "" {
+		advertiseIP = "127.0.0.1"
+	}
+
+	if len(config.Runtime.ServerToken) > 0 {
+		p := filepath.Join(config.DataDir, "token")
+		if err := writeToken(config.Runtime.ServerToken, p, config.Runtime.ServerCA); err == nil {
+			logrus.Infof("Node token is available at %s", p)
+			nodeFile = p
+		}
+
+		// backwards compatibility
+		np := filepath.Join(config.DataDir, "node-token")
+		if !isSymlink(np) {
+			if err := os.RemoveAll(np); err != nil {
+				return err
+			}
+			if err := os.Symlink(p, np); err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(nodeFile) > 0 {
+		printToken(config.SupervisorPort, advertiseIP, "To join node to cluster:", "agent")
+	}
+
+	return nil
+}
+
+func writeKubeConfig(certs string, config *Config) error {
+	ip := config.ControlConfig.BindAddress
+	if ip == "" {
+		ip = "127.0.0.1"
+	}
+	url := fmt.Sprintf("https://%s:%d", ip, config.ControlConfig.HTTPSPort)
+	kubeConfig, err := HomeKubeConfig(true, config.Rootless)
+	def := true
+	if err != nil {
+		kubeConfig = filepath.Join(config.ControlConfig.DataDir, "kubeconfig-"+version.Program+".yaml")
+		def = false
+	}
+	kubeConfigSymlink := kubeConfig
+	if config.ControlConfig.KubeConfigOutput != "" {
+		kubeConfig = config.ControlConfig.KubeConfigOutput
+	}
+
+	if isSymlink(kubeConfigSymlink) {
+		if err := os.Remove(kubeConfigSymlink); err != nil {
+			logrus.Errorf("Failed to remove kubeconfig symlink")
+		}
+	}
+
+	if err = clientaccess.WriteClientKubeConfig(kubeConfig, url, config.ControlConfig.Runtime.ServerCA, config.ControlConfig.Runtime.ClientAdminCert,
+		config.ControlConfig.Runtime.ClientAdminKey); err == nil {
+		logrus.Infof("Wrote kubeconfig %s", kubeConfig)
+	} else {
+		logrus.Errorf("Failed to generate kubeconfig: %v", err)
+		return err
+	}
+
+	if config.ControlConfig.KubeConfigMode != "" {
+		mode, err := strconv.ParseInt(config.ControlConfig.KubeConfigMode, 8, 0)
+		if err == nil {
+			util.SetFileModeForPath(kubeConfig, os.FileMode(mode))
+		} else {
+			logrus.Errorf("Failed to set %s to mode %s: %v", kubeConfig, os.FileMode(mode), err)
+		}
+	} else {
+		util.SetFileModeForPath(kubeConfig, os.FileMode(0600))
+	}
+
+	if kubeConfigSymlink != kubeConfig {
+		if err := writeConfigSymlink(kubeConfig, kubeConfigSymlink); err != nil {
+			logrus.Errorf("Failed to write kubeconfig symlink: %v", err)
+		}
+	}
+
+	if def {
+		logrus.Infof("Run: %s kubectl", filepath.Base(os.Args[0]))
+	}
+
+	return nil
+}
+
+func setupDataDirAndChdir(config *config.Control) error {
+	var (
+		err error
+	)
+
+	config.DataDir, err = resolveDataDir(config.DataDir)
 	if err != nil {
 		return err
 	}
-	if !cfg.DisableAgent {
-		go setMasterRoleLabel(ctx, coreClient.CoreV1().Nodes())
+
+	dataDir := config.DataDir
+
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return errors.Wrapf(err, "can not mkdir %s", dataDir)
+	}
+
+	if err := os.Chdir(dataDir); err != nil {
+		return errors.Wrapf(err, "can not chdir %s", dataDir)
+	}
+
+	return nil
+}
+
+func printToken(httpsPort int, advertiseIP, prefix, cmd string) {
+	ip := advertiseIP
+	if ip == "" {
+		hostIP, err := net.ChooseHostInterface()
+		if err != nil {
+			logrus.Errorf("Failed to choose interface: %v", err)
+		}
+		ip = hostIP.String()
+	}
+
+	logrus.Infof("%s %s %s -s https://%s:%d -t ${NODE_TOKEN}", prefix, version.Program, cmd, ip, httpsPort)
+}
+
+func FormatToken(token string, certFile string) (string, error) {
+	if len(token) == 0 {
+		return token, nil
+	}
+
+	prefix := "K10"
+	if len(certFile) > 0 {
+		bytes, err := ioutil.ReadFile(certFile)
+		if err != nil {
+			return "", nil
+		}
+		digest := sha256.Sum256(bytes)
+		prefix = "K10" + hex.EncodeToString(digest[:]) + "::"
+	}
+
+	return prefix + token, nil
+}
+
+func writeToken(token, file, certs string) error {
+	if len(token) == 0 {
+		return nil
+	}
+
+	token, err := FormatToken(token, certs)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(file, []byte(token+"\n"), 0600)
+}
+
+func setNoProxyEnv(config *config.Control) error {
+	splitter := func(c rune) bool {
+		return c == ','
+	}
+	envList := []string{}
+	envList = append(envList, strings.FieldsFunc(os.Getenv("NO_PROXY"), splitter)...)
+	envList = append(envList, strings.FieldsFunc(os.Getenv("no_proxy"), splitter)...)
+	envList = append(envList,
+		".svc",
+		"."+config.ClusterDomain,
+		config.ClusterIPRange.String(),
+		config.ServiceIPRange.String(),
+	)
+	os.Unsetenv("no_proxy")
+	return os.Setenv("NO_PROXY", strings.Join(envList, ","))
+}
+
+func writeConfigSymlink(kubeconfig, kubeconfigSymlink string) error {
+	if err := os.Remove(kubeconfigSymlink); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove %s file: %v", kubeconfigSymlink, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(kubeconfigSymlink), 0755); err != nil {
+		return fmt.Errorf("failed to create path for symlink: %v", err)
+	}
+	if err := os.Symlink(kubeconfig, kubeconfigSymlink); err != nil {
+		return fmt.Errorf("failed to create symlink: %v", err)
 	}
 	return nil
 }
 
-func coreClient(cfg string) (kubernetes.Interface, error) {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", cfg)
-	if err != nil {
-		return nil, err
+func isSymlink(config string) bool {
+	if fi, err := os.Lstat(config); err == nil && (fi.Mode()&os.ModeSymlink == os.ModeSymlink) {
+		return true
 	}
-
-	return kubernetes.NewForConfig(restConfig)
+	return false
 }
 
-func setMasterRoleLabel(ctx context.Context, nodes v1.NodeInterface) error {
+func setMasterRoleLabel(ctx context.Context, nodes v1.NodeClient) error {
 	for {
 		nodeName := os.Getenv("NODE_NAME")
-
-		node, err := nodes.Get(ctx, nodeName, metav1.GetOptions{})
+		node, err := nodes.Get(nodeName, metav1.GetOptions{})
 		if err != nil {
 			logrus.Infof("Waiting for master node %s startup: %v", nodeName, err)
 			time.Sleep(1 * time.Second)
@@ -319,9 +439,9 @@ func setMasterRoleLabel(ctx context.Context, nodes v1.NodeInterface) error {
 			node.Labels = make(map[string]string)
 		}
 		node.Labels[MasterRoleLabelKey] = "true"
-		_, err = nodes.Update(ctx, node, metav1.UpdateOptions{})
+		_, err = nodes.Update(node)
 		if err == nil {
-			logrus.Infof("master role label has been set successfully on node: %s", nodeName)
+			logrus.Infof("Master role label has been set successfully on node: %s", nodeName)
 			break
 		}
 		select {
@@ -333,380 +453,43 @@ func setMasterRoleLabel(ctx context.Context, nodes v1.NodeInterface) error {
 	return nil
 }
 
-func setEtcdStorageBackend(argsMap map[string]string, cfg *config.Control) {
-	argsMap["storage-backend"] = "etcd3"
-	argsMap["etcd-servers"] = cfg.Datastore.Endpoint
-	argsMap["etcd-cafile"] = cfg.Datastore.CAFile
-	argsMap["etcd-certfile"] = cfg.Datastore.CertFile
-	argsMap["etcd-keyfile"] = cfg.Datastore.KeyFile
-}
-
-func defaults(config *config.Control) {
-	if config.ClusterIPRange == nil {
-		_, clusterIPNet, _ := net.ParseCIDR("10.42.0.0/16")
-		config.ClusterIPRange = clusterIPNet
-	}
-
-	if config.ServiceIPRange == nil {
-		_, serviceIPNet, _ := net.ParseCIDR("10.43.0.0/16")
-		config.ServiceIPRange = serviceIPNet
-	}
-
-	if len(config.ClusterDNS) == 0 {
-		config.ClusterDNS = net.ParseIP("10.43.0.10")
-	}
-
-	if config.AdvertisePort == 0 {
-		config.AdvertisePort = config.HTTPSPort
-	}
-
-	if config.APIServerPort == 0 {
-		if config.HTTPSPort != 0 {
-			config.APIServerPort = config.HTTPSPort
-		} else {
-			config.APIServerPort = 6443
-		}
-	}
-
-	if config.DataDir == "" {
-		config.DataDir = "./management-state"
-	}
-}
-
-//generate certificate
-func genCerts(config *config.Control) error {
-	var err error
-	if err = genClientCerts(config); err != nil {
-		return err
-	}
-	if err = genServerCerts(config); err != nil {
-		return err
-	}
-	if err = genRequestHeaderCerts(config); err != nil {
-		return err
-	}
-	if err = genETCDCerts(config); err != nil {
-		return err
-	}
-	return nil
-}
-
-//generate user
-func genUsers() error {
-
-	return nil
-}
-
-func genServiceAccount(runtime *config.ControlRuntime) error {
-	_, keyErr := os.Stat(runtime.ServiceKey)
-	if keyErr == nil {
+func setClusterDNSConfig(ctx context.Context, controlConfig *Config, configMap v1.ConfigMapClient) error {
+	nodeName := os.Getenv("NODE_NAME")
+	// check if configmap already exists
+	_, err := configMap.Get("kube-system", "cluster-dns", metav1.GetOptions{})
+	if err == nil {
+		logrus.Infof("Cluster dns configmap already exists")
 		return nil
 	}
-
-	key, err := cert.NewPrivateKey()
-	if err != nil {
-		return err
+	clusterDNS := controlConfig.ControlConfig.ClusterDNS
+	clusterDomain := controlConfig.ControlConfig.ClusterDomain
+	c := &corev1.ConfigMap{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "ConfigMap",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "cluster-dns",
+			Namespace: "kube-system",
+		},
+		Data: map[string]string{
+			"clusterDNS":    clusterDNS.String(),
+			"clusterDomain": clusterDomain,
+		},
 	}
-
-	return cert.WriteKey(runtime.ServiceKey, cert.EncodePrivateKeyPEM(key))
-}
-
-func addSANs(altNames *cert.AltNames, sans []string) {
-	for _, san := range sans {
-		ip := net.ParseIP(san)
-		if ip == nil {
-			altNames.DNSNames = append(altNames.DNSNames, san)
-		} else {
-			altNames.IPs = append(altNames.IPs, ip)
-		}
-	}
-}
-
-type signedCertFactory = func(commonName string, organization []string, certFile, keyFile string) (bool, error)
-
-func getSigningCertFactory(regen bool, altNames *cert.AltNames, extKeyUsage []x509.ExtKeyUsage, caCertFile, caKeyFile string) signedCertFactory {
-	return func(commonName string, organization []string, certFile, keyFile string) (bool, error) {
-		return cert.CreateClientCertKey(regen, commonName, organization, altNames, extKeyUsage, caCertFile, caKeyFile, certFile, keyFile)
-	}
-}
-
-func genClientCerts(config *config.Control) error {
-	var err error
-	runtime := config.Runtime
-	//创建客户端的CA证书
-	regen, err := cert.CreateCACertKey(version.Program+"-client", runtime.ClientCA, runtime.ClientCAKey)
-	if err != nil {
-		return err
-	}
-	//用clientCA 创建客户端证书
-	factory := getSigningCertFactory(regen, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, runtime.ClientCA, runtime.ClientCAKey)
-	//是否需要重新创建证书
-	var certGen bool
-	apiEndpoint := fmt.Sprintf("https://%s:%d", config.APIServerBindAddress, config.APIServerPort) //)
-
-	certGen, err = factory("system:admin", []string{"system:masters"}, runtime.ClientAdminCert, runtime.ClientAdminKey)
-	if err != nil {
-		return err
-	}
-
-	if certGen {
-		if err = control.KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, runtime.ServerCA, runtime.ClientAdminCert, runtime.ClientAdminKey); err != nil { //
-			return err
-		}
-	}
-
-	certGen, err = factory("system:kube-controller-manager", []string{"system:masters"}, runtime.ClientControllerCert, runtime.ClientControllerKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err = control.KubeConfig(runtime.KubeConfigController, apiEndpoint, runtime.ServerCA, runtime.ClientControllerCert, runtime.ClientControllerKey); err != nil { //
-			return err
-		}
-	}
-	certGen, err = factory("system:kube-scheduler", nil, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err = control.KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, runtime.ServerCA, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey); err != nil { //
-			return err
-		}
-	}
-
-	certGen, err = factory("kube-apiserver", []string{"system:masters"}, runtime.ClientKubeAPICert, runtime.ClientKubeAPIKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err := control.KubeConfig(runtime.KubeConfigAPIServer, apiEndpoint, runtime.ServerCA, runtime.ClientKubeAPICert, runtime.ClientKubeAPIKey); err != nil {
-			return err
-		}
-	}
-
-	if _, err = factory("system:kube-proxy", nil, runtime.ClientKubeProxyCert, runtime.ClientKubeProxyKey); err != nil {
-		return err
-	}
-	if _, err := cert.LoadOrGenerateKeyFile(runtime.ClientKubeletKey, regen); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func genRequestHeaderCerts(config *config.Control) error {
-	runtime := config.Runtime
-	regen, err := cert.CreateCACertKey(version.Program+"-request-header", runtime.RequestHeaderCA, runtime.RequestHeaderCAKey)
-	if err != nil {
-		return err
-	}
-
-	if _, err := cert.CreateClientCertKey(regen, requestHeaderCN, nil,
-		nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		runtime.RequestHeaderCA, runtime.RequestHeaderCAKey,
-		runtime.ClientAuthProxyCert, runtime.ClientAuthProxyKey); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func genServerCerts(config *config.Control) error {
-	runtime := config.Runtime
-	var err error
-	//创建服务端的CA证书
-	regen, err := cert.CreateCACertKey(version.Program+"-server", runtime.ServerCA, runtime.ServerCAKey)
-	if err != nil {
-		return err
-	}
-	_, apiServerServiceIP, err := master.ServiceIPRange(*config.ServiceIPRange)
-	if err != nil {
-		return err
-	}
-	altNames := &cert.AltNames{
-		DNSNames: []string{"kubernetes.default.svc", "kubernetes.default", "kubernetes", "localhost"},
-		IPs:      []net.IP{apiServerServiceIP},
-	}
-	addSANs(altNames, config.SANs)
-	if _, err := cert.CreateClientCertKey(regen, "kube-apiserver", nil,
-		altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		runtime.ServerCA, runtime.ServerCAKey,
-		runtime.ServingKubeAPICert, runtime.ServingKubeAPIKey); err != nil {
-		return err
-	}
-	if _, err := cert.LoadOrGenerateKeyFile(runtime.ServingKubeletKey, regen); err != nil {
-		return err
-	}
-	return nil
-
-}
-
-//generate etcd certificate
-func genETCDCerts(config *config.Control) error {
-	runtime := config.Runtime
-	//创建CA证书
-	regen, err := cert.CreateCACertKey("etcd-server", runtime.ETCDServerCA, runtime.ETCDServerCAKey)
-	if err != nil {
-		return err
-	}
-	altNames := &cert.AltNames{
-		DNSNames: []string{"localhost"},
-	}
-	addSANs(altNames, config.SANs)
-	_, err = cert.CreateClientCertKey(regen, "etcd-server", nil, altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		runtime.ETCDServerCA, runtime.ETCDServerCAKey, runtime.ServerETCDCert, runtime.ServerETCDKey)
-	if err != nil {
-		return err
-	}
-	_, err = cert.CreateClientCertKey(regen, "etcd-client", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
-		runtime.ETCDServerCA, runtime.ETCDServerCAKey, runtime.ClientETCDCert, runtime.ClientETCDKey)
-	if err != nil {
-		return err
-	}
-
-	regen, err = cert.CreateCACertKey("etcd-peer", runtime.ETCDPeerCA, runtime.ETCDPeerCAKey)
-	if err != nil {
-		return nil
-	}
-	_, err = cert.CreateClientCertKey(regen, "etcd-peer", nil, altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		runtime.ETCDPeerCA, runtime.ETCDPeerCAKey, runtime.PeerServerClientETCDCert, runtime.PeerServerClientETCDKey)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func waitForAPIServerInBackground(ctx context.Context, runtime *config.ControlRuntime) error {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", runtime.KubeConfigAdmin)
-	if err != nil {
-		return err
-	}
-	k8sClient, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return err
-	}
-
-	done := make(chan struct{})
-	runtime.APIServerReady = done
-	go func() {
-		defer close(done)
-
-	etcdLoop:
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-runtime.ETCDReady:
-				break etcdLoop
-			case <-time.After(30 * time.Second):
-				logrus.Info("Waiting for etcd server to become available")
-			}
-		}
-
-		logrus.Info("Waiting for API server to become available")
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case err := <-promise(func() error { return app2.WaitForAPIServer(k8sClient, 30*time.Second) }):
-				if err != nil {
-					logrus.Info("Waiting for API server to become available", err)
-					continue
-				}
-				return
-			}
-		}
-	}()
-
-	return nil
-}
-
-func promise(f func() error) <-chan error {
-	c := make(chan error, 1)
-	go func() {
-		c <- f()
-		close(c)
-	}()
-	return c
-}
-
-// ServiceIPRange checks if the serviceClusterIPRange flag is nil, raising a warning if so and
-// setting service ip range to the default value in kubeoptions.DefaultServiceIPCIDR
-// for now until the default is removed per the deprecation timeline guidelines.
-// Returns service ip range, api server service IP, and an error
-func ServiceIPRange(passedServiceClusterIPRange net.IPNet) (net.IPNet, net.IP, error) {
-	serviceClusterIPRange := passedServiceClusterIPRange
-	if passedServiceClusterIPRange.IP == nil {
-		klog.Warningf("No CIDR for service cluster IPs specified. Default value which was %s is deprecated and will be removed in future releases. Please specify it using --service-cluster-ip-range on kube-apiserver.", kubeoptions.DefaultServiceIPCIDR.String())
-		serviceClusterIPRange = kubeoptions.DefaultServiceIPCIDR
-	}
-
-	size := integer.Int64Min(utilnet.RangeSize(&serviceClusterIPRange), 1<<16)
-	if size < 8 {
-		return net.IPNet{}, net.IP{}, fmt.Errorf("the service cluster IP range must be at least %d IP addresses", 8)
-	}
-
-	// Select the first valid IP from ServiceClusterIPRange to use as the GenericAPIServer service IP.
-	apiServerServiceIP, err := utilnet.GetIndexedIP(&serviceClusterIPRange, 1)
-	if err != nil {
-		return net.IPNet{}, net.IP{}, err
-	}
-	klog.V(4).Infof("Setting service IP to %q (read-write).", apiServerServiceIP)
-
-	return serviceClusterIPRange, apiServerServiceIP, nil
-}
-
-func writeKubeConfig(config *config.Control) error {
-	ip := config.APIServerBindAddress
-	if ip == "" {
-		ip = "127.0.0.1"
-	}
-	url := fmt.Sprintf("https://%s:%d", ip, config.APIServerPort)
-	kubeConfig, err := datadir.HomeKubeConfig(true, true)
-	def := true
-	if err != nil {
-		kubeConfig = filepath.Join(config.DataDir, "kubeconfig-"+version.Program+".yaml")
-		def = false
-	}
-	// kubeConfigSymlink := kubeConfig
-	// if config.ControlConfig.KubeConfigOutput != "" {
-	// 	kubeConfig = config.ControlConfig.KubeConfigOutput
-	// }
-
-	// if isSymlink(kubeConfigSymlink) {
-	// 	if err := os.Remove(kubeConfigSymlink); err != nil {
-	// 		logrus.Errorf("failed to remove kubeconfig symlink")
-	// 	}
-	// }
-
-	if err = clientaccess.WriteClientKubeConfig(kubeConfig, url, config.Runtime.ServerCA, config.Runtime.ClientAdminCert,
-		config.Runtime.ClientAdminKey); err == nil {
-		logrus.Infof("Wrote kubeconfig %s", kubeConfig)
-	} else {
-		logrus.Errorf("Failed to generate kubeconfig: %v", err)
-		return err
-	}
-
-	if config.KubeConfigMode != "" {
-		mode, err := strconv.ParseInt(config.KubeConfigMode, 8, 0)
+	for {
+		_, err = configMap.Create(c)
 		if err == nil {
-			fileutil.SetFileModeForPath(kubeConfig, os.FileMode(mode))
-		} else {
-			logrus.Errorf("failed to set %s to mode %s: %v", kubeConfig, os.FileMode(mode), err)
+			logrus.Infof("Cluster dns configmap has been set successfully")
+			break
 		}
-	} else {
-		fileutil.SetFileModeForPath(kubeConfig, os.FileMode(0600))
+		logrus.Infof("Waiting for master node %s startup: %v", nodeName, err)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
 	}
-
-	// if kubeConfigSymlink != kubeConfig {
-	// 	if err := writeConfigSymlink(kubeConfig, kubeConfigSymlink); err != nil {
-	// 		logrus.Errorf("failed to write kubeconfig symlink: %v", err)
-	// 	}
-	// }
-
-	if def {
-		logrus.Infof("Run: %s kubectl", filepath.Base(os.Args[0]))
-	}
-
 	return nil
 }

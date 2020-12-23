@@ -20,10 +20,15 @@ package v1
 
 import (
 	"context"
+	"time"
 
+	"github.com/rancher/wrangler/pkg/apply"
+	"github.com/rancher/wrangler/pkg/condition"
 	"github.com/rancher/wrangler/pkg/generic"
+	"github.com/rancher/wrangler/pkg/kv"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -40,20 +45,15 @@ import (
 type ServiceHandler func(string, *v1.Service) (*v1.Service, error)
 
 type ServiceController interface {
+	generic.ControllerMeta
 	ServiceClient
 
 	OnChange(ctx context.Context, name string, sync ServiceHandler)
 	OnRemove(ctx context.Context, name string, sync ServiceHandler)
 	Enqueue(namespace, name string)
+	EnqueueAfter(namespace, name string, duration time.Duration)
 
 	Cache() ServiceCache
-
-	Informer() cache.SharedIndexInformer
-	GroupVersionKind() schema.GroupVersionKind
-
-	AddGenericHandler(ctx context.Context, name string, handler generic.Handler)
-	AddGenericRemoveHandler(ctx context.Context, name string, handler generic.Handler)
-	Updater() generic.Updater
 }
 
 type ServiceClient interface {
@@ -118,26 +118,21 @@ func (c *serviceController) Updater() generic.Updater {
 	}
 }
 
-func UpdateServiceOnChange(updater generic.Updater, handler ServiceHandler) ServiceHandler {
-	return func(key string, obj *v1.Service) (*v1.Service, error) {
-		if obj == nil {
-			return handler(key, nil)
-		}
-
-		copyObj := obj.DeepCopy()
-		newObj, err := handler(key, copyObj)
-		if newObj != nil {
-			copyObj = newObj
-		}
-		if obj.ResourceVersion == copyObj.ResourceVersion && !equality.Semantic.DeepEqual(obj, copyObj) {
-			newObj, err := updater(copyObj)
-			if newObj != nil && err == nil {
-				copyObj = newObj.(*v1.Service)
-			}
-		}
-
-		return copyObj, err
+func UpdateServiceDeepCopyOnChange(client ServiceClient, obj *v1.Service, handler func(obj *v1.Service) (*v1.Service, error)) (*v1.Service, error) {
+	if obj == nil {
+		return obj, nil
 	}
+
+	copyObj := obj.DeepCopy()
+	newObj, err := handler(copyObj)
+	if newObj != nil {
+		copyObj = newObj
+	}
+	if obj.ResourceVersion == copyObj.ResourceVersion && !equality.Semantic.DeepEqual(obj, copyObj) {
+		return client.Update(copyObj)
+	}
+
+	return copyObj, err
 }
 
 func (c *serviceController) AddGenericHandler(ctx context.Context, name string, handler generic.Handler) {
@@ -162,6 +157,10 @@ func (c *serviceController) Enqueue(namespace, name string) {
 	c.controllerManager.Enqueue(c.gvk, c.informer.Informer(), namespace, name)
 }
 
+func (c *serviceController) EnqueueAfter(namespace, name string, duration time.Duration) {
+	c.controllerManager.EnqueueAfter(c.gvk, c.informer.Informer(), namespace, name, duration)
+}
+
 func (c *serviceController) Informer() cache.SharedIndexInformer {
 	return c.informer.Informer()
 }
@@ -178,35 +177,38 @@ func (c *serviceController) Cache() ServiceCache {
 }
 
 func (c *serviceController) Create(obj *v1.Service) (*v1.Service, error) {
-	return c.clientGetter.Services(obj.Namespace).Create(obj)
+	return c.clientGetter.Services(obj.Namespace).Create(context.TODO(), obj, metav1.CreateOptions{})
 }
 
 func (c *serviceController) Update(obj *v1.Service) (*v1.Service, error) {
-	return c.clientGetter.Services(obj.Namespace).Update(obj)
+	return c.clientGetter.Services(obj.Namespace).Update(context.TODO(), obj, metav1.UpdateOptions{})
 }
 
 func (c *serviceController) UpdateStatus(obj *v1.Service) (*v1.Service, error) {
-	return c.clientGetter.Services(obj.Namespace).UpdateStatus(obj)
+	return c.clientGetter.Services(obj.Namespace).UpdateStatus(context.TODO(), obj, metav1.UpdateOptions{})
 }
 
 func (c *serviceController) Delete(namespace, name string, options *metav1.DeleteOptions) error {
-	return c.clientGetter.Services(namespace).Delete(name, options)
+	if options == nil {
+		options = &metav1.DeleteOptions{}
+	}
+	return c.clientGetter.Services(namespace).Delete(context.TODO(), name, *options)
 }
 
 func (c *serviceController) Get(namespace, name string, options metav1.GetOptions) (*v1.Service, error) {
-	return c.clientGetter.Services(namespace).Get(name, options)
+	return c.clientGetter.Services(namespace).Get(context.TODO(), name, options)
 }
 
 func (c *serviceController) List(namespace string, opts metav1.ListOptions) (*v1.ServiceList, error) {
-	return c.clientGetter.Services(namespace).List(opts)
+	return c.clientGetter.Services(namespace).List(context.TODO(), opts)
 }
 
 func (c *serviceController) Watch(namespace string, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.clientGetter.Services(namespace).Watch(opts)
+	return c.clientGetter.Services(namespace).Watch(context.TODO(), opts)
 }
 
 func (c *serviceController) Patch(namespace, name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.Service, err error) {
-	return c.clientGetter.Services(namespace).Patch(name, pt, data, subresources...)
+	return c.clientGetter.Services(namespace).Patch(context.TODO(), name, pt, data, metav1.PatchOptions{}, subresources...)
 }
 
 type serviceCache struct {
@@ -235,8 +237,109 @@ func (c *serviceCache) GetByIndex(indexName, key string) (result []*v1.Service, 
 	if err != nil {
 		return nil, err
 	}
+	result = make([]*v1.Service, 0, len(objs))
 	for _, obj := range objs {
 		result = append(result, obj.(*v1.Service))
 	}
 	return result, nil
+}
+
+type ServiceStatusHandler func(obj *v1.Service, status v1.ServiceStatus) (v1.ServiceStatus, error)
+
+type ServiceGeneratingHandler func(obj *v1.Service, status v1.ServiceStatus) ([]runtime.Object, v1.ServiceStatus, error)
+
+func RegisterServiceStatusHandler(ctx context.Context, controller ServiceController, condition condition.Cond, name string, handler ServiceStatusHandler) {
+	statusHandler := &serviceStatusHandler{
+		client:    controller,
+		condition: condition,
+		handler:   handler,
+	}
+	controller.AddGenericHandler(ctx, name, FromServiceHandlerToHandler(statusHandler.sync))
+}
+
+func RegisterServiceGeneratingHandler(ctx context.Context, controller ServiceController, apply apply.Apply,
+	condition condition.Cond, name string, handler ServiceGeneratingHandler, opts *generic.GeneratingHandlerOptions) {
+	statusHandler := &serviceGeneratingHandler{
+		ServiceGeneratingHandler: handler,
+		apply:                    apply,
+		name:                     name,
+		gvk:                      controller.GroupVersionKind(),
+	}
+	if opts != nil {
+		statusHandler.opts = *opts
+	}
+	controller.OnChange(ctx, name, statusHandler.Remove)
+	RegisterServiceStatusHandler(ctx, controller, condition, name, statusHandler.Handle)
+}
+
+type serviceStatusHandler struct {
+	client    ServiceClient
+	condition condition.Cond
+	handler   ServiceStatusHandler
+}
+
+func (a *serviceStatusHandler) sync(key string, obj *v1.Service) (*v1.Service, error) {
+	if obj == nil {
+		return obj, nil
+	}
+
+	origStatus := obj.Status.DeepCopy()
+	obj = obj.DeepCopy()
+	newStatus, err := a.handler(obj, obj.Status)
+	if err != nil {
+		// Revert to old status on error
+		newStatus = *origStatus.DeepCopy()
+	}
+
+	if a.condition != "" {
+		if errors.IsConflict(err) {
+			a.condition.SetError(&newStatus, "", nil)
+		} else {
+			a.condition.SetError(&newStatus, "", err)
+		}
+	}
+	if !equality.Semantic.DeepEqual(origStatus, &newStatus) {
+		var newErr error
+		obj.Status = newStatus
+		obj, newErr = a.client.UpdateStatus(obj)
+		if err == nil {
+			err = newErr
+		}
+	}
+	return obj, err
+}
+
+type serviceGeneratingHandler struct {
+	ServiceGeneratingHandler
+	apply apply.Apply
+	opts  generic.GeneratingHandlerOptions
+	gvk   schema.GroupVersionKind
+	name  string
+}
+
+func (a *serviceGeneratingHandler) Remove(key string, obj *v1.Service) (*v1.Service, error) {
+	if obj != nil {
+		return obj, nil
+	}
+
+	obj = &v1.Service{}
+	obj.Namespace, obj.Name = kv.RSplit(key, "/")
+	obj.SetGroupVersionKind(a.gvk)
+
+	return nil, generic.ConfigureApplyForObject(a.apply, obj, &a.opts).
+		WithOwner(obj).
+		WithSetID(a.name).
+		ApplyObjects()
+}
+
+func (a *serviceGeneratingHandler) Handle(obj *v1.Service, status v1.ServiceStatus) (v1.ServiceStatus, error) {
+	objs, newStatus, err := a.ServiceGeneratingHandler(obj, status)
+	if err != nil {
+		return newStatus, err
+	}
+
+	return newStatus, generic.ConfigureApplyForObject(a.apply, obj, &a.opts).
+		WithOwner(obj).
+		WithSetID(a.name).
+		ApplyObjects(objs...)
 }

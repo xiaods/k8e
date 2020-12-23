@@ -3,18 +3,22 @@ package datadir
 import (
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/xiaods/k8e/pkg/version"
+	"github.com/rancher/wrangler/pkg/resolvehome"
 )
 
 var (
-	DefaultDataDir     = "/var/lib/" + version.Program
+	DefaultDataDir     = "/var/lib/k8e/" + version.Program
 	DefaultHomeDataDir = "${HOME}/.k8e/" + version.Program
 	HomeConfig         = "${HOME}/.kube/" + version.Program + ".yaml"
-	GlobalConfig       = "/etc/" + version.Program + "/" + version.Program + ".yaml"
+	GlobalConfig       = "/etc/k8e/" + version.Program + "/" + version.Program + ".yaml"
 )
+
+func Resolve(dataDir string) (string, error) {
+	return LocalHome(dataDir, false)
+}
 
 func LocalHome(dataDir string, forceLocal bool) (string, error) {
 	if dataDir == "" {
@@ -25,43 +29,10 @@ func LocalHome(dataDir string, forceLocal bool) (string, error) {
 		}
 	}
 
-	dataDir, err := Resolve(dataDir)
+	dataDir, err := resolvehome.Resolve(dataDir)
 	if err != nil {
 		return "", errors.Wrapf(err, "resolving %s", dataDir)
 	}
 
 	return filepath.Abs(dataDir)
-}
-
-func HomeKubeConfig(write, rootless bool) (string, error) {
-	if write {
-		if os.Getuid() == 0 && !rootless {
-			return GlobalConfig, nil
-		}
-		return Resolve(HomeConfig)
-	}
-
-	if _, err := os.Stat(GlobalConfig); err == nil {
-		return GlobalConfig, nil
-	}
-
-	return Resolve(HomeConfig)
-}
-
-var (
-	homes = []string{"$HOME", "${HOME}", "~"}
-)
-
-func Resolve(s string) (string, error) {
-	for _, home := range homes {
-		if strings.Contains(s, home) {
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				return "", errors.Wrap(err, "determining current user")
-			}
-			s = strings.Replace(s, home, homeDir, -1)
-		}
-	}
-
-	return s, nil
 }

@@ -2,337 +2,45 @@ package agent
 
 import (
 	"bufio"
-	"context"
-	"io/ioutil"
+	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/opencontainers/runc/libcontainer/system"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	"github.com/xiaods/k8e/pkg/clientaccess"
-	"github.com/xiaods/k8e/pkg/daemons/agent/containerd"
-	"github.com/xiaods/k8e/pkg/daemons/agent/flannel"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/daemons/control"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
-	"github.com/xiaods/k8e/pkg/daemons/syssetup"
-	"github.com/xiaods/k8e/pkg/datadir"
+	"github.com/xiaods/k8e/pkg/version"
+	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/net"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/component-base/logs"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
+
+	_ "k8s.io/component-base/metrics/prometheus/restclient" // for client metric registration
+	_ "k8s.io/component-base/metrics/prometheus/version"    // for version metric registration
 )
 
-const (
-	dockershimSock = "unix:///var/run/dockershim.sock"
-	containerdSock = "unix:///run/k8e/containerd/containerd.sock"
-)
+func Agent(config *config.Agent) error {
+	rand.Seed(time.Now().UTC().UnixNano())
 
-// func StartAgent(config *config.Agent) error {
-// 	var err error
-// 	if err = agent(config); err != nil {
-// 		return err
-// 	}
-// 	return nil
-// }
+	logs.InitLogs()
+	defer logs.FlushLogs()
 
-// func agent(config *config.Agent) error {
-// 	var err error
-// 	if err = prepare(config); err != nil {
-// 		return err
-// 	}
-// 	if err = kubelet(config); err != nil {
-// 		return nil
-// 	}
-// 	return nil
-// }
-
-// setupCriCtlConfig creates the crictl config file and populates it
-// with the given data from config.
-func setupCriCtlConfig(nodeConfig *config.Node) error {
-	cre := nodeConfig.ContainerRuntimeEndpoint
-	if cre == "" {
-		cre = containerdSock
-	}
-
-	agentConfDir := datadir.DefaultDataDir + "/agent/etc"
-	if _, err := os.Stat(agentConfDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(agentConfDir, 0755); err != nil {
-			return err
-		}
-	}
-
-	crp := "runtime-endpoint: " + cre + "\n"
-	return ioutil.WriteFile(agentConfDir+"/crictl.yaml", []byte(crp), 0600)
-}
-
-func Prepare(ctx context.Context, config *config.Node) error {
-	return prepare(ctx, config)
-}
-
-func Containerd(ctx context.Context, config *config.Node) error {
-	return containerd.Run(ctx, config)
-}
-
-func NetWorkCNI(ctx context.Context, config *config.Node) error {
-	return networkCNI(ctx, config)
-}
-
-func Kubelet(ctx context.Context, cfg *config.Node) error {
-	return kubelet(&cfg.AgentConfig)
-}
-
-func KubeProxy(ctx context.Context, cfg *config.Node) error {
-	return kubeProxy(&cfg.AgentConfig)
-}
-
-func networkCNI(ctx context.Context, config *config.Node) error {
-	logrus.Info("start networkcni")
-	coreClient, err := coreClient(config.AgentConfig.KubeConfigKubelet)
-	if err != nil {
-		return err
-	}
-	if err := flannel.Run(ctx, config, coreClient.CoreV1().Nodes()); err != nil {
-		return err
-	}
-	return nil
-}
-
-func coreClient(cfg string) (kubernetes.Interface, error) {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return kubernetes.NewForConfig(restConfig)
-}
-
-func prepare(ctx context.Context, config *config.Node) error {
-	syssetup.Configure()
-	os.MkdirAll(filepath.Join(config.AgentConfig.DataDir, "cred"), 0700)
-	os.MkdirAll(filepath.Join(config.AgentConfig.DataDir, "tls"), 0700)
-	var err error
-	err = initTLSCredPath(config)
-	if err != nil {
-		return err
-	}
-	err = setupCriCtlConfig(config)
-	if err != nil {
-		return err
-	}
-	err = genCerts(&config.AgentConfig)
-	if err != nil {
-		return err
-	}
-	config.FlannelBackend = "vxlan"
-	if err := flannel.Prepare(ctx, config); err != nil {
-		return err
-	}
-	return nil
-}
-
-func genCerts(config *config.Agent) error {
-	var err error
-	if err = genClientCerts(config); err != nil {
-		return err
-	}
-	return nil
-}
-
-func genClientCerts(config *config.Agent) error {
-	var err error
-
-	info, err := clientaccess.ParseAndValidateToken(config.DaemonURL, "")
-	nodeName, nodeIP, err := getHostnameAndIP(config)
-	if err != nil {
-		return err
-	}
-	clientKubeletCert := filepath.Join(config.DataDir, "tls", "client-kubelet.crt")
-	clientKubeletKey := filepath.Join(config.DataDir, "tls", "client-kubelet.key")
-	clientKubeProxyCert := filepath.Join(config.DataDir, "tls", "client-kube-proxy.crt")
-	clientKubeProxyKey := filepath.Join(config.DataDir, "tls", "client-kube-proxy.key")
-	clientCAFile := filepath.Join(config.DataDir, "tls", "client-ca.crt")
-	serverCAFile := filepath.Join(config.DataDir, "tls", "server-ca.crt")
-	controlConfig, err := getServerConfig(info)
-	if err != nil {
-		return err
-	}
-	config.ClusterCIDR = controlConfig.ClusterIPRange
-	if !config.Internal { //非内嵌
-
-		if err = getHostFile(serverCAFile, "", info); err != nil {
-			return err
-		}
-		if err = getHostFile(clientCAFile, "", info); err != nil {
-			return err
-		}
-		if err = getNodeNamedHostFile(clientKubeletCert, clientKubeletKey, nodeName, nodeIP, "", info); err != nil {
-			return err
-		}
-		if err = getHostFile(clientKubeProxyCert, clientKubeProxyKey, info); err != nil {
-			return err
-		}
-	}
-
-	if err = getNodeNamedHostFile(clientKubeletCert, "", nodeName, nodeIP, "", info); err != nil {
-		return err
-	}
-	apiEndpoint := config.APIServerURL
-	if err = control.KubeConfig(config.KubeConfigKubelet, apiEndpoint, serverCAFile, clientKubeletCert, clientKubeletKey); err != nil {
+	if err := startKubelet(config); err != nil {
 		return err
 	}
 
-	if err = control.KubeConfig(config.KubeConfigKubeProxy, apiEndpoint, serverCAFile, clientKubeProxyCert, clientKubeProxyKey); err != nil {
-		return err
+	if !config.DisableKubeProxy {
+		return startKubeProxy(config)
 	}
 
 	return nil
 }
 
-func initTLSCredPath(nodeConfig *config.Node) error {
-	dataDir := nodeConfig.AgentConfig.DataDir
-	nodeConfig.AgentConfig.KubeConfigKubelet = filepath.Join(dataDir, "cred", "kubelet.kubeconfig")
-	nodeConfig.AgentConfig.KubeConfigKubeProxy = filepath.Join(dataDir, "cred", "kubeproxy.kubeconfig")
-	nodeConfig.Containerd.Config = filepath.Join(dataDir, "etc/containerd/config.toml")
-	nodeConfig.Containerd.Root = filepath.Join(dataDir, "containerd")
-	nodeConfig.Containerd.Opt = filepath.Join(dataDir, "containerd")
-	nodeConfig.Containerd.State = "/run/k8e/containerd"
-	nodeConfig.Containerd.Address = filepath.Join(nodeConfig.Containerd.State, "containerd.sock")
-	nodeConfig.Containerd.Template = filepath.Join(dataDir, "etc/containerd/config.toml.tmpl")
-	nodeConfig.AgentConfig.RuntimeSocket = containerdSock
-	nodeName, nodeIP, err := getHostnameAndIP(&nodeConfig.AgentConfig)
-	if err != nil {
-		return err
-	}
-	// if envInfo.WithNodeID {
-	// 	nodeID, err := ensureNodeID(filepath.Join(nodeConfigPath, "id"))
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	nodeName += "-" + nodeID
-	// }
-	nodeConfig.AgentConfig.NodeName = nodeName
-	nodeConfig.AgentConfig.NodeIP = nodeIP
-	os.Setenv("NODE_NAME", nodeConfig.AgentConfig.NodeName)
-	nodeConfig.NoFlannel = false
-	if !nodeConfig.NoFlannel {
-		hostLocal, err := exec.LookPath("host-local")
-		if err != nil {
-			return errors.Wrapf(err, "failed to find host-local")
-		}
-
-		//if envInfo.FlannelConf == "" {
-		nodeConfig.FlannelConf = filepath.Join(dataDir, "etc/flannel/net-conf.json")
-		// } else {
-		// 	nodeConfig.FlannelConf = envInfo.FlannelConf
-		// 	nodeConfig.FlannelConfOverride = true
-		// }
-		nodeConfig.AgentConfig.CNIBinDir = filepath.Dir(hostLocal)
-		nodeConfig.AgentConfig.CNIConfDir = filepath.Join(dataDir, "etc/cni/net.d")
-	}
-	return nil
-}
-
-func getHostnameAndIP(info *config.Agent) (string, string, error) {
-	ip := info.NodeIP
-	if ip == "" {
-		hostIP, err := net.ChooseHostInterface()
-		if err != nil {
-			return "", "", err
-		}
-		ip = hostIP.String()
-	}
-
-	name := info.NodeName
-	if name == "" {
-		hostname, err := os.Hostname()
-		if err != nil {
-			return "", "", err
-		}
-		name = hostname
-	}
-
-	// Use lower case hostname to comply with kubernetes constraint:
-	// https://github.com/kubernetes/kubernetes/issues/71140
-	name = strings.ToLower(name)
-
-	return name, ip, nil
-}
-
-func kubelet(cfg *config.Agent) error {
+func startKubeProxy(cfg *config.Agent) error {
 	argsMap := map[string]string{
-		"healthz-bind-address":     "127.0.0.1",
-		"read-only-port":           "0",
-		"cluster-domain":           cfg.ClusterDomain,
-		"kubeconfig":               cfg.KubeConfigKubelet,
-		"eviction-hard":            "imagefs.available<5%,nodefs.available<5%",
-		"eviction-minimum-reclaim": "imagefs.available=10%,nodefs.available=10%",
-		"fail-swap-on":             "false",
-		//"cgroup-root": "/k3s",
-		"cgroup-driver":                "cgroupfs",
-		"authentication-token-webhook": "false",
-		"anonymous-auth":               "false",
-		"authorization-mode":           modes.ModeWebhook}
-
-	//	argsMap["container-runtime"] = "docker"
-	argsMap["network-plugin"] = "cni"
-	logrus.Info("RuntimeSocket", cfg.RuntimeSocket)
-	if cfg.RuntimeSocket != "" {
-		argsMap["container-runtime"] = "remote"
-		argsMap["container-runtime-endpoint"] = cfg.RuntimeSocket
-		argsMap["containerd"] = cfg.RuntimeSocket
-		argsMap["serialize-image-pulls"] = "false"
-	}
-	if cfg.NodeName != "" {
-		argsMap["hostname-override"] = cfg.NodeName
-	}
-	defaultIP, err := net.ChooseHostInterface()
-	if err != nil || defaultIP.String() != cfg.NodeIP {
-		argsMap["node-ip"] = cfg.NodeIP
-	}
-	root, hasCFS, hasPIDs := checkCgroups()
-	if !hasCFS {
-		logrus.Warn("Disabling CPU quotas due to missing cpu.cfs_period_us")
-		argsMap["cpu-cfs-quota"] = "false"
-	}
-	if !hasPIDs {
-		logrus.Warn("Disabling pod PIDs limit feature due to missing cgroup pids support")
-		argsMap["cgroups-per-qos"] = "false"
-		argsMap["enforce-node-allocatable"] = ""
-		argsMap["feature-gates"] = addFeatureGate(argsMap["feature-gates"], "SupportPodPidsLimit=false")
-	}
-	if root != "" {
-		argsMap["runtime-cgroups"] = root
-		argsMap["kubelet-cgroups"] = root
-	}
-	if system.RunningInUserNS() {
-		argsMap["feature-gates"] = addFeatureGate(argsMap["feature-gates"], "DevicePlugins=false")
-	}
-
-	argsMap["node-labels"] = strings.Join(cfg.NodeLabels, ",")
-	if len(cfg.NodeTaints) > 0 {
-		argsMap["register-with-taints"] = strings.Join(cfg.NodeTaints, ",")
-	}
-	//--cloud-provider=external 的 kubelet 将被添加一个 node.cloudprovider.kubernetes.io/uninitialized 的污点，导致其在初始化过程中不可调度（NoSchedule）
-	if !cfg.DisableCCM {
-		argsMap["cloud-provider"] = "external"
-	}
-	//设置 kubelet 的默认内核调整行为。如果已设置该参数，当任何内核可调参数与 kubelet 默认值不同时，kubelet 都会出错
-	if cfg.ProtectKernelDefaults {
-		argsMap["protect-kernel-defaults"] = "true"
-	}
-
-	args := config.GetArgsList(argsMap, cfg.ExtraKubeletArgs)
-	logrus.Infof("Running kubelet %s", config.ArgString(args))
-	return executor.Kubelet(args)
-}
-
-func kubeProxy(cfg *config.Agent) error {
-	argsMap := map[string]string{
-		"proxy-mode":           "iptables", // ipvs
+		"proxy-mode":           "iptables",
 		"healthz-bind-address": "127.0.0.1",
 		"kubeconfig":           cfg.KubeConfigKubeProxy,
 		"cluster-cidr":         cfg.ClusterCIDR.String(),
@@ -346,6 +54,120 @@ func kubeProxy(cfg *config.Agent) error {
 	return executor.KubeProxy(args)
 }
 
+func startKubelet(cfg *config.Agent) error {
+	argsMap := map[string]string{
+		"healthz-bind-address":     "127.0.0.1",
+		"read-only-port":           "0",
+		"cluster-domain":           cfg.ClusterDomain,
+		"kubeconfig":               cfg.KubeConfigKubelet,
+		"eviction-hard":            "imagefs.available<5%,nodefs.available<5%",
+		"eviction-minimum-reclaim": "imagefs.available=10%,nodefs.available=10%",
+		"fail-swap-on":             "false",
+		//"cgroup-root": "/k3s",
+		"cgroup-driver":                "cgroupfs",
+		"authentication-token-webhook": "true",
+		"anonymous-auth":               "false",
+		"authorization-mode":           modes.ModeWebhook,
+	}
+	if cfg.PodManifests != "" && argsMap["pod-manifest-path"] == "" {
+		argsMap["pod-manifest-path"] = cfg.PodManifests
+	}
+	if err := os.MkdirAll(argsMap["pod-manifest-path"], 0755); err != nil {
+		logrus.Errorf("Failed to mkdir %s: %v", argsMap["pod-manifest-path"], err)
+	}
+	if cfg.RootDir != "" {
+		argsMap["root-dir"] = cfg.RootDir
+		argsMap["cert-dir"] = filepath.Join(cfg.RootDir, "pki")
+		argsMap["seccomp-profile-root"] = filepath.Join(cfg.RootDir, "seccomp")
+	}
+	if cfg.CNIConfDir != "" {
+		argsMap["cni-conf-dir"] = cfg.CNIConfDir
+	}
+	if cfg.CNIBinDir != "" {
+		argsMap["cni-bin-dir"] = cfg.CNIBinDir
+	}
+	if cfg.CNIPlugin {
+		argsMap["network-plugin"] = "cni"
+	}
+	if len(cfg.ClusterDNS) > 0 {
+		argsMap["cluster-dns"] = cfg.ClusterDNS.String()
+	}
+	if cfg.ResolvConf != "" {
+		argsMap["resolv-conf"] = cfg.ResolvConf
+	}
+	if cfg.RuntimeSocket != "" {
+		argsMap["container-runtime"] = "remote"
+		argsMap["container-runtime-endpoint"] = cfg.RuntimeSocket
+		argsMap["containerd"] = cfg.RuntimeSocket
+		argsMap["serialize-image-pulls"] = "false"
+	} else if cfg.PauseImage != "" {
+		argsMap["pod-infra-container-image"] = cfg.PauseImage
+	}
+	if cfg.ListenAddress != "" {
+		argsMap["address"] = cfg.ListenAddress
+	}
+	if cfg.ClientCA != "" {
+		argsMap["anonymous-auth"] = "false"
+		argsMap["client-ca-file"] = cfg.ClientCA
+	}
+	if cfg.ServingKubeletCert != "" && cfg.ServingKubeletKey != "" {
+		argsMap["tls-cert-file"] = cfg.ServingKubeletCert
+		argsMap["tls-private-key-file"] = cfg.ServingKubeletKey
+	}
+	if cfg.NodeName != "" {
+		argsMap["hostname-override"] = cfg.NodeName
+	}
+	defaultIP, err := net.ChooseHostInterface()
+	if err != nil || defaultIP.String() != cfg.NodeIP {
+		argsMap["node-ip"] = cfg.NodeIP
+	}
+	kubeletRoot, runtimeRoot, hasCFS, hasPIDs := checkCgroups()
+	if !hasCFS {
+		logrus.Warn("Disabling CPU quotas due to missing cpu.cfs_period_us")
+		argsMap["cpu-cfs-quota"] = "false"
+	}
+	if !hasPIDs {
+		logrus.Warn("Disabling pod PIDs limit feature due to missing cgroup pids support")
+		argsMap["cgroups-per-qos"] = "false"
+		argsMap["enforce-node-allocatable"] = ""
+		argsMap["feature-gates"] = addFeatureGate(argsMap["feature-gates"], "SupportPodPidsLimit=false")
+	}
+	if kubeletRoot != "" {
+		argsMap["kubelet-cgroups"] = kubeletRoot
+	}
+	if runtimeRoot != "" {
+		argsMap["runtime-cgroups"] = runtimeRoot
+	}
+	if system.RunningInUserNS() {
+		argsMap["feature-gates"] = addFeatureGate(argsMap["feature-gates"], "DevicePlugins=false")
+	}
+
+	argsMap["node-labels"] = strings.Join(cfg.NodeLabels, ",")
+	if len(cfg.NodeTaints) > 0 {
+		argsMap["register-with-taints"] = strings.Join(cfg.NodeTaints, ",")
+	}
+	if !cfg.DisableCCM {
+		argsMap["cloud-provider"] = "external"
+	}
+
+	if cfg.Rootless {
+		// flags are from https://github.com/rootless-containers/usernetes/blob/v20190826.0/boot/kubelet.sh
+		argsMap["cgroup-driver"] = "none"
+		argsMap["feature-gates=SupportNoneCgroupDriver"] = "true"
+		argsMap["cgroups-per-qos"] = "false"
+		argsMap["enforce-node-allocatable"] = ""
+	}
+
+	if cfg.ProtectKernelDefaults {
+		argsMap["protect-kernel-defaults"] = "true"
+	}
+
+	args := config.GetArgsList(argsMap, cfg.ExtraKubeletArgs)
+	logrus.Infof("Running kubelet %s", config.ArgString(args))
+
+	return executor.Kubelet(args)
+}
+
 func addFeatureGate(current, new string) string {
 	if current == "" {
 		return new
@@ -353,10 +175,10 @@ func addFeatureGate(current, new string) string {
 	return current + "," + new
 }
 
-func checkCgroups() (root string, hasCFS bool, hasPIDs bool) {
+func checkCgroups() (kubeletRoot, runtimeRoot string, hasCFS, hasPIDs bool) {
 	f, err := os.Open("/proc/self/cgroup")
 	if err != nil {
-		return "", false, false
+		return "", "", false, false
 	}
 	defer f.Close()
 
@@ -376,15 +198,51 @@ func checkCgroups() (root string, hasCFS bool, hasPIDs bool) {
 					hasCFS = true
 				}
 			} else if system == "name=systemd" {
+				// If we detect that we are running under a `.scope` unit with systemd
+				// we can assume we are being directly invoked from the command line
+				// and thus need to set our kubelet root to something out of the context
+				// of `/user.slice` to ensure that `CPUAccounting` and `MemoryAccounting`
+				// are enabled, as they are generally disabled by default for `user.slice`
+				// Note that we are not setting the `runtimeRoot` as if we are running with
+				// `--docker`, we will inadvertently move the cgroup `dockerd` lives in
+				//  which is not ideal and causes dockerd to become unmanageable by systemd.
 				last := parts[len(parts)-1]
-				i := strings.LastIndex(last, ".slice")
+				i := strings.LastIndex(last, ".scope")
 				if i > 0 {
-					root = "/systemd" + last[:i+len(".slice")]
-				} else {
-					root = "/systemd"
+					kubeletRoot = "/" + version.Program
 				}
 			}
 		}
 	}
-	return root, hasCFS, hasPIDs
+
+	if kubeletRoot == "" {
+		// Examine process ID 1 to see if there is a cgroup assigned to it.
+		// When we are not in a container, process 1 is likely to be systemd or some other service manager.
+		// It either lives at `/` or `/init.scope` according to https://man7.org/linux/man-pages/man7/systemd.special.7.html
+		// When containerized, process 1 will be generally be in a cgroup, otherwise, we may be running in
+		// a host PID scenario but we don't support this.
+		g, err := os.Open("/proc/1/cgroup")
+		if err != nil {
+			return "", "", false, false
+		}
+		defer g.Close()
+		scan = bufio.NewScanner(g)
+		for scan.Scan() {
+			parts := strings.Split(scan.Text(), ":")
+			if len(parts) < 3 {
+				continue
+			}
+			systems := strings.Split(parts[1], ",")
+			for _, system := range systems {
+				if system == "name=systemd" {
+					last := parts[len(parts)-1]
+					if last != "/" && last != "/init.scope" {
+						kubeletRoot = "/" + version.Program
+						runtimeRoot = "/" + version.Program
+					}
+				}
+			}
+		}
+	}
+	return kubeletRoot, runtimeRoot, hasCFS, hasPIDs
 }

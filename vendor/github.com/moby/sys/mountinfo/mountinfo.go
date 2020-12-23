@@ -1,8 +1,6 @@
 package mountinfo
 
-import (
-	"os"
-)
+import "io"
 
 // GetMounts retrieves a list of mounts for the current running process,
 // with an optional filter applied (use nil for no filter).
@@ -10,17 +8,23 @@ func GetMounts(f FilterFunc) ([]*Info, error) {
 	return parseMountTable(f)
 }
 
-// Mounted determines if a specified path is a mount point.
-//
-// The argument must be an absolute path, with all symlinks resolved, and clean.
-// One way to ensure it is to process the path using filepath.Abs followed by
-// filepath.EvalSymlinks before calling this function.
-func Mounted(path string) (bool, error) {
-	// root is always mounted
-	if path == string(os.PathSeparator) {
-		return true, nil
+// GetMountsFromReader retrieves a list of mounts from the
+// reader provided, with an optional filter applied (use nil
+// for no filter). This can be useful in tests or benchmarks
+// that provide a fake mountinfo data.
+func GetMountsFromReader(reader io.Reader, f FilterFunc) ([]*Info, error) {
+	return parseInfoFile(reader, f)
+}
+
+// Mounted determines if a specified mountpoint has been mounted.
+// On Linux it looks at /proc/self/mountinfo.
+func Mounted(mountpoint string) (bool, error) {
+	entries, err := GetMounts(SingleEntryFilter(mountpoint))
+	if err != nil {
+		return false, err
 	}
-	return mounted(path)
+
+	return len(entries) > 0, nil
 }
 
 // Info reveals information about a particular mounted filesystem. This
@@ -46,18 +50,18 @@ type Info struct {
 	// Mountpoint indicates the mount point relative to the process's root.
 	Mountpoint string
 
-	// Options represents mount-specific options.
-	Options string
+	// Opts represents mount-specific options.
+	Opts string
 
 	// Optional represents optional fields.
 	Optional string
 
-	// FSType indicates the type of filesystem, such as EXT3.
-	FSType string
+	// Fstype indicates the type of filesystem, such as EXT3.
+	Fstype string
 
 	// Source indicates filesystem specific information or "none".
 	Source string
 
-	// VFSOptions represents per super block options.
-	VFSOptions string
+	// VfsOpts represents per super block options.
+	VfsOpts string
 }

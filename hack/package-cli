@@ -17,6 +17,8 @@ for i in bridge flannel host-local loopback portmap; do
     ln -s cni bin/$i
 done
 
+cp contrib/util/check-config.sh bin/check-config
+
 rm -rf build/data
 mkdir -p build/data build/out
 mkdir -p dist/artifacts
@@ -33,7 +35,7 @@ mkdir -p dist/artifacts
     set -x
 )
 
-tar cvzf ./build/out/data.tar.gz ./bin
+tar cvzf ./build/out/data.tar.gz --exclude ./bin/hyperkube ./bin
 HASH=$(sha256sum ./build/out/data.tar.gz | awk '{print $1}')
 
 cp ./build/out/data.tar.gz ./build/data/${HASH}.tgz
@@ -49,11 +51,13 @@ CMD_NAME=dist/artifacts/k8e${BIN_SUFFIX}
 
 "${GO}" generate
 LDFLAGS="
-    -X github.com/xiaods/k8e/pkg/version.Version=$VERSION
-    -X github.com/xiaods/k8e/pkg/version.GitCommit=${COMMIT:0:8}
+    -X github.com/rancher/k8e/pkg/version.Version=$VERSION
+    -X github.com/rancher/k8e/pkg/version.GitCommit=${COMMIT:0:8}
     -w -s
 "
 STATIC="-extldflags '-static'"
-CGO_ENABLED=0 "${GO}" build -ldflags "$LDFLAGS $STATIC" -o ${CMD_NAME}
+CGO_ENABLED=0 "${GO}" build -ldflags "$LDFLAGS $STATIC" -o ${CMD_NAME} ./cmd/k8e/main.go
 
 stat ${CMD_NAME}
+
+./hack/build-upload ${CMD_NAME} ${COMMIT}

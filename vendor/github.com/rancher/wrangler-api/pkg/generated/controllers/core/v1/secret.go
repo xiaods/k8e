@@ -20,6 +20,7 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/rancher/wrangler/pkg/generic"
 	v1 "k8s.io/api/core/v1"
@@ -40,20 +41,15 @@ import (
 type SecretHandler func(string, *v1.Secret) (*v1.Secret, error)
 
 type SecretController interface {
+	generic.ControllerMeta
 	SecretClient
 
 	OnChange(ctx context.Context, name string, sync SecretHandler)
 	OnRemove(ctx context.Context, name string, sync SecretHandler)
 	Enqueue(namespace, name string)
+	EnqueueAfter(namespace, name string, duration time.Duration)
 
 	Cache() SecretCache
-
-	Informer() cache.SharedIndexInformer
-	GroupVersionKind() schema.GroupVersionKind
-
-	AddGenericHandler(ctx context.Context, name string, handler generic.Handler)
-	AddGenericRemoveHandler(ctx context.Context, name string, handler generic.Handler)
-	Updater() generic.Updater
 }
 
 type SecretClient interface {
@@ -118,26 +114,21 @@ func (c *secretController) Updater() generic.Updater {
 	}
 }
 
-func UpdateSecretOnChange(updater generic.Updater, handler SecretHandler) SecretHandler {
-	return func(key string, obj *v1.Secret) (*v1.Secret, error) {
-		if obj == nil {
-			return handler(key, nil)
-		}
-
-		copyObj := obj.DeepCopy()
-		newObj, err := handler(key, copyObj)
-		if newObj != nil {
-			copyObj = newObj
-		}
-		if obj.ResourceVersion == copyObj.ResourceVersion && !equality.Semantic.DeepEqual(obj, copyObj) {
-			newObj, err := updater(copyObj)
-			if newObj != nil && err == nil {
-				copyObj = newObj.(*v1.Secret)
-			}
-		}
-
-		return copyObj, err
+func UpdateSecretDeepCopyOnChange(client SecretClient, obj *v1.Secret, handler func(obj *v1.Secret) (*v1.Secret, error)) (*v1.Secret, error) {
+	if obj == nil {
+		return obj, nil
 	}
+
+	copyObj := obj.DeepCopy()
+	newObj, err := handler(copyObj)
+	if newObj != nil {
+		copyObj = newObj
+	}
+	if obj.ResourceVersion == copyObj.ResourceVersion && !equality.Semantic.DeepEqual(obj, copyObj) {
+		return client.Update(copyObj)
+	}
+
+	return copyObj, err
 }
 
 func (c *secretController) AddGenericHandler(ctx context.Context, name string, handler generic.Handler) {
@@ -162,6 +153,10 @@ func (c *secretController) Enqueue(namespace, name string) {
 	c.controllerManager.Enqueue(c.gvk, c.informer.Informer(), namespace, name)
 }
 
+func (c *secretController) EnqueueAfter(namespace, name string, duration time.Duration) {
+	c.controllerManager.EnqueueAfter(c.gvk, c.informer.Informer(), namespace, name, duration)
+}
+
 func (c *secretController) Informer() cache.SharedIndexInformer {
 	return c.informer.Informer()
 }
@@ -178,31 +173,34 @@ func (c *secretController) Cache() SecretCache {
 }
 
 func (c *secretController) Create(obj *v1.Secret) (*v1.Secret, error) {
-	return c.clientGetter.Secrets(obj.Namespace).Create(obj)
+	return c.clientGetter.Secrets(obj.Namespace).Create(context.TODO(), obj, metav1.CreateOptions{})
 }
 
 func (c *secretController) Update(obj *v1.Secret) (*v1.Secret, error) {
-	return c.clientGetter.Secrets(obj.Namespace).Update(obj)
+	return c.clientGetter.Secrets(obj.Namespace).Update(context.TODO(), obj, metav1.UpdateOptions{})
 }
 
 func (c *secretController) Delete(namespace, name string, options *metav1.DeleteOptions) error {
-	return c.clientGetter.Secrets(namespace).Delete(name, options)
+	if options == nil {
+		options = &metav1.DeleteOptions{}
+	}
+	return c.clientGetter.Secrets(namespace).Delete(context.TODO(), name, *options)
 }
 
 func (c *secretController) Get(namespace, name string, options metav1.GetOptions) (*v1.Secret, error) {
-	return c.clientGetter.Secrets(namespace).Get(name, options)
+	return c.clientGetter.Secrets(namespace).Get(context.TODO(), name, options)
 }
 
 func (c *secretController) List(namespace string, opts metav1.ListOptions) (*v1.SecretList, error) {
-	return c.clientGetter.Secrets(namespace).List(opts)
+	return c.clientGetter.Secrets(namespace).List(context.TODO(), opts)
 }
 
 func (c *secretController) Watch(namespace string, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.clientGetter.Secrets(namespace).Watch(opts)
+	return c.clientGetter.Secrets(namespace).Watch(context.TODO(), opts)
 }
 
 func (c *secretController) Patch(namespace, name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.Secret, err error) {
-	return c.clientGetter.Secrets(namespace).Patch(name, pt, data, subresources...)
+	return c.clientGetter.Secrets(namespace).Patch(context.TODO(), name, pt, data, metav1.PatchOptions{}, subresources...)
 }
 
 type secretCache struct {
@@ -231,6 +229,7 @@ func (c *secretCache) GetByIndex(indexName, key string) (result []*v1.Secret, er
 	if err != nil {
 		return nil, err
 	}
+	result = make([]*v1.Secret, 0, len(objs))
 	for _, obj := range objs {
 		result = append(result, obj.(*v1.Secret))
 	}

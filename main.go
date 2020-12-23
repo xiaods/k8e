@@ -1,34 +1,34 @@
+//go:generate go run pkg/codegen/cleanup/main.go
+//go:generate /bin/rm -rf pkg/generated
 //go:generate go run pkg/codegen/main.go
+//go:generate go fmt pkg/deploy/zz_generated_bindata.go
+//go:generate go fmt pkg/static/zz_generated_bindata.go
+
 package main
 
 import (
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
+	"github.com/xiaods/k8e/pkg/cli/crictl"
+	"github.com/xiaods/k8e/pkg/cli/kubectl"
 	"github.com/xiaods/k8e/pkg/cli/server"
-	"github.com/xiaods/k8e/pkg/version"
+	"github.com/xiaods/k8e/pkg/configfilearg"
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
 )
 
 func main() {
-	cmdVersion := version.MakeVersion()
-
-	printk8eASCIIArt := version.PrintK8eASCIIArt
-
-	var rootCmd = &cobra.Command{
-		Use: "k8e",
-		Run: func(cmd *cobra.Command, args []string) {
-			printk8eASCIIArt()
-			cmd.Help()
-		},
+	app := cmds.NewApp()
+	app.Commands = []cli.Command{
+		cmds.NewServerCommand(server.Run),
+		cmds.NewAgentCommand(agent.Run),
+		cmds.NewKubectlCommand(kubectl.Run),
+		cmds.NewCRICTL(crictl.Run),
 	}
 
-	rootCmd.AddCommand(cmdVersion)
-	rootCmd.AddCommand(cmds.NewServerCommand(server.Run))
-	rootCmd.AddCommand(cmds.NewAgentCommand(agent.Run))
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil {
+		logrus.Fatal(err)
 	}
 }

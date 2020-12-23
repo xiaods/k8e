@@ -20,8 +20,8 @@ import (
 )
 
 var (
-	pipeFD   = "_K8E_ROOTLESS_FD"
-	childEnv = "_K8E_ROOTLESS_SOCK"
+	pipeFD   = "_K3S_ROOTLESS_FD"
+	childEnv = "_K3S_ROOTLESS_SOCK"
 	Sock     = ""
 )
 

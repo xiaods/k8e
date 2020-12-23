@@ -9,17 +9,13 @@ import (
 	"path/filepath"
 
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 )
 
 func Handler(bootstrap *config.ControlRuntimeBootstrap) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		rw.Header().Set("Content-Type", "application/json")
-		err := Write(rw, bootstrap)
-		if err != nil {
-			logrus.Error(err)
-		}
+		Write(rw, bootstrap)
 	})
 }
 
@@ -29,16 +25,13 @@ func Write(w io.Writer, bootstrap *config.ControlRuntimeBootstrap) error {
 		return nil
 	}
 
-	dataMap := make(map[string][]byte)
+	dataMap := map[string][]byte{}
 	for pathKey, path := range paths {
 		if path == "" {
 			continue
 		}
 		data, err := ioutil.ReadFile(path)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
 			return errors.Wrapf(err, "failed to read %s", path)
 		}
 
@@ -82,10 +75,6 @@ func objToMap(obj interface{}) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var data map[string]string
-	err = json.Unmarshal(bytes, &data)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
+	data := map[string]string{}
+	return data, json.Unmarshal(bytes, &data)
 }

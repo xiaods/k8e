@@ -1,8 +1,8 @@
 package configfilearg
 
 import (
-	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/version"
+	"github.com/sirupsen/logrus"
 )
 
 func MustParse(args []string) []string {
@@ -10,7 +10,7 @@ func MustParse(args []string) []string {
 		After:         []string{"server", "agent"},
 		FlagNames:     []string{"--config", "-c"},
 		EnvName:       version.ProgramUpper + "_CONFIG_FILE",
-		DefaultConfig: "/etc/xiaods/" + version.Program + "/config.yaml",
+		DefaultConfig: "/etc/rancher/" + version.Program + "/config.yaml",
 	}
 	result, err := parser.Parse(args)
 	if err != nil {

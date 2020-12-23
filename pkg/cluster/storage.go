@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/rancher/kine/pkg/client"
 	"github.com/xiaods/k8e/pkg/bootstrap"
+	"github.com/rancher/kine/pkg/client"
 )
 
 // save writes the current ControlRuntimeBootstrap data to the datastore. This contains a complete
