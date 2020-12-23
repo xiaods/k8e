@@ -85,6 +85,7 @@ require (
 	github.com/rancher/remotedialer v0.2.0
 	github.com/rancher/wrangler v0.6.1
 	github.com/rancher/wrangler-api v0.2.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/rootless-containers/rootlesskit v0.11.1
 	github.com/sirupsen/logrus v1.7.0
 	github.com/spf13/cobra v1.0.0
@@ -96,7 +97,7 @@ require (
 	google.golang.org/grpc v1.31.1
 	gopkg.in/yaml.v2 v2.3.0
 	gopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776 // indirect
-	k8s.io/api v0.19.0 // indirect
+	k8s.io/api v0.19.0
 	k8s.io/apimachinery v0.19.0
 	k8s.io/apiserver v0.19.0
 	k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
@@ -106,5 +107,4 @@ require (
 	k8s.io/kube-aggregator v0.18.0 // indirect
 	k8s.io/kubernetes v1.19.5
 	k8s.io/utils v0.0.0-20200729134348-d5654de09c73
-	sigs.k8s.io/yaml v1.2.0
 )
