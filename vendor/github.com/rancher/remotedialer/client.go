@@ -2,7 +2,6 @@ package remotedialer
 
 import (
 	"context"
-	"io/ioutil"
 	"net/http"
 	"time"
 
@@ -23,40 +22,28 @@ func connectToProxy(rootCtx context.Context, proxyURL string, headers http.Heade
 	logrus.WithField("url", proxyURL).Info("Connecting to proxy")
 
 	if dialer == nil {
-		dialer = &websocket.Dialer{Proxy:http.ProxyFromEnvironment,HandshakeTimeout:HandshakeTimeOut}
+		dialer = &websocket.Dialer{}
 	}
-	ws, resp, err := dialer.Dial(proxyURL, headers)
+	ws, _, err := dialer.Dial(proxyURL, headers)
 	if err != nil {
-		if resp == nil {
-			logrus.WithError(err).Errorf("Failed to connect to proxy. Empty dialer response")
-		} else {
-			rb, err2 := ioutil.ReadAll(resp.Body)
-			if err2 != nil {
-				logrus.WithError(err).Errorf("Failed to connect to proxy. Response status: %v - %v. Couldn't read response body (err: %v)", resp.StatusCode, resp.Status, err2)
-			} else {
-				logrus.WithError(err).Errorf("Failed to connect to proxy. Response status: %v - %v. Response body: %s", resp.StatusCode, resp.Status, rb)
-			}
-		}
+		logrus.WithError(err).Error("Failed to connect to proxy")
 		return err
 	}
 	defer ws.Close()
-
-	result := make(chan error, 2)
 
 	ctx, cancel := context.WithCancel(rootCtx)
 	defer cancel()
 
 	if onConnect != nil {
-		go func() {
-			if err := onConnect(ctx); err != nil {
-				result <- err
-			}
-		}()
+		if err := onConnect(ctx); err != nil {
+			return err
+		}
 	}
 
 	session := NewClientSession(auth, ws)
 	defer session.Close()
 
+	result := make(chan error, 1)
 	go func() {
 		_, err = session.Serve(ctx)
 		result <- err

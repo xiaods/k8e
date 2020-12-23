@@ -7,8 +7,6 @@ import (
 	"net"
 	"sync"
 	"time"
-
-	"github.com/rancher/remotedialer/metrics"
 )
 
 type connection struct {
@@ -35,12 +33,10 @@ func newConnection(connID int64, session *Session, proto, address string) *conne
 		session: session,
 		buf:     make(chan []byte, 1024),
 	}
-	metrics.IncSMTotalAddConnectionsForWS(session.clientKey, proto, address)
 	return c
 }
 
 func (c *connection) tunnelClose(err error) {
-	metrics.IncSMTotalRemoveConnectionsForWS(c.session.clientKey, c.addr.Network(), c.addr.String())
 	c.writeErr(err)
 	c.doTunnelClose(err)
 }
@@ -83,7 +79,6 @@ func (c *connection) Read(b []byte) (int, error) {
 
 	n := c.copyData(b)
 	if n > 0 {
-		metrics.AddSMTotalReceiveBytesOnWS(c.session.clientKey, float64(n))
 		return n, nil
 	}
 
@@ -100,7 +95,6 @@ func (c *connection) Read(b []byte) (int, error) {
 
 	c.readBuf = next
 	n = c.copyData(b)
-	metrics.AddSMTotalReceiveBytesOnWS(c.session.clientKey, float64(n))
 	return n, nil
 }
 
@@ -116,16 +110,12 @@ func (c *connection) Write(b []byte) (int, error) {
 	if !c.writeDeadline.IsZero() {
 		deadline = c.writeDeadline.Sub(time.Now()).Nanoseconds() / 1000000
 	}
-	msg := newMessage(c.connID, deadline, b)
-	metrics.AddSMTotalTransmitBytesOnWS(c.session.clientKey, float64(len(msg.Bytes())))
-	return c.session.writeMessage(msg)
+	return c.session.writeMessage(newMessage(c.connID, deadline, b))
 }
 
 func (c *connection) writeErr(err error) {
 	if err != nil {
-		msg := newErrorMessage(c.connID, err)
-		metrics.AddSMTotalTransmitErrorBytesOnWS(c.session.clientKey, float64(len(msg.Bytes())))
-		c.session.writeMessage(msg)
+		c.session.writeMessage(newErrorMessage(c.connID, err))
 	}
 }
 

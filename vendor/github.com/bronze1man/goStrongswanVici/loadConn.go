@@ -36,7 +36,7 @@ type ChildSAConf struct {
 	ESPProposals  []string `json:"esp_proposals,omitempty"` //aes128-sha1_modp1024
 	StartAction   string   `json:"start_action"`            //none,trap,start
 	CloseAction   string   `json:"close_action"`
-	ReqID         string   `json:"reqid"`
+	ReqID         string   `json:"reqid,omitempty"`
 	RekeyTime     string   `json:"rekey_time"`
 	ReplayWindow  string   `json:"replay_window,omitempty"`
 	Mode          string   `json:"mode"`
@@ -45,6 +45,8 @@ type ChildSAConf struct {
 	Priority      string   `json:"priority,omitempty"`
 	MarkIn        string   `json:"mark_in,omitempty"`
 	MarkOut       string   `json:"mark_out,omitempty"`
+	DpdAction     string   `json:"dpd_action,omitempty"`
+	LifeTime      string   `json:"life_time,omitempty"`
 }
 
 func (c *ClientConn) LoadConn(conn *map[string]IKEConf) error {

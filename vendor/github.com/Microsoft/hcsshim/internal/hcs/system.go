@@ -28,7 +28,8 @@ type System struct {
 	waitBlock      chan struct{}
 	waitError      error
 	exitError      error
-	os, typ        string
+
+	os, typ string
 }
 
 func newSystem(id string) *System {

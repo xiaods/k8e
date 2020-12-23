@@ -1,10 +1,11 @@
 package remotedialer
 
-import "time"
+import (
+	"time"
+)
 
-const (
-	PingWaitDuration  	= 60 * time.Second
-	PingWriteInterval 	= 5 * time.Second
-	MaxRead           	= 8192
-	HandshakeTimeOut	= 10 * time.Second
+var (
+	PingWaitDuration  = time.Duration(10 * time.Second)
+	PingWriteInterval = time.Duration(5 * time.Second)
+	MaxRead           = 8192
 )

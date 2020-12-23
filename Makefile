@@ -10,20 +10,18 @@ all: clean deps build
 
 .PHONY: deps
 deps:
-	@go mod vendor
 	@go mod tidy
+	@go mod vendor
 
 .PHONY: build
-build:
+build: build/data
 	@bash ./hack/build
 
-.PHONY: generate
 generate: build/data
-	@bash ./hack/download
 	@go generate
 
 build/data:
-	mkdir -p $@
+	@mkdir -p $@
 
 .PHONY: package
 package:
@@ -36,4 +34,3 @@ clean:
 .PHONY: test
 test:
 	CGO_ENABLED=0 go test $(shell go list ./... | grep -v /vendor/|xargs echo) -cover
-
