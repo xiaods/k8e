@@ -62,7 +62,7 @@ func NewAgentCommand(run func(cmd *cobra.Command, args []string)) *cobra.Command
 	cmd.Short = "Run node agent"
 	cmd.Long = "Run node agent"
 	cmd.Run = run
-
+	cmd.DisableFlagParsing = true
 	cmd.Flags().StringVarP(&Agent.DataDir, "data-dir", "d", "", "(data) Folder to hold state default /var/lib/k8e/"+version.Program+" or ${HOME}/.k8e/"+version.Program+" if not root")
 	cmd.Flags().StringVarP(&Agent.ServerURL, "server", "s", "", "(experimental/cluster) Server to connect to, used to join a cluster")
 	cmd.Flags().BoolVar(&Agent.DisableCCM, "disable-cloud-controller", true, "(components) Disable "+version.Program+" default cloud controller manager")
