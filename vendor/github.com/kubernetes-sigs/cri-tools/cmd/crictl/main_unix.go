@@ -22,4 +22,4 @@ const (
 	defaultConfigPath = "/etc/crictl.yaml"
 )
 
-var defaultRuntimeEndpoints = []string{"unix:///run/k3s/containerd/containerd.sock", "unix:///var/run/dockershim.sock", "unix:///run/containerd/containerd.sock", "unix:///run/crio/crio.sock"}
+var defaultRuntimeEndpoints = []string{"unix:///run/k8e/containerd/containerd.sock", "unix:///var/run/dockershim.sock", "unix:///run/containerd/containerd.sock", "unix:///run/crio/crio.sock"}

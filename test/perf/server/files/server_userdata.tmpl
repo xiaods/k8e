@@ -6,7 +6,7 @@ ssh_authorized_keys:
 %{ endfor }
 %{ endif }
 write_files:
-- path: /opt/k3s/run_k3s.sh
+- path: /opt/k8e/run_k8e.sh
   permissions: "0755"
   owner: root:root
   content: |
@@ -26,13 +26,13 @@ write_files:
 
     while true; do
     if [ ${db_engine} == "embedded-etcd" ]; then
-    curl -sfL https://get.k3s.io | K3S_CLUSTER_SECRET="${k3s_cluster_secret}" \
-       INSTALL_K3S_VERSION="${install_k3s_version}" \
-       INSTALL_K3S_EXEC="${k3s_server_args} --cluster-cidr=10.0.0.0/8 --no-deploy traefik --no-deploy servicelb --tls-san ${lb_address} %{ if master_index != 0 } --server https://${lb_address}:6443 %{ else } --cluster-init %{ endif }" sh -
+    curl -sfL https://get.k8e.io | k8e_CLUSTER_SECRET="${k8e_cluster_secret}" \
+       INSTALL_k8e_VERSION="${install_k8e_version}" \
+       INSTALL_k8e_EXEC="${k8e_server_args} --cluster-cidr=10.0.0.0/8 --no-deploy traefik --no-deploy servicelb --tls-san ${lb_address} %{ if master_index != 0 } --server https://${lb_address}:6443 %{ else } --cluster-init %{ endif }" sh -
     else
-      curl -sfL https://get.k3s.io | K3S_CLUSTER_SECRET="${k3s_cluster_secret}" \
-         INSTALL_K3S_VERSION="${install_k3s_version}" \
-         INSTALL_K3S_EXEC="${k3s_server_args} --cluster-cidr=10.0.0.0/8 --no-deploy traefik --no-deploy servicelb --tls-san ${lb_address} %{ if use_ha == "true" } --datastore-endpoint=$STORAGE_ENDPOINT %{ endif }" sh -
+      curl -sfL https://get.k8e.io | k8e_CLUSTER_SECRET="${k8e_cluster_secret}" \
+         INSTALL_k8e_VERSION="${install_k8e_version}" \
+         INSTALL_k8e_EXEC="${k8e_server_args} --cluster-cidr=10.0.0.0/8 --no-deploy traefik --no-deploy servicelb --tls-san ${lb_address} %{ if use_ha == "true" } --datastore-endpoint=$STORAGE_ENDPOINT %{ endif }" sh -
       fi
       if [ $? -eq 0 ]; then
         break
@@ -67,9 +67,9 @@ runcmd:
 %{ if master_index != 0 }
 - sleep 20
 %{ endif }
-- /opt/k3s/run_k3s.sh
+- /opt/k8e/run_k8e.sh
 %{ if debug != 0 }
-- sed -i 's/bin\/k3s/bin\/k3s --debug/g' /etc/systemd/system/k3s.service
+- sed -i 's/bin\/k8e/bin\/k8e --debug/g' /etc/systemd/system/k8e.service
 - systemctl daemon-reload
-- systemctl restart k3s
+- systemctl restart k8e
 %{ endif }

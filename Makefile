@@ -15,6 +15,9 @@ deps:
 	go mod vendor
 	go mod tidy
 
+
+.DEFAULT_GOAL := ci
+
 .PHONY: $(TARGETS)
 
 .PHONY: generate

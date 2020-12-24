@@ -20,7 +20,7 @@ package versioned
 import (
 	"fmt"
 
-	k3sv1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k3s.cattle.io/v1"
+	k8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"
@@ -28,19 +28,19 @@ import (
 
 type Interface interface {
 	Discovery() discovery.DiscoveryInterface
-	K3sV1() k3sv1.K3sV1Interface
+	K8eV1() k8ev1.K8eV1Interface
 }
 
 // Clientset contains the clients for groups. Each group has exactly one
 // version included in a Clientset.
 type Clientset struct {
 	*discovery.DiscoveryClient
-	k3sV1 *k3sv1.K3sV1Client
+	k8eV1 *k8ev1.K8eV1Client
 }
 
-// K3sV1 retrieves the K3sV1Client
-func (c *Clientset) K3sV1() k3sv1.K3sV1Interface {
-	return c.k3sV1
+// K8eV1 retrieves the K8eV1Client
+func (c *Clientset) K8eV1() k8ev1.K8eV1Interface {
+	return c.k8eV1
 }
 
 // Discovery retrieves the DiscoveryClient
@@ -64,7 +64,7 @@ func NewForConfig(c *rest.Config) (*Clientset, error) {
 	}
 	var cs Clientset
 	var err error
-	cs.k3sV1, err = k3sv1.NewForConfig(&configShallowCopy)
+	cs.k8eV1, err = k8ev1.NewForConfig(&configShallowCopy)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func NewForConfig(c *rest.Config) (*Clientset, error) {
 // panics if there is an error in the config.
 func NewForConfigOrDie(c *rest.Config) *Clientset {
 	var cs Clientset
-	cs.k3sV1 = k3sv1.NewForConfigOrDie(c)
+	cs.k8eV1 = k8ev1.NewForConfigOrDie(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClientForConfigOrDie(c)
 	return &cs
@@ -89,7 +89,7 @@ func NewForConfigOrDie(c *rest.Config) *Clientset {
 // New creates a new Clientset for the given RESTClient.
 func New(c rest.Interface) *Clientset {
 	var cs Clientset
-	cs.k3sV1 = k3sv1.New(c)
+	cs.k8eV1 = k8ev1.New(c)
 
 	cs.DiscoveryClient = discovery.NewDiscoveryClient(c)
 	return &cs

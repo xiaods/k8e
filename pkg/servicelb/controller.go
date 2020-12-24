@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/xiaods/k8e/pkg/version"
 	appclient "github.com/rancher/wrangler-api/pkg/generated/controllers/apps/v1"
 	coreclient "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
 	"github.com/rancher/wrangler/pkg/apply"
@@ -15,6 +14,7 @@ import (
 	"github.com/rancher/wrangler/pkg/relatedresource"
 	"github.com/rancher/wrangler/pkg/slice"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/version"
 	apps "k8s.io/api/apps/v1"
 	core "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -376,7 +376,7 @@ func (h *handler) newDaemonSet(svc *core.Service) (*apps.DaemonSet, error) {
 	}
 	ds.Spec.Template.Spec.Tolerations = append(ds.Spec.Template.Spec.Tolerations, criticalAddonsOnlyToleration)
 
-	// Add node selector only if label "svccontroller.k3s.cattle.io/enablelb" exists on the nodes
+	// Add node selector only if label "svccontroller.k8e.cattle.io/enablelb" exists on the nodes
 	selector, err := labels.Parse(daemonsetNodeLabel)
 	if err != nil {
 		return nil, err

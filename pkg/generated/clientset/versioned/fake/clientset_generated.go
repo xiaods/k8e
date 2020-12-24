@@ -19,8 +19,8 @@ package fake
 
 import (
 	clientset "github.com/xiaods/k8e/pkg/generated/clientset/versioned"
-	k3sv1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k3s.cattle.io/v1"
-	fakek3sv1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k3s.cattle.io/v1/fake"
+	k8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1"
+	fakek8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1/fake"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
@@ -75,7 +75,7 @@ func (c *Clientset) Tracker() testing.ObjectTracker {
 
 var _ clientset.Interface = &Clientset{}
 
-// K3sV1 retrieves the K3sV1Client
-func (c *Clientset) K3sV1() k3sv1.K3sV1Interface {
-	return &fakek3sv1.FakeK3sV1{Fake: &c.Fake}
+// K8eV1 retrieves the K8eV1Client
+func (c *Clientset) K8eV1() k8ev1.K8eV1Interface {
+	return &fakek8ev1.FakeK8eV1{Fake: &c.Fake}
 }

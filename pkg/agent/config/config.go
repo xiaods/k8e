@@ -20,13 +20,13 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/proxy"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/net"
 )
@@ -337,7 +337,7 @@ func get(envInfo *cmds.Agent, proxy proxy.Proxy) (*config.Node, error) {
 	if envInfo.Rootless {
 		nodePasswordRoot = envInfo.DataDir
 	}
-	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "rancher", "node")
+	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
 	if err := os.MkdirAll(nodeConfigPath, 0755); err != nil {
 		return nil, err
 	}
@@ -386,14 +386,14 @@ func get(envInfo *cmds.Agent, proxy proxy.Proxy) (*config.Node, error) {
 		return nil, err
 	}
 
-	clientK3sControllerCert := filepath.Join(envInfo.DataDir, "client-"+version.Program+"-controller.crt")
-	clientK3sControllerKey := filepath.Join(envInfo.DataDir, "client-"+version.Program+"-controller.key")
-	if err := getHostFile(clientK3sControllerCert, clientK3sControllerKey, info); err != nil {
+	clientK8eControllerCert := filepath.Join(envInfo.DataDir, "client-"+version.Program+"-controller.crt")
+	clientK8eControllerKey := filepath.Join(envInfo.DataDir, "client-"+version.Program+"-controller.key")
+	if err := getHostFile(clientK8eControllerCert, clientK8eControllerKey, info); err != nil {
 		return nil, err
 	}
 
-	kubeconfigK3sController := filepath.Join(envInfo.DataDir, version.Program+"controller.kubeconfig")
-	if err := control.KubeConfig(kubeconfigK3sController, proxy.APIServerURL(), serverCAFile, clientK3sControllerCert, clientK3sControllerKey); err != nil {
+	kubeconfigK8eController := filepath.Join(envInfo.DataDir, version.Program+"controller.kubeconfig")
+	if err := control.KubeConfig(kubeconfigK8eController, proxy.APIServerURL(), serverCAFile, clientK8eControllerCert, clientK8eControllerKey); err != nil {
 		return nil, err
 	}
 
@@ -418,7 +418,7 @@ func get(envInfo *cmds.Agent, proxy proxy.Proxy) (*config.Node, error) {
 	nodeConfig.AgentConfig.ListenAddress = "0.0.0.0"
 	nodeConfig.AgentConfig.KubeConfigKubelet = kubeconfigKubelet
 	nodeConfig.AgentConfig.KubeConfigKubeProxy = kubeconfigKubeproxy
-	nodeConfig.AgentConfig.KubeConfigK3sController = kubeconfigK3sController
+	nodeConfig.AgentConfig.KubeConfigK8eController = kubeconfigK8eController
 	if envInfo.Rootless {
 		nodeConfig.AgentConfig.RootDir = filepath.Join(envInfo.DataDir, "kubelet")
 	}
@@ -433,7 +433,7 @@ func get(envInfo *cmds.Agent, proxy proxy.Proxy) (*config.Node, error) {
 	if !envInfo.Debug {
 		nodeConfig.Containerd.Log = filepath.Join(envInfo.DataDir, "containerd/containerd.log")
 	}
-	nodeConfig.Containerd.State = "/run/k3s/containerd"
+	nodeConfig.Containerd.State = "/run/k8e/containerd"
 	nodeConfig.Containerd.Address = filepath.Join(nodeConfig.Containerd.State, "containerd.sock")
 	nodeConfig.Containerd.Template = filepath.Join(envInfo.DataDir, "etc/containerd/config.toml.tmpl")
 	nodeConfig.Certificate = servingCert

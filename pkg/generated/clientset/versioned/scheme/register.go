@@ -18,7 +18,7 @@ limitations under the License.
 package scheme
 
 import (
-	k3sv1 "github.com/xiaods/k8e/pkg/apis/k3s.cattle.io/v1"
+	k8ev1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -30,7 +30,7 @@ var Scheme = runtime.NewScheme()
 var Codecs = serializer.NewCodecFactory(Scheme)
 var ParameterCodec = runtime.NewParameterCodec(Scheme)
 var localSchemeBuilder = runtime.SchemeBuilder{
-	k3sv1.AddToScheme,
+	k8ev1.AddToScheme,
 }
 
 // AddToScheme adds all types of this clientset into the given scheme. This allows composition

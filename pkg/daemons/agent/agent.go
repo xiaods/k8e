@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/opencontainers/runc/libcontainer/system"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/component-base/logs"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
@@ -63,7 +63,7 @@ func startKubelet(cfg *config.Agent) error {
 		"eviction-hard":            "imagefs.available<5%,nodefs.available<5%",
 		"eviction-minimum-reclaim": "imagefs.available=10%,nodefs.available=10%",
 		"fail-swap-on":             "false",
-		//"cgroup-root": "/k3s",
+		//"cgroup-root": "/k8e",
 		"cgroup-driver":                "cgroupfs",
 		"authentication-token-webhook": "true",
 		"anonymous-auth":               "false",

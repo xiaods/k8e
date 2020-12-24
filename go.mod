@@ -21,7 +21,7 @@ replace (
 	github.com/docker/libnetwork => github.com/docker/libnetwork v0.8.0-dev.2.0.20190624125649-f0e46a78ea34
 	github.com/golang/protobuf => github.com/golang/protobuf v1.3.5
 	github.com/juju/errors => github.com/k3s-io/nocode v0.0.0-20200630202308-cb097102c09f
-	github.com/kubernetes-sigs/cri-tools => github.com/rancher/cri-tools v1.19.0-k3s1
+	github.com/kubernetes-sigs/cri-tools => github.com/xiaods/cri-tools v1.19.0-k8e1
 	github.com/matryer/moq => github.com/rancher/moq v0.0.0-20190404221404-ee5226d43009
 	github.com/opencontainers/runc => github.com/opencontainers/runc v1.0.0-rc92
 	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.0.3-0.20200728170252-4d89ac9fbff6
@@ -77,7 +77,7 @@ require (
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
 	github.com/gorilla/websocket v1.4.1
-	github.com/kubernetes-sigs/cri-tools v0.0.0-00010101000000-000000000000
+	github.com/kubernetes-sigs/cri-tools v1.19.0
 	github.com/lib/pq v1.8.0
 	github.com/mattn/go-sqlite3 v1.14.4
 	github.com/morikuni/aec v1.0.0

@@ -4,10 +4,10 @@ import (
 	"os"
 
 	bindata "github.com/go-bindata/go-bindata"
-	v1 "github.com/xiaods/k8e/pkg/apis/k3s.cattle.io/v1"
 	controllergen "github.com/rancher/wrangler/pkg/controller-gen"
 	"github.com/rancher/wrangler/pkg/controller-gen/args"
 	"github.com/sirupsen/logrus"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
 )
 
 var (
@@ -71,7 +71,7 @@ func main() {
 		OutputPackage: "github.com/xiaods/k8e/pkg/generated",
 		Boilerplate:   "hack/boilerplate.go.txt",
 		Groups: map[string]args.Group{
-			"k3s.cattle.io": {
+			"k8e.cattle.io": {
 				Types: []interface{}{
 					v1.Addon{},
 				},

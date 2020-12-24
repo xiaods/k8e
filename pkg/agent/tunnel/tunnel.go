@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/rancher/remotedialer"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/proxy"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/rancher/remotedialer"
-	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -53,7 +53,7 @@ func getAddresses(endpoint *v1.Endpoints) []string {
 }
 
 func Setup(ctx context.Context, config *config.Node, proxy proxy.Proxy) error {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", config.AgentConfig.KubeConfigK3sController)
+	restConfig, err := clientcmd.BuildConfigFromFlags("", config.AgentConfig.KubeConfigK8eController)
 	if err != nil {
 		return err
 	}

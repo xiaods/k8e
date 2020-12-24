@@ -17,19 +17,19 @@ var (
 	HostnameLabel   = version.Program + ".io/hostname"
 )
 
-func (k *k3s) AddSSHKeyToAllInstances(ctx context.Context, user string, keyData []byte) error {
+func (k *k8e) AddSSHKeyToAllInstances(ctx context.Context, user string, keyData []byte) error {
 	return cloudprovider.NotImplemented
 }
 
-func (k *k3s) CurrentNodeName(ctx context.Context, hostname string) (types.NodeName, error) {
+func (k *k8e) CurrentNodeName(ctx context.Context, hostname string) (types.NodeName, error) {
 	return types.NodeName(hostname), nil
 }
 
-func (k *k3s) InstanceExistsByProviderID(ctx context.Context, providerID string) (bool, error) {
+func (k *k8e) InstanceExistsByProviderID(ctx context.Context, providerID string) (bool, error) {
 	return true, nil
 }
 
-func (k *k3s) InstanceID(ctx context.Context, nodeName types.NodeName) (string, error) {
+func (k *k8e) InstanceID(ctx context.Context, nodeName types.NodeName) (string, error) {
 	_, err := k.NodeCache.Get(string(nodeName))
 	if err != nil {
 		return "", fmt.Errorf("Failed to find node %s: %v", nodeName, err)
@@ -37,11 +37,11 @@ func (k *k3s) InstanceID(ctx context.Context, nodeName types.NodeName) (string, 
 	return string(nodeName), nil
 }
 
-func (k *k3s) InstanceShutdownByProviderID(ctx context.Context, providerID string) (bool, error) {
+func (k *k8e) InstanceShutdownByProviderID(ctx context.Context, providerID string) (bool, error) {
 	return true, cloudprovider.NotImplemented
 }
 
-func (k *k3s) InstanceType(ctx context.Context, name types.NodeName) (string, error) {
+func (k *k8e) InstanceType(ctx context.Context, name types.NodeName) (string, error) {
 	_, err := k.InstanceID(ctx, name)
 	if err != nil {
 		return "", err
@@ -49,11 +49,11 @@ func (k *k3s) InstanceType(ctx context.Context, name types.NodeName) (string, er
 	return version.Program, nil
 }
 
-func (k *k3s) InstanceTypeByProviderID(ctx context.Context, providerID string) (string, error) {
+func (k *k8e) InstanceTypeByProviderID(ctx context.Context, providerID string) (string, error) {
 	return "", cloudprovider.NotImplemented
 }
 
-func (k *k3s) NodeAddresses(ctx context.Context, name types.NodeName) ([]corev1.NodeAddress, error) {
+func (k *k8e) NodeAddresses(ctx context.Context, name types.NodeName) ([]corev1.NodeAddress, error) {
 	addresses := []corev1.NodeAddress{}
 	node, err := k.NodeCache.Get(string(name))
 	if err != nil {
@@ -81,6 +81,6 @@ func (k *k3s) NodeAddresses(ctx context.Context, name types.NodeName) ([]corev1.
 	return addresses, nil
 }
 
-func (k *k3s) NodeAddressesByProviderID(ctx context.Context, providerID string) ([]corev1.NodeAddress, error) {
+func (k *k8e) NodeAddressesByProviderID(ctx context.Context, providerID string) ([]corev1.NodeAddress, error) {
 	return nil, cloudprovider.NotImplemented
 }

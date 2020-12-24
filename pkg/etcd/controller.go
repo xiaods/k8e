@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	nodeID      = "etcd.k3s.cattle.io/node-name"
-	nodeAddress = "etcd.k3s.cattle.io/node-address"
+	nodeID      = "etcd.k8e.cattle.io/node-name"
+	nodeAddress = "etcd.k8e.cattle.io/node-address"
 	master      = "node-role.kubernetes.io/master"
 	etcdRole    = "node-role.kubernetes.io/etcd"
 )

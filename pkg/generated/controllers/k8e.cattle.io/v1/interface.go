@@ -19,16 +19,16 @@ package v1
 
 import (
 	"github.com/rancher/wrangler/pkg/generic"
-	v1 "github.com/xiaods/k8e/pkg/apis/k3s.cattle.io/v1"
-	clientset "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k3s.cattle.io/v1"
-	informers "github.com/xiaods/k8e/pkg/generated/informers/externalversions/k3s.cattle.io/v1"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	clientset "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1"
+	informers "github.com/xiaods/k8e/pkg/generated/informers/externalversions/k8e.cattle.io/v1"
 )
 
 type Interface interface {
 	Addon() AddonController
 }
 
-func New(controllerManager *generic.ControllerManager, client clientset.K3sV1Interface,
+func New(controllerManager *generic.ControllerManager, client clientset.K8eV1Interface,
 	informers informers.Interface) Interface {
 	return &version{
 		controllerManager: controllerManager,
@@ -40,7 +40,7 @@ func New(controllerManager *generic.ControllerManager, client clientset.K3sV1Int
 type version struct {
 	controllerManager *generic.ControllerManager
 	informers         informers.Interface
-	client            clientset.K3sV1Interface
+	client            clientset.K8eV1Interface
 }
 
 func (c *version) Addon() AddonController {
