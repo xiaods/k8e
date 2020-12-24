@@ -63,7 +63,7 @@ type Agent struct {
 	RootDir                 string
 	KubeConfigKubelet       string
 	KubeConfigKubeProxy     string
-	KubeConfigK3sController string
+	KubeConfigK8eController string
 	NodeIP                  string
 	NodeExternalIP          string
 	RuntimeSocket           string
@@ -93,7 +93,7 @@ type Control struct {
 	AdvertiseIP   string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
-	// The port which custom k3s API runs on
+	// The port which custom K8e API runs on
 	SupervisorPort int
 	// The port which kube-apiserver runs on
 	APIServerPort            int
@@ -199,8 +199,8 @@ type ControlRuntime struct {
 	ClientKubeletKey          string
 	ClientCloudControllerCert string
 	ClientCloudControllerKey  string
-	ClientK3sControllerCert   string
-	ClientK3sControllerKey    string
+	ClientK8eControllerCert   string
+	ClientK8eControllerKey    string
 
 	ServerETCDCert           string
 	ServerETCDKey            string

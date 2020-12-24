@@ -10,6 +10,7 @@ import (
 	"time"
 
 	systemd "github.com/coreos/go-systemd/daemon"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/config"
 	"github.com/xiaods/k8e/pkg/agent/containerd"
 	"github.com/xiaods/k8e/pkg/agent/flannel"
@@ -25,7 +26,6 @@ import (
 	"github.com/xiaods/k8e/pkg/nodeconfig"
 	"github.com/xiaods/k8e/pkg/rootless"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -42,7 +42,7 @@ var (
 
 const (
 	dockershimSock = "unix:///var/run/dockershim.sock"
-	containerdSock = "unix:///run/k3s/containerd/containerd.sock"
+	containerdSock = "unix:///run/k8e/containerd/containerd.sock"
 )
 
 // setupCriCtlConfig creates the crictl config file and populates it

@@ -21,10 +21,10 @@ import (
 	"context"
 	time "time"
 
-	k3scattleiov1 "github.com/xiaods/k8e/pkg/apis/k3s.cattle.io/v1"
+	k8ecattleiov1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
 	versioned "github.com/xiaods/k8e/pkg/generated/clientset/versioned"
 	internalinterfaces "github.com/xiaods/k8e/pkg/generated/informers/externalversions/internalinterfaces"
-	v1 "github.com/xiaods/k8e/pkg/generated/listers/k3s.cattle.io/v1"
+	v1 "github.com/xiaods/k8e/pkg/generated/listers/k8e.cattle.io/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	watch "k8s.io/apimachinery/pkg/watch"
@@ -61,16 +61,16 @@ func NewFilteredAddonInformer(client versioned.Interface, namespace string, resy
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K3sV1().Addons(namespace).List(context.TODO(), options)
+				return client.K8eV1().Addons(namespace).List(context.TODO(), options)
 			},
 			WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.K3sV1().Addons(namespace).Watch(context.TODO(), options)
+				return client.K8eV1().Addons(namespace).Watch(context.TODO(), options)
 			},
 		},
-		&k3scattleiov1.Addon{},
+		&k8ecattleiov1.Addon{},
 		resyncPeriod,
 		indexers,
 	)
@@ -81,7 +81,7 @@ func (f *addonInformer) defaultInformer(client versioned.Interface, resyncPeriod
 }
 
 func (f *addonInformer) Informer() cache.SharedIndexInformer {
-	return f.factory.InformerFor(&k3scattleiov1.Addon{}, f.defaultInformer)
+	return f.factory.InformerFor(&k8ecattleiov1.Addon{}, f.defaultInformer)
 }
 
 func (f *addonInformer) Lister() v1.AddonLister {

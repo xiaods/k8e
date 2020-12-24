@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 
 	"github.com/pkg/errors"
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 type Agent struct {
@@ -83,13 +83,13 @@ var (
 		Name:        "private-registry",
 		Usage:       "(agent/runtime) Private registry configuration file",
 		Destination: &AgentConfig.PrivateRegistry,
-		Value:       "/etc/rancher/" + version.Program + "/registries.yaml",
+		Value:       "/etc/k8e/" + version.Program + "/registries.yaml",
 	}
 	PauseImageFlag = cli.StringFlag{
 		Name:        "pause-image",
 		Usage:       "(agent/runtime) Customized pause image for containerd or docker sandbox",
 		Destination: &AgentConfig.PauseImage,
-		Value:       "docker.io/rancher/pause:3.1",
+		Value:       "registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.2",
 	}
 	SnapshotterFlag = cli.StringFlag{
 		Name:        "snapshotter",
@@ -203,7 +203,7 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 				Name:        "data-dir,d",
 				Usage:       "(agent/data) Folder to hold state",
 				Destination: &AgentConfig.DataDir,
-				Value:       "/var/lib/rancher/" + version.Program + "",
+				Value:       "/var/lib/k8e/" + version.Program + "",
 			},
 			NodeNameFlag,
 			WithNodeIDFlag,

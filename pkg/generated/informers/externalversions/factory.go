@@ -24,7 +24,7 @@ import (
 
 	versioned "github.com/xiaods/k8e/pkg/generated/clientset/versioned"
 	internalinterfaces "github.com/xiaods/k8e/pkg/generated/informers/externalversions/internalinterfaces"
-	k3scattleio "github.com/xiaods/k8e/pkg/generated/informers/externalversions/k3s.cattle.io"
+	k8ecattleio "github.com/xiaods/k8e/pkg/generated/informers/externalversions/k8e.cattle.io"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -171,9 +171,9 @@ type SharedInformerFactory interface {
 	ForResource(resource schema.GroupVersionResource) (GenericInformer, error)
 	WaitForCacheSync(stopCh <-chan struct{}) map[reflect.Type]bool
 
-	K3s() k3scattleio.Interface
+	K8e() k8ecattleio.Interface
 }
 
-func (f *sharedInformerFactory) K3s() k3scattleio.Interface {
-	return k3scattleio.New(f, f.namespace, f.tweakListOptions)
+func (f *sharedInformerFactory) K8e() k8ecattleio.Interface {
+	return k8ecattleio.New(f, f.namespace, f.tweakListOptions)
 }

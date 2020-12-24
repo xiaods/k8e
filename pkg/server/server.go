@@ -212,7 +212,7 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		return err
 	}
 
-	return deploy.WatchFiles(ctx, sc.Apply, sc.K3s.K3s().V1().Addon(), controlConfig.Disables, dataDir)
+	return deploy.WatchFiles(ctx, sc.Apply, sc.K8e.K8e().V1().Addon(), controlConfig.Disables, dataDir)
 }
 
 func HomeKubeConfig(write, rootless bool) (string, error) {

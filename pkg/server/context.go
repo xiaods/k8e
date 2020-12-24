@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/rancher/helm-controller/pkg/generated/controllers/helm.cattle.io"
-	"github.com/xiaods/k8e/pkg/generated/controllers/k3s.cattle.io"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/apps"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/batch"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
@@ -12,13 +11,14 @@ import (
 	"github.com/rancher/wrangler/pkg/apply"
 	"github.com/rancher/wrangler/pkg/crd"
 	"github.com/rancher/wrangler/pkg/start"
+	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
 type Context struct {
-	K3s   *k3s.Factory
+	K8e   *k8e.Factory
 	Helm  *helm.Factory
 	Batch *batch.Factory
 	Apps  *apps.Factory
@@ -29,7 +29,7 @@ type Context struct {
 }
 
 func (c *Context) Start(ctx context.Context) error {
-	return start.All(ctx, 5, c.K3s, c.Helm, c.Apps, c.Auth, c.Batch, c.Core)
+	return start.All(ctx, 5, c.K8e, c.Helm, c.Apps, c.Auth, c.Batch, c.Core)
 }
 
 func newContext(ctx context.Context, cfg string) (*Context, error) {
@@ -44,7 +44,7 @@ func newContext(ctx context.Context, cfg string) (*Context, error) {
 
 	k8s := kubernetes.NewForConfigOrDie(restConfig)
 	return &Context{
-		K3s:   k3s.NewFactoryFromConfigOrDie(restConfig),
+		K8e:   k8e.NewFactoryFromConfigOrDie(restConfig),
 		Helm:  helm.NewFactoryFromConfigOrDie(restConfig),
 		K8s:   k8s,
 		Auth:  rbac.NewFactoryFromConfigOrDie(restConfig),
@@ -62,7 +62,7 @@ func crds(ctx context.Context, config *rest.Config) error {
 	}
 
 	factory.BatchCreateCRDs(ctx, crd.NamespacedTypes(
-		"Addon.k3s.cattle.io/v1",
+		"Addon.k8e.cattle.io/v1",
 		"HelmChart.helm.cattle.io/v1",
 		"HelmChartConfig.helm.cattle.io/v1")...)
 

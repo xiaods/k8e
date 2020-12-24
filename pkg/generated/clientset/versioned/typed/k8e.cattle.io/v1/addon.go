@@ -21,7 +21,7 @@ import (
 	"context"
 	"time"
 
-	v1 "github.com/xiaods/k8e/pkg/apis/k3s.cattle.io/v1"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
 	scheme "github.com/xiaods/k8e/pkg/generated/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	types "k8s.io/apimachinery/pkg/types"
@@ -56,7 +56,7 @@ type addons struct {
 }
 
 // newAddons returns a Addons
-func newAddons(c *K3sV1Client, namespace string) *addons {
+func newAddons(c *K8eV1Client, namespace string) *addons {
 	return &addons{
 		client: c.RESTClient(),
 		ns:     namespace,

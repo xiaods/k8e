@@ -20,7 +20,7 @@ package externalversions
 import (
 	"fmt"
 
-	v1 "github.com/xiaods/k8e/pkg/apis/k3s.cattle.io/v1"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	cache "k8s.io/client-go/tools/cache"
 )
@@ -51,9 +51,9 @@ func (f *genericInformer) Lister() cache.GenericLister {
 // TODO extend this to unknown resources with a client pool
 func (f *sharedInformerFactory) ForResource(resource schema.GroupVersionResource) (GenericInformer, error) {
 	switch resource {
-	// Group=k3s.cattle.io, Version=v1
+	// Group=k8e.cattle.io, Version=v1
 	case v1.SchemeGroupVersion.WithResource("addons"):
-		return &genericInformer{resource: resource.GroupResource(), informer: f.K3s().V1().Addons().Informer()}, nil
+		return &genericInformer{resource: resource.GroupResource(), informer: f.K8e().V1().Addons().Informer()}, nil
 
 	}
 

@@ -23,12 +23,9 @@ jobs:
     
     - name: check depends
       run: sudo apt-get install -y libseccomp-dev
-
-    - name: Build
-      run: make build
       
     - name: package bin
-      run: make package
+      run: make
       
     - name: Test
       run: go test -v .

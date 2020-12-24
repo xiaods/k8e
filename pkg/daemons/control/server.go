@@ -43,7 +43,7 @@ import (
 	"k8s.io/kubernetes/pkg/master"
 	"k8s.io/kubernetes/pkg/proxy/util"
 
-	// registering k3s cloud provider
+	// registering K8e cloud provider
 	_ "github.com/xiaods/k8e/pkg/cloudprovider"
 	// for client metric registration
 	_ "k8s.io/component-base/metrics/prometheus/restclient"
@@ -302,8 +302,8 @@ func prepare(ctx context.Context, config *config.Control, runtime *config.Contro
 	runtime.ClientKubeAPIKey = filepath.Join(config.DataDir, "tls", "client-kube-apiserver.key")
 	runtime.ClientKubeProxyCert = filepath.Join(config.DataDir, "tls", "client-kube-proxy.crt")
 	runtime.ClientKubeProxyKey = filepath.Join(config.DataDir, "tls", "client-kube-proxy.key")
-	runtime.ClientK3sControllerCert = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-controller.crt")
-	runtime.ClientK3sControllerKey = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-controller.key")
+	runtime.ClientK8eControllerCert = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-controller.crt")
+	runtime.ClientK8eControllerKey = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-controller.key")
 
 	runtime.ServingKubeAPICert = filepath.Join(config.DataDir, "tls", "serving-kube-apiserver.crt")
 	runtime.ServingKubeAPIKey = filepath.Join(config.DataDir, "tls", "serving-kube-apiserver.key")
@@ -551,8 +551,8 @@ func genClientCerts(config *config.Control, runtime *config.ControlRuntime) erro
 	if _, err = factory("system:kube-proxy", nil, runtime.ClientKubeProxyCert, runtime.ClientKubeProxyKey); err != nil {
 		return err
 	}
-	// This user (system:k3s-controller by default) must be bound to a role in rolebindings.yaml or the downstream equivalent
-	if _, err = factory("system:"+version.Program+"-controller", nil, runtime.ClientK3sControllerCert, runtime.ClientK3sControllerKey); err != nil {
+	// This user (system:K8e-controller by default) must be bound to a role in rolebindings.yaml or the downstream equivalent
+	if _, err = factory("system:"+version.Program+"-controller", nil, runtime.ClientK8eControllerCert, runtime.ClientK8eControllerKey); err != nil {
 		return err
 	}
 
@@ -925,7 +925,7 @@ func cloudControllerManager(ctx context.Context, cfg *config.Control, runtime *c
 
 	command := ccmapp.NewCloudControllerManagerCommand()
 	command.SetArgs(args)
-	// register k3s cloud provider
+	// register K8e cloud provider
 
 	go func() {
 		for {

@@ -1,8 +1,8 @@
 package cmds
 
 import (
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 var (
@@ -12,6 +12,6 @@ var (
 		Name:   "config,c",
 		Usage:  "(config) Load configuration from `FILE`",
 		EnvVar: version.ProgramUpper + "_CONFIG_FILE",
-		Value:  "/etc/rancher/" + version.Program + "/config.yaml",
+		Value:  "/etc/k8e/" + version.Program + "/config.yaml",
 	}
 )

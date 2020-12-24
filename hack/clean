@@ -2,4 +2,4 @@
 
 cd $(dirname $0)/..
 
-rm -rf dist bin build k8e
+rm -rf dist bin build k8e kubectl

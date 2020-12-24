@@ -3,8 +3,8 @@ package cmds
 import (
 	"context"
 
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 const (
@@ -110,7 +110,7 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			},
 			cli.StringFlag{
 				Name:        "data-dir,d",
-				Usage:       "(data) Folder to hold state default /var/lib/rancher/" + version.Program + " or ${HOME}/.rancher/" + version.Program + " if not root",
+				Usage:       "(data) Folder to hold state default /var/lib/k8e/" + version.Program + " or ${HOME}/.k8e/" + version.Program + " if not root",
 				Destination: &ServerConfig.DataDir,
 			},
 			cli.StringFlag{

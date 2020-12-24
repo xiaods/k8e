@@ -6,8 +6,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -22,7 +22,7 @@ func Run(ctx context.Context, nodeConfig *config.Node) error {
 		return nil
 	}
 
-	restConfig, err := clientcmd.BuildConfigFromFlags("", nodeConfig.AgentConfig.KubeConfigK3sController)
+	restConfig, err := clientcmd.BuildConfigFromFlags("", nodeConfig.AgentConfig.KubeConfigK8eController)
 	if err != nil {
 		return err
 	}
