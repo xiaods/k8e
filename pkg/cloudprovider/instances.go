@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/version"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	cloudprovider "k8s.io/cloud-provider"

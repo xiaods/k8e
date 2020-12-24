@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 
 	"github.com/pkg/errors"
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/rancher/wrangler/pkg/resolvehome"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 var (

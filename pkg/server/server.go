@@ -17,6 +17,10 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/rancher/helm-controller/pkg/helm"
+	v1 "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	"github.com/rancher/wrangler/pkg/leader"
+	"github.com/rancher/wrangler/pkg/resolvehome"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control"
@@ -28,10 +32,6 @@ import (
 	"github.com/xiaods/k8e/pkg/static"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
-	v1 "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
-	"github.com/rancher/wrangler/pkg/leader"
-	"github.com/rancher/wrangler/pkg/resolvehome"
-	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/net"
 )

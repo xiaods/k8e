@@ -7,15 +7,15 @@ import (
 	"runtime"
 
 	"github.com/erikdubbelboer/gspt"
+	"github.com/rancher/wrangler/pkg/signals"
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/netutil"
 	"github.com/xiaods/k8e/pkg/token"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/rancher/wrangler/pkg/signals"
-	"github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
 )
 
 func Run(ctx *cli.Context) error {

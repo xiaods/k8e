@@ -23,6 +23,8 @@ import (
 
 	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
+	"github.com/rancher/wrangler-api/pkg/generated/controllers/rbac"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -30,8 +32,6 @@ import (
 	"github.com/xiaods/k8e/pkg/passwd"
 	"github.com/xiaods/k8e/pkg/token"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/rancher/wrangler-api/pkg/generated/controllers/rbac"
-	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
