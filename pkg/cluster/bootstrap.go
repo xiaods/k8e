@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/sirupsen/logrus"
 )
 
 // Bootstrap attempts to load a managed database driver, if one has been initialized or should be created/joined.

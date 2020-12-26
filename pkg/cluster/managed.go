@@ -13,10 +13,10 @@ import (
 
 	"github.com/xiaods/k8e/pkg/etcd"
 
-	"github.com/xiaods/k8e/pkg/cluster/managed"
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/rancher/kine/pkg/endpoint"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/cluster/managed"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 // testClusterDB returns a channel that will be closed when the datastore connection is available.

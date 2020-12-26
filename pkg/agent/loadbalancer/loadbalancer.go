@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"github.com/google/tcpproxy"
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 type LoadBalancer struct {

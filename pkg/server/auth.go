@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
-	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	"k8s.io/apiserver/pkg/endpoints/request"
 )
 

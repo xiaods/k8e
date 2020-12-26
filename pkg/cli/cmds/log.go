@@ -11,8 +11,8 @@ import (
 
 	"github.com/docker/docker/pkg/reexec"
 	"github.com/natefinch/lumberjack"
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 type Log struct {

@@ -1,5 +1,3 @@
-./bin
-./etc
 ./pkg/data/zz_generated_bindata.go
 ./.cache
 ./.dapper

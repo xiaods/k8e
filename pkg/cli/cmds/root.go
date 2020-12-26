@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 var (

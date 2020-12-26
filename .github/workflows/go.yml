@@ -23,6 +23,9 @@ jobs:
     
     - name: check depends
       run: sudo apt-get install -y libseccomp-dev
+
+    - name: generate resources
+      run: make generate
       
     - name: package bin
       run: make
