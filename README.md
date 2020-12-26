@@ -37,14 +37,15 @@ SKIP_VALIDATE=true make
 2. Run server.
 
 ```bash
-sudo k8e server &
+sudo ./k8e check-config
+sudo ./k8e server &
 # Kubeconfig is written to /etc/k8e/k8e/k8e.yaml
 export KUBECONFIG=/etc/k8e/k8e/k8e.yaml
-sudo k8e kubectl get nodes
+sudo ./k8e kubectl get nodes
 
 # On a different node run the below. NODE_TOKEN comes from
 # /var/lib/k8e/k8e/server/node-token on your server
-sudo k8e agent --server https://myserver:6443 --token ${NODE_TOKEN}
+sudo ./k8e agent --server https://myserver:6443 --token ${NODE_TOKEN}
 ```
 
 Architecture

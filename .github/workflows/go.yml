@@ -23,9 +23,12 @@ jobs:
     
     - name: check depends
       run: sudo apt-get install -y libseccomp-dev
+
+    - name: generate resources
+      run: make generate
       
     - name: package bin
-      run: make
+      run: SKIP_VALIDATE=true make
       
     - name: Test
       run: go test -v .

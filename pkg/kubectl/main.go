@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/xiaods/k8e/pkg/server"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
+	"github.com/xiaods/k8e/pkg/server"
 	utilflag "k8s.io/component-base/cli/flag"
 	"k8s.io/component-base/logs"
 	"k8s.io/kubernetes/pkg/kubectl/cmd"

@@ -14,11 +14,11 @@ import (
 
 	"github.com/gorilla/mux"
 	certutil "github.com/rancher/dynamiclistener/cert"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/passwd"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/json"
 )
 
