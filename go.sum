@@ -484,6 +484,8 @@ github.com/k3s-io/containerd v1.4.3-k3s1 h1:4n8gpBDXa6IpinjzSl+uJsTPfg0l0Dus6zZB
 github.com/k3s-io/containerd v1.4.3-k3s1/go.mod h1:SQt4M1HhVTRsIIYHCfaelw8OGnk1FAkZbfiCx1WpkvE=
 github.com/k3s-io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea h1:7cwby0GoNAi8IsVrT0q+JfQpB6V76ZaEGhj6qts/mvU=
 github.com/k3s-io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea/go.mod h1:yVHk9ub3CSBatqGNg7GRmsnfLWtoW60w4eDYfh7vHDg=
+github.com/k3s-io/helm-controller v0.8.3 h1:GWxavyMz7Bw2ClxH5okkeOL8o5U6IBK7uauc44SDCjU=
+github.com/k3s-io/helm-controller v0.8.3/go.mod h1:nZP8FH3KZrNNUf5r+SwwiMR63HS6lxdHdpHijgPfF74=
 github.com/k3s-io/kubernetes v1.19.5-k3s1 h1:BKdjKyO8LzVo94lVX40lGd6v+mn8phLzYsGoeNGW2eg=
 github.com/k3s-io/kubernetes v1.19.5-k3s1/go.mod h1:C5hGC62q7CF0806SpBOSf11RyBaM1oQpl01BWRPK81o=
 github.com/k3s-io/kubernetes v1.19.7-k3s1 h1:eHp4p64Wg8KbtPW0kfakunWcDDkfFF1h1i5MCCUq17g=

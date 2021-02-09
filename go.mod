@@ -87,7 +87,7 @@ require (
 	github.com/pierrec/lz4 v2.5.2+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/rancher/dynamiclistener v0.2.1
-	github.com/rancher/helm-controller v0.7.3
+	github.com/k3s-io/helm-controller v0.8.3
 	github.com/rancher/kine v0.5.1
 	github.com/rancher/remotedialer v0.2.0
 	github.com/rancher/wrangler v0.6.1
