@@ -1,10 +1,8 @@
-name: Go
+name: Go for k8e
 
 on:
-  push:
-    branches: [ dev ]
   pull_request:
-    branches: [ dev ]
+    branches: [ master ]
 
 jobs:
 
@@ -27,8 +25,21 @@ jobs:
     - name: generate resources
       run: make generate
       
-    - name: package bin
-      run: SKIP_VALIDATE=true make
-      
     - name: Test
       run: go test -v .
+      
+    - name: package bin
+      run: SKIP_VALIDATE=true make
+
+    - name: Deploy to qiniu
+      uses: saltbo/uptoc@v1.4.3
+      with:
+        driver: qiniu
+        region: cn-south-1
+        bucket: k8e
+        exclude: .cache,test
+        dist: dist/artifacts
+      env:
+        UPTOC_UPLOADER_AK: ${{ secrets.UPTOC_UPLOADER_KEYID }}
+        UPTOC_UPLOADER_SK: ${{ secrets.UPTOC_UPLOADER_KEYSECRET }}
+  
