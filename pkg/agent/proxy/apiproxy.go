@@ -121,7 +121,7 @@ func (p *proxy) SetAPIServerPort(ctx context.Context, port int) error {
 	p.apiServerURL = u.String()
 	p.apiServerEnabled = true
 
-	if p.lbEnabled {
+	if p.lbEnabled && p.apiServerLB == nil {
 		lbServerPort := p.lbServerPort
 
 		if lbServerPort != 0 {
