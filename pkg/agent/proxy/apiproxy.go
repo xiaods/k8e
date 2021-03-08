@@ -17,19 +17,21 @@ type Proxy interface {
 	SupervisorURL() string
 	SupervisorAddresses() []string
 	APIServerURL() string
+	IsAPIServerLBEnabled() bool
 }
 
-func NewAPIProxy(enabled bool, dataDir, supervisorURL string) (Proxy, error) {
+func NewAPIProxy(enabled bool, dataDir, supervisorURL string, lbServerPort int) (Proxy, error) {
 	p := &proxy{
 		lbEnabled:            enabled,
 		dataDir:              dataDir,
 		initialSupervisorURL: supervisorURL,
 		supervisorURL:        supervisorURL,
 		apiServerURL:         supervisorURL,
+		lbServerPort:         lbServerPort,
 	}
 
 	if enabled {
-		lb, err := loadbalancer.New(dataDir, loadbalancer.SupervisorServiceName, supervisorURL)
+		lb, err := loadbalancer.New(dataDir, loadbalancer.SupervisorServiceName, supervisorURL, p.lbServerPort)
 		if err != nil {
 			return nil, err
 		}
@@ -45,12 +47,13 @@ func NewAPIProxy(enabled bool, dataDir, supervisorURL string) (Proxy, error) {
 	p.fallbackSupervisorAddress = u.Host
 	p.supervisorPort = u.Port()
 
-	return p, nil
+	return &p, nil
 }
 
 type proxy struct {
-	dataDir   string
-	lbEnabled bool
+	dataDir      string
+	lbEnabled    bool
+	lbServerPort int
 
 	initialSupervisorURL      string
 	supervisorURL             string
@@ -106,7 +109,12 @@ func (p *proxy) StartAPIServerProxy(port int) error {
 	p.apiServerEnabled = true
 
 	if p.lbEnabled {
-		lb, err := loadbalancer.New(p.dataDir, loadbalancer.APIServerServiceName, p.apiServerURL)
+		lbServerPort := p.lbServerPort
+
+		if lbServerPort != 0 {
+			lbServerPort = lbServerPort + 1
+		}
+		lb, err := loadbalancer.New(p.dataDir, loadbalancer.APIServerServiceName, p.apiServerURL, lbServerPort)
 		if err != nil {
 			return err
 		}
@@ -119,6 +127,10 @@ func (p *proxy) StartAPIServerProxy(port int) error {
 
 func (p *proxy) SupervisorURL() string {
 	return p.supervisorURL
+}
+
+func (p *proxy) IsAPIServerLBEnabled() bool {
+	return p.apiServerLB != nil
 }
 
 func (p *proxy) SupervisorAddresses() []string {

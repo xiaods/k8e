@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -10,6 +11,7 @@ import (
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/etcd"
 )
 
 type Cluster struct {
@@ -34,6 +36,31 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 		return nil, errors.Wrap(err, "init cluster datastore and https")
 	}
 
+	if c.config.DisableETCD {
+		ready := make(chan struct{})
+		defer close(ready)
+
+		// try to get /db/info urls first before attempting to use join url
+		clientURLs, _, err := etcd.ClientURLs(ctx, c.clientAccessInfo)
+		if err != nil {
+			return nil, err
+		}
+		if len(clientURLs) < 1 {
+			clientURL, err := url.Parse(c.config.JoinURL)
+			if err != nil {
+				return nil, err
+			}
+			clientURL.Host = clientURL.Hostname() + ":2379"
+			clientURLs = append(clientURLs, clientURL.String())
+		}
+		etcdProxy, err := etcd.NewETCDProxy(true, c.config.DataDir, clientURLs[0])
+		if err != nil {
+			return nil, err
+		}
+		c.setupEtcdProxy(ctx, etcdProxy)
+		return ready, nil
+	}
+
 	// start managed database (if necessary)
 	if err := c.start(ctx); err != nil {
 		return nil, errors.Wrap(err, "start managed database")
@@ -42,21 +69,10 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 	// get the wait channel for testing managed database readiness
 	ready, err := c.testClusterDB(ctx)
 	if err != nil {
-		return nil, err
-	}
-
-	// if necessary, store bootstrap data to datastore
-	if c.saveBootstrap {
-		if err := c.save(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	// if necessary, record successful bootstrap
-	if c.shouldBootstrap {
-		if err := c.bootstrapped(); err != nil {
-			return nil, err
-		}
+		if c.shouldBootstrap {
+			if err := c.bootstrapped(); err != nil {
+				return nil, err
+			}
 	}
 
 	return ready, c.startStorage(ctx)
