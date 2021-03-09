@@ -408,7 +408,7 @@ func GetClient(ctx context.Context, runtime *config.ControlRuntime, endpoints ..
 }
 
 //getClientConfig generates an etcd client config connected to the specified endpoints
-func GetAdvertiseAddress(ctx context.Context, runtime *config.ControlRuntime, endpoints ...string) (*etcd.Config, error) {
+func getClientConfig(ctx context.Context, runtime *config.ControlRuntime, endpoints ...string) (*etcd.Config, error) {
 	tlsConfig, err := toTLSConfig(runtime)
 	if err != nil {
 		return nil, err
@@ -446,7 +446,7 @@ func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
 }
 
 // getAdvertiseAddress returns the IP address best suited for advertising to clients
-func getAdvertiseAddress(advertiseIP string) (string, error) {
+func GetAdvertiseAddress(advertiseIP string) (string, error) {
 	ip := advertiseIP
 	if ip == "" {
 		ipAddr, err := utilnet.ChooseHostInterface()
