@@ -21,7 +21,7 @@ type Proxy interface {
 }
 
 func NewAPIProxy(enabled bool, dataDir, supervisorURL string, lbServerPort int) (Proxy, error) {
-	p := &proxy{
+	p := proxy{
 		lbEnabled:            enabled,
 		dataDir:              dataDir,
 		initialSupervisorURL: supervisorURL,
