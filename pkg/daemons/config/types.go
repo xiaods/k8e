@@ -37,6 +37,7 @@ type Node struct {
 	AgentConfig              Agent
 	CACerts                  []byte
 	Certificate              *tls.Certificate
+	ServerHTTPSPort          int
 }
 
 type Containerd struct {
@@ -124,6 +125,10 @@ type Control struct {
 	DisableCCM               bool
 	DisableNPC               bool
 	DisableKubeProxy         bool
+	DisableAPIServer         bool
+	DisableControllerManager bool
+	DisableScheduler         bool
+	DisableETCD              bool
 	ClusterInit              bool
 	ClusterReset             bool
 	ClusterResetRestorePath  string

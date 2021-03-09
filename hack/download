@@ -5,7 +5,7 @@ cd $(dirname $0)/..
 
 . ./hack/version.sh
 
-ROOT_VERSION=v0.7.0
+ROOT_VERSION=v0.8.1
 TRAEFIK_VERSION=1.81.0
 CHARTS_DIR=build/static/charts
 

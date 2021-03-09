@@ -32,7 +32,7 @@ jobs:
       run: SKIP_VALIDATE=true make
 
     - name: Deploy to qiniu
-      uses: saltbo/uptoc@v1.4.3
+      uses: saltbo/uptoc@master
       with:
         driver: qiniu
         region: cn-south-1
