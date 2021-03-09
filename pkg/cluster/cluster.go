@@ -12,6 +12,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
+	"github.com/sirupsen/logrus"
 )
 
 type Cluster struct {
