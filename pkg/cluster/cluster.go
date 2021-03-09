@@ -8,11 +8,11 @@ import (
 	"github.com/pkg/errors"
 	"github.com/rancher/kine/pkg/client"
 	"github.com/rancher/kine/pkg/endpoint"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
-	"github.com/sirupsen/logrus"
 )
 
 type Cluster struct {
@@ -80,9 +80,10 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 			if err := c.bootstrapped(); err != nil {
 				return nil, err
 			}
+		}
 	}
-
 	return ready, c.startStorage(ctx)
+
 }
 
 // startStorage starts the kine listener and configures the endpoints, if necessary.
