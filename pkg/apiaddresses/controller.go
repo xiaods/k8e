@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net"
-	"strconv"
 
 	controllerv1 "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	etcdv3 "go.etcd.io/etcd/clientv3"
 	v1 "k8s.io/api/core/v1"
@@ -54,7 +53,7 @@ func (h *handler) sync(key string, endpoint *v1.Endpoints) (*v1.Endpoints, error
 	}
 
 	w := &bytes.Buffer{}
-	if err := json.NewEncoder(w).Encode(getAddresses(endpoint)); err != nil {
+	if err := json.NewEncoder(w).Encode(util.GetAddresses(endpoint)); err != nil {
 		return nil, err
 	}
 
@@ -64,24 +63,4 @@ func (h *handler) sync(key string, endpoint *v1.Endpoints) (*v1.Endpoints, error
 	}
 
 	return endpoint, nil
-}
-
-func getAddresses(endpoint *v1.Endpoints) []string {
-	serverAddresses := []string{}
-	if endpoint == nil {
-		return serverAddresses
-	}
-	for _, subset := range endpoint.Subsets {
-		var port string
-		if len(subset.Ports) > 0 {
-			port = strconv.Itoa(int(subset.Ports[0].Port))
-		}
-		if port == "" {
-			port = "443"
-		}
-		for _, address := range subset.Addresses {
-			serverAddresses = append(serverAddresses, net.JoinHostPort(address.IP, port))
-		}
-	}
-	return serverAddresses
 }
