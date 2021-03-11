@@ -139,12 +139,12 @@ func Run(ctx context.Context, cfg cmds.Agent) error {
 		}
 	}
 
-	cfg.DataDir = filepath.Join(cfg.DataDir, "agent")
+	agentDir := filepath.Join(cfg.DataDir, "agent")
 	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
 		return err
 	}
 
-	proxy, err := proxy.NewAPIProxy(!cfg.DisableLoadBalancer, cfg.DataDir, cfg.ServerURL, cfg.LBServerPort)
+	proxy, err := proxy.NewSupervisorProxy(!cfg.DisableLoadBalancer, agentDir, cfg.ServerURL, cfg.LBServerPort)
 	if err != nil {
 		return err
 	}
