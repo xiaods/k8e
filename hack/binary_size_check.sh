@@ -1,17 +1,29 @@
-#!/bin/sh
-
+#!/bin/bash
 set -e
 
 if [ "${DEBUG}" = 1 ]; then
     set -x
 fi
 
+cd $(dirname $0)/..
+
+. ./hack/version.sh
+
 MAX_BINARY_SIZE=61000000
-SIZE=$(ls -l dist/artifacts/k8e | awk -F ' ' '{print $5}')
+BIN_SUFFIX="-${ARCH}"
+if [ ${ARCH} = amd64 ]; then
+    BIN_SUFFIX=""
+elif [ ${ARCH} = arm ]; then
+    BIN_SUFFIX="-armhf"
+fi
+
+CMD_NAME="dist/artifacts/k8e${BIN_SUFFIX}"
+SIZE=$(stat -c '%s' ${CMD_NAME})
 
 if [ ${SIZE} -gt ${MAX_BINARY_SIZE} ]; then
-    echo "k8e binary exceeds acceptable size of "${MAX_BINARY_SIZE}
+    echo "k8e binary ${CMD_NAME} size ${SIZE} exceeds max acceptable size of ${MAX_BINARY_SIZE} bytes"
     exit 1
 fi
 
+echo "k8e binary ${CMD_NAME} size ${SIZE} is less than max acceptable size of ${MAX_BINARY_SIZE} bytes"
 exit 0
