@@ -12,6 +12,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/cli/crictl"
 	"github.com/xiaods/k8e/pkg/cli/ctr"
+	"github.com/xiaods/k8e/pkg/cli/etcdsnapshot"
 	"github.com/xiaods/k8e/pkg/cli/kubectl"
 	"github.com/xiaods/k8e/pkg/cli/server"
 	"github.com/xiaods/k8e/pkg/configfilearg"
@@ -42,6 +43,7 @@ func main() {
 		cmds.NewKubectlCommand(kubectl.Run),
 		cmds.NewCRICTL(crictl.Run),
 		cmds.NewCtrCommand(ctr.Run),
+		cmds.NewEtcdSnapshotCommand(etcdsnapshot.Run),
 	}
 
 	err := app.Run(configfilearg.MustParse(os.Args))

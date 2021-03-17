@@ -5,7 +5,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/rancher/kine/pkg/client"
+	"github.com/k3s-io/kine/pkg/client"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 )
@@ -19,6 +19,7 @@ func (c *Cluster) save(ctx context.Context) error {
 	if err := bootstrap.Write(buf, &c.runtime.ControlRuntimeBootstrap); err != nil {
 		return err
 	}
+
 	data, err := encrypt(c.config.Token, buf.Bytes())
 	if err != nil {
 		return err
@@ -28,6 +29,7 @@ func (c *Cluster) save(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+
 	if err := storageClient.Create(ctx, storageKey(c.config.Token), data); err != nil {
 		if err.Error() == "key exists" {
 			logrus.Warnln("Bootstrap key exists. Please follow documentation updating a node after restore.")
@@ -38,6 +40,7 @@ func (c *Cluster) save(ctx context.Context) error {
 		}
 		return err
 	}
+
 	return nil
 }
 
@@ -52,7 +55,6 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	c.storageClient = storageClient
 
 	value, err := storageClient.Get(ctx, storageKey(c.config.Token))
 	if err == client.ErrNotFound {

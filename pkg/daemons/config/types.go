@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/rancher/kine/pkg/endpoint"
+	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 )
@@ -135,10 +135,21 @@ type Control struct {
 	EncryptSecrets           bool
 	TLSMinVersion            uint16
 	TLSCipherSuites          []uint16
+	EtcdSnapshotName         string
 	EtcdDisableSnapshots     bool
+	EtcdExposeMetrics        bool
 	EtcdSnapshotDir          string
 	EtcdSnapshotCron         string
 	EtcdSnapshotRetention    int
+	EtcdS3                   bool
+	EtcdS3Endpoint           string
+	EtcdS3EndpointCA         string
+	EtcdS3SkipSSLVerify      bool
+	EtcdS3AccessKey          string
+	EtcdS3SecretKey          string
+	EtcdS3BucketName         string
+	EtcdS3Region             string
+	EtcdS3Folder             string
 
 	BindAddress string
 	SANs        []string

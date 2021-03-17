@@ -32,7 +32,7 @@ func Run(ctx context.Context, nodeConfig *config.Node) error {
 		return err
 	}
 
-	// retry backoff to wait for the clusterrolebinding for the k3s tunnel controller (system:k3s-controller or equivalent)
+	// retry backoff to wait for the clusterrolebinding for the k8e tunnel controller (system:k8e-controller or equivalent)
 	// which has to occur before it can bring up the connection to the API server.
 	retryBackoff := wait.Backoff{
 		Steps:    6,

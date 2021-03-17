@@ -78,10 +78,12 @@ require (
 	github.com/gorilla/mux v1.7.4
 	github.com/gorilla/websocket v1.4.1
 	github.com/k3s-io/helm-controller v0.8.3
+	github.com/k3s-io/kine v0.6.0
 	github.com/klauspost/compress v1.11.7
 	github.com/kubernetes-sigs/cri-tools v1.19.0
 	github.com/lib/pq v1.8.0
 	github.com/mattn/go-sqlite3 v1.14.4
+	github.com/minio/minio-go/v7 v7.0.7
 	github.com/morikuni/aec v1.0.0
 	github.com/natefinch/lumberjack v2.0.0+incompatible
 	github.com/opencontainers/runc v1.0.0-rc92

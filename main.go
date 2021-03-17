@@ -14,6 +14,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/cli/crictl"
+	"github.com/xiaods/k8e/pkg/cli/etcdsnapshot"
 	"github.com/xiaods/k8e/pkg/cli/kubectl"
 	"github.com/xiaods/k8e/pkg/cli/server"
 	"github.com/xiaods/k8e/pkg/configfilearg"
@@ -26,6 +27,7 @@ func main() {
 		cmds.NewAgentCommand(agent.Run),
 		cmds.NewKubectlCommand(kubectl.Run),
 		cmds.NewCRICTL(crictl.Run),
+		cmds.NewEtcdSnapshotCommand(etcdsnapshot.Run),
 	}
 
 	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil {
