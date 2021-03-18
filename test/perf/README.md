@@ -1,4 +1,4 @@
-# K3S Performance Tests
+# K8E Performance Tests
 
 ---
 

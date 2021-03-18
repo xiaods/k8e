@@ -27,7 +27,7 @@ type Server struct {
 	ClusterDomain  string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
-	// The port which custom k3s API runs on
+	// The port which custom k8e API runs on
 	SupervisorPort int
 	// The port which kube-apiserver runs on
 	APIServerPort            int
@@ -64,10 +64,21 @@ type Server struct {
 	ClusterResetRestorePath  string
 	EncryptSecrets           bool
 	StartupHooks             []func(context.Context, <-chan struct{}, string) error
+	EtcdSnapshotName         string
 	EtcdDisableSnapshots     bool
+	EtcdExposeMetrics        bool
 	EtcdSnapshotDir          string
 	EtcdSnapshotCron         string
 	EtcdSnapshotRetention    int
+	EtcdS3                   bool
+	EtcdS3Endpoint           string
+	EtcdS3EndpointCA         string
+	EtcdS3SkipSSLVerify      bool
+	EtcdS3AccessKey          string
+	EtcdS3SecretKey          string
+	EtcdS3BucketName         string
+	EtcdS3Region             string
+	EtcdS3Folder             string
 }
 
 var ServerConfig Server
@@ -216,9 +227,20 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				EnvVar:      version.ProgramUpper + "_DATASTORE_KEYFILE",
 			},
 			&cli.BoolFlag{
+				Name:        "etcd-expose-metrics",
+				Usage:       "(db) Expose etcd metrics to client interface. (Default false)",
+				Destination: &ServerConfig.EtcdExposeMetrics,
+			},
+			&cli.BoolFlag{
 				Name:        "etcd-disable-snapshots",
 				Usage:       "(db) Disable automatic etcd snapshots",
 				Destination: &ServerConfig.EtcdDisableSnapshots,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-snapshot-name",
+				Usage:       "(db) Set the base name of etcd snapshots. Default: etcd-snapshot-<unix-timestamp>",
+				Destination: &ServerConfig.EtcdSnapshotName,
+				Value:       "etcd-snapshot",
 			},
 			&cli.StringFlag{
 				Name:        "etcd-snapshot-schedule-cron",
@@ -236,6 +258,55 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Name:        "etcd-snapshot-dir",
 				Usage:       "(db) Directory to save db snapshots. (Default location: ${data-dir}/db/snapshots)",
 				Destination: &ServerConfig.EtcdSnapshotDir,
+			},
+			&cli.BoolFlag{
+				Name:        "etcd-s3",
+				Usage:       "(db) Enable backup to S3",
+				Destination: &ServerConfig.EtcdS3,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-endpoint",
+				Usage:       "(db) S3 endpoint url",
+				Destination: &ServerConfig.EtcdS3Endpoint,
+				Value:       "s3.amazonaws.com",
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-endpoint-ca",
+				Usage:       "(db) S3 custom CA cert to connect to S3 endpoint",
+				Destination: &ServerConfig.EtcdS3EndpointCA,
+			},
+			&cli.BoolFlag{
+				Name:        "etcd-s3-skip-ssl-verify",
+				Usage:       "(db) Disables S3 SSL certificate validation",
+				Destination: &ServerConfig.EtcdS3SkipSSLVerify,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-access-key",
+				Usage:       "(db) S3 access key",
+				EnvVar:      "AWS_ACCESS_KEY_ID",
+				Destination: &ServerConfig.EtcdS3AccessKey,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-secret-key",
+				Usage:       "(db) S3 secret key",
+				EnvVar:      "AWS_SECRET_ACCESS_KEY",
+				Destination: &ServerConfig.EtcdS3SecretKey,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-bucket",
+				Usage:       "(db) S3 bucket name",
+				Destination: &ServerConfig.EtcdS3BucketName,
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-region",
+				Usage:       "(db) S3 region / bucket location (optional)",
+				Destination: &ServerConfig.EtcdS3Region,
+				Value:       "us-east-1",
+			},
+			&cli.StringFlag{
+				Name:        "etcd-s3-folder",
+				Usage:       "(db) S3 folder",
+				Destination: &ServerConfig.EtcdS3Folder,
 			},
 			cli.StringFlag{
 				Name:        "default-local-storage-path",

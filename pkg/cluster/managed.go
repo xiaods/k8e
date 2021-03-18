@@ -14,7 +14,7 @@ import (
 
 	"github.com/xiaods/k8e/pkg/etcd"
 
-	"github.com/rancher/kine/pkg/endpoint"
+	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/version"
@@ -58,7 +58,15 @@ func (c *Cluster) start(ctx context.Context) error {
 		return nil
 	}
 
-	if c.config.ClusterReset {
+	switch {
+	case c.config.ClusterReset && c.config.ClusterResetRestorePath != "":
+		rebootstrap := func() error {
+			return c.storageBootstrap(ctx)
+		}
+		if err := c.managedDB.Reset(ctx, rebootstrap); err != nil {
+			return err
+		}
+	case c.config.ClusterReset:
 		if _, err := os.Stat(resetFile); err != nil {
 			if !os.IsNotExist(err) {
 				return err
@@ -66,9 +74,9 @@ func (c *Cluster) start(ctx context.Context) error {
 		} else {
 			return fmt.Errorf("cluster-reset was successfully performed, please remove the cluster-reset flag and start %s normally, if you need to perform another cluster reset, you must first manually delete the %s file", version.Program, resetFile)
 		}
-		return c.managedDB.Reset(ctx)
 	}
-	// removing the reset file and ignore error if the file doesnt exist
+
+	// removing the reset file and ignore error if the file doesn't exist
 	os.Remove(resetFile)
 
 	return c.managedDB.Start(ctx, c.clientAccessInfo)

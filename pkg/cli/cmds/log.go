@@ -52,7 +52,7 @@ var (
 func InitLogging() error {
 	var rErr error
 	logSetupOnce.Do(func() {
-		if LogConfig.LogFile != "" && os.Getenv("_K3S_LOG_REEXEC_") == "" {
+		if LogConfig.LogFile != "" && os.Getenv("_K8E_LOG_REEXEC_") == "" {
 			rErr = runWithLogging()
 			return
 		}
@@ -94,7 +94,7 @@ func runWithLogging() error {
 	args := append([]string{version.Program}, os.Args[1:]...)
 	cmd := reexec.Command(args...)
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "_K3S_LOG_REEXEC_=true")
+	cmd.Env = append(cmd.Env, "_K8E_LOG_REEXEC_=true")
 	cmd.Stderr = l
 	cmd.Stdout = l
 	cmd.Stdin = os.Stdin

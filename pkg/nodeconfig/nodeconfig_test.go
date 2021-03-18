@@ -75,7 +75,7 @@ func TestSetExistingNodeConfigAnnotations(t *testing.T) {
 
 func TestSetArgsWithEqual(t *testing.T) {
 	os.Args = []string{version.Program, "server", "--no-flannel", "--write-kubeconfig-mode=777"}
-	os.Setenv("K3S_NODE_NAME", "fakeNode-with-no-annotation")
+	os.Setenv("K8E_NODE_NAME", "fakeNode-with-no-annotation")
 	nodeUpdated, err := SetNodeConfigAnnotations(FakeNodeWithNoAnnotation)
 	if err != nil {
 		t.Fatalf("Failed to set node config annotation: %v", err)

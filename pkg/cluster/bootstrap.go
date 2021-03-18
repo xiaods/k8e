@@ -10,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/clientaccess"
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -146,4 +147,13 @@ func (c *Cluster) bootstrap(ctx context.Context) error {
 // We hash the token value exactly as it is provided by the user, NOT the normalized version.
 func (c *Cluster) bootstrapStamp() string {
 	return filepath.Join(c.config.DataDir, "db/joined-"+keyHash(c.config.Token))
+}
+
+// Snapshot is a proxy method to call the snapshot method on the managedb
+// interface for etcd clusters.
+func (c *Cluster) Snapshot(ctx context.Context, config *config.Control) error {
+	if c.managedDB == nil {
+		return errors.New("unable to perform etcd snapshot on non-etcd system")
+	}
+	return c.managedDB.Snapshot(ctx, config)
 }
