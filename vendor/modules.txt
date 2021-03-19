@@ -873,19 +873,6 @@ github.com/rancher/dynamiclistener/storage/memory
 # github.com/rancher/go-powershell v0.0.0-20200701182037-6845e6fcfa79
 github.com/rancher/go-powershell/backend
 github.com/rancher/go-powershell/utils
-# github.com/rancher/kine v0.5.1
-## explicit
-github.com/rancher/kine/pkg/broadcaster
-github.com/rancher/kine/pkg/drivers/dqlite
-github.com/rancher/kine/pkg/drivers/generic
-github.com/rancher/kine/pkg/drivers/mysql
-github.com/rancher/kine/pkg/drivers/pgsql
-github.com/rancher/kine/pkg/drivers/sqlite
-github.com/rancher/kine/pkg/endpoint
-github.com/rancher/kine/pkg/logstructured
-github.com/rancher/kine/pkg/logstructured/sqllog
-github.com/rancher/kine/pkg/server
-github.com/rancher/kine/pkg/tls
 # github.com/rancher/remotedialer v0.2.0
 ## explicit
 github.com/rancher/remotedialer
