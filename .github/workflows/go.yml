@@ -7,10 +7,11 @@ on:
 jobs:
 
   build:
-    name: Build
+    name: Build & Release
     runs-on: ubuntu-latest
+    env:
+      DRONE_TAG: v1.19.8+k8e3
     steps:
-
     - name: Set up Go 1.x
       uses: actions/setup-go@v2
       with:
