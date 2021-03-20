@@ -1,9 +1,15 @@
 # 使用k8e快速部署Kubernetes集群服务
-作为经常需要使用Kubernetes集群做很多技术验证的场景，我们需要快速构建集群。当前能快速部署Kubernetes 集群的方式有很多种，官方有kubeadm工具首当其冲，社区有sealos作为一键部署的最佳方案，都非常流行。但是我给大家推荐的这种方式，是基于二进制方式的部署，踢出docker 镜像的依赖，并且把Kubernetes相关的生态管理工具都集成到一个二进制包中，通过软链接暴露，让环境依赖更少。k8e是基于我对Kubernetes最佳部署实践的理解，剔除不必要的特性，让你更方便的操作理解Kubernetes，并且和Kubernetes的行为一致，你可以自由扩展。
+作为YAML工程师，经常需要使用Kubernetes集群来验证很多技术化场景，如何快速搭建一套完整标准化的集群至关重要。罗列当前能快速部署Kubernetes 集群的工具有很多种，例如官方首当其冲有**kubeadm**工具，云原生社区有**sealos**作为一键部署的最佳方案，熟悉起来后部署都非常快。但是你是否考虑过并不是每一个YAML工程师都需要非常了解集群组件的搭配。这里，我给大家推荐的工具是基于单个文件的免配置的部署方式，对比kubeadm和sealos方案，去掉了对 Kubernetes 官方组件镜像的依赖，并且把Kubernetes相关的核心扩展推荐组件也都集成到这个二进制包中，通过软链接暴露，让环境依赖更少，这个安装工具就是**k8e**(可以叫 'kuber easy' 或 K8易) 。k8e是基于当前主流上游Kubernetes发行版 k3s做的优化封装和裁剪。去掉对IoT的依赖，目标就是做最好的服务器版本的发行版本。并且和上游保持一致，可以自由扩展。
 
-启动k8e，你可以自己放一台机器做试验就可以，4Core/8G RAM是最小标配。有很多朋友还想安装集群高可用模式，那么就需要三台起步。操作部署步骤如下：
+**K8e v1**架构图：
 
-1. 下载一键安装工具k8e
+![k8e-arch](./k8e-arch.png)
+
+
+
+启动k8e，你可以自己放一台机器做试验就可以，**4Core/8G RAM**是最小标配。有很多朋友还想安装集群高可用模式，那么就需要三台起步。操作部署步骤如下：
+
+1. ### 下载一键安装工具k8e
 ```
 mkdir -p /opt/k8e && cd /opt/k8e
 
@@ -41,9 +47,12 @@ bootstrap server和其它server都需要配置样例的参数：
 ```
 k8e server --tls-san 192.168.1.1 
 ```
-4. 加载其它容器网络，和标准k8s一样，只是需要静止掉默认的 flannel 网络。比如支持cilium网络：
+4. k8e默认支持flannel网络，更换为eBPF/cilium网络，可如下配置启动加载：
+
+注意主机系统必须满足：**Linux kernel >= 4.9.17**
 
 bootstrap server(172.25.1.55): 
+
 ```
 K8E_NODE_NAME=k8e-55  K8E_TOKEN=ilovek8e /opt/k8e/k8e server --flannel-backend=none --cluster-init --disable servicelb,traefik >> k8e.log 2>&1 &
 ```
