@@ -7,7 +7,7 @@
 ```
 mkdir -p /opt/k8e && cd /opt/k8e
 
-curl https://github.com/xiaods/k8e/releases/download/v1.19.8%2Bk8e1/k8e-amd64 -o k8e
+curl https://gitreleases.dev/gh/xiaods/k8e/latest/k8e -o k8e
 
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/start-bootstrap.sh -o start-bootstrap.sh
 
