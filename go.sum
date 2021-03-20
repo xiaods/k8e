@@ -492,6 +492,8 @@ github.com/julienschmidt/httprouter v1.2.0/go.mod h1:SYymIcj16QtmaHHD7aYtjjsJG7V
 github.com/jung-kurt/gofpdf v1.0.3-0.20190309125859-24315acbbda5/go.mod h1:7Id9E/uU8ce6rXgefFLlgrJj/GYY22cpxn+r32jIOes=
 github.com/k3s-io/containerd v1.4.3-k3s1 h1:4n8gpBDXa6IpinjzSl+uJsTPfg0l0Dus6zZBJLl3lDg=
 github.com/k3s-io/containerd v1.4.3-k3s1/go.mod h1:SQt4M1HhVTRsIIYHCfaelw8OGnk1FAkZbfiCx1WpkvE=
+github.com/k3s-io/containerd v1.4.3-k3s5 h1:wGKP+NNg9Kk2+gAdY6KvBFX6bSkeXfHX5pn+6cJhOQ0=
+github.com/k3s-io/containerd v1.4.3-k3s5/go.mod h1:2QPgKXi8SPBf4oL3yUt0jtbmtrfv2VJzqX1AVNCje/A=
 github.com/k3s-io/containerd v1.4.4-k3s1 h1:9D9ynaNMW0vT/Kycr7qLstBGby6T84iJpbKFXKGhAPk=
 github.com/k3s-io/containerd v1.4.4-k3s1/go.mod h1:M0uyTU3ZQ0WEBn5YcYPDs/7LpW/0mqjt5im7Wn2z1kc=
 github.com/k3s-io/continuity v0.0.0-20210309170710-f93269e0d5c1 h1:KEz2rd9IDbrQT8w6RibEYlwfTXiu0P6hQDE+6O4IJdI=
@@ -500,6 +502,12 @@ github.com/k3s-io/cri v1.4.0-k3s.5 h1:Uh7QkRKibPJqSBbtCtgpjYsdNVcx3Tx+7HHlhxKBtu
 github.com/k3s-io/cri v1.4.0-k3s.5/go.mod h1:fGPUUHMKQik/vIegSe05DtX/m4miovdtvVLqRUFAkK0=
 github.com/k3s-io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea h1:7cwby0GoNAi8IsVrT0q+JfQpB6V76ZaEGhj6qts/mvU=
 github.com/k3s-io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea/go.mod h1:yVHk9ub3CSBatqGNg7GRmsnfLWtoW60w4eDYfh7vHDg=
+github.com/k3s-io/flannel v0.12.0-k3s2 h1:KEfj4fe+P0qINcYZxo5/C0cga2XBEfeV4nhKrUGDyCg=
+github.com/k3s-io/flannel v0.12.0-k3s2/go.mod h1:2tCkIFWhim43MkRsOcPOxY8/Bcpai9uZLJaywN7ciNg=
+github.com/k3s-io/go-powershell v0.0.0-20200701182037-6845e6fcfa79 h1:9naOL3iAREsJh9mbf9C6Qqu9xuFv7/jIGBFCWvZMg4E=
+github.com/k3s-io/go-powershell v0.0.0-20200701182037-6845e6fcfa79/go.mod h1:lsDHcxq5ugFJff6YHEwpzLh31NDv0B2cIKki1ViQ65o=
+github.com/k3s-io/go-powershell v0.0.0-20201118222746-51f4c451fbd7 h1:C+6IIP6yECS10qkq2EeGQjr2ts0k7UxrutGF+pLPSnU=
+github.com/k3s-io/go-powershell v0.0.0-20201118222746-51f4c451fbd7/go.mod h1:wJnuh+xbDmskSfAM3UikTsGO8kaWLu3iycSgUKAiYjQ=
 github.com/k3s-io/helm-controller v0.8.3 h1:GWxavyMz7Bw2ClxH5okkeOL8o5U6IBK7uauc44SDCjU=
 github.com/k3s-io/helm-controller v0.8.3/go.mod h1:nZP8FH3KZrNNUf5r+SwwiMR63HS6lxdHdpHijgPfF74=
 github.com/k3s-io/kine v0.6.0 h1:4l7wjgCxb2oD+7Hyf3xIhkGd/6s1sXpRFdQiyy+7Ki8=
