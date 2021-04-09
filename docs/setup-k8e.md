@@ -27,6 +27,7 @@ curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/setup-k8s-tools
 
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-uninstall.sh -o k8e-uninstall.sh
 ```
+
 2. 启动集群过程：
 * 第一台，属于引导服务(注意：第一台主机IP就是**api-server**的IP)：bash start-bootstrap.sh
 * 第2台到N+1台主控节点，必须是奇数，遵循**CAP原理**(注意：启动前修改api-server的IP，指向第一台主机IP)：bash start-server.sh
@@ -50,22 +51,108 @@ k8e server --tls-san 192.168.1.1
 4. k8e默认支持flannel网络，更换为eBPF/cilium网络，可如下配置启动加载：
 
 注意主机系统必须满足：**Linux kernel >= 4.9.17**
+升级内核
 
-bootstrap server(172.25.1.55): 
-
+下载内核升级包：http://elrepo.reloumirrors.net/kernel/el7/x86_64/RPMS/
 ```
-K8E_NODE_NAME=k8e-55  K8E_TOKEN=ilovek8e /opt/k8e/k8e server --flannel-backend=none --cluster-init --disable servicelb,traefik >> k8e.log 2>&1 &
+rpm -ivh kernel-ml-5.11.6-1.el7.elrepo.x86_64.rpm 
+rpm -ivh kernel-ml-devel-5.11.6-1.el7.elrepo.x86_64.rpm 
+rpm -ivh kernel-ml-headers-5.11.6-1.el7.elrepo.x86_64.rpm
+grub2-set-default 0
+reboot
+[root@k8e-55 k8e]# uname -r
+5.11.6-1.el7.elrepo.x86_64
+```
+bootstrap server(172.25.1.55): 
+```
+K8E_NODE_NAME=k8e-55  K8E_TOKEN=ilovek8e /opt/k8e/k8e server --flannel-backend=none --disable-kube-proxy=true --cluster-init --disable servicelb,traefik >> k8e.log 2>&1 &
 ```
 server 2(172.25.1.56):
 ```
-K8E_NODE_NAME=k8e-56 K8E_TOKEN=ilovek8e /opt/k8e/k8e server --server https://172.25.1.55:6443 --flannel-backend=none --disable servicelb,traefik >> k8e.log 2>&1 &
+K8E_NODE_NAME=k8e-56 K8E_TOKEN=ilovek8e /opt/k8e/k8e server --server https://172.25.1.55:6443 --flannel-backend=none --disable servicelb,traefik --disable-kube-proxy=true >> k8e.log 2>&1 &
 ```
 server 3(172.25.1.57):
 ```
-K8E_NODE_NAME=k8e-57 K8E_TOKEN=ilovek8e /opt/k8e/k8e server --server https://172.25.1.57:6443 --flannel-backend=none --disable servicelb,traefik >> k8e.log 2>&1 &
+K8E_NODE_NAME=k8e-57 K8E_TOKEN=ilovek8e /opt/k8e/k8e server --server https://172.25.1.55:6443 --flannel-backend=none --disable servicelb,traefik --disable-kube-proxy=true >> k8e.log 2>&1 &
 ```
-
+挂载BPF文件系统
+```
+sudo mount bpffs -t bpf /sys/fs/bpf
+```
+添加 helm cilium repo
+```
+helm repo add cilium https://helm.cilium.io/
+```
+创建 etcd ssl 证书
+```
+kubectl create secret generic -n kube-system cilium-etcd-secrets \
+                        --from-file=etcd-client-ca.crt=/var/lib/k8e/k8e/server/tls/etcd/server-ca.crt \
+                        --from-file=etcd-client.key=/var/lib/k8e/k8e/server/tls/etcd/client.key \
+                        --from-file=etcd-client.crt=/var/lib/k8e/k8e/server/tls/etcd/client.crt
+```
 安装cilium
 ```
-helm install cilium cilium/cilium --version 1.9.5 --set global.etcd.enabled=true --set global.etcd.ssl=true  --set global.prometheus.enabled=true --set global.etcd.endpoints[0]=https://172.25.1.55:2379 --namespace kube-system
+helm install cilium cilium/cilium --version 1.9.5 --set nodeinit.enabled=true \
+                                                  --set nodeinit.restartPods=true \
+                                                  --set tunnel=disabled \
+                                                  --set bpfMasquerade=true \ 
+                                                  --set bpf.masquerade=true \
+                                                  --set bpf.clockProbe=true \
+                                                  --set bpf.waitForMount=true \
+                                                  --set bpf.preallocateMaps=true \
+                                                  --set bpf.tproxy=true \
+                                                  --set bpf.hostRouting=false \
+                                                  --set autoDirectNodeRoutes=true \
+                                                  --set localRedirectPolicy=true \
+                                                  --set enableK8sEndpointSlice=true \
+                                                  --set wellKnownIdentities.enabled=true \
+                                                  --set sockops.enabled=true \
+                                                  --set endpointRoutes.enabled=false \
+                                                  --set nativeRoutingCIDR=10.43.0.0/28 \
+                                                  --set enable-node-port=true \
+                                                  --set hostServices.enabled=true \
+                                                  --set nodePort.enabled=true \
+                                                  --set hostPort.enabled=true \
+                                                  --set kubeProxyReplacement=strict \
+                                                  --set loadBalancer.mode=dsr \
+                                                  --set k8sServiceHost=172.25.1.55 \
+                                                  --set k8sServicePort=6443 \
+                                                  --set global.etcd.endpoints[0]=https://172.25.1.55:2379 \
+                                                  --namespace kube-system
 ```
+**安装成功**：
+
+![k8e-cilium](./k8e-cilium.png)
+
+安装Hubble
+```
+helm upgrade cilium cilium/cilium --version 1.9.5 \
+   --namespace kube-system \
+   --reuse-values \
+   --set hubble.listenAddress=":4244" \
+   --set hubble.relay.enabled=true \
+   --set hubble.ui.enabled=true
+```
+如果需要通过nodeport的方式访问，可以创建如下service，访问http://{$Externap_IP}:32000即可看到相关的策略
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: hubble-ui-node
+  namespace: kube-system
+spec:
+  ports:
+  - name: http
+    port: 8081
+    protocol: TCP
+    targetPort: 8081
+    nodePort: 32000
+  selector:
+    k8s-app: hubble-ui
+  sessionAffinity: None
+  type: NodePort
+  ```
+
+  ![k8e-hubble](./k8e-hubble.png)
+
+

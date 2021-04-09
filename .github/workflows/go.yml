@@ -27,7 +27,7 @@ jobs:
       run: make generate
       
     - name: Test
-      run: go test -v .
+      run: go get -u github.com/rakyll/gotest && go mod vendor && gotest -v ./...
       
     - name: package bin
       run: SKIP_VALIDATE=true make

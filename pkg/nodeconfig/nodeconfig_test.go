@@ -57,7 +57,7 @@ func TestSetEmptyNodeConfigAnnotations(t *testing.T) {
 	actualEnv := FakeNodeWithNoAnnotation.Annotations[NodeEnvAnnotation]
 	assertEqual(t, expectedEnv, actualEnv)
 
-	expectedHash := "MROOIJGRXUZ53BM74K76TZLRXQOLNNBNJBJOY7JJ22EAEUIBW7YA===="
+	expectedHash := "KIKSLVYCWQSAPAESY5OEISQ4CINZD7IZCMGG43F4GOUZLNVCP4KA===="
 	actualHash := FakeNodeWithNoAnnotation.Annotations[NodeConfigHashAnnotation]
 	assertEqual(t, expectedHash, actualHash)
 }
@@ -70,7 +70,7 @@ func TestSetExistingNodeConfigAnnotations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to set node config annotation: %v", err)
 	}
-	assertEqual(t, false, nodeUpdated)
+	assertEqual(t, true, nodeUpdated)
 }
 
 func TestSetArgsWithEqual(t *testing.T) {
