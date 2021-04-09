@@ -58,11 +58,11 @@ data:
         ready
         kubernetes %{CLUSTER_DOMAIN}% in-addr.arpa ip6.arpa {
           pods insecure
-          upstream
           fallthrough in-addr.arpa ip6.arpa
         }
         hosts /etc/coredns/NodeHosts {
-          reload 1s
+          ttl 60
+          reload 15s
           fallthrough
         }
         prometheus :9153
@@ -95,10 +95,14 @@ spec:
       labels:
         k8s-app: kube-dns
     spec:
+      priorityClassName: "system-cluster-critical"
       serviceAccountName: coredns
       tolerations:
         - key: "CriticalAddonsOnly"
           operator: "Exists"
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
         - key: "node-role.kubernetes.io/master"
           operator: "Exists"
           effect: "NoSchedule"
@@ -106,7 +110,7 @@ spec:
         beta.kubernetes.io/os: linux
       containers:
       - name: coredns
-        image: registry.cn-hangzhou.aliyuncs.com/google_containers/coredns:1.7.0
+        image: rancher/coredns-coredns:1.8.0
         imagePullPolicy: IfNotPresent
         resources:
           limits:
