@@ -30,7 +30,7 @@ jobs:
       run: go get -u github.com/rakyll/gotest && go mod vendor && gotest -v ./...
       
     - name: package bin
-      run: SKIP_VALIDATE=true make
+      run: SKIP_VALIDATE=true GOLANG=golang:1.16.2-alpine3.12 make
 
     - name: Deploy to qiniu
       uses: saltbo/uptoc@master
