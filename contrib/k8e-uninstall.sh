@@ -20,7 +20,7 @@ fatal()
 rm -rf /etc/k8e/k8e
 rm -rf /run/k8e
 rm -rf /run/flannel
-rm -rf /var/lib/rancher/k8e
+rm -rf /var/lib/k8e/k8e
 rm -rf /var/lib/kubelet
 
 BIN_DIR=/usr/local/bin

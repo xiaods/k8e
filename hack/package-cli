@@ -61,4 +61,4 @@ CGO_ENABLED=0 "${GO}" build -ldflags "$LDFLAGS $STATIC" -o ${CMD_NAME} ./cmd/k8e
 
 stat ${CMD_NAME}
 
-./hack/build-upload ${CMD_NAME} ${COMMIT}
+echo ${CMD_NAME} ${COMMIT}

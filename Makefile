@@ -1,4 +1,4 @@
-TARGETS := $(shell ls hack | grep -v \\.sh)
+TARGETS := $(shell ls hack | grep -v \\.sh | grep -v package-airgap| grep -v clean)
 
 .dapper:
 	@echo Downloading dapper
@@ -28,6 +28,8 @@ generate: build/data
 build/data:
 	mkdir -p $@
 
-.PHONY: package-airgap
 package-airgap:
 	./hack/package-airgap
+
+clean:
+	./hack/clean
