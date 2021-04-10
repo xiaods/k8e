@@ -23,7 +23,7 @@ var (
 	defaultPassword = "token"
 )
 
-const TESTINFO_URL = "/v1-k8e/server-bootstrap"
+const TestinfoURL = "/v1-k8e/server-bootstrap"
 
 // TestTrustedCA confirms that tokens are validated when the server uses a cert (self-signed or otherwise)
 // that is trusted by the OS CA bundle. This test must be run first, since it mucks with the system root certs.
@@ -193,7 +193,7 @@ func TestInvalidCredentials(t *testing.T) {
 		info, err := ParseAndValidateToken(server.URL, testCase)
 		assert.NoError(err, testCase)
 		if assert.NotNil(info) {
-			res, err := info.Get(TESTINFO_URL)
+			res, err := info.Get(TestinfoURL)
 			assert.Error(err, testCase)
 			assert.Empty(res, testCase)
 		}
@@ -201,7 +201,7 @@ func TestInvalidCredentials(t *testing.T) {
 		info, err = ParseAndValidateTokenForUser(server.URL, testCase, defaultUsername)
 		assert.NoError(err, testCase)
 		if assert.NotNil(info) {
-			res, err := info.Get(TESTINFO_URL)
+			res, err := info.Get(TestinfoURL)
 			assert.Error(err, testCase)
 			assert.Empty(res, testCase)
 		}
@@ -316,7 +316,7 @@ func TestParseAndGet(t *testing.T) {
 func newTLSServer(t *testing.T, username, password string, sendWrongCA bool) *httptest.Server {
 	var server *httptest.Server
 	server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == TESTINFO_URL {
+		if r.URL.Path == TestinfoURL {
 			if authUsername, authPassword, ok := r.BasicAuth(); ok != true || authPassword != password || authUsername != username {
 				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return

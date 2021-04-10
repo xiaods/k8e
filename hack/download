@@ -25,3 +25,11 @@ if [ $code -ne 0 ]; then
   exit $code
 fi
 cp hack/wg-add.sh bin/aux/
+
+#nerdctl for containerd
+echo "download nerdctl..."
+if [ ${ARCH} = amd64 ]; then
+  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.7.3/nerdctl-0.7.3-linux-amd64.tar.gz | tar zxf - -C bin
+elif [ ${ARCH} = arm ]; then
+  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.7.3/nerdctl-0.7.3-linux-arm64.tar.gz | tar zxf - -C bin
+fi
