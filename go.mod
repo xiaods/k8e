@@ -70,7 +70,6 @@ require (
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f
 	github.com/docker/docker v17.12.0-ce-rc1.0.20200916142827-bd33bbf0497b+incompatible
 	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
-	github.com/fatih/color v1.10.0 // indirect
 	github.com/frankban/quicktest v1.10.2 // indirect
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-sql-driver/mysql v1.4.1
@@ -91,7 +90,6 @@ require (
 	github.com/opencontainers/selinux v1.6.0
 	github.com/pierrec/lz4 v2.5.2+incompatible
 	github.com/pkg/errors v0.9.1
-	github.com/rakyll/gotest v0.0.5 // indirect
 	github.com/rancher/dynamiclistener v0.2.3
 	github.com/rancher/remotedialer v0.2.0
 	github.com/rancher/wrangler v0.6.1
