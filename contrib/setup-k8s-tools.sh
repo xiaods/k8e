@@ -34,6 +34,8 @@ create_symlinks() {
             info "Skipping ${BIN_DIR}/${cmd} symlink to k8e, already exists"
         fi
     done
+    info "Create nerdctl symlink for k8e"
+    $SUDO ln -sf /var/lib/k8e/k8e/data/bin/nerdctl ${BIN_DIR}/nerdctl
 }
 
 (
