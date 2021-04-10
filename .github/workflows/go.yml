@@ -10,7 +10,8 @@ jobs:
     name: Build & Release
     runs-on: ubuntu-latest
     env:
-      DRONE_TAG: v1.19.8+k8e3
+      DRONE_TAG: v1.19.8+k8e4
+      GOLANG: golang:1.16.2-alpine3.12 
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v2
@@ -30,7 +31,7 @@ jobs:
       run: go get -u github.com/rakyll/gotest && go mod vendor && gotest -v ./...
       
     - name: package bin
-      run: SKIP_VALIDATE=true GOLANG=golang:1.16.2-alpine3.12 make
+      run: SKIP_VALIDATE=true make
 
     - name: Deploy to qiniu
       uses: saltbo/uptoc@master
