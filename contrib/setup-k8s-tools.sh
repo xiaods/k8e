@@ -35,7 +35,7 @@ create_symlinks() {
         fi
     done
     info "Create nerdctl symlink for k8e"
-    $SUDO ln -sf /var/lib/k8e/k8e/data/bin/nerdctl ${BIN_DIR}/nerdctl
+    $SUDO ln -sf /var/lib/k8e/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
 }
 
 (
