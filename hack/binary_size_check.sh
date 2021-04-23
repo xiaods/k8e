@@ -13,8 +13,8 @@ MAX_BINARY_SIZE=61000000
 BIN_SUFFIX="-${ARCH}"
 if [ ${ARCH} = amd64 ]; then
     BIN_SUFFIX=""
-elif [ ${ARCH} = arm ]; then
-    BIN_SUFFIX="-armhf"
+elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
+    BIN_SUFFIX="-arm64"
 fi
 
 CMD_NAME="dist/artifacts/k8e${BIN_SUFFIX}"
