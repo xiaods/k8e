@@ -10,7 +10,7 @@ jobs:
     name: Build & Release
     runs-on: ubuntu-latest
     env:
-      DRONE_TAG: v1.19.9+k8e2
+      DRONE_TAG: v1.19.10+k8e1
       GOLANG: golang:1.16.2-alpine3.12
     steps:
     - name: Set up Go 1.x
