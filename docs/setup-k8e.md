@@ -95,7 +95,6 @@ kubectl create secret generic -n kube-system cilium-etcd-secrets \
 helm install cilium cilium/cilium --version 1.9.5 --set nodeinit.enabled=true \
                                                   --set nodeinit.restartPods=true \
                                                   --set tunnel=disabled \
-                                                  --set bpfMasquerade=true \ 
                                                   --set bpf.masquerade=true \
                                                   --set bpf.clockProbe=true \
                                                   --set bpf.waitForMount=true \
