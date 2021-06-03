@@ -7,7 +7,6 @@ cd $(dirname $0)/..
 
 RUNC_VERSION=v1.0.0-rc95
 ROOT_VERSION=v0.8.1
-TRAEFIK_VERSION=1.81.0
 CHARTS_DIR=build/static/charts
 RUNC_DIR=build/src/github.com/opencontainers/runc
 DATA_DIR=build/data
@@ -26,17 +25,6 @@ git fetch --all --tags
 git checkout ${RUNC_VERSION} -b k8e
 popd
 
-TRAEFIK_FILE=traefik-${TRAEFIK_VERSION}.tgz
-TRAEFIK_URL=https://charts.helm.sh/stable/packages/${TRAEFIK_FILE}
-
-echo "Downloading Traefik Helm chart from ${TRAEFIK_URL}"
-curl -sfL ${TRAEFIK_URL} -o ${CHARTS_DIR}/${TRAEFIK_FILE}
-code=$?
-
-if [ $code -ne 0 ]; then
-  echo "Error: Failed to download Traefik Helm chart!"
-  exit $code
-fi
 cp hack/wg-add.sh bin/aux/
 
 #nerdctl for containerd
