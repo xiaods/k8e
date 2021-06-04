@@ -28,11 +28,11 @@ write_files:
     if [ ${db_engine} == "embedded-etcd" ]; then
     curl -sfL https://get.k8e.io | k8e_CLUSTER_SECRET="${k8e_cluster_secret}" \
        INSTALL_k8e_VERSION="${install_k8e_version}" \
-       INSTALL_k8e_EXEC="${k8e_server_args} --cluster-cidr=10.0.0.0/8 --no-deploy servicelb --tls-san ${lb_address} %{ if master_index != 0 } --server https://${lb_address}:6443 %{ else } --cluster-init %{ endif }" sh -
+       INSTALL_k8e_EXEC="${k8e_server_args} --cluster-cidr=10.0.0.0/8 --disable servicelb --tls-san ${lb_address} %{ if master_index != 0 } --server https://${lb_address}:6443 %{ else } --cluster-init %{ endif }" sh -
     else
       curl -sfL https://get.k8e.io | k8e_CLUSTER_SECRET="${k8e_cluster_secret}" \
          INSTALL_k8e_VERSION="${install_k8e_version}" \
-         INSTALL_k8e_EXEC="${k8e_server_args} --cluster-cidr=10.0.0.0/8 --no-deploy servicelb --tls-san ${lb_address} %{ if use_ha == "true" } --datastore-endpoint=$STORAGE_ENDPOINT %{ endif }" sh -
+         INSTALL_k8e_EXEC="${k8e_server_args} --cluster-cidr=10.0.0.0/8 --disable servicelb --tls-san ${lb_address} %{ if use_ha == "true" } --datastore-endpoint=$STORAGE_ENDPOINT %{ endif }" sh -
       fi
       if [ $? -eq 0 ]; then
         break
