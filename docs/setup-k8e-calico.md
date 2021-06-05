@@ -22,15 +22,15 @@ reboot
 
 bootstrap server(172.25.1.55): 
 ```
-K8E_NODE_NAME=k8e-55  K8E_TOKEN=ilovek8e /opt/k8e/k8e server --flannel-backend=none --disable-kube-proxy=true --cluster-init --disable servicelb,traefik >> k8e.log 2>&1 &
+K8E_NODE_NAME=k8e-55  K8E_TOKEN=ilovek8e /opt/k8e/k8e server --flannel-backend=none --disable-kube-proxy=true --cluster-init --disable servicelb >> k8e.log 2>&1 &
 ```
 server 2(172.25.1.56):
 ```
-K8E_NODE_NAME=k8e-56 K8E_TOKEN=ilovek8e /opt/k8e/k8e server --server https://172.25.1.55:6443 --flannel-backend=none --disable servicelb,traefik --disable-kube-proxy=true >> k8e.log 2>&1 &
+K8E_NODE_NAME=k8e-56 K8E_TOKEN=ilovek8e /opt/k8e/k8e server --server https://172.25.1.55:6443 --flannel-backend=none --disable servicelb --disable-kube-proxy=true >> k8e.log 2>&1 &
 ```
 server 3(172.25.1.57):
 ```
-K8E_NODE_NAME=k8e-57 K8E_TOKEN=ilovek8e /opt/k8e/k8e server --server https://172.25.1.55:6443 --flannel-backend=none --disable servicelb,traefik --disable-kube-proxy=true >> k8e.log 2>&1 &
+K8E_NODE_NAME=k8e-57 K8E_TOKEN=ilovek8e /opt/k8e/k8e server --server https://172.25.1.55:6443 --flannel-backend=none --disable servicelb --disable-kube-proxy=true >> k8e.log 2>&1 &
 ```
 
 ### 网络堆栈Calico集成
