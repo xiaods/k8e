@@ -1,7 +1,0 @@
-.terraform*
-*.tfstate*
-*.tfvars*
-*.plan*
-*tests_results*
-*junit.xml
-*kubeconfig.yaml
