@@ -15,12 +15,11 @@ import (
 )
 
 const (
-	FlannelBackendNone      = "none"
-	FlannelBackendVXLAN     = "vxlan"
-	FlannelBackendHostGW    = "host-gw"
-	FlannelBackendIPSEC     = "ipsec"
-	FlannelBackendWireguard = "wireguard"
-	CertificateRenewDays    = 90
+	FlannelBackendNone   = "none"
+	FlannelBackendVXLAN  = "vxlan"
+	FlannelBackendHostGW = "host-gw"
+	FlannelBackendIPSEC  = "ipsec"
+	CertificateRenewDays = 90
 )
 
 type Node struct {
