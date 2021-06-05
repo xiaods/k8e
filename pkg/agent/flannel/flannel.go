@@ -21,18 +21,18 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/coreos/flannel/backend"
-	"github.com/coreos/flannel/network"
-	"github.com/coreos/flannel/pkg/ip"
-	"github.com/coreos/flannel/subnet/kube"
+	"github.com/flannel-io/flannel/backend"
+	"github.com/flannel-io/flannel/network"
+	"github.com/flannel-io/flannel/pkg/ip"
+	"github.com/flannel-io/flannel/subnet/kube"
 	"golang.org/x/net/context"
 	log "k8s.io/klog"
 
 	// Backends need to be imported for their init() to get executed and them to register
-	_ "github.com/coreos/flannel/backend/extension"
-	_ "github.com/coreos/flannel/backend/hostgw"
-	_ "github.com/coreos/flannel/backend/ipsec"
-	_ "github.com/coreos/flannel/backend/vxlan"
+	_ "github.com/flannel-io/flannel/backend/extension"
+	_ "github.com/flannel-io/flannel/backend/hostgw"
+	_ "github.com/flannel-io/flannel/backend/ipsec"
+	_ "github.com/flannel-io/flannel/backend/vxlan"
 )
 
 const (
