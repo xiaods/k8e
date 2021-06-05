@@ -25,8 +25,6 @@ git fetch --all --tags
 git checkout ${RUNC_VERSION} -b k8e
 popd
 
-cp hack/wg-add.sh bin/aux/
-
 #nerdctl for containerd
 echo "download nerdctl..."
 if [ ${ARCH} = amd64 ]; then
