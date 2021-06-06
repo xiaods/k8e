@@ -1,6 +1,8 @@
 K8e 🚀 (said 'kuber easy') - Simple Kubernetes Distribution
 ===============================================
-Kubernetes Easy (k8e) is a lightweight, Extensible, Enterprise Kubernetes distribution that allows users to uniformly manage, secure, and get out-of-the-box kubernetes cluster for enterprise environments.
+<img src="./docs/k8e-logo.png" alt="logo" style="zoom:50%;" />
+
+[Kubernetes Easy (k8e)](https://getk8e.com) is a lightweight, Extensible, Enterprise Kubernetes distribution that allows users to uniformly manage, secure, and get out-of-the-box kubernetes cluster for enterprise environments.
 
 The k8e 🚀 (said 'kuber easy') project builds on upstream project [K3s](https://github.com/rancher/k3s) as codebase, remove Edge/IoT features and extend enterprise features with best practices.
 
