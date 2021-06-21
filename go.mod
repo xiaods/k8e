@@ -27,9 +27,9 @@ replace (
 	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.0.3-0.20200728170252-4d89ac9fbff6
 	github.com/rancher/k3s/pkg/data => ./pkg/data
 	go.etcd.io/etcd => github.com/k3s-io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea
-	golang.org/x/crypto => golang.org/x/crypto v0.0.0-20201002170205-7f63de1d35b0
-	golang.org/x/net => golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
-	golang.org/x/sys => golang.org/x/sys v0.0.0-20201112073958-5cba982894dd
+	golang.org/x/crypto => golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
+	golang.org/x/net => golang.org/x/net v0.0.0-20210224082022-3d97a244fca7
+	golang.org/x/sys => golang.org/x/sys v0.0.0-20210225134936-a50acf3fe073
 	google.golang.org/genproto => google.golang.org/genproto v0.0.0-20200224152610-e50cd9704f63
 	google.golang.org/grpc => google.golang.org/grpc v1.27.1
 	gopkg.in/square/go-jose.v2 => gopkg.in/square/go-jose.v2 v2.2.2
@@ -104,10 +104,10 @@ require (
 	github.com/stretchr/testify v1.6.1
 	github.com/tchap/go-patricia v2.3.0+incompatible // indirect
 	github.com/urfave/cli v1.22.2
-	go.etcd.io/etcd v0.5.0-alpha.5.0.20200819165624-17cef6e3e9d5
-	golang.org/x/crypto v0.0.0-20201002170205-7f63de1d35b0
-	golang.org/x/net v0.0.0-20201110031124-69a78807bb2b
-	golang.org/x/sys v0.0.0-20210403161142-5e06dd20ab57
+	go.etcd.io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea
+	golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
+	golang.org/x/net v0.0.0-20210226172049-e18ecbb05110
+	golang.org/x/sys v0.0.0-20210426230700-d19ff857e887
 	google.golang.org/grpc v1.31.1
 	gopkg.in/yaml.v2 v2.3.0
 	k8s.io/api v0.19.11
