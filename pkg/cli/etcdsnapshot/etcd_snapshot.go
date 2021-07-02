@@ -58,7 +58,7 @@ func run(app *cli.Context, cfg *cmds.Server) error {
 		return err
 	}
 	if !initialized {
-		return errors.New("managed etcd database has not been initialized")
+		return fmt.Errorf("etcd database in %s was not initialized", dataDir)
 	}
 
 	cluster := cluster.New(&serverConfig.ControlConfig)
