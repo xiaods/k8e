@@ -68,6 +68,7 @@ require (
 	github.com/containerd/cri v1.11.1-0.20200820101445-b0cc07999aa5
 	github.com/coreos/go-iptables v0.4.5
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f
+	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/docker/docker v17.12.0-ce-rc1.0.20200916142827-bd33bbf0497b+incompatible
 	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
 	github.com/flannel-io/flannel v0.14.0
@@ -75,10 +76,11 @@ require (
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/google/cadvisor v0.37.5
+	github.com/google/go-cmp v0.5.4 // indirect
 	github.com/google/tcpproxy v0.0.0-20180808230851-dfa16c61dad2
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
-	github.com/gorilla/websocket v1.4.1
+	github.com/gorilla/websocket v1.4.2
 	github.com/k3s-io/helm-controller v0.8.3
 	github.com/k3s-io/kine v0.6.0
 	github.com/klauspost/compress v1.11.7
@@ -88,6 +90,8 @@ require (
 	github.com/minio/minio-go/v7 v7.0.7
 	github.com/morikuni/aec v1.0.0
 	github.com/natefinch/lumberjack v2.0.0+incompatible
+	github.com/onsi/ginkgo v1.16.1 // indirect
+	github.com/onsi/gomega v1.11.0 // indirect
 	// LOOK TO hack/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
 	github.com/opencontainers/runc v1.0.0-rc92
 	github.com/opencontainers/selinux v1.6.0
@@ -100,6 +104,7 @@ require (
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rootless-containers/rootlesskit v0.10.0
 	github.com/sirupsen/logrus v1.7.0
+	github.com/spf13/cobra v1.1.1 // indirect
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.6.1
 	github.com/tchap/go-patricia v2.3.0+incompatible // indirect
@@ -108,8 +113,9 @@ require (
 	golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
 	golang.org/x/net v0.0.0-20210226172049-e18ecbb05110
 	golang.org/x/sys v0.0.0-20210426230700-d19ff857e887
+	golang.org/x/tools v0.1.0 // indirect
 	google.golang.org/grpc v1.31.1
-	gopkg.in/yaml.v2 v2.3.0
+	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/api v0.19.11
 	k8s.io/apimachinery v0.19.11
 	k8s.io/apiserver v0.19.11
