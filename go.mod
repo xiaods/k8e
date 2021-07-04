@@ -64,6 +64,7 @@ replace (
 require (
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/bronze1man/goStrongswanVici v0.0.0-20190828090544-27d02f80ba40 // indirect
+	github.com/containerd/cgroups v0.0.0-20200710171044-318312a37340
 	github.com/containerd/containerd v1.4.4
 	github.com/containerd/cri v1.11.1-0.20200820101445-b0cc07999aa5
 	github.com/coreos/go-iptables v0.4.5
@@ -72,18 +73,16 @@ require (
 	github.com/docker/docker v17.12.0-ce-rc1.0.20200916142827-bd33bbf0497b+incompatible
 	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
 	github.com/flannel-io/flannel v0.14.0
-	github.com/frankban/quicktest v1.10.2 // indirect
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/google/cadvisor v0.37.5
-	github.com/google/go-cmp v0.5.4 // indirect
 	github.com/google/tcpproxy v0.0.0-20180808230851-dfa16c61dad2
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
 	github.com/gorilla/websocket v1.4.2
 	github.com/k3s-io/helm-controller v0.8.3
 	github.com/k3s-io/kine v0.6.0
-	github.com/klauspost/compress v1.11.7
+	github.com/klauspost/compress v1.12.2
 	github.com/kubernetes-sigs/cri-tools v1.19.0
 	github.com/lib/pq v1.8.0
 	github.com/mattn/go-sqlite3 v1.14.4
@@ -95,15 +94,16 @@ require (
 	// LOOK TO hack/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
 	github.com/opencontainers/runc v1.0.0-rc92
 	github.com/opencontainers/selinux v1.6.0
-	github.com/pierrec/lz4 v2.5.2+incompatible
+	github.com/pierrec/lz4 v2.6.0+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/rancher/dynamiclistener v0.2.3
 	github.com/rancher/remotedialer v0.2.0
+	github.com/rancher/wharfie v0.4.0
 	github.com/rancher/wrangler v0.6.2
 	github.com/rancher/wrangler-api v0.6.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rootless-containers/rootlesskit v0.10.0
-	github.com/sirupsen/logrus v1.7.0
+	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cobra v1.1.1 // indirect
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.6.1
@@ -116,7 +116,7 @@ require (
 	golang.org/x/tools v0.1.0 // indirect
 	google.golang.org/grpc v1.31.1
 	gopkg.in/yaml.v2 v2.4.0
-	k8s.io/api v0.19.12
+	k8s.io/api v0.21.0
 	k8s.io/apimachinery v0.19.12
 	k8s.io/apiserver v0.19.12
 	k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
@@ -124,7 +124,7 @@ require (
 	k8s.io/component-base v0.19.12
 	k8s.io/cri-api v0.19.12
 	k8s.io/klog v1.0.0
-	k8s.io/kubernetes v1.19.12
+	k8s.io/kubernetes v1.21.0
 	k8s.io/utils v0.0.0-20200729134348-d5654de09c73
 	sigs.k8s.io/yaml v1.2.0
 )
