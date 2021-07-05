@@ -26,7 +26,7 @@ const (
 	// default; the --long option defaults to 27 or 128M, which is still too much for a Pi3. 32MB
 	// (--long=25) has been tested to work acceptably while still compressing by an additional 3-6% on
 	// our datasets.
-	MaxDecoderMemory = 1 << 25
+	MaxDecoderMemory = 1 << 30
 )
 
 // TODO(bradfitz): this was copied from x/build/cmd/buildlet/buildlet.go
