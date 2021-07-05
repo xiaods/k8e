@@ -18,6 +18,9 @@ fatal()
 
 BIN_DIR=/usr/local/bin
 
+# --- nerdctl containerd run sock path ---
+export CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock
+
 # --- add additional utility links ---
 create_symlinks() {
 
