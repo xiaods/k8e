@@ -1,3 +1,5 @@
+// +build windows
+
 package rootless
 
 func Rootless(stateDir string) error {
