@@ -69,8 +69,6 @@ type Agent struct {
 	CNIPlugin               bool
 	NodeTaints              []string
 	NodeLabels              []string
-	IPSECPSK                string
-	StrongSwanDir           string
 	PrivateRegistry         string
 	AirgapExtraRegistry     []string
 	DisableCCM              bool
@@ -110,7 +108,6 @@ type Control struct {
 	ExtraSchedulerAPIArgs    []string
 	NoLeaderElect            bool
 	JoinURL                  string
-	IPSECPSK                 string
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
 	DisableNPC               bool
@@ -160,7 +157,6 @@ type ControlRuntimeBootstrap struct {
 	PasswdFile         string
 	RequestHeaderCA    string
 	RequestHeaderCAKey string
-	IPSECKey           string
 	EncryptionConfig   string
 }
 

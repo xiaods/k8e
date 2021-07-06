@@ -246,7 +246,6 @@ func prepare(ctx context.Context, config *config.Control, runtime *config.Contro
 	runtime.ServerCAKey = filepath.Join(config.DataDir, "tls", "server-ca.key")
 	runtime.RequestHeaderCA = filepath.Join(config.DataDir, "tls", "request-header-ca.crt")
 	runtime.RequestHeaderCAKey = filepath.Join(config.DataDir, "tls", "request-header-ca.key")
-	runtime.IPSECKey = filepath.Join(config.DataDir, "cred", "ipsec.psk")
 
 	runtime.ServiceKey = filepath.Join(config.DataDir, "tls", "service.key")
 	runtime.PasswdFile = filepath.Join(config.DataDir, "cred", "passwd")

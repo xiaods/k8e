@@ -11,7 +11,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"text/template"
 	"time"
 
@@ -105,10 +104,6 @@ func GenServerDeps(config *config.Control, runtime *config.ControlRuntime) error
 		return err
 	}
 
-	if err := genEncryptedNetworkInfo(config, runtime); err != nil {
-		return err
-	}
-
 	if err := genEncryptionConfig(config, runtime); err != nil {
 		return err
 	}
@@ -168,29 +163,6 @@ func genUsers(config *config.Control, runtime *config.ControlRuntime) error {
 	}
 
 	return passwd.Write(runtime.PasswdFile)
-}
-
-func genEncryptedNetworkInfo(controlConfig *config.Control, runtime *config.ControlRuntime) error {
-	if s, err := os.Stat(runtime.IPSECKey); err == nil && s.Size() > 0 {
-		psk, err := ioutil.ReadFile(runtime.IPSECKey)
-		if err != nil {
-			return err
-		}
-		controlConfig.IPSECPSK = strings.TrimSpace(string(psk))
-		return nil
-	}
-
-	psk, err := token.Random(ipsecTokenSize)
-	if err != nil {
-		return err
-	}
-
-	controlConfig.IPSECPSK = psk
-	if err := ioutil.WriteFile(runtime.IPSECKey, []byte(psk+"\n"), 0600); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func getServerPass(passwd *passwd.Passwd, config *config.Control) (string, error) {
