@@ -155,7 +155,7 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Name:        "flannel-backend",
 				Usage:       "(networking) One of 'none', 'vxlan', 'ipsec', 'host-gw'",
 				Destination: &ServerConfig.FlannelBackend,
-				Value:       "vxlan",
+				Value:       "none",
 			},
 			cli.StringFlag{
 				Name:        "token,t",
