@@ -11,7 +11,7 @@ spec:
     ipPools:
     - blockSize: 26
       cidr: 10.42.0.0/16
-      encapsulation: VXLANCrossSubnet
+      encapsulation: IPIPCrossSubnet
       natOutgoing: Enabled
       nodeSelector: all()
     containerIPForwarding: Enabled
