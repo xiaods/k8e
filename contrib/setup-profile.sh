@@ -5,3 +5,6 @@
 CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock
 export CONTAINERD_ADDRESS
 
+
+PATH=$PATH:/usr/local/bin
+export PATH
