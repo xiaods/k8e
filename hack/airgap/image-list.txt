@@ -3,7 +3,7 @@ docker.io/calico/kube-controllers:v3.19.1
 docker.io/calico/node:v3.19.1
 docker.io/calico/pod2daemon-flexvol:v3.19.1
 docker.io/calico/typha:v3.19.1
-docker.io/rancher/coredns-coredns:1.8.0
+docker.io/rancher/coredns-coredns:1.8.3
 docker.io/rancher/local-path-provisioner:v0.0.14
 docker.io/rancher/metrics-server:v0.3.6
 registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.4.1
