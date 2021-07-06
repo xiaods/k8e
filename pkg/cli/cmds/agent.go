@@ -27,9 +27,6 @@ type Agent struct {
 	Snapshotter              string
 	Docker                   bool
 	ContainerRuntimeEndpoint string
-	NoFlannel                bool
-	FlannelIface             string
-	FlannelConf              string
 	Debug                    bool
 	Rootless                 bool
 	RootlessAlreadyUnshared  bool
@@ -106,21 +103,6 @@ var (
 		Usage:       "(agent/runtime) Override default containerd snapshotter",
 		Destination: &AgentConfig.Snapshotter,
 		Value:       "overlayfs",
-	}
-	FlannelFlag = cli.BoolFlag{
-		Name:        "no-flannel",
-		Usage:       "(deprecated) Use --flannel-backend=none",
-		Destination: &AgentConfig.NoFlannel,
-	}
-	FlannelIfaceFlag = cli.StringFlag{
-		Name:        "flannel-iface",
-		Usage:       "(agent/networking) Override default flannel interface",
-		Destination: &AgentConfig.FlannelIface,
-	}
-	FlannelConfFlag = cli.StringFlag{
-		Name:        "flannel-conf",
-		Usage:       "(agent/networking) Override default flannel config file",
-		Destination: &AgentConfig.FlannelConf,
 	}
 	ResolvConfFlag = cli.StringFlag{
 		Name:        "resolv-conf",
@@ -236,8 +218,6 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 			NodeIPFlag,
 			NodeExternalIPFlag,
 			ResolvConfFlag,
-			FlannelIfaceFlag,
-			FlannelConfFlag,
 			ExtraKubeletArgs,
 			ExtraKubeProxyArgs,
 			ProtectKernelDefaultsFlag,
@@ -252,7 +232,6 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 			// Deprecated/hidden below
 
 			&DisableSELinuxFlag,
-			FlannelFlag,
 			cli.StringFlag{
 				Name:        "cluster-secret",
 				Usage:       "(deprecated) use --token",

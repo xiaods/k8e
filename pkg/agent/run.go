@@ -15,7 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/config"
 	"github.com/xiaods/k8e/pkg/agent/containerd"
-	"github.com/xiaods/k8e/pkg/agent/flannel"
 	"github.com/xiaods/k8e/pkg/agent/netpol"
 	"github.com/xiaods/k8e/pkg/agent/proxy"
 	"github.com/xiaods/k8e/pkg/agent/syssetup"
@@ -87,12 +86,6 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 		return err
 	}
 
-	if !nodeConfig.NoFlannel {
-		if err := flannel.Prepare(ctx, nodeConfig); err != nil {
-			return err
-		}
-	}
-
 	if !nodeConfig.Docker && nodeConfig.ContainerRuntimeEndpoint == "" {
 		if err := containerd.Run(ctx, nodeConfig); err != nil {
 			return err
@@ -106,11 +99,6 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 	coreClient, err := coreClient(nodeConfig.AgentConfig.KubeConfigKubelet)
 	if err != nil {
 		return err
-	}
-	if !nodeConfig.NoFlannel {
-		if err := flannel.Run(ctx, nodeConfig, coreClient.CoreV1().Nodes()); err != nil {
-			return err
-		}
 	}
 
 	if err := configureNode(ctx, &nodeConfig.AgentConfig, coreClient.CoreV1().Nodes()); err != nil {

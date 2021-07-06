@@ -50,7 +50,6 @@ type Server struct {
 	AdvertisePort            int
 	DisableScheduler         bool
 	ServerURL                string
-	FlannelBackend           string
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
 	DisableNPC               bool
@@ -150,12 +149,6 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Usage:       "(networking) Cluster Domain",
 				Destination: &ServerConfig.ClusterDomain,
 				Value:       "cluster.local",
-			},
-			cli.StringFlag{
-				Name:        "flannel-backend",
-				Usage:       "(networking) One of 'none', 'vxlan', 'ipsec', 'host-gw'",
-				Destination: &ServerConfig.FlannelBackend,
-				Value:       "none",
 			},
 			cli.StringFlag{
 				Name:        "token,t",
@@ -366,8 +359,6 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			NodeIPFlag,
 			NodeExternalIPFlag,
 			ResolvConfFlag,
-			FlannelIfaceFlag,
-			FlannelConfFlag,
 			ExtraKubeletArgs,
 			ExtraKubeProxyArgs,
 			ProtectKernelDefaultsFlag,
@@ -422,7 +413,6 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			// Hidden/Deprecated flags below
 
 			&DisableSELinuxFlag,
-			FlannelFlag,
 			cli.StringSliceFlag{
 				Name:  "no-deploy",
 				Usage: "(deprecated) Do not deploy packaged components (valid items: " + DisableItems + ")",

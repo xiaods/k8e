@@ -13,7 +13,6 @@ import (
 	"github.com/xiaods/k8e/pkg/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/datadir"
-	"github.com/xiaods/k8e/pkg/netutil"
 	"github.com/xiaods/k8e/pkg/token"
 	"github.com/xiaods/k8e/pkg/version"
 )
@@ -48,10 +47,6 @@ func Run(ctx *cli.Context) error {
 
 	if cmds.AgentConfig.ServerURL == "" {
 		return fmt.Errorf("--server is required")
-	}
-
-	if cmds.AgentConfig.FlannelIface != "" && cmds.AgentConfig.NodeIP == "" {
-		cmds.AgentConfig.NodeIP = netutil.GetIPFromInterface(cmds.AgentConfig.FlannelIface)
 	}
 
 	logrus.Info("Starting " + version.Program + " agent " + ctx.App.Version)

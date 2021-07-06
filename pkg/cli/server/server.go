@@ -19,7 +19,6 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/etcd"
-	"github.com/xiaods/k8e/pkg/netutil"
 	"github.com/xiaods/k8e/pkg/rootless"
 	"github.com/xiaods/k8e/pkg/server"
 	"github.com/xiaods/k8e/pkg/token"
@@ -113,7 +112,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.Datastore.KeyFile = cfg.DatastoreKeyFile
 	serverConfig.ControlConfig.AdvertiseIP = cfg.AdvertiseIP
 	serverConfig.ControlConfig.AdvertisePort = cfg.AdvertisePort
-	serverConfig.ControlConfig.FlannelBackend = cfg.FlannelBackend
 	serverConfig.ControlConfig.ExtraCloudControllerArgs = cfg.ExtraCloudControllerArgs
 	serverConfig.ControlConfig.DisableCCM = cfg.DisableCCM
 	serverConfig.ControlConfig.DisableNPC = cfg.DisableNPC
@@ -179,9 +177,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 	}
 
-	if cmds.AgentConfig.FlannelIface != "" && cmds.AgentConfig.NodeIP == "" {
-		cmds.AgentConfig.NodeIP = netutil.GetIPFromInterface(cmds.AgentConfig.FlannelIface)
-	}
 	if serverConfig.ControlConfig.PrivateIP == "" && cmds.AgentConfig.NodeIP != "" {
 		serverConfig.ControlConfig.PrivateIP = cmds.AgentConfig.NodeIP
 	}

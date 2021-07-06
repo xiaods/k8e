@@ -131,9 +131,6 @@ github.com/aws/aws-sdk-go/service/sts/stsiface
 github.com/beorn7/perks/quantile
 # github.com/blang/semver v3.5.0+incompatible
 github.com/blang/semver
-# github.com/bronze1man/goStrongswanVici v0.0.0-20190828090544-27d02f80ba40
-## explicit
-github.com/bronze1man/goStrongswanVici
 # github.com/canonical/go-dqlite v1.5.1
 github.com/canonical/go-dqlite
 github.com/canonical/go-dqlite/client
@@ -363,7 +360,6 @@ github.com/containernetworking/cni/pkg/utils
 github.com/containernetworking/cni/pkg/version
 # github.com/containernetworking/plugins v0.8.6
 github.com/containernetworking/plugins/pkg/ns
-github.com/containernetworking/plugins/pkg/utils/sysctl
 # github.com/containers/ocicrypt v1.0.1
 github.com/containers/ocicrypt
 github.com/containers/ocicrypt/blockcipher
@@ -472,19 +468,6 @@ github.com/evanphx/json-patch
 github.com/exponent-io/jsonpath
 # github.com/fatih/camelcase v1.0.0
 github.com/fatih/camelcase
-# github.com/flannel-io/flannel v0.14.0
-## explicit
-github.com/flannel-io/flannel/backend
-github.com/flannel-io/flannel/backend/extension
-github.com/flannel-io/flannel/backend/hostgw
-github.com/flannel-io/flannel/backend/ipsec
-github.com/flannel-io/flannel/backend/vxlan
-github.com/flannel-io/flannel/network
-github.com/flannel-io/flannel/pkg/ip
-github.com/flannel-io/flannel/pkg/powershell
-github.com/flannel-io/flannel/pkg/routing
-github.com/flannel-io/flannel/subnet
-github.com/flannel-io/flannel/subnet/kube
 # github.com/fsnotify/fsnotify v1.4.9
 github.com/fsnotify/fsnotify
 # github.com/fullsailor/pkcs7 v0.0.0-20190404230743-d7302db945fa
@@ -1193,7 +1176,6 @@ golang.org/x/crypto/ssh/terminal
 golang.org/x/mod/module
 golang.org/x/mod/semver
 # golang.org/x/net v0.0.0-20210226172049-e18ecbb05110 => golang.org/x/net v0.0.0-20210224082022-3d97a244fca7
-## explicit
 golang.org/x/net/bpf
 golang.org/x/net/context
 golang.org/x/net/context/ctxhttp

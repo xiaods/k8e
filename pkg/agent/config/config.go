@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -313,14 +312,6 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 		}
 	}
 
-	var flannelIface *sysnet.Interface
-	if !envInfo.NoFlannel && len(envInfo.FlannelIface) > 0 {
-		flannelIface, err = sysnet.InterfaceByName(envInfo.FlannelIface)
-		if err != nil {
-			return nil, errors.Wrapf(err, "unable to find interface")
-		}
-	}
-
 	clientCAFile := filepath.Join(envInfo.DataDir, "client-ca.crt")
 	if err := getHostFile(clientCAFile, "", info); err != nil {
 		return nil, err
@@ -402,10 +393,9 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 		Docker:                   envInfo.Docker,
 		SELinux:                  envInfo.EnableSELinux,
 		ContainerRuntimeEndpoint: envInfo.ContainerRuntimeEndpoint,
-		FlannelBackend:           controlConfig.FlannelBackend,
 		ServerHTTPSPort:          controlConfig.HTTPSPort,
 	}
-	nodeConfig.FlannelIface = flannelIface
+
 	nodeConfig.Images = filepath.Join(envInfo.DataDir, "images")
 	nodeConfig.AgentConfig.NodeIP = nodeIP
 	nodeConfig.AgentConfig.NodeName = nodeName
@@ -440,28 +430,6 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.Containerd.Address = filepath.Join(nodeConfig.Containerd.State, "containerd.sock")
 	nodeConfig.Containerd.Template = filepath.Join(envInfo.DataDir, "etc/containerd/config.toml.tmpl")
 	nodeConfig.Certificate = servingCert
-
-	if nodeConfig.FlannelBackend == config.FlannelBackendNone {
-		nodeConfig.NoFlannel = true
-	} else {
-		nodeConfig.NoFlannel = envInfo.NoFlannel
-	}
-
-	if !nodeConfig.NoFlannel {
-		hostLocal, err := exec.LookPath("host-local")
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to find host-local")
-		}
-
-		if envInfo.FlannelConf == "" {
-			nodeConfig.FlannelConf = filepath.Join(envInfo.DataDir, "etc/flannel/net-conf.json")
-		} else {
-			nodeConfig.FlannelConf = envInfo.FlannelConf
-			nodeConfig.FlannelConfOverride = true
-		}
-		nodeConfig.AgentConfig.CNIBinDir = filepath.Dir(hostLocal)
-		nodeConfig.AgentConfig.CNIConfDir = filepath.Join(envInfo.DataDir, "etc/cni/net.d")
-	}
 
 	if !nodeConfig.Docker && nodeConfig.ContainerRuntimeEndpoint == "" {
 		nodeConfig.AgentConfig.RuntimeSocket = nodeConfig.Containerd.Address

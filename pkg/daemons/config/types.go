@@ -15,22 +15,13 @@ import (
 )
 
 const (
-	FlannelBackendNone   = "none"
-	FlannelBackendVXLAN  = "vxlan"
-	FlannelBackendHostGW = "host-gw"
-	FlannelBackendIPSEC  = "ipsec"
 	CertificateRenewDays = 90
 )
 
 type Node struct {
 	Docker                   bool
 	ContainerRuntimeEndpoint string
-	NoFlannel                bool
 	SELinux                  bool
-	FlannelBackend           string
-	FlannelConf              string
-	FlannelConfOverride      bool
-	FlannelIface             *net.Interface
 	Containerd               Containerd
 	Images                   string
 	AgentConfig              Agent
@@ -119,7 +110,6 @@ type Control struct {
 	ExtraSchedulerAPIArgs    []string
 	NoLeaderElect            bool
 	JoinURL                  string
-	FlannelBackend           string
 	IPSECPSK                 string
 	DefaultLocalStoragePath  string
 	DisableCCM               bool

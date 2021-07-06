@@ -29,11 +29,6 @@ const ContainerdConfigTemplate = `
   disable_snapshot_annotations = true
   snapshotter = "{{ .NodeConfig.AgentConfig.Snapshotter }}"
 {{end}}
-{{- if not .NodeConfig.NoFlannel }}
-[plugins.cri.cni]
-  bin_dir = "{{ .NodeConfig.AgentConfig.CNIBinDir }}"
-  conf_dir = "{{ .NodeConfig.AgentConfig.CNIConfDir }}"
-{{end}}
 [plugins.cri.containerd.runtimes.runc]
   runtime_type = "io.containerd.runc.v2"
 {{ if .PrivateRegistryConfig }}

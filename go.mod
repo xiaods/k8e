@@ -63,7 +63,6 @@ replace (
 
 require (
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
-	github.com/bronze1man/goStrongswanVici v0.0.0-20190828090544-27d02f80ba40 // indirect
 	github.com/containerd/cgroups v0.0.0-20200710171044-318312a37340
 	github.com/containerd/containerd v1.4.4
 	github.com/containerd/cri v1.11.1-0.20200820101445-b0cc07999aa5
@@ -72,7 +71,6 @@ require (
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/docker/docker v17.12.0-ce-rc1.0.20200916142827-bd33bbf0497b+incompatible
 	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
-	github.com/flannel-io/flannel v0.14.0
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/google/cadvisor v0.37.5
@@ -111,7 +109,6 @@ require (
 	github.com/urfave/cli v1.22.2
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea
 	golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
-	golang.org/x/net v0.0.0-20210226172049-e18ecbb05110
 	golang.org/x/sys v0.0.0-20210426230700-d19ff857e887
 	golang.org/x/tools v0.1.0 // indirect
 	google.golang.org/grpc v1.31.1
