@@ -96,7 +96,7 @@ var (
 		Name:        "pause-image",
 		Usage:       "(agent/runtime) Customized pause image for containerd or docker sandbox",
 		Destination: &AgentConfig.PauseImage,
-		Value:       "registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.4.1",
+		Value:       "k8s.gcr.io/pause:3.4.1",
 	}
 	SnapshotterFlag = cli.StringFlag{
 		Name:        "snapshotter",
