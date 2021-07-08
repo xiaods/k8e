@@ -25,6 +25,9 @@ curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-uninstall.s
 
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/setup-profile.sh -o setup-profile.sh
 
+bash setup-k8s-tools.sh
+bash setup-profile.sh
+
 echo "Done! Happy deployment."
 
 
