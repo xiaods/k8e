@@ -9,10 +9,10 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/google/tcpproxy"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/version"
 	"golang.org/x/sys/unix"
+	"inet.af/tcpproxy"
 )
 
 type LoadBalancer struct {
