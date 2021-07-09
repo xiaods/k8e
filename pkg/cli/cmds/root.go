@@ -32,6 +32,7 @@ func NewApp() *cli.App {
 	app.Usage = "Kubernetes, but small and simple"
 	app.Version = fmt.Sprintf("%s (%s)", version.Version, version.GitCommit)
 	cli.VersionPrinter = func(c *cli.Context) {
+		version.PrintK8eASCIIArt()
 		fmt.Printf("%s version %s\n", app.Name, app.Version)
 	}
 	app.Flags = []cli.Flag{
