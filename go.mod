@@ -25,7 +25,7 @@ replace (
 	// LOOK TO hack/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
 	github.com/opencontainers/runc => github.com/opencontainers/runc v1.0.0-rc92
 	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.0.3-0.20200728170252-4d89ac9fbff6
-	github.com/rancher/k3s/pkg/data => ./pkg/data
+	github.com/xiaods/k8e/pkg/data => ./pkg/data
 	go.etcd.io/etcd => github.com/k3s-io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea
 	golang.org/x/crypto => golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
 	golang.org/x/net => golang.org/x/net v0.0.0-20210224082022-3d97a244fca7
