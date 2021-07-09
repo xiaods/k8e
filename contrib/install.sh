@@ -21,13 +21,17 @@ curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/stop-k8e.sh -o 
 
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/setup-k8s-tools.sh -o setup-k8s-tools.sh
 
+curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-killall.sh -o k8e-killall.sh
+
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-uninstall.sh -o k8e-uninstall.sh
 
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/setup-profile.sh -o setup-profile.sh
 
+
 bash setup-k8s-tools.sh
 bash setup-profile.sh
 
+/opt/k8e/k8e check-config
+
+source ~/.bashrc
 echo "Done! Happy deployment."
-
-
