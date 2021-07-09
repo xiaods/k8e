@@ -592,9 +592,6 @@ github.com/google/go-containerregistry/pkg/authn
 github.com/google/go-containerregistry/pkg/name
 # github.com/google/gofuzz v1.1.0
 github.com/google/gofuzz
-# github.com/google/tcpproxy v0.0.0-20180808230851-dfa16c61dad2
-## explicit
-github.com/google/tcpproxy
 # github.com/google/uuid v1.1.1
 ## explicit
 github.com/google/uuid
@@ -1377,6 +1374,9 @@ gopkg.in/warnings.v0
 gopkg.in/yaml.v2
 # gopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776
 gopkg.in/yaml.v3
+# inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
+## explicit
+inet.af/tcpproxy
 # k8s.io/api v0.21.0 => github.com/k3s-io/kubernetes/staging/src/k8s.io/api v1.19.12-k3s1
 ## explicit
 k8s.io/api/admission/v1

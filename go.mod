@@ -74,7 +74,6 @@ require (
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-sql-driver/mysql v1.4.1
 	github.com/google/cadvisor v0.37.5
-	github.com/google/tcpproxy v0.0.0-20180808230851-dfa16c61dad2
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
 	github.com/gorilla/websocket v1.4.2
@@ -113,6 +112,7 @@ require (
 	golang.org/x/tools v0.1.0 // indirect
 	google.golang.org/grpc v1.31.1
 	gopkg.in/yaml.v2 v2.4.0
+	inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
 	k8s.io/api v0.21.0
 	k8s.io/apimachinery v0.19.12
 	k8s.io/apiserver v0.19.12
