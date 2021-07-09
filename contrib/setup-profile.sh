@@ -9,4 +9,6 @@ echo 'export CONTAINERD_ADDRESS' >> ~/.bashrc
 echo 'PATH=$PATH:/usr/local/bin' >> ~/.bashrc 
 echo 'export PATH' >> ~/.bashrc 
 
+echo 'alias docker=nerdctl' >> ~/.bashrc
+
 source ~/.bashrc 

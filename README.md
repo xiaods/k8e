@@ -50,11 +50,6 @@ sudo ./k8e kubectl get nodes
 sudo ./k8e agent --server https://myserver:6443 --token ${NODE_TOKEN}
 ```
 
-Architecture
---------------
-![k8e-arch](./docs/k8e-arch.png)
-
-
 Acknowledgments
 --------------
 - Thanks [k3s](https://github.com/rancher/k3s) for the great open source project.
