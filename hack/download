@@ -5,7 +5,7 @@ cd $(dirname $0)/..
 
 . ./hack/version.sh
 
-RUNC_VERSION=v1.0.0-rc95
+RUNC_VERSION=v1.0.0
 ROOT_VERSION=v0.8.1
 CHARTS_DIR=build/static/charts
 RUNC_DIR=build/src/github.com/opencontainers/runc
