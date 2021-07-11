@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
-	net2 "net"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,15 +17,18 @@ import (
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
+	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/rootless"
 	"github.com/xiaods/k8e/pkg/server"
 	"github.com/xiaods/k8e/pkg/token"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
-	"k8s.io/apimachinery/pkg/util/net"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	kubeapiserverflag "k8s.io/component-base/cli/flag"
 	"k8s.io/kubernetes/pkg/master"
+	utilsnet "k8s.io/utils/net"
 
 	_ "github.com/go-sql-driver/mysql" // ensure we have mysql
 	_ "github.com/lib/pq"              // ensure we have postgres
@@ -178,26 +181,73 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 	}
 
-	if serverConfig.ControlConfig.PrivateIP == "" && cmds.AgentConfig.NodeIP != "" {
-		serverConfig.ControlConfig.PrivateIP = cmds.AgentConfig.NodeIP
+	if serverConfig.ControlConfig.PrivateIP == "" && len(cmds.AgentConfig.NodeIP) != 0 {
+		// ignoring the error here is fine since etcd will fall back to the interface's IPv4 address
+		serverConfig.ControlConfig.PrivateIP, _ = util.GetFirst4String(cmds.AgentConfig.NodeIP)
 	}
-	if serverConfig.ControlConfig.AdvertiseIP == "" && cmds.AgentConfig.NodeExternalIP != "" {
-		serverConfig.ControlConfig.AdvertiseIP = cmds.AgentConfig.NodeExternalIP
+
+	// if not set, try setting advertise-ip from agent node-external-ip
+	if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeExternalIP) != 0 {
+		serverConfig.ControlConfig.AdvertiseIP, _ = util.GetFirst4String(cmds.AgentConfig.NodeExternalIP)
 	}
-	if serverConfig.ControlConfig.AdvertiseIP == "" && cmds.AgentConfig.NodeIP != "" {
-		serverConfig.ControlConfig.AdvertiseIP = cmds.AgentConfig.NodeIP
+
+	// if not set, try setting advertise-up from agent node-ip
+	if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeIP) != 0 {
+		serverConfig.ControlConfig.AdvertiseIP, _ = util.GetFirst4String(cmds.AgentConfig.NodeIP)
 	}
+
+	// if we ended up with any advertise-ips, ensure they're added to the SAN list;
+	// note that kube-apiserver does not support dual-stack advertise-ip as of 1.21.0:
+	/// https://github.com/kubernetes/kubeadm/issues/1612#issuecomment-772583989
 	if serverConfig.ControlConfig.AdvertiseIP != "" {
 		serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, serverConfig.ControlConfig.AdvertiseIP)
 	}
 
-	_, serverConfig.ControlConfig.ClusterIPRange, err = net2.ParseCIDR(cfg.ClusterCIDR)
-	if err != nil {
-		return errors.Wrapf(err, "Invalid CIDR %s: %v", cfg.ClusterCIDR, err)
+	// configure ClusterIPRanges
+	if len(cmds.ServerConfig.ClusterCIDR) == 0 {
+		cmds.ServerConfig.ClusterCIDR.Set("10.42.0.0/16")
 	}
-	_, serverConfig.ControlConfig.ServiceIPRange, err = net2.ParseCIDR(cfg.ServiceCIDR)
+	for _, cidr := range cmds.ServerConfig.ClusterCIDR {
+		for _, v := range strings.Split(cidr, ",") {
+			_, parsed, err := net.ParseCIDR(v)
+			if err != nil {
+				return errors.Wrapf(err, "invalid cluster-cidr %s", v)
+			}
+			serverConfig.ControlConfig.ClusterIPRanges = append(serverConfig.ControlConfig.ClusterIPRanges, parsed)
+		}
+	}
+
+	// set ClusterIPRange to the first IPv4 block, for legacy clients
+	clusterIPRange, err := util.GetFirst4Net(serverConfig.ControlConfig.ClusterIPRanges)
 	if err != nil {
-		return errors.Wrapf(err, "Invalid CIDR %s: %v", cfg.ServiceCIDR, err)
+		return errors.Wrap(err, "cannot configure IPv4 cluster-cidr")
+	}
+	serverConfig.ControlConfig.ClusterIPRange = clusterIPRange
+
+	// configure ServiceIPRanges
+	if len(cmds.ServerConfig.ServiceCIDR) == 0 {
+		cmds.ServerConfig.ServiceCIDR.Set("10.43.0.0/16")
+	}
+	for _, cidr := range cmds.ServerConfig.ServiceCIDR {
+		for _, v := range strings.Split(cidr, ",") {
+			_, parsed, err := net.ParseCIDR(v)
+			if err != nil {
+				return errors.Wrapf(err, "invalid service-cidr %s", v)
+			}
+			serverConfig.ControlConfig.ServiceIPRanges = append(serverConfig.ControlConfig.ServiceIPRanges, parsed)
+		}
+	}
+
+	// set ServiceIPRange to the first IPv4 block, for legacy clients
+	serviceIPRange, err := util.GetFirst4Net(serverConfig.ControlConfig.ServiceIPRanges)
+	if err != nil {
+		return errors.Wrap(err, "cannot configure IPv4 service-cidr")
+	}
+	serverConfig.ControlConfig.ServiceIPRange = serviceIPRange
+
+	serverConfig.ControlConfig.ServiceNodePortRange, err = utilnet.ParsePortRange(cfg.ServiceNodePortRange)
+	if err != nil {
+		return errors.Wrapf(err, "invalid port range %s", cfg.ServiceNodePortRange)
 	}
 
 	_, apiServerServiceIP, err := master.ServiceIPRange(*serverConfig.ControlConfig.ServiceIPRange)
@@ -206,14 +256,36 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 	serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, apiServerServiceIP.String())
 
-	// If cluster-dns CLI arg is not set, we set ClusterDNS address to be ServiceCIDR network + 10,
+	// If cluster-dns CLI arg is not set, we set ClusterDNS address to be the first IPv4 ServiceCIDR network + 10,
 	// i.e. when you set service-cidr to 192.168.0.0/16 and don't provide cluster-dns, it will be set to 192.168.0.10
-	if cfg.ClusterDNS == "" {
-		serverConfig.ControlConfig.ClusterDNS = make(net2.IP, 4)
-		copy(serverConfig.ControlConfig.ClusterDNS, serverConfig.ControlConfig.ServiceIPRange.IP.To4())
-		serverConfig.ControlConfig.ClusterDNS[3] = 10
+	// If there are no IPv4 ServiceCIDRs, an error will be raised.
+	if len(cmds.ServerConfig.ClusterDNS) == 0 {
+		clusterDNS, err := utilsnet.GetIndexedIP(serverConfig.ControlConfig.ServiceIPRange, 10)
+		if err != nil {
+			return errors.Wrap(err, "cannot configure default cluster-dns address")
+		}
+		serverConfig.ControlConfig.ClusterDNS = clusterDNS
+		serverConfig.ControlConfig.ClusterDNSs = []net.IP{serverConfig.ControlConfig.ClusterDNS}
 	} else {
-		serverConfig.ControlConfig.ClusterDNS = net2.ParseIP(cfg.ClusterDNS)
+		for _, ip := range cmds.ServerConfig.ClusterDNS {
+			for _, v := range strings.Split(ip, ",") {
+				parsed := net.ParseIP(v)
+				if parsed == nil {
+					return fmt.Errorf("invalid cluster-dns address %s", v)
+				}
+				serverConfig.ControlConfig.ClusterDNSs = append(serverConfig.ControlConfig.ClusterDNSs, parsed)
+			}
+		}
+		// Set ClusterDNS to the first IPv4 address, for legacy clients
+		clusterDNS, err := util.GetFirst4(serverConfig.ControlConfig.ClusterDNSs)
+		if err != nil {
+			return errors.Wrap(err, "cannot configure IPv4 cluster-dns address")
+		}
+		serverConfig.ControlConfig.ClusterDNS = clusterDNS
+	}
+
+	if err := validateNetworkConfiguration(serverConfig); err != nil {
+		return err
 	}
 
 	if cfg.DefaultLocalStoragePath == "" {
@@ -285,10 +357,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 
 	logrus.Info("Starting " + version.Program + " " + app.App.Version)
-	notifySocket := os.Getenv("NOTIFY_SOCKET")
-	os.Unsetenv("NOTIFY_SOCKET")
 
 	ctx := signals.SetupSignalHandler(context.Background())
+
 	if err := server.StartServer(ctx, &serverConfig); err != nil {
 		return err
 	}
@@ -301,9 +372,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 			<-serverConfig.ControlConfig.Runtime.ETCDReady
 			logrus.Info("ETCD server is now running")
 		}
+
 		logrus.Info(version.Program + " is up and running")
-		if notifySocket != "" {
-			os.Setenv("NOTIFY_SOCKET", notifySocket)
+		if cfg.DisableAgent && os.Getenv("NOTIFY_SOCKET") != "" {
 			systemd.SdNotify(true, "READY=1\n")
 		}
 	}()
@@ -319,7 +390,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 
 	url := fmt.Sprintf("https://%s:%d", ip, serverConfig.ControlConfig.SupervisorPort)
-	token, err := server.FormatToken(serverConfig.ControlConfig.Runtime.AgentToken, serverConfig.ControlConfig.Runtime.ServerCA)
+	token, err := clientaccess.FormatToken(serverConfig.ControlConfig.Runtime.AgentToken, serverConfig.ControlConfig.Runtime.ServerCA)
 	if err != nil {
 		return err
 	}
@@ -348,9 +419,37 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	return agent.Run(ctx, agentConfig)
 }
 
+// validateNetworkConfig ensures that the network configuration values make sense.
+func validateNetworkConfiguration(serverConfig server.Config) error {
+	// Dual-stack operation requires fairly extensive manual configuration at the moment - do some
+	// preflight checks to make sure that the user isn't trying to use flannel/npc, or trying to
+	// enable dual-stack DNS (which we don't currently support since it's not easy to template)
+	dualCluster, err := utilsnet.IsDualStackCIDRs(serverConfig.ControlConfig.ClusterIPRanges)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate cluster-cidr")
+	}
+	dualService, err := utilsnet.IsDualStackCIDRs(serverConfig.ControlConfig.ServiceIPRanges)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate service-cidr")
+	}
+	dualDNS, err := utilsnet.IsDualStackIPs(serverConfig.ControlConfig.ClusterDNSs)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate cluster-dns")
+	}
+
+	if (serverConfig.ControlConfig.DisableNPC == false) && (dualCluster || dualService) {
+		return errors.New("network policy enforcement are not compatible with dual-stack operation; server must be restarted with --disable-network-policy and an alternative CNI plugin deployed")
+	}
+	if dualDNS == true {
+		return errors.New("dual-stack cluster-dns is not supported")
+	}
+
+	return nil
+}
+
 func knownIPs(ips []string) []string {
 	ips = append(ips, "127.0.0.1")
-	ip, err := net.ChooseHostInterface()
+	ip, err := utilnet.ChooseHostInterface()
 	if err == nil {
 		ips = append(ips, ip.String())
 	}
@@ -371,8 +470,8 @@ func getArgValueFromList(searchArg string, argList []string) string {
 }
 
 // setAPIAddressChannel will try to get the api address key from etcd and when it succeed it will
-// set the APIAddressCh channel with its value, the function works for both k8e and rke2 in case
-// of k8e we block returning back to the agent.Run until we get the api address, however in rke2
+// set the APIAddressCh channel with its value, the function works for both k3s and rke2 in case
+// of k3s we block returning back to the agent.Run until we get the api address, however in rke2
 // the code will not block operation and will run the operation in a goroutine
 func setAPIAddressChannel(ctx context.Context, serverConfig *server.Config, agentConfig *cmds.Agent) {
 	// start a goroutine to check for the server ip if set from etcd in case of rke2

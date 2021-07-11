@@ -21,11 +21,13 @@ import (
 	"github.com/xiaods/k8e/pkg/agent/tunnel"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
+	cp "github.com/xiaods/k8e/pkg/cloudprovider"
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	daemonconfig "github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/nodeconfig"
 	"github.com/xiaods/k8e/pkg/rootless"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -35,6 +37,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	app2 "k8s.io/kubernetes/cmd/kube-proxy/app"
 	kubeproxyconfig "k8s.io/kubernetes/pkg/proxy/apis/config"
+	utilsnet "k8s.io/utils/net"
 	utilpointer "k8s.io/utils/pointer"
 )
 
@@ -76,11 +79,25 @@ func setupCriCtlConfig(cfg cmds.Agent, nodeConfig *daemonconfig.Node) error {
 func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 	nodeConfig := config.Get(ctx, cfg, proxy)
 
+	dualCluster, err := utilsnet.IsDualStackCIDRs(nodeConfig.AgentConfig.ClusterCIDRs)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate cluster-cidr")
+	}
+	dualService, err := utilsnet.IsDualStackCIDRs(nodeConfig.AgentConfig.ServiceCIDRs)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate service-cidr")
+	}
+	dualNode, err := utilsnet.IsDualStackIPs(nodeConfig.AgentConfig.NodeIPs)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate node-ip")
+	}
+
+	enableIPv6 := dualCluster || dualService || dualNode
 	conntrackConfig, err := getConntrackConfig(nodeConfig)
 	if err != nil {
 		return errors.Wrap(err, "failed to validate kube-proxy conntrack configuration")
 	}
-	syssetup.Configure(conntrackConfig)
+	syssetup.Configure(enableIPv6, conntrackConfig)
 
 	if err := setupCriCtlConfig(cfg, nodeConfig); err != nil {
 		return err
@@ -239,22 +256,30 @@ func configureNode(ctx context.Context, agentConfig *daemonconfig.Agent, nodes v
 			continue
 		}
 
-		newLabels, updateMutables := updateMutableLabels(agentConfig, node.Labels)
+		updateNode := false
+		if labels, changed := updateMutableLabels(agentConfig, node.Labels); changed {
+			node.Labels = labels
+			updateNode = true
+		}
 
-		updateAddresses := !agentConfig.DisableCCM
-		if updateAddresses {
-			newLabels, updateAddresses = updateAddressLabels(agentConfig, newLabels)
+		if !agentConfig.DisableCCM {
+			if annotations, changed := updateAddressAnnotations(agentConfig, node.Annotations); changed {
+				node.Annotations = annotations
+				updateNode = true
+			}
+			if labels, changed := updateLegacyAddressLabels(agentConfig, node.Labels); changed {
+				node.Labels = labels
+				updateNode = true
+			}
 		}
 
 		// inject node config
-		updateNode, err := nodeconfig.SetNodeConfigAnnotations(node)
-		if err != nil {
+		if changed, err := nodeconfig.SetNodeConfigAnnotations(node); err != nil {
 			return err
-		}
-		if updateAddresses || updateMutables {
-			node.Labels = newLabels
+		} else if changed {
 			updateNode = true
 		}
+
 		if updateNode {
 			if _, err := nodes.Update(ctx, node, metav1.UpdateOptions{}); err != nil {
 				logrus.Infof("Failed to update node %s: %v", agentConfig.NodeName, err)
@@ -294,18 +319,36 @@ func updateMutableLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]
 	return result, !equality.Semantic.DeepEqual(nodeLabels, result)
 }
 
-func updateAddressLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]string) (map[string]string, bool) {
+func updateLegacyAddressLabels(agentConfig *daemonconfig.Agent, nodeLabels map[string]string) (map[string]string, bool) {
+	ls := labels.Set(nodeLabels)
+	if ls.Has(cp.InternalIPKey) || ls.Has(cp.HostnameKey) {
+		result := map[string]string{
+			cp.InternalIPKey: agentConfig.NodeIP,
+			cp.HostnameKey:   agentConfig.NodeName,
+		}
+
+		if agentConfig.NodeExternalIP != "" {
+			result[cp.ExternalIPKey] = agentConfig.NodeExternalIP
+		}
+
+		result = labels.Merge(nodeLabels, result)
+		return result, !equality.Semantic.DeepEqual(nodeLabels, result)
+	}
+	return nil, false
+}
+
+func updateAddressAnnotations(agentConfig *daemonconfig.Agent, nodeAnnotations map[string]string) (map[string]string, bool) {
 	result := map[string]string{
-		InternalIPLabel: agentConfig.NodeIP,
-		HostnameLabel:   agentConfig.NodeName,
+		cp.InternalIPKey: util.JoinIPs(agentConfig.NodeIPs),
+		cp.HostnameKey:   agentConfig.NodeName,
 	}
 
 	if agentConfig.NodeExternalIP != "" {
-		result[ExternalIPLabel] = agentConfig.NodeExternalIP
+		result[cp.ExternalIPKey] = util.JoinIPs(agentConfig.NodeExternalIPs)
 	}
 
-	result = labels.Merge(nodeLabels, result)
-	return result, !equality.Semantic.DeepEqual(nodeLabels, result)
+	result = labels.Merge(nodeAnnotations, result)
+	return result, !equality.Semantic.DeepEqual(nodeAnnotations, result)
 }
 
 // setupTunnelAndRunAgent should start the setup tunnel before starting kubelet and kubeproxy

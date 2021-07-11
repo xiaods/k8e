@@ -15,15 +15,16 @@ const (
 )
 
 type Server struct {
-	ClusterCIDR    string
-	AgentToken     string
-	AgentTokenFile string
-	Token          string
-	TokenFile      string
-	ClusterSecret  string
-	ServiceCIDR    string
-	ClusterDNS     string
-	ClusterDomain  string
+	ClusterCIDR          cli.StringSlice
+	AgentToken           string
+	AgentTokenFile       string
+	Token                string
+	TokenFile            string
+	ClusterSecret        string
+	ServiceCIDR          cli.StringSlice
+	ServiceNodePortRange string
+	ClusterDNS           cli.StringSlice
+	ClusterDomain        string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
 	// The port which custom k8e API runs on
@@ -79,7 +80,36 @@ type Server struct {
 	EtcdS3Folder             string
 }
 
-var ServerConfig Server
+var (
+	ServerConfig Server
+	ClusterCIDR  = cli.StringSliceFlag{
+		Name:  "cluster-cidr",
+		Usage: "(networking) IPv4/IPv6 network CIDRs to use for pod IPs (default: 10.42.0.0/16)",
+		Value: &ServerConfig.ClusterCIDR,
+	}
+	ServiceCIDR = cli.StringSliceFlag{
+		Name:  "service-cidr",
+		Usage: "(networking) IPv4/IPv6 network CIDRs to use for service IPs (default: 10.43.0.0/16)",
+		Value: &ServerConfig.ServiceCIDR,
+	}
+	ServiceNodePortRange = cli.StringFlag{
+		Name:        "service-node-port-range",
+		Usage:       "(networking) Port range to reserve for services with NodePort visibility",
+		Destination: &ServerConfig.ServiceNodePortRange,
+		Value:       "30000-32767",
+	}
+	ClusterDNS = cli.StringSliceFlag{
+		Name:  "cluster-dns",
+		Usage: "(networking) IPv4 Cluster IP for coredns service. Should be in your service-cidr range (default: 10.43.0.10)",
+		Value: &ServerConfig.ClusterDNS,
+	}
+	ClusterDomain = cli.StringFlag{
+		Name:        "cluster-domain",
+		Usage:       "(networking) Cluster Domain",
+		Destination: &ServerConfig.ClusterDomain,
+		Value:       "cluster.local",
+	}
+)
 
 func NewServerCommand(action func(*cli.Context) error) cli.Command {
 	return cli.Command{
@@ -126,30 +156,11 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Usage:       "(data) Folder to hold state default /var/lib/k8e/" + version.Program + " or ${HOME}/.k8e/" + version.Program + " if not root",
 				Destination: &ServerConfig.DataDir,
 			},
-			cli.StringFlag{
-				Name:        "cluster-cidr",
-				Usage:       "(networking) Network CIDR to use for pod IPs",
-				Destination: &ServerConfig.ClusterCIDR,
-				Value:       "10.42.0.0/16",
-			},
-			cli.StringFlag{
-				Name:        "service-cidr",
-				Usage:       "(networking) Network CIDR to use for services IPs",
-				Destination: &ServerConfig.ServiceCIDR,
-				Value:       "10.43.0.0/16",
-			},
-			cli.StringFlag{
-				Name:        "cluster-dns",
-				Usage:       "(networking) Cluster IP for coredns service. Should be in your service-cidr range (default: 10.43.0.10)",
-				Destination: &ServerConfig.ClusterDNS,
-				Value:       "",
-			},
-			cli.StringFlag{
-				Name:        "cluster-domain",
-				Usage:       "(networking) Cluster Domain",
-				Destination: &ServerConfig.ClusterDomain,
-				Value:       "cluster.local",
-			},
+			ClusterCIDR,
+			ServiceCIDR,
+			ServiceNodePortRange,
+			ClusterDNS,
+			ClusterDomain,
 			cli.StringFlag{
 				Name:        "token,t",
 				Usage:       "(cluster) Shared secret used to join a server or agent to a cluster",
