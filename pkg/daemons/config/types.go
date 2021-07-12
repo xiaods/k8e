@@ -51,7 +51,7 @@ type Agent struct {
 	ServiceCIDR             *net.IPNet
 	ServiceCIDRs            []*net.IPNet
 	ServiceNodePortRange    utilnet.PortRange
-	ClusterCIDR             net.IPNet
+	ClusterCIDR             *net.IPNet
 	ClusterCIDRs            []*net.IPNet
 	ClusterDNS              net.IP
 	ClusterDNSs             []net.IP

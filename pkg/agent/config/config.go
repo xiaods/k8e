@@ -23,6 +23,7 @@ import (
 	"github.com/xiaods/k8e/pkg/agent/proxy"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
+	"github.com/xiaods/k8e/pkg/containerd"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control/deps"
 	"github.com/xiaods/k8e/pkg/util"
@@ -39,7 +40,7 @@ func Get(ctx context.Context, agent cmds.Agent, proxy proxy.Proxy) *config.Node 
 	for {
 		agentConfig, err := get(ctx, &agent, proxy)
 		if err != nil {
-			logrus.Errorf("Failed to retrieve agent config: %v", err)
+			logrus.Errorf("Failed to configure agent: %v", err)
 			select {
 			case <-time.After(5 * time.Second):
 				continue
@@ -313,7 +314,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 
 	controlConfig, err := getConfig(info)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "failed to retrieve configuration from server")
 	}
 
 	// If the supervisor and externally-facing apiserver are not on the same port, tell the proxy where to find the apiserver.
@@ -323,29 +324,29 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 		}
 	}
 
-	clientCAFile := filepath.Join(envInfo.DataDir, "client-ca.crt")
+	clientCAFile := filepath.Join(envInfo.DataDir, "agent", "client-ca.crt")
 	if err := getHostFile(clientCAFile, "", info); err != nil {
 		return nil, err
 	}
 
-	serverCAFile := filepath.Join(envInfo.DataDir, "server-ca.crt")
+	serverCAFile := filepath.Join(envInfo.DataDir, "agent", "server-ca.crt")
 	if err := getHostFile(serverCAFile, "", info); err != nil {
 		return nil, err
 	}
 
-	servingKubeletCert := filepath.Join(envInfo.DataDir, "serving-kubelet.crt")
-	servingKubeletKey := filepath.Join(envInfo.DataDir, "serving-kubelet.key")
+	servingKubeletCert := filepath.Join(envInfo.DataDir, "agent", "serving-kubelet.crt")
+	servingKubeletKey := filepath.Join(envInfo.DataDir, "agent", "serving-kubelet.key")
 
 	nodePasswordRoot := "/"
 	if envInfo.Rootless {
-		nodePasswordRoot = envInfo.DataDir
+		nodePasswordRoot = filepath.Join(envInfo.DataDir, "agent")
 	}
-	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
+	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "rancher", "node")
 	if err := os.MkdirAll(nodeConfigPath, 0755); err != nil {
 		return nil, err
 	}
 
-	oldNodePasswordFile := filepath.Join(envInfo.DataDir, "node-password.txt")
+	oldNodePasswordFile := filepath.Join(envInfo.DataDir, "agent", "node-password.txt")
 	newNodePasswordFile := filepath.Join(nodeConfigPath, "password")
 	upgradeOldNodePasswordPath(oldNodePasswordFile, newNodePasswordFile)
 
@@ -422,22 +423,59 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.AgentConfig.KubeConfigKubeProxy = kubeconfigKubeproxy
 	nodeConfig.AgentConfig.KubeConfigK8eController = kubeconfigK8eController
 	if envInfo.Rootless {
-		nodeConfig.AgentConfig.RootDir = filepath.Join(envInfo.DataDir, "kubelet")
+		nodeConfig.AgentConfig.RootDir = filepath.Join(envInfo.DataDir, "agent", "kubelet")
 	}
-	nodeConfig.AgentConfig.PauseImage = envInfo.PauseImage
-	nodeConfig.AgentConfig.AirgapExtraRegistry = envInfo.AirgapExtraRegistry
 	nodeConfig.AgentConfig.Snapshotter = envInfo.Snapshotter
 	nodeConfig.CACerts = info.CACerts
-	nodeConfig.Containerd.Config = filepath.Join(envInfo.DataDir, "etc/containerd/config.toml")
-	nodeConfig.Containerd.Root = filepath.Join(envInfo.DataDir, "containerd")
-	nodeConfig.Containerd.Opt = filepath.Join(envInfo.DataDir, "containerd")
-	if !envInfo.Debug {
-		nodeConfig.Containerd.Log = filepath.Join(envInfo.DataDir, "containerd/containerd.log")
+	nodeConfig.Containerd.Config = filepath.Join(envInfo.DataDir, "agent", "etc", "containerd", "config.toml")
+	nodeConfig.Containerd.Root = filepath.Join(envInfo.DataDir, "agent", "containerd")
+	if !nodeConfig.Docker && nodeConfig.ContainerRuntimeEndpoint == "" {
+		switch nodeConfig.AgentConfig.Snapshotter {
+		case "overlayfs":
+			if err := containerd.OverlaySupported(nodeConfig.Containerd.Root); err != nil {
+				return nil, errors.Wrapf(err, "\"overlayfs\" snapshotter cannot be enabled for %q, try using \"fuse-overlayfs\" or \"native\"",
+					nodeConfig.Containerd.Root)
+			}
+		case "fuse-overlayfs":
+			if err := containerd.FuseoverlayfsSupported(nodeConfig.Containerd.Root); err != nil {
+				return nil, errors.Wrapf(err, "\"fuse-overlayfs\" snapshotter cannot be enabled for %q, try using \"native\"",
+					nodeConfig.Containerd.Root)
+			}
+		}
 	}
-	nodeConfig.Containerd.State = "/run/k8e/containerd"
-	nodeConfig.Containerd.Address = filepath.Join(nodeConfig.Containerd.State, "containerd.sock")
-	nodeConfig.Containerd.Template = filepath.Join(envInfo.DataDir, "etc/containerd/config.toml.tmpl")
+	nodeConfig.Containerd.Opt = filepath.Join(envInfo.DataDir, "agent", "containerd")
+	if !envInfo.Debug {
+		nodeConfig.Containerd.Log = filepath.Join(envInfo.DataDir, "agent", "containerd", "containerd.log")
+	}
+	applyContainerdStateAndAddress(nodeConfig)
+	nodeConfig.Containerd.Template = filepath.Join(envInfo.DataDir, "agent", "etc", "containerd", "config.toml.tmpl")
 	nodeConfig.Certificate = servingCert
+
+	nodeConfig.AgentConfig.NodeIPs = nodeIPs
+	nodeIP, err := util.GetFirst4(nodeIPs)
+	if err != nil {
+		return nil, errors.Wrap(err, "cannot configure IPv4 node-ip")
+	}
+	nodeConfig.AgentConfig.NodeIP = nodeIP.String()
+
+	for _, externalIP := range envInfo.NodeExternalIP {
+		for _, v := range strings.Split(externalIP, ",") {
+			ip := sysnet.ParseIP(v)
+			if ip == nil {
+				return nil, fmt.Errorf("invalid node-external-ip %s", v)
+			}
+			nodeConfig.AgentConfig.NodeExternalIPs = append(nodeConfig.AgentConfig.NodeExternalIPs, ip)
+		}
+	}
+
+	// if configured, set NodeExternalIP to the first IPv4 address, for legacy clients
+	if len(nodeConfig.AgentConfig.NodeExternalIPs) > 0 {
+		nodeExternalIP, err := util.GetFirst4(nodeConfig.AgentConfig.NodeExternalIPs)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot configure IPv4 node-external-ip")
+		}
+		nodeConfig.AgentConfig.NodeExternalIP = nodeExternalIP.String()
+	}
 
 	if !nodeConfig.Docker && nodeConfig.ContainerRuntimeEndpoint == "" {
 		nodeConfig.AgentConfig.RuntimeSocket = nodeConfig.Containerd.Address
@@ -447,14 +485,38 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	}
 
 	if controlConfig.ClusterIPRange != nil {
-		nodeConfig.AgentConfig.ClusterCIDR = *controlConfig.ClusterIPRange
+		nodeConfig.AgentConfig.ClusterCIDR = controlConfig.ClusterIPRange
+		nodeConfig.AgentConfig.ClusterCIDRs = []*sysnet.IPNet{controlConfig.ClusterIPRange}
 	}
 
-	os.Setenv("NODE_NAME", nodeConfig.AgentConfig.NodeName)
+	if len(controlConfig.ClusterIPRanges) > 0 {
+		nodeConfig.AgentConfig.ClusterCIDRs = controlConfig.ClusterIPRanges
+	}
+
+	if controlConfig.ServiceIPRange != nil {
+		nodeConfig.AgentConfig.ServiceCIDR = controlConfig.ServiceIPRange
+		nodeConfig.AgentConfig.ServiceCIDRs = []*sysnet.IPNet{controlConfig.ServiceIPRange}
+	}
+
+	if len(controlConfig.ServiceIPRanges) > 0 {
+		nodeConfig.AgentConfig.ServiceCIDRs = controlConfig.ServiceIPRanges
+	}
+
+	if controlConfig.ServiceNodePortRange != nil {
+		nodeConfig.AgentConfig.ServiceNodePortRange = *controlConfig.ServiceNodePortRange
+	}
+
+	if len(controlConfig.ClusterDNSs) == 0 {
+		nodeConfig.AgentConfig.ClusterDNSs = []sysnet.IP{controlConfig.ClusterDNS}
+	} else {
+		nodeConfig.AgentConfig.ClusterDNSs = controlConfig.ClusterDNSs
+	}
+
+	nodeConfig.AgentConfig.PauseImage = envInfo.PauseImage
+	nodeConfig.AgentConfig.AirgapExtraRegistry = envInfo.AirgapExtraRegistry
 
 	nodeConfig.AgentConfig.ExtraKubeletArgs = envInfo.ExtraKubeletArgs
 	nodeConfig.AgentConfig.ExtraKubeProxyArgs = envInfo.ExtraKubeProxyArgs
-
 	nodeConfig.AgentConfig.NodeTaints = envInfo.Taints
 	nodeConfig.AgentConfig.NodeLabels = envInfo.Labels
 	nodeConfig.AgentConfig.PrivateRegistry = envInfo.PrivateRegistry
@@ -462,8 +524,12 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.AgentConfig.DisableNPC = controlConfig.DisableNPC
 	nodeConfig.AgentConfig.DisableKubeProxy = controlConfig.DisableKubeProxy
 	nodeConfig.AgentConfig.Rootless = envInfo.Rootless
-	nodeConfig.AgentConfig.PodManifests = filepath.Join(envInfo.DataDir, DefaultPodManifestPath)
+	nodeConfig.AgentConfig.PodManifests = filepath.Join(envInfo.DataDir, "agent", DefaultPodManifestPath)
 	nodeConfig.AgentConfig.ProtectKernelDefaults = envInfo.ProtectKernelDefaults
+
+	if err := validateNetworkConfig(nodeConfig); err != nil {
+		return nil, err
+	}
 
 	return nodeConfig, nil
 }
@@ -476,4 +542,16 @@ func getConfig(info *clientaccess.Info) (*config.Control, error) {
 
 	controlControl := &config.Control{}
 	return controlControl, json.Unmarshal(data, controlControl)
+}
+
+// validateNetworkConfig ensures that the network configuration values provided by the server make sense.
+func validateNetworkConfig(nodeConfig *config.Node) error {
+	// Old versions of the server do not send enough information to correctly start the NPC. Users
+	// need to upgrade the server to at least the same version as the agent, or disable the NPC
+	// cluster-wide.
+	if nodeConfig.AgentConfig.DisableNPC == false && (nodeConfig.AgentConfig.ServiceCIDR == nil || nodeConfig.AgentConfig.ServiceNodePortRange.Size == 0) {
+		return fmt.Errorf("incompatible down-level server detected; servers must be upgraded to at least %s, or restarted with --disable-network-policy", version.Version)
+	}
+
+	return nil
 }
