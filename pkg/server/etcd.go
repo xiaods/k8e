@@ -22,7 +22,7 @@ func setETCDLabelsAndAnnotations(ctx context.Context, config *Config) error {
 	for range t.C {
 		controlConfig := &config.ControlConfig
 
-		sc, err := newContext(ctx, controlConfig.Runtime.KubeConfigAdmin)
+		sc, err := NewContext(ctx, controlConfig.Runtime.KubeConfigAdmin)
 		if err != nil {
 			logrus.Infof("Failed to set etcd role label: %v", err)
 			continue
@@ -55,6 +55,10 @@ func setETCDLabelsAndAnnotations(ctx context.Context, config *Config) error {
 		var controlRoleLabelExists bool
 		if _, ok := node.Labels[MasterRoleLabelKey]; ok {
 			delete(node.Labels, MasterRoleLabelKey)
+			controlRoleLabelExists = true
+		}
+		if _, ok := node.Labels[ControlPlaneRoleLabelKey]; ok {
+			delete(node.Labels, ControlPlaneRoleLabelKey)
 			controlRoleLabelExists = true
 		}
 

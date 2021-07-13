@@ -158,7 +158,7 @@ func preloadImages(ctx context.Context, cfg *config.Node) error {
 	// Ensure that nothing else can modify the image store while we're importing,
 	// and that our images are imported into the k8s.io namespace
 	ctx = namespaces.WithNamespace(ctx, "k8s.io")
-	// At startup all leases from k3s are cleared
+	// At startup all leases from k8e are cleared
 	ls := client.LeasesService()
 	existingLeases, err := ls.List(ctx)
 	if err != nil {

@@ -280,7 +280,7 @@ func newMinimalNodeConfig(serviceIPCIDR string, nodePortRange string, hostNameOv
 		nodeConfig.AgentConfig.NodeName = hostNameOverride
 	}
 	if externalIPs != nil {
-		// TODO: We don't currently have a way to set these through the K3s CLI; if we ever do then test that here.
+		// TODO: We don't currently have a way to set these through the K8e CLI; if we ever do then test that here.
 		for _, cidr := range externalIPs {
 			if _, _, err := net.ParseCIDR(cidr); err != nil {
 				panic("failed to get parse --service-external-ip-range parameter: " + err.Error())
