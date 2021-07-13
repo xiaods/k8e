@@ -1,23 +1,28 @@
 package server
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
+	coreclient "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/passwd"
+	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/apimachinery/pkg/util/json"
 )
@@ -26,13 +31,16 @@ const (
 	staticURL = "/static/"
 )
 
-func router(serverConfig *config.Control, tunnel http.Handler, ca []byte) http.Handler {
+func router(ctx context.Context, config *Config) http.Handler {
+	serverConfig := &config.ControlConfig
+	nodeAuth := passwordBootstrap(ctx, config)
+
 	prefix := "/v1-" + version.Program
 	authed := mux.NewRouter()
 	authed.Use(authMiddleware(serverConfig, version.Program+":agent"))
 	authed.NotFoundHandler = serverConfig.Runtime.Handler
-	authed.Path(prefix + "/serving-kubelet.crt").Handler(servingKubeletCert(serverConfig, serverConfig.Runtime.ServingKubeletKey))
-	authed.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(serverConfig, serverConfig.Runtime.ClientKubeletKey))
+	authed.Path(prefix + "/serving-kubelet.crt").Handler(servingKubeletCert(serverConfig, serverConfig.Runtime.ServingKubeletKey, nodeAuth))
+	authed.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(serverConfig, serverConfig.Runtime.ClientKubeletKey, nodeAuth))
 	authed.Path(prefix + "/client-kube-proxy.crt").Handler(fileHandler(serverConfig.Runtime.ClientKubeProxyCert, serverConfig.Runtime.ClientKubeProxyKey))
 	authed.Path(prefix + "/client-" + version.Program + "-controller.crt").Handler(fileHandler(serverConfig.Runtime.ClientK8eControllerCert, serverConfig.Runtime.ClientK8eControllerKey))
 	authed.Path(prefix + "/client-ca.crt").Handler(fileHandler(serverConfig.Runtime.ClientCA))
@@ -41,7 +49,7 @@ func router(serverConfig *config.Control, tunnel http.Handler, ca []byte) http.H
 
 	nodeAuthed := mux.NewRouter()
 	nodeAuthed.Use(authMiddleware(serverConfig, "system:nodes"))
-	nodeAuthed.Path(prefix + "/connect").Handler(tunnel)
+	nodeAuthed.Path(prefix + "/connect").Handler(serverConfig.Runtime.Tunnel)
 	nodeAuthed.NotFoundHandler = authed
 
 	serverAuthed := mux.NewRouter()
@@ -56,14 +64,23 @@ func router(serverConfig *config.Control, tunnel http.Handler, ca []byte) http.H
 	router := mux.NewRouter()
 	router.NotFoundHandler = serverAuthed
 	router.PathPrefix(staticURL).Handler(serveStatic(staticURL, staticDir))
-	router.Path("/cacerts").Handler(cacerts(ca))
+	router.Path("/cacerts").Handler(cacerts(serverConfig.Runtime.ServerCA))
 	router.Path("/ping").Handler(ping())
 
 	return router
 }
 
-func cacerts(ca []byte) http.Handler {
+func cacerts(serverCA string) http.Handler {
+	var ca []byte
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		if ca == nil {
+			var err error
+			ca, err = ioutil.ReadFile(serverCA)
+			if err != nil {
+				sendError(err, resp)
+				return
+			}
+		}
 		resp.Header().Set("content-type", "text/plain")
 		resp.Write(ca)
 	})
@@ -117,21 +134,16 @@ func getCACertAndKeys(caCertFile, caKeyFile, signingKeyFile string) ([]*x509.Cer
 	return caCert, caKey.(crypto.Signer), key.(crypto.Signer), nil
 }
 
-func servingKubeletCert(server *config.Control, keyFile string) http.Handler {
+func servingKubeletCert(server *config.Control, keyFile string, auth nodePassBootstrapper) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		if req.TLS == nil {
 			resp.WriteHeader(http.StatusNotFound)
 			return
 		}
 
-		nodeName, nodePassword, err := getNodeInfo(req)
+		nodeName, errCode, err := auth(req)
 		if err != nil {
-			sendError(err, resp)
-			return
-		}
-
-		if err := ensureNodePassword(server.Runtime.NodePasswdFile, nodeName, nodePassword); err != nil {
-			sendError(err, resp, http.StatusForbidden)
+			sendError(err, resp, errCode)
 			return
 		}
 
@@ -142,8 +154,16 @@ func servingKubeletCert(server *config.Control, keyFile string) http.Handler {
 		}
 
 		ips := []net.IP{net.ParseIP("127.0.0.1")}
+
 		if nodeIP := req.Header.Get(version.Program + "-Node-IP"); nodeIP != "" {
-			ips = append(ips, net.ParseIP(nodeIP))
+			for _, v := range strings.Split(nodeIP, ",") {
+				ip := net.ParseIP(v)
+				if ip == nil {
+					sendError(fmt.Errorf("invalid IP address %s", ip), resp)
+					return
+				}
+				ips = append(ips, ip)
+			}
 		}
 
 		cert, err := certutil.NewSignedCert(certutil.Config{
@@ -170,21 +190,16 @@ func servingKubeletCert(server *config.Control, keyFile string) http.Handler {
 	})
 }
 
-func clientKubeletCert(server *config.Control, keyFile string) http.Handler {
+func clientKubeletCert(server *config.Control, keyFile string, auth nodePassBootstrapper) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		if req.TLS == nil {
 			resp.WriteHeader(http.StatusNotFound)
 			return
 		}
 
-		nodeName, nodePassword, err := getNodeInfo(req)
+		nodeName, errCode, err := auth(req)
 		if err != nil {
-			sendError(err, resp)
-			return
-		}
-
-		if err := ensureNodePassword(server.Runtime.NodePasswdFile, nodeName, nodePassword); err != nil {
-			sendError(err, resp, http.StatusForbidden)
+			sendError(err, resp, errCode)
 			return
 		}
 
@@ -265,29 +280,95 @@ func serveStatic(urlPrefix, staticDir string) http.Handler {
 }
 
 func sendError(err error, resp http.ResponseWriter, status ...int) {
-	code := http.StatusInternalServerError
+	var code int
 	if len(status) == 1 {
 		code = status[0]
 	}
-
+	if code == 0 || code == http.StatusOK {
+		code = http.StatusInternalServerError
+	}
 	logrus.Error(err)
 	resp.WriteHeader(code)
 	resp.Write([]byte(err.Error()))
 }
 
-func ensureNodePassword(passwdFile, nodeName, pass string) error {
-	passwd, err := passwd.Read(passwdFile)
-	if err != nil {
-		return err
-	}
-	match, exists := passwd.Check(nodeName, pass)
-	if exists {
-		if !match {
-			return fmt.Errorf("Node password validation failed for '%s', using passwd file '%s'", nodeName, passwdFile)
+// nodePassBootstrapper returns a node name, or http error code and error
+type nodePassBootstrapper func(req *http.Request) (string, int, error)
+
+func passwordBootstrap(ctx context.Context, config *Config) nodePassBootstrapper {
+	runtime := config.ControlConfig.Runtime
+	var secretClient coreclient.SecretClient
+	var once sync.Once
+
+	return nodePassBootstrapper(func(req *http.Request) (string, int, error) {
+		nodeName, nodePassword, err := getNodeInfo(req)
+		if err != nil {
+			return "", http.StatusBadRequest, err
 		}
-		return nil
+
+		if secretClient == nil {
+			if runtime.Core != nil {
+				// initialize the client if we can
+				secretClient = runtime.Core.Core().V1().Secret()
+			} else if nodeName == os.Getenv("NODE_NAME") {
+				// or verify the password locally and ensure a secret later
+				return verifyLocalPassword(ctx, config, &once, nodeName, nodePassword)
+			} else {
+				// or reject the request until the core is ready
+				return "", http.StatusServiceUnavailable, errors.New("runtime core not ready")
+			}
+		}
+
+		if err := nodepassword.Ensure(secretClient, nodeName, nodePassword); err != nil {
+			return "", http.StatusForbidden, err
+		}
+
+		return nodeName, http.StatusOK, nil
+	})
+}
+
+func verifyLocalPassword(ctx context.Context, config *Config, once *sync.Once, nodeName, nodePassword string) (string, int, error) {
+	// use same password file location that the agent creates
+	nodePasswordRoot := "/"
+	if config.Rootless {
+		nodePasswordRoot = filepath.Join(config.ControlConfig.DataDir, "agent")
 	}
-	// If user doesn't exist we save this password for future validation
-	passwd.EnsureUser(nodeName, "", pass)
-	return passwd.Write(passwdFile)
+	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
+	nodePasswordFile := filepath.Join(nodeConfigPath, "password")
+
+	passBytes, err := ioutil.ReadFile(nodePasswordFile)
+	if err != nil {
+		return "", http.StatusInternalServerError, errors.Wrap(err, "unable to read node password file")
+	}
+
+	password := strings.TrimSpace(string(passBytes))
+	if password != nodePassword {
+		return "", http.StatusForbidden, errors.Wrapf(err, "unable to verify local password for node '%s'", nodeName)
+	}
+
+	// make sure the secret is created when the api server is ready
+	ensureSecret := func() {
+		runtime := config.ControlConfig.Runtime
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(1 * time.Second):
+				if runtime.Core != nil {
+					logrus.Debugf("runtime core has become available, ensuring password secret for node '%s'", nodeName)
+					secretClient := runtime.Core.Core().V1().Secret()
+					if err := nodepassword.Ensure(secretClient, nodeName, nodePassword); err != nil {
+						logrus.Warnf("error ensuring node password secret for pre-validated node '%s': %v", nodeName, err)
+					}
+					return
+				}
+			}
+		}
+	}
+
+	go once.Do(ensureSecret)
+
+	logrus.Debugf("password verified locally for node '%s'", nodeName)
+
+	return nodeName, http.StatusOK, nil
 }

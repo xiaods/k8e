@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"runtime"
 
 	"github.com/k3s-io/helm-controller/pkg/generated/controllers/helm.cattle.io"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/apps"
@@ -11,7 +14,11 @@ import (
 	"github.com/rancher/wrangler/pkg/apply"
 	"github.com/rancher/wrangler/pkg/crd"
 	"github.com/rancher/wrangler/pkg/start"
+	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/deploy"
 	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
+	"github.com/xiaods/k8e/pkg/version"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -32,11 +39,21 @@ func (c *Context) Start(ctx context.Context) error {
 	return start.All(ctx, 5, c.K8e, c.Helm, c.Apps, c.Auth, c.Batch, c.Core)
 }
 
-func newContext(ctx context.Context, cfg string) (*Context, error) {
+func NewContext(ctx context.Context, cfg string) (*Context, error) {
 	restConfig, err := clientcmd.BuildConfigFromFlags("", cfg)
 	if err != nil {
 		return nil, err
 	}
+
+	// Construct a custom user-agent string for the apply client used by the deploy controller
+	// so that we can track which node's deploy controller most recently modified a resource.
+	nodeName := os.Getenv("NODE_NAME")
+	managerName := deploy.ControllerName + "@" + nodeName
+	if nodeName == "" || len(managerName) > validation.FieldManagerMaxLength {
+		logrus.Warn("Deploy controller node name is empty or too long, and will not be tracked via server side apply field management")
+		managerName = deploy.ControllerName
+	}
+	restConfig.UserAgent = fmt.Sprintf("%s/%s (%s/%s) %s/%s", managerName, version.Version, runtime.GOOS, runtime.GOARCH, version.Program, version.GitCommit)
 
 	if err := crds(ctx, restConfig); err != nil {
 		return nil, err

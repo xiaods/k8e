@@ -81,6 +81,7 @@ type Agent struct {
 	AirgapExtraRegistry     []string
 	DisableCCM              bool
 	DisableNPC              bool
+	DisableHelmController   bool
 	DisableKubeProxy        bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
@@ -123,6 +124,7 @@ type Control struct {
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
 	DisableNPC               bool
+	DisableHelmController    bool
 	DisableKubeProxy         bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
