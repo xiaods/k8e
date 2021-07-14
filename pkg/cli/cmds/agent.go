@@ -33,6 +33,7 @@ type Agent struct {
 	WithNodeID               bool
 	EnableSELinux            bool
 	ProtectKernelDefaults    bool
+	ClusterReset             bool
 	PrivateRegistry          string
 	AirgapExtraRegistry      cli.StringSlice
 	ExtraKubeletArgs         cli.StringSlice

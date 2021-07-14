@@ -403,8 +403,10 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	agentConfig.Token = token
 	agentConfig.DisableLoadBalancer = !serverConfig.ControlConfig.DisableAPIServer
 	agentConfig.ETCDAgent = serverConfig.ControlConfig.DisableAPIServer
+	agentConfig.ClusterReset = serverConfig.ControlConfig.ClusterReset
 
 	agentConfig.Rootless = cfg.Rootless
+
 	if agentConfig.Rootless {
 		// let agent specify Rootless kubelet flags, but not unshare twice
 		agentConfig.RootlessAlreadyUnshared = true
@@ -416,7 +418,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		setAPIAddressChannel(ctx, &serverConfig, &agentConfig)
 		defer close(agentConfig.APIAddressCh)
 	}
-
 	return agent.Run(ctx, agentConfig)
 }
 
