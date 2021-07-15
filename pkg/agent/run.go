@@ -196,7 +196,7 @@ func Run(ctx context.Context, cfg cmds.Agent) error {
 	}
 
 	agentDir := filepath.Join(cfg.DataDir, "agent")
-	if err := os.MkdirAll(cfg.DataDir, 0700); err != nil {
+	if err := os.MkdirAll(agentDir, 0700); err != nil {
 		return err
 	}
 
