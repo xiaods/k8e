@@ -2,9 +2,63 @@
 set -e
 set -o noglob
 
-echo "Install... k8e binary to /opt/k8e"
+# ---use binary install directory
+BIN_DIR=/usr/local/bin
+PROFILE=~/.bashrc
 
-mkdir -p /opt/k8e && cd /opt/k8e
+# --- helper functions for logs ---
+info()
+{
+    echo '[INFO] ' "$@"
+}
+warn()
+{
+    echo '[WARN] ' "$@" >&2
+}
+fatal()
+{
+    echo '[ERROR] ' "$@" >&2
+    exit 1
+}
+
+# --- add additional utility links ---
+create_symlinks() {
+    for cmd in kubectl crictl ctr; do
+        if [ ! -e ${BIN_DIR}/${cmd} ]; then
+            which_cmd=$(which ${cmd} 2>/dev/null || true)
+            if [ -z "${which_cmd}" ]; then
+                info "Creating ${BIN_DIR}/${cmd} symlink to k8e"
+                $SUDO ln -sf ${BIN_DIR}/k8e ${BIN_DIR}/${cmd}
+            else
+                info "Skipping ${BIN_DIR}/${cmd} symlink to k8e, command exists in PATH at ${which_cmd}"
+            fi
+        else
+            info "Skipping ${BIN_DIR}/${cmd} symlink to k8e, already exists"
+        fi
+    done
+    info "Create nerdctl symlink for k8e"
+    $SUDO ln -sf /var/lib/k8e/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
+}
+
+# --- seutp profile ---
+source_profile() {
+if ! grep -s 'containerd\.sock' "$PROFILE"; then
+    echo 'export CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock' >> "$PROFILE"
+fi
+if ! grep -s '\/usr\/local\/bin' "$PROFILE"; then
+    echo 'export PATH=$PATH:/usr/local/bin' >> ~/.bashrc 
+fi
+if ! grep -s 'docker=nerdctl' "$PROFILE"; then
+    echo 'alias docker=nerdctl' >> ~/.bashrc
+fi
+}
+
+# --- download k8e and setup all-in-one functions
+download_and_setup() {
+
+info "Install... k8e binary to ${BIN_DIR}"
+
+cd $BIN_DIR
 
 curl -s https://api.github.com/repos/xiaods/k8e/releases/latest \
 | grep "browser_download_url.*k8e" \
@@ -19,19 +73,20 @@ curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/start-agent.sh 
 
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/stop-k8e.sh -o stop-k8e.sh
 
-curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/setup-k8s-tools.sh -o setup-k8s-tools.sh
-
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-killall.sh -o k8e-killall.sh
 
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-uninstall.sh -o k8e-uninstall.sh
 
-curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/setup-profile.sh -o setup-profile.sh
 
+create_symlinks
+source_profile
 
-bash setup-k8s-tools.sh
-bash setup-profile.sh
+$BIN_DIR/k8e check-config
+info "Done! Happy deployment."
 
-/opt/k8e/k8e check-config
+}
 
-source ~/.bashrc
-echo "Done! Happy deployment."
+# --- run the install process --
+{
+    download_and_setup
+}
