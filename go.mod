@@ -64,8 +64,9 @@ replace (
 require (
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/containerd/cgroups v0.0.0-20200710171044-318312a37340
-	github.com/containerd/containerd v1.4.4
+	github.com/containerd/containerd v1.5.2
 	github.com/containerd/cri v1.11.1-0.20200820101445-b0cc07999aa5
+	github.com/containerd/fuse-overlayfs-snapshotter v1.0.3
 	github.com/coreos/go-iptables v0.4.5
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
@@ -110,7 +111,7 @@ require (
 	golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
 	golang.org/x/sys v0.0.0-20210426230700-d19ff857e887
 	golang.org/x/tools v0.1.0 // indirect
-	google.golang.org/grpc v1.31.1
+	google.golang.org/grpc v1.33.2
 	gopkg.in/yaml.v2 v2.4.0
 	inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
 	k8s.io/api v0.21.0

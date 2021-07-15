@@ -164,7 +164,7 @@ github.com/containerd/cgroups/v2
 github.com/containerd/cgroups/v2/stats
 # github.com/containerd/console v1.0.0 => github.com/containerd/console v1.0.0
 github.com/containerd/console
-# github.com/containerd/containerd v1.4.4 => github.com/k3s-io/containerd v1.4.4-k3s1
+# github.com/containerd/containerd v1.5.2 => github.com/k3s-io/containerd v1.4.4-k3s1
 ## explicit
 github.com/containerd/containerd
 github.com/containerd/containerd/api/events
@@ -300,7 +300,7 @@ github.com/containerd/containerd/snapshots/storage
 github.com/containerd/containerd/sys
 github.com/containerd/containerd/sys/reaper
 github.com/containerd/containerd/version
-# github.com/containerd/continuity v0.0.0-20200710164510-efbc4488d8fe => github.com/k3s-io/continuity v0.0.0-20210309170710-f93269e0d5c1
+# github.com/containerd/continuity v0.1.0 => github.com/k3s-io/continuity v0.0.0-20210309170710-f93269e0d5c1
 github.com/containerd/continuity
 github.com/containerd/continuity/devices
 github.com/containerd/continuity/driver
@@ -339,6 +339,9 @@ github.com/containerd/cri/pkg/streaming/remotecommand
 github.com/containerd/cri/pkg/util
 # github.com/containerd/fifo v0.0.0-20200410184934-f15a3290365b => github.com/containerd/fifo v0.0.0-20190816180239-bda0ff6ed73c
 github.com/containerd/fifo
+# github.com/containerd/fuse-overlayfs-snapshotter v1.0.3
+## explicit
+github.com/containerd/fuse-overlayfs-snapshotter
 # github.com/containerd/go-cni v1.0.1
 github.com/containerd/go-cni
 # github.com/containerd/go-runc v0.0.0-20200220073739-7016d3ce2328 => github.com/containerd/go-runc v0.0.0-20200220073739-7016d3ce2328
@@ -1309,7 +1312,7 @@ google.golang.org/appengine/urlfetch
 google.golang.org/genproto/googleapis/api/httpbody
 google.golang.org/genproto/googleapis/rpc/status
 google.golang.org/genproto/protobuf/field_mask
-# google.golang.org/grpc v1.31.1 => google.golang.org/grpc v1.27.1
+# google.golang.org/grpc v1.33.2 => google.golang.org/grpc v1.27.1
 ## explicit
 google.golang.org/grpc
 google.golang.org/grpc/attributes
