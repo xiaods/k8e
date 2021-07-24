@@ -65,13 +65,13 @@ curl -s https://api.github.com/repos/xiaods/k8e/releases/latest \
 | cut -d '"' -f 4 \
 | wget -qi - &&  chmod +x k8e
 
-curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/start-bootstrap.sh -o start-bootstrap.sh
+curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-start-bootstrap.sh -o k8e-start-bootstrap.sh
 
-curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/start-server.sh -o start-server.sh
+curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-start-server.sh -o k8e-start-server.sh
 
-curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/start-agent.sh -o start-agent.sh
+curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-start-agent.sh -o k8e-start-agent.sh
 
-curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/stop-k8e.sh -o stop-k8e.sh
+curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-stop.sh -o k8e-stop.sh
 
 curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-killall.sh -o k8e-killall.sh
 
