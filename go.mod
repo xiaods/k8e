@@ -78,7 +78,7 @@ require (
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.4
 	github.com/gorilla/websocket v1.4.2
-	github.com/k3s-io/helm-controller v0.8.3
+	github.com/k3s-io/helm-controller v0.10.3
 	github.com/k3s-io/kine v0.6.0
 	github.com/klauspost/compress v1.12.2
 	github.com/kubernetes-sigs/cri-tools v1.19.0
