@@ -38,6 +38,8 @@ create_symlinks() {
     done
     info "Create nerdctl symlink for k8e"
     $SUDO ln -sf /var/lib/k8e/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
+    info "add calicoctl symlink for k8e"
+    $SUDO ln -sf /var/lib/k8e/k8e/data/current/bin/calicoctl ${BIN_DIR}/calicoctl
 }
 
 # --- seutp profile ---
@@ -46,7 +48,7 @@ if ! grep -s 'containerd\.sock' "$PROFILE"; then
     echo 'export CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock' >> "$PROFILE"
 fi
 if ! grep -s '\/usr\/local\/bin' "$PROFILE"; then
-    echo 'export PATH=$PATH:/usr/local/bin' >> ~/.bashrc 
+    echo 'export PATH=$PATH:/usr/local/bin' >> ~/.bashrc
 fi
 if ! grep -s 'docker=nerdctl' "$PROFILE"; then
     echo 'alias docker=nerdctl' >> ~/.bashrc
