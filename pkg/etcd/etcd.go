@@ -53,7 +53,8 @@ const (
 	defaultKeepAliveTime    = 30 * time.Second
 	defaultKeepAliveTimeout = 10 * time.Second
 
-	maxBackupRetention = 5
+	maxBackupRetention   = 5
+	memberRemovalTimeout = time.Minute * 1
 )
 
 var (
@@ -561,6 +562,8 @@ func (e *ETCD) cluster(ctx context.Context, forceNew bool, options executor.Init
 
 // removePeer removes a peer from the cluster. The peer ID and IP address must both match.
 func (e *ETCD) removePeer(ctx context.Context, id, address string, removeSelf bool) error {
+	ctx, cancel := context.WithTimeout(ctx, memberRemovalTimeout)
+	defer cancel()
 	members, err := e.client.MemberList(ctx)
 	if err != nil {
 		return err
@@ -744,8 +747,12 @@ members:
 		if member.IsLearner {
 			continue
 		}
-		for _, url := range member.ClientURLs {
-			if strings.Contains(url, ip) {
+		for _, clientURL := range member.ClientURLs {
+			u, err := url.Parse(clientURL)
+			if err != nil {
+				continue
+			}
+			if u.Hostname() == ip {
 				continue members
 			}
 		}
