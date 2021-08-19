@@ -32,3 +32,11 @@ if [ ${ARCH} = amd64 ]; then
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
   curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.10.0/nerdctl-0.10.0-linux-arm64.tar.gz | tar zxf - -C bin
 fi
+
+# calicoctl
+echo "download calicoctl..."
+if [ ${ARCH} = amd64 ]; then
+  curl -o bin/calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.20.0/calicoctl"
+elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
+  curl -o bin/calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.20.0/calicoctl-linux-arm64"
+fi
