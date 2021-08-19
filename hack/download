@@ -40,3 +40,4 @@ if [ ${ARCH} = amd64 ]; then
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
   curl -o bin/calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.20.0/calicoctl-linux-arm64"
 fi
+chmod +x bin/calicoctl
