@@ -20,6 +20,10 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+var (
+	defaultScheme = "https"
+)
+
 // registry stores information necessary to configure authentication and
 // connections to remote registries, including overriding registry endpoints
 type registry struct {
@@ -94,7 +98,7 @@ func (r *registry) Rewrite(ref name.Reference) name.Reference {
 // Resolve returns an authenticator for the authn.Keychain interface. The authenticator
 // provides credentials to a registry by looking up configuration from mirror endpoints.
 func (r *registry) Resolve(target authn.Resource) (authn.Authenticator, error) {
-	endpointURL, err := r.getEndpointForHost(target.RegistryStr())
+	endpointURL, err := r.getEndpointForHost(target.RegistryStr(), defaultScheme)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +109,7 @@ func (r *registry) Resolve(target authn.Resource) (authn.Authenticator, error) {
 // overrides the Host in the headers and URL based on mirror endpoint configuration. It also
 // configures TLS based on the endpoint's TLS config, if any.
 func (r *registry) RoundTrip(req *http.Request) (*http.Response, error) {
-	endpointURL, err := r.getEndpointForHost(req.URL.Host)
+	endpointURL, err := r.getEndpointForHost(req.URL.Host, req.URL.Scheme)
 	if err != nil {
 		return nil, err
 	}
@@ -174,9 +178,9 @@ func (r *registry) RoundTrip(req *http.Request) (*http.Response, error) {
 
 // getEndpointForHost gets endpoint configuration for a host. Because go-containerregistry's
 // Keychain interface does not provide a good hook to check authentication for multiple endpoints,
-// we only use the first endpoint from the mirror list. If no endpoint configuration is found, https
-// and the default path are assumed.
-func (r *registry) getEndpointForHost(host string) (*url.URL, error) {
+// we only use the first endpoint from the mirror list. If no endpoint configuration is found, the
+// and the default path is assumed.
+func (r *registry) getEndpointForHost(host, scheme string) (*url.URL, error) {
 	keys := []string{host}
 	if host == name.DefaultRegistry {
 		keys = append(keys, "docker.io")
@@ -199,7 +203,7 @@ func (r *registry) getEndpointForHost(host string) (*url.URL, error) {
 			}
 		}
 	}
-	return url.Parse("https://" + host + "/v2/")
+	return url.Parse(fmt.Sprintf("%s://%s/v2/", scheme, host))
 }
 
 // getAuthenticatorForHost returns an Authenticator for a given host. This should be the host from

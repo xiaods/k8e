@@ -111,13 +111,14 @@ type Conn struct {
 	}
 }
 
-// Deprecated: use NewWithContext instead.
+// New establishes a connection to any available bus and authenticates.
+// Callers should call Close() when done with the connection.
+// Deprecated: use NewWithContext instead
 func New() (*Conn, error) {
 	return NewWithContext(context.Background())
 }
 
-// NewWithContext establishes a connection to any available bus and authenticates.
-// Callers should call Close() when done with the connection.
+// NewWithContext same as New with context
 func NewWithContext(ctx context.Context) (*Conn, error) {
 	conn, err := NewSystemConnectionContext(ctx)
 	if err != nil && os.Geteuid() == 0 {
@@ -126,41 +127,44 @@ func NewWithContext(ctx context.Context) (*Conn, error) {
 	return conn, err
 }
 
-// Deprecated: use NewSystemConnectionContext instead.
+// NewSystemConnection establishes a connection to the system bus and authenticates.
+// Callers should call Close() when done with the connection
+// Deprecated: use NewSystemConnectionContext instead
 func NewSystemConnection() (*Conn, error) {
 	return NewSystemConnectionContext(context.Background())
 }
 
-// NewSystemConnectionContext establishes a connection to the system bus and authenticates.
-// Callers should call Close() when done with the connection.
+// NewSystemConnectionContext same as NewSystemConnection with context
 func NewSystemConnectionContext(ctx context.Context) (*Conn, error) {
 	return NewConnection(func() (*dbus.Conn, error) {
 		return dbusAuthHelloConnection(ctx, dbus.SystemBusPrivate)
 	})
 }
 
-// Deprecated: use NewUserConnectionContext instead.
+// NewUserConnection establishes a connection to the session bus and
+// authenticates. This can be used to connect to systemd user instances.
+// Callers should call Close() when done with the connection.
+// Deprecated: use NewUserConnectionContext instead
 func NewUserConnection() (*Conn, error) {
 	return NewUserConnectionContext(context.Background())
 }
 
-// NewUserConnectionContext establishes a connection to the session bus and
-// authenticates. This can be used to connect to systemd user instances.
-// Callers should call Close() when done with the connection.
+// NewUserConnectionContext same as NewUserConnection with context
 func NewUserConnectionContext(ctx context.Context) (*Conn, error) {
 	return NewConnection(func() (*dbus.Conn, error) {
 		return dbusAuthHelloConnection(ctx, dbus.SessionBusPrivate)
 	})
 }
 
-// Deprecated: use NewSystemdConnectionContext instead.
+// NewSystemdConnection establishes a private, direct connection to systemd.
+// This can be used for communicating with systemd without a dbus daemon.
+// Callers should call Close() when done with the connection.
+// Deprecated: use NewSystemdConnectionContext instead
 func NewSystemdConnection() (*Conn, error) {
 	return NewSystemdConnectionContext(context.Background())
 }
 
-// NewSystemdConnectionContext establishes a private, direct connection to systemd.
-// This can be used for communicating with systemd without a dbus daemon.
-// Callers should call Close() when done with the connection.
+// NewSystemdConnectionContext same as NewSystemdConnection with context
 func NewSystemdConnectionContext(ctx context.Context) (*Conn, error) {
 	return NewConnection(func() (*dbus.Conn, error) {
 		// We skip Hello when talking directly to systemd.
@@ -170,7 +174,7 @@ func NewSystemdConnectionContext(ctx context.Context) (*Conn, error) {
 	})
 }
 
-// Close closes an established connection.
+// Close closes an established connection
 func (c *Conn) Close() {
 	c.sysconn.Close()
 	c.sigconn.Close()
@@ -213,7 +217,7 @@ func NewConnection(dialBus func() (*dbus.Conn, error)) (*Conn, error) {
 
 // GetManagerProperty returns the value of a property on the org.freedesktop.systemd1.Manager
 // interface. The value is returned in its string representation, as defined at
-// https://developer.gnome.org/glib/unstable/gvariant-text.html.
+// https://developer.gnome.org/glib/unstable/gvariant-text.html
 func (c *Conn) GetManagerProperty(prop string) (string, error) {
 	variant, err := c.sysobj.GetProperty("org.freedesktop.systemd1.Manager." + prop)
 	if err != nil {
