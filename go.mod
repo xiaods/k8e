@@ -4,7 +4,7 @@ go 1.15
 
 replace (
 	github.com/Microsoft/hcsshim => github.com/Microsoft/hcsshim v0.8.20
-	github.com/benmoss/go-powershell => github.com/k3s-io/go-powershell v0.0.0-20201118222746-51f4c451fbd7
+	github.com/benmoss/go-powershell => github.com/rancher/go-powershell v0.0.0-20200701184732-233247d45373
 	github.com/containerd/aufs => github.com/containerd/aufs v1.0.0
 	github.com/containerd/btrfs => github.com/containerd/btrfs v1.0.0
 	github.com/containerd/cgroups => github.com/containerd/cgroups v1.0.1
@@ -17,15 +17,16 @@ replace (
 	github.com/containerd/ttrpc => github.com/containerd/ttrpc v1.0.2
 	github.com/containerd/typeurl => github.com/containerd/typeurl v1.0.2
 	github.com/containerd/zfs => github.com/containerd/zfs v1.0.0
+	github.com/coreos/flannel => github.com/rancher/flannel v0.12.0-k3s1
 	github.com/coreos/go-systemd => github.com/coreos/go-systemd v0.0.0-20190321100706-95778dfbb74e
 	github.com/docker/distribution => github.com/docker/distribution v2.7.1-0.20190205005809-0d3efadf0154+incompatible
 	github.com/docker/docker => github.com/docker/docker v17.12.0-ce-rc1.0.20200310163718-4634ce647cf2+incompatible
 	github.com/docker/libnetwork => github.com/docker/libnetwork v0.8.0-dev.2.0.20190624125649-f0e46a78ea34
 	github.com/golang/protobuf => github.com/golang/protobuf v1.3.5
 	github.com/juju/errors => github.com/k3s-io/nocode v0.0.0-20200630202308-cb097102c09f
-	github.com/kubernetes-sigs/cri-tools => github.com/xiaods/cri-tools v1.19.0-k8e1
+	github.com/kubernetes-sigs/cri-tools => github.com/rancher/cri-tools v1.19.0-k3s1
 	github.com/matryer/moq => github.com/rancher/moq v0.0.0-20190404221404-ee5226d43009
-	// LOOK TO hack/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
+	// LOOK TO scripts/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
 	github.com/opencontainers/runc => github.com/opencontainers/runc v1.0.0-rc92
 	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.0.3-0.20200728170252-4d89ac9fbff6
 	github.com/xiaods/k8e/pkg/data => ./pkg/data
@@ -75,7 +76,6 @@ require (
 	github.com/containernetworking/plugins v0.9.1 // indirect
 	github.com/coreos/go-iptables v0.5.0
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f
-	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/docker/docker v17.12.0-ce-rc1.0.20200916142827-bd33bbf0497b+incompatible
 	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
@@ -83,37 +83,34 @@ require (
 	github.com/google/cadvisor v0.37.5
 	github.com/google/uuid v1.2.0
 	github.com/gorilla/mux v1.7.4
-	github.com/gorilla/websocket v1.4.2
-	github.com/k3s-io/helm-controller v0.10.3
-	github.com/k3s-io/kine v0.6.0
-	github.com/klauspost/compress v1.12.2
-	github.com/kubernetes-sigs/cri-tools v1.19.0
+	github.com/gorilla/websocket v1.4.1
+	github.com/k3s-io/helm-controller v0.10.5
+	github.com/k3s-io/kine v0.6.2
+	github.com/klauspost/compress v1.13.4
+	github.com/kubernetes-sigs/cri-tools v0.0.0-00010101000000-000000000000
 	github.com/lib/pq v1.8.0
 	github.com/mattn/go-sqlite3 v1.14.4
 	github.com/minio/minio-go/v7 v7.0.7
 	github.com/morikuni/aec v1.0.0
 	github.com/natefinch/lumberjack v2.0.0+incompatible
-	github.com/onsi/ginkgo v1.16.1 // indirect
-	github.com/onsi/gomega v1.11.0 // indirect
-	// LOOK TO hack/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
+	// LOOK TO scripts/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
 	github.com/opencontainers/runc v1.0.0-rc94
 	github.com/opencontainers/selinux v1.8.0
 	github.com/pierrec/lz4 v2.6.0+incompatible
 	github.com/pkg/errors v0.9.1
-	github.com/rancher/dynamiclistener v0.2.3
+	github.com/rancher/dynamiclistener v0.2.2
 	github.com/rancher/remotedialer v0.2.0
-	github.com/rancher/wharfie v0.4.0
+	github.com/rancher/wharfie v0.4.1
 	github.com/rancher/wrangler v0.6.2
 	github.com/rancher/wrangler-api v0.6.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rootless-containers/rootlesskit v0.10.0
 	github.com/sirupsen/logrus v1.8.1
-	github.com/spf13/cobra v1.1.1 // indirect
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.6.1
 	github.com/tchap/go-patricia v2.3.0+incompatible // indirect
 	github.com/urfave/cli v1.22.2
-	go.etcd.io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea
+	go.etcd.io/etcd v0.5.0-alpha.5.0.20200819165624-17cef6e3e9d5
 	golang.org/x/crypto v0.0.0-20210322153248-0c34fe9e7dc2
 	golang.org/x/sys v0.0.0-20210426230700-d19ff857e887
 	google.golang.org/grpc v1.33.2
