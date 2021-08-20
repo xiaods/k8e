@@ -38,7 +38,7 @@ create_symlinks() {
     done
     info "Create nerdctl symlink for k8e"
     $SUDO ln -sf /var/lib/k8e/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
-    info "add calicoctl symlink for k8e"
+    info "Create calicoctl symlink for k8e"
     $SUDO ln -sf /var/lib/k8e/k8e/data/current/bin/calicoctl ${BIN_DIR}/calicoctl
 }
 
