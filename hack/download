@@ -6,7 +6,6 @@ cd $(dirname $0)/..
 . ./hack/version.sh
 
 RUNC_VERSION=v1.0.0
-ROOT_VERSION=v0.9.1
 CHARTS_DIR=build/static/charts
 RUNC_DIR=build/src/github.com/opencontainers/runc
 DATA_DIR=build/data
@@ -16,8 +15,7 @@ rm -rf ${CHARTS_DIR}
 rm -rf ${RUNC_DIR}
 mkdir -p ${CHARTS_DIR}
 mkdir -p ${DATA_DIR}
-
-curl --compressed -sfL https://github.com/k3s-io/k3s-root/releases/download/${ROOT_VERSION}/k3s-root-${ARCH}.tar | tar xf -
+mkdir -p bin
 
 git clone --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR} || true
 pushd ${RUNC_DIR}
