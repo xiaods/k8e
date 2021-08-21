@@ -21,6 +21,16 @@ fatal()
     exit 1
 }
 
+# --- define needed environment variables ---
+setup_env() {
+    # --- use sudo if we are not already root ---
+    SUDO=sudo
+    if [ $(id -u) -eq 0 ]; then
+        SUDO=
+    fi
+
+}
+
 # --- add additional utility links ---
 create_symlinks() {
     for cmd in kubectl crictl ctr; do
@@ -90,5 +100,6 @@ info "Done! Happy deployment."
 
 # --- run the install process --
 {
+    setup_env
     download_and_setup
 }

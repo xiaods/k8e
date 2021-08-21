@@ -24,7 +24,7 @@ rm -rf /var/lib/kubelet
 
 BIN_DIR=/usr/local/bin
 
-for cmd in kubectl crictl ctr; do
+for cmd in kubectl crictl ctr nerdctl calicoctl; do
     if [ -L ${BIN_DIR}/\$cmd ]; then
         rm -f ${BIN_DIR}/\$cmd
     fi
