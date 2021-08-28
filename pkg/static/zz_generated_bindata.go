@@ -1,5 +1,6 @@
 // Code generated for package static by go-bindata DO NOT EDIT. (@generated)
 // sources:
+//go:build !no_stage
 // +build !no_stage
 
 package static

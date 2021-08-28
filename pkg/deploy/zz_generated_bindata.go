@@ -12,6 +12,7 @@
 // manifests/metrics-server/metrics-server-service.yaml
 // manifests/metrics-server/resource-reader.yaml
 // manifests/rolebindings.yaml
+//go:build !no_stage
 // +build !no_stage
 
 package deploy
