@@ -83,7 +83,7 @@ func (fi bindataFileInfo) Sys() interface{} {
 // It returns an error if the asset could not be found or
 // could not be loaded.
 func Asset(name string) ([]byte, error) {
-	cannonicalName := strings.Replace(name, "\\", "/", -1)
+	cannonicalName := strings.ReplaceAll(name, "\\", "/")
 	if f, ok := _bindata[cannonicalName]; ok {
 		a, err := f()
 		if err != nil {
@@ -109,7 +109,7 @@ func MustAsset(name string) []byte {
 // It returns an error if the asset could not be found or
 // could not be loaded.
 func AssetInfo(name string) (os.FileInfo, error) {
-	cannonicalName := strings.Replace(name, "\\", "/", -1)
+	cannonicalName := strings.ReplaceAll(name, "\\", "/")
 	if f, ok := _bindata[cannonicalName]; ok {
 		a, err := f()
 		if err != nil {
@@ -147,8 +147,8 @@ var _bindata = map[string]func() (*asset, error){}
 // AssetDir("") will return []string{"data"}.
 func AssetDir(name string) ([]string, error) {
 	node := _bintree
-	if len(name) != 0 {
-		cannonicalName := strings.Replace(name, "\\", "/", -1)
+	if name != "" {
+		cannonicalName := strings.ReplaceAll(name, "\\", "/")
 		pathList := strings.Split(cannonicalName, "/")
 		for _, p := range pathList {
 			node = node.Children[p]
@@ -217,6 +217,6 @@ func RestoreAssets(dir, name string) error {
 }
 
 func _filePath(dir, name string) string {
-	cannonicalName := strings.Replace(name, "\\", "/", -1)
+	cannonicalName := strings.ReplaceAll(name, "\\", "/")
 	return filepath.Join(append([]string{dir}, strings.Split(cannonicalName, "/")...)...)
 }
