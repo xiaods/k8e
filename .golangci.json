@@ -32,6 +32,14 @@
 			{
 				"linters": "revive",
 				"text": "should have comment"
+			},
+			{
+				"linters": "revive",
+				"text": "comment on exported"
+			},
+			{
+				"linters": "revive",
+				"text": "if-return: redundant if"
 			}
 		]
 	}
