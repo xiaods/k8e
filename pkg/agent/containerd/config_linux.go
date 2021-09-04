@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package containerd
@@ -10,13 +11,13 @@ import (
 
 	"github.com/opencontainers/runc/libcontainer/system"
 	"github.com/pkg/errors"
+	"github.com/rancher/wharfie/pkg/registries"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	util2 "github.com/xiaods/k8e/pkg/agent/util"
 	"github.com/xiaods/k8e/pkg/cgroups"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/rancher/wharfie/pkg/registries"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
