@@ -23,7 +23,6 @@ import (
 	"github.com/xiaods/k8e/pkg/agent/proxy"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
-	"github.com/xiaods/k8e/pkg/containerd"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control/deps"
 	"github.com/xiaods/k8e/pkg/util"
@@ -429,20 +428,6 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.CACerts = info.CACerts
 	nodeConfig.Containerd.Config = filepath.Join(envInfo.DataDir, "agent", "etc", "containerd", "config.toml")
 	nodeConfig.Containerd.Root = filepath.Join(envInfo.DataDir, "agent", "containerd")
-	if !nodeConfig.Docker && nodeConfig.ContainerRuntimeEndpoint == "" {
-		switch nodeConfig.AgentConfig.Snapshotter {
-		case "overlayfs":
-			if err := containerd.OverlaySupported(nodeConfig.Containerd.Root); err != nil {
-				return nil, errors.Wrapf(err, "\"overlayfs\" snapshotter cannot be enabled for %q, try using \"fuse-overlayfs\" or \"native\"",
-					nodeConfig.Containerd.Root)
-			}
-		case "fuse-overlayfs":
-			if err := containerd.FuseoverlayfsSupported(nodeConfig.Containerd.Root); err != nil {
-				return nil, errors.Wrapf(err, "\"fuse-overlayfs\" snapshotter cannot be enabled for %q, try using \"native\"",
-					nodeConfig.Containerd.Root)
-			}
-		}
-	}
 	nodeConfig.Containerd.Opt = filepath.Join(envInfo.DataDir, "agent", "containerd")
 	if !envInfo.Debug {
 		nodeConfig.Containerd.Log = filepath.Join(envInfo.DataDir, "agent", "containerd", "containerd.log")
