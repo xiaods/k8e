@@ -2,7 +2,8 @@ apiVersion: v1
 kind: Namespace
 metadata:
   labels:
-    app.flomesh.io/control-plane: operator-manager
+    app.kubernetes.io/control-plane: operator-manager
+    app.kubernetes.io/name: pipy-operator
     flomesh.io/inject: "false"
   name: flomesh
 ---
@@ -11,7 +12,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: flomesh/serving-cert-fsm
-    controller-gen.kubebuilder.io/version: v0.4.1
+    controller-gen.kubebuilder.io/version: v0.6.1
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: proxies.flomesh.io
 spec:
   group: flomesh.io
@@ -195,7 +198,9 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: flomesh/serving-cert-fsm
-    controller-gen.kubebuilder.io/version: v0.4.1
+    controller-gen.kubebuilder.io/version: v0.6.1
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: proxyprofiles.flomesh.io
 spec:
   group: flomesh.io
@@ -505,12 +510,16 @@ status:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: operator-manager-fsm
   namespace: flomesh
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: leader-election-role-fsm
   namespace: flomesh
 rules:
@@ -540,6 +549,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   creationTimestamp: null
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: manager-role-fsm
 rules:
 - apiGroups:
@@ -693,6 +704,8 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: metrics-reader-fsm
 rules:
 - nonResourceURLs:
@@ -703,6 +716,8 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: proxy-role-fsm
 rules:
 - apiGroups:
@@ -721,6 +736,8 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: leader-election-rolebinding-fsm
   namespace: flomesh
 roleRef:
@@ -735,6 +752,8 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: manager-rolebinding-fsm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -748,6 +767,8 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: proxy-rolebinding-fsm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -774,6 +795,8 @@ data:
       resourceName: 06558885.flomesh.io
 kind: ConfigMap
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: manager-config-fsm
   namespace: flomesh
 ---
@@ -781,7 +804,8 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    app.flomesh.io/control-plane: operator-manager
+    app.kubernetes.io/control-plane: operator-manager
+    app.kubernetes.io/name: pipy-operator
   name: operator-manager-metrics-service-fsm
   namespace: flomesh
 spec:
@@ -791,13 +815,15 @@ spec:
     protocol: TCP
     targetPort: https
   selector:
-    app.flomesh.io/control-plane: operator-manager
-    app.flomesh.io/instance: operator-manager
-    app.flomesh.io/name: pipy-operator
+    app.kubernetes.io/control-plane: operator-manager
+    app.kubernetes.io/instance: operator-manager
+    app.kubernetes.io/name: pipy-operator
 ---
 apiVersion: v1
 kind: Service
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: proxy-injector-svc-fsm
   namespace: flomesh
 spec:
@@ -806,12 +832,14 @@ spec:
     protocol: TCP
     targetPort: 7443
   selector:
-    app.flomesh.io/instance: proxy-injector
-    app.flomesh.io/name: pipy-operator
+    app.kubernetes.io/instance: proxy-injector
+    app.kubernetes.io/name: pipy-operator
 ---
 apiVersion: v1
 kind: Service
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: webhook-service-fsm
   namespace: flomesh
 spec:
@@ -820,32 +848,32 @@ spec:
     protocol: TCP
     targetPort: 9443
   selector:
-    app.flomesh.io/control-plane: operator-manager
-    app.flomesh.io/instance: operator-manager
-    app.flomesh.io/name: pipy-operator
+    app.kubernetes.io/control-plane: operator-manager
+    app.kubernetes.io/instance: operator-manager
+    app.kubernetes.io/name: pipy-operator
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app.flomesh.io/control-plane: operator-manager
-    app.flomesh.io/instance: operator-manager
-    app.flomesh.io/name: pipy-operator
+    app.kubernetes.io/control-plane: operator-manager
+    app.kubernetes.io/instance: operator-manager
+    app.kubernetes.io/name: pipy-operator
   name: operator-manager-fsm
   namespace: flomesh
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.flomesh.io/control-plane: operator-manager
-      app.flomesh.io/instance: operator-manager
-      app.flomesh.io/name: pipy-operator
+      app.kubernetes.io/control-plane: operator-manager
+      app.kubernetes.io/instance: operator-manager
+      app.kubernetes.io/name: pipy-operator
   template:
     metadata:
       labels:
-        app.flomesh.io/control-plane: operator-manager
-        app.flomesh.io/instance: operator-manager
-        app.flomesh.io/name: pipy-operator
+        app.kubernetes.io/control-plane: operator-manager
+        app.kubernetes.io/instance: operator-manager
+        app.kubernetes.io/name: pipy-operator
     spec:
       containers:
       - args:
@@ -853,7 +881,7 @@ spec:
         - --v=2
         command:
         - /operator-manager
-        image: flomesh/operator-manager:0.4.2
+        image: flomesh/operator-manager:0.4.3
         imagePullPolicy: IfNotPresent
         livenessProbe:
           httpGet:
@@ -901,31 +929,31 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
-    app.flomesh.io/instance: proxy-injector
-    app.flomesh.io/name: pipy-operator
+    app.kubernetes.io/instance: proxy-injector
+    app.kubernetes.io/name: pipy-operator
   name: proxy-injector-fsm
   namespace: flomesh
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.flomesh.io/instance: proxy-injector
-      app.flomesh.io/name: pipy-operator
+      app.kubernetes.io/instance: proxy-injector
+      app.kubernetes.io/name: pipy-operator
   template:
     metadata:
       labels:
-        app.flomesh.io/instance: proxy-injector
-        app.flomesh.io/name: pipy-operator
+        app.kubernetes.io/instance: proxy-injector
+        app.kubernetes.io/name: pipy-operator
     spec:
       containers:
       - args:
         - --enable-leader-election
         - --proxy-image=flomesh/pipy-pjs:latest
-        - --proxy-init-image=flomesh/proxy-init:0.4.2
+        - --proxy-init-image=flomesh/proxy-init:0.4.3
         - --v=2
         command:
         - /proxy-injector
-        image: flomesh/proxy-injector:0.4.2
+        image: flomesh/proxy-injector:0.4.3
         imagePullPolicy: IfNotPresent
         livenessProbe:
           httpGet:
@@ -966,6 +994,8 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: serving-cert-fsm
   namespace: flomesh
 spec:
@@ -982,6 +1012,8 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: selfsigned-issuer-fsm
   namespace: flomesh
 spec:
@@ -992,6 +1024,8 @@ kind: MutatingWebhookConfiguration
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: flomesh/serving-cert-fsm
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: mutating-webhook-configuration-fsm
 webhooks:
 - admissionReviewVersions:
@@ -1042,6 +1076,8 @@ kind: MutatingWebhookConfiguration
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: flomesh/serving-cert-fsm
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: proxy-injector-webhook-cfg-fsm
 webhooks:
 - admissionReviewVersions:
@@ -1074,6 +1110,8 @@ kind: ValidatingWebhookConfiguration
 metadata:
   annotations:
     cert-manager.io/inject-ca-from: flomesh/serving-cert-fsm
+  labels:
+    app.kubernetes.io/name: pipy-operator
   name: validating-webhook-configuration-fsm
 webhooks:
 - admissionReviewVersions:
