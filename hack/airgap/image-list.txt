@@ -15,3 +15,7 @@ flomesh/cert-manager-cainjector:v1.3.2
 flomesh/cert-manager-controller:v1.3.2
 flomesh/cert-manager-webhook:v1.3.2
 flomesh/pipy-pjs:latest
+flomesh/ingress-cfg:0.2.3
+flomesh/pipy-pjs:0.4.0-115
+flomesh/wait-for-it:1.0.0
+flomesh/ingress-manager:0.2.3
