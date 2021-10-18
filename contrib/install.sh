@@ -3,6 +3,7 @@ set -e
 set -o noglob
 
 # ---use binary install directory
+TMP_DIR=/tmp
 BIN_DIR=/usr/local/bin
 PROFILE=~/.bashrc
 SYSTEM_NAME=k8e
@@ -137,7 +138,7 @@ download_and_setup() {
     fi
  
     info "Install... k8e binary to ${BIN_DIR}"
-    cd $BIN_DIR
+    cd $TMP_DIR &&
     $SUDO curl -s https://api.github.com/repos/xiaods/k8e/releases/latest \
         | grep "browser_download_url.*k8e" \
         | cut -d '"' -f 4 \
@@ -145,6 +146,8 @@ download_and_setup() {
          $SUDO chmod +x k8e && \
          $SUDO chmod 755 k8e && \
          $SUDO chown root:root k8e
+         
+    $SUDO mv $TMP_DIR/k8e $BIN_DIR/k8e
 
     $SUDO curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-start-bootstrap.sh -o k8e-start-bootstrap.sh && \
     $SUDO chmod +x k8e-start-bootstrap.sh
