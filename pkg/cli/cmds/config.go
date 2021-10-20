@@ -12,6 +12,6 @@ var (
 		Name:   "config,c",
 		Usage:  "(config) Load configuration from `FILE`",
 		EnvVar: version.ProgramUpper + "_CONFIG_FILE",
-		Value:  "/etc/k8e/" + version.Program + "/config.yaml",
+		Value:  "/etc/" + version.Program + "/config.yaml",
 	}
 )

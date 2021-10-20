@@ -10,7 +10,7 @@ func MustParse(args []string) []string {
 		After:         []string{"server", "agent"},
 		FlagNames:     []string{"--config", "-c"},
 		EnvName:       version.ProgramUpper + "_CONFIG_FILE",
-		DefaultConfig: "/etc/k8e/" + version.Program + "/config.yaml",
+		DefaultConfig: "/etc/" + version.Program + "/config.yaml",
 	}
 	result, err := parser.Parse(args)
 	if err != nil {

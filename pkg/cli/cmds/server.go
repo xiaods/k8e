@@ -154,7 +154,7 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			},
 			cli.StringFlag{
 				Name:        "data-dir,d",
-				Usage:       "(data) Folder to hold state default /var/lib/k8e/" + version.Program + " or ${HOME}/.k8e/" + version.Program + " if not root",
+				Usage:       "(data) Folder to hold state default /var/lib/" + version.Program + " or ${HOME}/." + version.Program + "/ if not root",
 				Destination: &ServerConfig.DataDir,
 			},
 			ClusterCIDR,
