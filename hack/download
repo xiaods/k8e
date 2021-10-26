@@ -23,19 +23,18 @@ git fetch --all --tags
 git checkout ${RUNC_VERSION} -b k8e
 popd
 
-#nerdctl for containerd , v0.11.0
+#nerdctl for containerd , v0.12.1
 echo "download nerdctl..."
 if [ ${ARCH} = amd64 ]; then
-  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.11.0/nerdctl-0.11.0-linux-amd64.tar.gz | tar zxf - -C bin
+  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.12.1/nerdctl-0.12.1-linux-amd64.tar.gz | tar zxf - -C bin
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.11.0/nerdctl-0.11.0-linux-arm64.tar.gz | tar zxf - -C bin
+  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.12.1/nerdctl-0.12.1-linux-arm64.tar.gz | tar zxf - -C bin
 fi
 
-# calicoctl
-echo "download calicoctl..."
+# Cilium
+echo "download Cilium..."
 if [ ${ARCH} = amd64 ]; then
-  curl -o bin/calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.20.0/calicoctl"
+  curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/v0.9.2/cilium-linux-amd64.tar.gz | tar zxf - -C bin
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-  curl -o bin/calicoctl -O -L  "https://github.com/projectcalico/calicoctl/releases/download/v3.20.0/calicoctl-linux-arm64"
+  curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/v0.9.2/cilium-linux-arm64.tar.gz | tar zxf - -C bin
 fi
-chmod +x bin/calicoctl
