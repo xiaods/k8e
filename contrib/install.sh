@@ -56,9 +56,9 @@ create_symlinks() {
         fi
     done
     info "Create nerdctl symlink for k8e"
-    $SUDO ln -sf /var/lib/k8e/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
-    info "Create calicoctl symlink for k8e"
-    $SUDO ln -sf /var/lib/k8e/k8e/data/current/bin/calicoctl ${BIN_DIR}/calicoctl
+    $SUDO ln -sf /var/lib/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
+    info "Create cilium ctl symlink for k8e"
+    $SUDO ln -sf /var/lib/k8e/data/current/bin/cilium ${BIN_DIR}/cilium
 }
 
 # --- seutp profile ---
