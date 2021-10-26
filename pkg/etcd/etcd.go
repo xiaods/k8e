@@ -502,6 +502,7 @@ func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
 	return &tls.Config{
 		RootCAs:      pool,
 		Certificates: []tls.Certificate{clientCert},
+		MaxVersion:   0,
 	}, nil
 }
 
