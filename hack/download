@@ -23,12 +23,12 @@ git fetch --all --tags
 git checkout ${RUNC_VERSION} -b k8e
 popd
 
-#nerdctl for containerd , v0.11.0
+#nerdctl for containerd , v0.12.1
 echo "download nerdctl..."
 if [ ${ARCH} = amd64 ]; then
-  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.11.0/nerdctl-0.11.0-linux-amd64.tar.gz | tar zxf - -C bin
+  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.12.1/nerdctl-0.12.1-linux-amd64.tar.gz | tar zxf - -C bin
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.11.0/nerdctl-0.11.0-linux-arm64.tar.gz | tar zxf - -C bin
+  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.12.1/nerdctl-0.12.1-linux-arm64.tar.gz | tar zxf - -C bin
 fi
 
 # Cilium
