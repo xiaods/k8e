@@ -276,8 +276,8 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 		if err != nil {
 			return err
 		}
-		if info.Mode() != 0700 {
-			if err := os.Chmod(etcdDir, 0700); err != nil {
+		if info.Mode() != 0600 {
+			if err := os.Chmod(etcdDir, 0600); err != nil {
 				return err
 			}
 		}
@@ -502,6 +502,7 @@ func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
 	return &tls.Config{
 		RootCAs:      pool,
 		Certificates: []tls.Certificate{clientCert},
+		MaxVersion:   0,
 	}, nil
 }
 
