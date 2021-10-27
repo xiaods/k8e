@@ -19,6 +19,7 @@ import (
 	"github.com/xiaods/k8e/pkg/agent/loadbalancer"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/rootless"
@@ -28,7 +29,7 @@ import (
 	"github.com/xiaods/k8e/pkg/version"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	kubeapiserverflag "k8s.io/component-base/cli/flag"
-	"k8s.io/kubernetes/pkg/master"
+	"k8s.io/kubernetes/pkg/controlplane"
 	utilsnet "k8s.io/utils/net"
 
 	_ "github.com/go-sql-driver/mysql" // ensure we have mysql
@@ -78,8 +79,11 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		cfg.Token = cfg.ClusterSecret
 	}
 
+	agentReady := make(chan struct{})
+
 	serverConfig := server.Config{}
 	serverConfig.DisableAgent = cfg.DisableAgent
+	serverConfig.ControlConfig.Runtime = &config.ControlRuntime{AgentReady: agentReady}
 	serverConfig.ControlConfig.Token = cfg.Token
 	serverConfig.ControlConfig.AgentToken = cfg.AgentToken
 	serverConfig.ControlConfig.JoinURL = cfg.ServerURL
@@ -111,9 +115,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.ExtraSchedulerAPIArgs = cfg.ExtraSchedulerArgs
 	serverConfig.ControlConfig.ClusterDomain = cfg.ClusterDomain
 	serverConfig.ControlConfig.Datastore.Endpoint = cfg.DatastoreEndpoint
-	serverConfig.ControlConfig.Datastore.CAFile = cfg.DatastoreCAFile
-	serverConfig.ControlConfig.Datastore.CertFile = cfg.DatastoreCertFile
-	serverConfig.ControlConfig.Datastore.KeyFile = cfg.DatastoreKeyFile
+	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CAFile = cfg.DatastoreCAFile
+	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CertFile = cfg.DatastoreCertFile
 	serverConfig.ControlConfig.AdvertiseIP = cfg.AdvertiseIP
 	serverConfig.ControlConfig.AdvertisePort = cfg.AdvertisePort
 	serverConfig.ControlConfig.ExtraCloudControllerArgs = cfg.ExtraCloudControllerArgs
@@ -209,6 +212,19 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, serverConfig.ControlConfig.AdvertiseIP)
 	}
 
+	// Ensure that we add the localhost name/ip and node name/ip to the SAN list. This list is shared by the
+	// certs for the supervisor, kube-apiserver cert, and etcd. DNS entries for the in-cluster kubernetes
+	// service endpoint are added later when the certificates are created.
+	nodeName, nodeIPs, err := util.GetHostnameAndIPs(cmds.AgentConfig.NodeName, cmds.AgentConfig.NodeIP)
+	if err != nil {
+		return err
+	}
+	serverConfig.ControlConfig.ServerNodeName = nodeName
+	serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, "127.0.0.1", "localhost", nodeName)
+	for _, ip := range nodeIPs {
+		serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, ip.String())
+	}
+
 	// configure ClusterIPRanges
 	if len(cmds.ServerConfig.ClusterCIDR) == 0 {
 		cmds.ServerConfig.ClusterCIDR.Set("10.42.0.0/16")
@@ -256,7 +272,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		return errors.Wrapf(err, "invalid port range %s", cfg.ServiceNodePortRange)
 	}
 
-	_, apiServerServiceIP, err := master.ServiceIPRange(*serverConfig.ControlConfig.ServiceIPRange)
+	// the apiserver service does not yet support dual-stack operation
+	_, apiServerServiceIP, err := controlplane.ServiceIPRange(*serverConfig.ControlConfig.ServiceIPRange)
 	if err != nil {
 		return err
 	}

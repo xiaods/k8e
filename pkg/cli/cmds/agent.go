@@ -40,6 +40,7 @@ type Agent struct {
 	ExtraKubeProxyArgs       cli.StringSlice
 	Labels                   cli.StringSlice
 	Taints                   cli.StringSlice
+	AgentReady               chan<- struct{}
 	AgentShared
 }
 

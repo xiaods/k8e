@@ -8,9 +8,10 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/k3s-io/kine/pkg/endpoint"
-	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
+	"github.com/rancher/wrangler/pkg/generated/controllers/core"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 )
@@ -77,6 +78,7 @@ type Agent struct {
 	CNIPlugin               bool
 	NodeTaints              []string
 	NodeLabels              []string
+	IPSECPSK                string
 	PrivateRegistry         string
 	AirgapExtraRegistry     []string
 	DisableCCM              bool
@@ -121,6 +123,7 @@ type Control struct {
 	ExtraSchedulerAPIArgs    []string
 	NoLeaderElect            bool
 	JoinURL                  string
+	IPSECPSK                 string
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
 	DisableNPC               bool
@@ -151,6 +154,9 @@ type Control struct {
 	EtcdS3BucketName         string
 	EtcdS3Region             string
 	EtcdS3Folder             string
+	EtcdS3Timeout            time.Duration
+	EtcdS3Insecure           bool
+	ServerNodeName           string
 
 	BindAddress string
 	SANs        []string
@@ -171,6 +177,7 @@ type ControlRuntimeBootstrap struct {
 	PasswdFile         string
 	RequestHeaderCA    string
 	RequestHeaderCAKey string
+	IPSECKey           string
 	EncryptionConfig   string
 }
 
@@ -179,6 +186,7 @@ type ControlRuntime struct {
 
 	HTTPBootstrap          bool
 	APIServerReady         <-chan struct{}
+	AgentReady             <-chan struct{}
 	ETCDReady              <-chan struct{}
 	ClusterControllerStart func(ctx context.Context) error
 

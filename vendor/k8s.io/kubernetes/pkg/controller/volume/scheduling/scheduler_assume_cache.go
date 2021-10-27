@@ -18,6 +18,7 @@ package scheduling
 
 import (
 	"fmt"
+	storagehelpers "k8s.io/component-helpers/storage/volume"
 	"strconv"
 	"sync"
 
@@ -357,7 +358,7 @@ type pvAssumeCache struct {
 
 func pvStorageClassIndexFunc(obj interface{}) ([]string, error) {
 	if pv, ok := obj.(*v1.PersistentVolume); ok {
-		return []string{pv.Spec.StorageClassName}, nil
+		return []string{storagehelpers.GetPersistentVolumeClass(pv)}, nil
 	}
 	return []string{""}, fmt.Errorf("object is not a v1.PersistentVolume: %v", obj)
 }

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/opencontainers/runc/libcontainer/system"
+	"github.com/opencontainers/runc/libcontainer/userns"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
@@ -140,7 +140,7 @@ func startKubelet(cfg *config.Agent) error {
 	if runtimeRoot != "" {
 		argsMap["runtime-cgroups"] = runtimeRoot
 	}
-	if system.RunningInUserNS() {
+	if userns.RunningInUserNS() {
 		argsMap["feature-gates"] = addFeatureGate(argsMap["feature-gates"], "DevicePlugins=false")
 	}
 

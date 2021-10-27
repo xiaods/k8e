@@ -17,17 +17,19 @@ limitations under the License.
 package expand
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
 
 	"k8s.io/klog/v2"
+	"k8s.io/mount-utils"
 	utilexec "k8s.io/utils/exec"
-	"k8s.io/utils/mount"
 
 	authenticationv1 "k8s.io/api/authentication/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -42,6 +44,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	cloudprovider "k8s.io/cloud-provider"
 	"k8s.io/kubernetes/pkg/controller/volume/events"
+	proxyutil "k8s.io/kubernetes/pkg/proxy/util"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/csimigration"
 	"k8s.io/kubernetes/pkg/volume/util"
@@ -95,6 +98,8 @@ type expandController struct {
 	translator CSINameTranslator
 
 	csiMigratedPluginManager csimigration.PluginManager
+
+	filteredDialOptions *proxyutil.FilteredDialOptions
 }
 
 // NewExpandController expands the pvs
@@ -105,7 +110,8 @@ func NewExpandController(
 	cloud cloudprovider.Interface,
 	plugins []volume.VolumePlugin,
 	translator CSINameTranslator,
-	csiMigratedPluginManager csimigration.PluginManager) (ExpandController, error) {
+	csiMigratedPluginManager csimigration.PluginManager,
+	filteredDialOptions *proxyutil.FilteredDialOptions) (ExpandController, error) {
 
 	expc := &expandController{
 		kubeClient:               kubeClient,
@@ -117,6 +123,7 @@ func NewExpandController(
 		queue:                    workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "volume_expand"),
 		translator:               translator,
 		csiMigratedPluginManager: csiMigratedPluginManager,
+		filteredDialOptions:      filteredDialOptions,
 	}
 
 	if err := expc.volumePluginMgr.InitPlugins(plugins, nil, expc); err != nil {
@@ -144,13 +151,18 @@ func NewExpandController(
 				return
 			}
 
-			oldSize := oldPVC.Spec.Resources.Requests[v1.ResourceStorage]
+			oldReq := oldPVC.Spec.Resources.Requests[v1.ResourceStorage]
+			oldCap := oldPVC.Status.Capacity[v1.ResourceStorage]
 			newPVC, ok := new.(*v1.PersistentVolumeClaim)
 			if !ok {
 				return
 			}
-			newSize := newPVC.Spec.Resources.Requests[v1.ResourceStorage]
-			if newSize.Cmp(oldSize) > 0 {
+			newReq := newPVC.Spec.Resources.Requests[v1.ResourceStorage]
+			newCap := newPVC.Status.Capacity[v1.ResourceStorage]
+			// PVC will be enqueued under 2 circumstances
+			// 1. User has increased PVC's request capacity --> volume needs to be expanded
+			// 2. PVC status capacity has been expanded --> claim's bound PV has likely recently gone through filesystem resize, so remove AnnPreResizeCapacity annotation from PV
+			if newReq.Cmp(oldReq) > 0 || newCap.Cmp(oldCap) > 0 {
 				expc.enqueuePVC(new)
 			}
 		},
@@ -166,10 +178,7 @@ func (expc *expandController) enqueuePVC(obj interface{}) {
 		return
 	}
 
-	size := pvc.Spec.Resources.Requests[v1.ResourceStorage]
-	statusSize := pvc.Status.Capacity[v1.ResourceStorage]
-
-	if pvc.Status.Phase == v1.ClaimBound && size.Cmp(statusSize) > 0 {
+	if pvc.Status.Phase == v1.ClaimBound {
 		key, err := kcache.DeletionHandlingMetaNamespaceKeyFunc(pvc)
 		if err != nil {
 			runtime.HandleError(fmt.Errorf("couldn't get key for object %#v: %v", pvc, err))
@@ -214,7 +223,7 @@ func (expc *expandController) syncHandler(key string) error {
 		return err
 	}
 
-	pv, err := getPersistentVolume(pvc, expc.pvLister)
+	pv, err := expc.getPersistentVolume(pvc)
 	if err != nil {
 		klog.V(5).Infof("Error getting Persistent Volume for PVC %q (uid: %q) from informer : %v", util.GetPersistentVolumeClaimQualifiedName(pvc), pvc.UID, err)
 		return err
@@ -224,6 +233,16 @@ func (expc *expandController) syncHandler(key string) error {
 		err := fmt.Errorf("persistent Volume is not bound to PVC being updated : %s", util.ClaimToClaimKey(pvc))
 		klog.V(4).Infof("%v", err)
 		return err
+	}
+
+	pvcRequestSize := pvc.Spec.Resources.Requests[v1.ResourceStorage]
+	pvcStatusSize := pvc.Status.Capacity[v1.ResourceStorage]
+
+	// call expand operation only under two condition
+	// 1. pvc's request size has been expanded and is larger than pvc's current status size
+	// 2. pv has an pre-resize capacity annotation
+	if pvcRequestSize.Cmp(pvcStatusSize) <= 0 && !metav1.HasAnnotation(pv.ObjectMeta, util.AnnPreResizeCapacity) {
+		return nil
 	}
 
 	volumeSpec := volume.NewSpecFromPersistentVolume(pv, false)
@@ -278,6 +297,11 @@ func (expc *expandController) syncHandler(key string) error {
 }
 
 func (expc *expandController) expand(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume, resizerName string) error {
+	// if node expand is complete and pv's annotation can be removed, remove the annotation from pv and return
+	if expc.isNodeExpandComplete(pvc, pv) && metav1.HasAnnotation(pv.ObjectMeta, util.AnnPreResizeCapacity) {
+		return util.DeleteAnnPreResizeCapacity(pv, expc.GetKubeClient())
+	}
+
 	pvc, err := util.MarkResizeInProgressWithResizer(pvc, resizerName, expc.kubeClient)
 	if err != nil {
 		klog.V(5).Infof("Error setting PVC %s in progress with error : %v", util.GetPersistentVolumeClaimQualifiedName(pvc), err)
@@ -319,15 +343,22 @@ func (expc *expandController) runWorker() {
 	}
 }
 
-func getPersistentVolume(pvc *v1.PersistentVolumeClaim, pvLister corelisters.PersistentVolumeLister) (*v1.PersistentVolume, error) {
+func (expc *expandController) getPersistentVolume(pvc *v1.PersistentVolumeClaim) (*v1.PersistentVolume, error) {
 	volumeName := pvc.Spec.VolumeName
-	pv, err := pvLister.Get(volumeName)
+	pv, err := expc.kubeClient.CoreV1().PersistentVolumes().Get(context.TODO(), volumeName, metav1.GetOptions{})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to find PV %q in PV informer cache with error : %v", volumeName, err)
+		return nil, fmt.Errorf("failed to get PV %q: %v", volumeName, err)
 	}
 
 	return pv.DeepCopy(), nil
+}
+
+// isNodeExpandComplete returns true if  pvc.Status.Capacity >= pv.Spec.Capacity
+func (expc *expandController) isNodeExpandComplete(pvc *v1.PersistentVolumeClaim, pv *v1.PersistentVolume) bool {
+	klog.V(4).Infof("pv %q capacity = %v, pvc %s capacity = %v", pv.Name, pv.Spec.Capacity[v1.ResourceStorage], pvc.ObjectMeta.Name, pvc.Status.Capacity[v1.ResourceStorage])
+	pvcCap, pvCap := pvc.Status.Capacity[v1.ResourceStorage], pv.Spec.Capacity[v1.ResourceStorage]
+	return pvcCap.Cmp(pvCap) >= 0
 }
 
 // Implementing VolumeHost interface
@@ -430,4 +461,8 @@ func (expc *expandController) GetEventRecorder() record.EventRecorder {
 func (expc *expandController) GetSubpather() subpath.Interface {
 	// not needed for expand controller
 	return nil
+}
+
+func (expc *expandController) GetFilteredDialOptions() *proxyutil.FilteredDialOptions {
+	return expc.filteredDialOptions
 }

@@ -1,3 +1,4 @@
+//go:build !windows
 // +build !windows
 
 package rootless
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/opencontainers/runc/libcontainer/cgroups"
 	"github.com/pkg/errors"
 	"github.com/rootless-containers/rootlesskit/pkg/child"
 	"github.com/rootless-containers/rootlesskit/pkg/copyup/tmpfssymlink"
@@ -17,6 +19,7 @@ import (
 	"github.com/rootless-containers/rootlesskit/pkg/parent"
 	portbuiltin "github.com/rootless-containers/rootlesskit/pkg/port/builtin"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -91,8 +94,26 @@ func createParentOpt(stateDir string) (*parent.Opt, error) {
 	}
 
 	opt := &parent.Opt{
-		StateDir:    stateDir,
-		CreatePIDNS: true,
+		StateDir:       stateDir,
+		CreatePIDNS:    true,
+		CreateCgroupNS: true,
+		CreateUTSNS:    true,
+		CreateIPCNS:    true,
+	}
+
+	selfCgroupMap, err := cgroups.ParseCgroupFile("/proc/self/cgroup")
+	if err != nil {
+		return nil, err
+	}
+	if selfCgroup2 := selfCgroupMap[""]; selfCgroup2 == "" {
+		logrus.Warnf("enabling cgroup2 is highly recommended, see https://rootlesscontaine.rs/getting-started/common/cgroup2/")
+	} else {
+		selfCgroup2Dir := filepath.Join("/sys/fs/cgroup", selfCgroup2)
+		if unix.Access(selfCgroup2Dir, unix.W_OK) == nil {
+			opt.EvacuateCgroup2 = "k3s_evac"
+		} else {
+			logrus.Warn("cannot set cgroup2 evacuation, make sure to run k3s as a systemd unit")
+		}
 	}
 
 	mtu := 0
@@ -106,7 +127,7 @@ func createParentOpt(stateDir string) (*parent.Opt, error) {
 		return nil, err
 	}
 	debugWriter := &logrusDebugWriter{}
-	opt.NetworkDriver, err = slirp4netns.NewParentDriver(debugWriter, binary, mtu, ipnet, disableHostLoopback, "", false, false)
+	opt.NetworkDriver, err = slirp4netns.NewParentDriver(debugWriter, binary, mtu, ipnet, "tap0", disableHostLoopback, "", false, false, false)
 	if err != nil {
 		return nil, err
 	}

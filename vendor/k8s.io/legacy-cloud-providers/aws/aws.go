@@ -35,7 +35,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
@@ -187,9 +186,25 @@ const ServiceAnnotationLoadBalancerBEProtocol = "service.beta.kubernetes.io/aws-
 // For example: "Key1=Val1,Key2=Val2,KeyNoVal1=,KeyNoVal2"
 const ServiceAnnotationLoadBalancerAdditionalTags = "service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags"
 
+// ServiceAnnotationLoadBalancerHealthCheckProtocol is the annotation used on the service to
+// specify the protocol used for the ELB health check. Supported values are TCP, HTTP, HTTPS
+// Default is TCP if externalTrafficPolicy is Cluster, HTTP if externalTrafficPolicy is Local
+const ServiceAnnotationLoadBalancerHealthCheckProtocol = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol"
+
+// ServiceAnnotationLoadBalancerHealthCheckPort is the annotation used on the service to
+// specify the port used for ELB health check.
+// Default is traffic-port if externalTrafficPolicy is Cluster, healthCheckNodePort if externalTrafficPolicy is Local
+const ServiceAnnotationLoadBalancerHealthCheckPort = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-port"
+
+// ServiceAnnotationLoadBalancerHealthCheckPath is the annotation used on the service to
+// specify the path for the ELB health check when the health check protocol is HTTP/HTTPS
+// Defaults to /healthz if externalTrafficPolicy is Local, / otherwise
+const ServiceAnnotationLoadBalancerHealthCheckPath = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-path"
+
 // ServiceAnnotationLoadBalancerHCHealthyThreshold is the annotation used on
 // the service to specify the number of successive successful health checks
-// required for a backend to be considered healthy for traffic.
+// required for a backend to be considered healthy for traffic. For NLB, healthy-threshold
+// and unhealthy-threshold must be equal.
 const ServiceAnnotationLoadBalancerHCHealthyThreshold = "service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold"
 
 // ServiceAnnotationLoadBalancerHCUnhealthyThreshold is the annotation used
@@ -445,7 +460,7 @@ const (
 // Source: http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumeTypes.html
 const (
 	MinTotalIOPS = 100
-	MaxTotalIOPS = 20000
+	MaxTotalIOPS = 64000
 )
 
 // VolumeOptions specifies capacity and tags for a volume.
@@ -805,8 +820,11 @@ func (p *awsSDKProvider) Compute(regionName string) (EC2, error) {
 	}
 	awsConfig = awsConfig.WithCredentialsChainVerboseErrors(true).
 		WithEndpointResolver(p.cfg.getResolver())
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config:            *awsConfig,
+		SharedConfigState: session.SharedConfigEnable,
+	})
 
-	sess, err := session.NewSession(awsConfig)
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize AWS session: %v", err)
 	}
@@ -827,8 +845,10 @@ func (p *awsSDKProvider) LoadBalancing(regionName string) (ELB, error) {
 	}
 	awsConfig = awsConfig.WithCredentialsChainVerboseErrors(true).
 		WithEndpointResolver(p.cfg.getResolver())
-
-	sess, err := session.NewSession(awsConfig)
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config:            *awsConfig,
+		SharedConfigState: session.SharedConfigEnable,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize AWS session: %v", err)
 	}
@@ -845,8 +865,10 @@ func (p *awsSDKProvider) LoadBalancingV2(regionName string) (ELBV2, error) {
 	}
 	awsConfig = awsConfig.WithCredentialsChainVerboseErrors(true).
 		WithEndpointResolver(p.cfg.getResolver())
-
-	sess, err := session.NewSession(awsConfig)
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config:            *awsConfig,
+		SharedConfigState: session.SharedConfigEnable,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize AWS session: %v", err)
 	}
@@ -864,8 +886,10 @@ func (p *awsSDKProvider) Autoscaling(regionName string) (ASG, error) {
 	}
 	awsConfig = awsConfig.WithCredentialsChainVerboseErrors(true).
 		WithEndpointResolver(p.cfg.getResolver())
-
-	sess, err := session.NewSession(awsConfig)
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config:            *awsConfig,
+		SharedConfigState: session.SharedConfigEnable,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize AWS session: %v", err)
 	}
@@ -895,8 +919,10 @@ func (p *awsSDKProvider) KeyManagement(regionName string) (KMS, error) {
 	}
 	awsConfig = awsConfig.WithCredentialsChainVerboseErrors(true).
 		WithEndpointResolver(p.cfg.getResolver())
-
-	sess, err := session.NewSession(awsConfig)
+	sess, err := session.NewSessionWithOptions(session.Options{
+		Config:            *awsConfig,
+		SharedConfigState: session.SharedConfigEnable,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("unable to initialize AWS session: %v", err)
 	}
@@ -1154,30 +1180,28 @@ func init() {
 			return nil, fmt.Errorf("unable to validate custom endpoint overrides: %v", err)
 		}
 
-		sess, err := session.NewSession(&aws.Config{})
+		sess, err := session.NewSessionWithOptions(session.Options{
+			Config:            aws.Config{},
+			SharedConfigState: session.SharedConfigEnable,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("unable to initialize AWS session: %v", err)
 		}
 
-		var provider credentials.Provider
-		if cfg.Global.RoleARN == "" {
-			provider = &ec2rolecreds.EC2RoleProvider{
-				Client: ec2metadata.New(sess),
-			}
-		} else {
+		var creds *credentials.Credentials
+		if cfg.Global.RoleARN != "" {
 			klog.Infof("Using AWS assumed role %v", cfg.Global.RoleARN)
-			provider = &stscreds.AssumeRoleProvider{
+			provider := &stscreds.AssumeRoleProvider{
 				Client:  sts.New(sess),
 				RoleARN: cfg.Global.RoleARN,
 			}
-		}
 
-		creds := credentials.NewChainCredentials(
-			[]credentials.Provider{
-				&credentials.EnvProvider{},
-				provider,
-				&credentials.SharedCredentialsProvider{},
-			})
+			creds = credentials.NewChainCredentials(
+				[]credentials.Provider{
+					&credentials.EnvProvider{},
+					provider,
+				})
+		}
 
 		aws := newAWSSDKProvider(creds, cfg)
 		return newAWSCloud(*cfg, aws)
@@ -2733,12 +2757,12 @@ func (c *Cloud) GetVolumeLabels(volumeName KubernetesVolumeID) (map[string]strin
 		return nil, fmt.Errorf("volume did not have AZ information: %q", aws.StringValue(info.VolumeId))
 	}
 
-	labels[v1.LabelZoneFailureDomain] = az
+	labels[v1.LabelTopologyZone] = az
 	region, err := azToRegion(az)
 	if err != nil {
 		return nil, err
 	}
-	labels[v1.LabelZoneRegion] = region
+	labels[v1.LabelTopologyRegion] = region
 
 	return labels, nil
 }
@@ -3510,14 +3534,6 @@ func splitCommaSeparatedString(commaSeparatedString string) []string {
 	return result
 }
 
-func parseStringAnnotation(annotations map[string]string, annotation string, value *string) bool {
-	if v, ok := annotations[annotation]; ok {
-		*value = v
-		return true
-	}
-	return false
-}
-
 // parses comma separated values from annotation into string slice, returns true if annotation exists
 func parseStringSliceAnnotation(annotations map[string]string, annotation string, value *[]string) bool {
 	rawValue := ""
@@ -3799,6 +3815,83 @@ func (c *Cloud) getSubnetCidrs(subnetIDs []string) ([]string, error) {
 	return cidrs, nil
 }
 
+func parseStringAnnotation(annotations map[string]string, annotation string, value *string) bool {
+	if v, ok := annotations[annotation]; ok {
+		*value = v
+		return true
+	}
+	return false
+}
+
+func parseInt64Annotation(annotations map[string]string, annotation string, value *int64) (bool, error) {
+	if v, ok := annotations[annotation]; ok {
+		parsed, err := strconv.ParseInt(v, 10, 0)
+		if err != nil {
+			return true, fmt.Errorf("failed to parse annotation %v=%v", annotation, v)
+		}
+		*value = parsed
+		return true, nil
+	}
+	return false, nil
+}
+
+func (c *Cloud) buildNLBHealthCheckConfiguration(svc *v1.Service) (healthCheckConfig, error) {
+	hc := healthCheckConfig{
+		Port:               defaultHealthCheckPort,
+		Path:               defaultHealthCheckPath,
+		Protocol:           elbv2.ProtocolEnumTcp,
+		Interval:           defaultNlbHealthCheckInterval,
+		Timeout:            defaultNlbHealthCheckTimeout,
+		HealthyThreshold:   defaultNlbHealthCheckThreshold,
+		UnhealthyThreshold: defaultNlbHealthCheckThreshold,
+	}
+	if svc.Spec.ExternalTrafficPolicy == v1.ServiceExternalTrafficPolicyTypeLocal {
+		path, port := servicehelpers.GetServiceHealthCheckPathPort(svc)
+		hc = healthCheckConfig{
+			Port:               strconv.Itoa(int(port)),
+			Path:               path,
+			Protocol:           elbv2.ProtocolEnumHttp,
+			Interval:           10,
+			Timeout:            10,
+			HealthyThreshold:   2,
+			UnhealthyThreshold: 2,
+		}
+	}
+	if parseStringAnnotation(svc.Annotations, ServiceAnnotationLoadBalancerHealthCheckProtocol, &hc.Protocol) {
+		hc.Protocol = strings.ToUpper(hc.Protocol)
+	}
+	switch hc.Protocol {
+	case elbv2.ProtocolEnumHttp, elbv2.ProtocolEnumHttps:
+		parseStringAnnotation(svc.Annotations, ServiceAnnotationLoadBalancerHealthCheckPath, &hc.Path)
+	case elbv2.ProtocolEnumTcp:
+		hc.Path = ""
+	default:
+		return healthCheckConfig{}, fmt.Errorf("Unsupported health check protocol %v", hc.Protocol)
+	}
+
+	parseStringAnnotation(svc.Annotations, ServiceAnnotationLoadBalancerHealthCheckPort, &hc.Port)
+
+	if _, err := parseInt64Annotation(svc.Annotations, ServiceAnnotationLoadBalancerHCInterval, &hc.Interval); err != nil {
+		return healthCheckConfig{}, err
+	}
+	if _, err := parseInt64Annotation(svc.Annotations, ServiceAnnotationLoadBalancerHCTimeout, &hc.Timeout); err != nil {
+		return healthCheckConfig{}, err
+	}
+	if _, err := parseInt64Annotation(svc.Annotations, ServiceAnnotationLoadBalancerHCHealthyThreshold, &hc.HealthyThreshold); err != nil {
+		return healthCheckConfig{}, err
+	}
+	if _, err := parseInt64Annotation(svc.Annotations, ServiceAnnotationLoadBalancerHCUnhealthyThreshold, &hc.UnhealthyThreshold); err != nil {
+		return healthCheckConfig{}, err
+	}
+
+	if hc.Port != defaultHealthCheckPort {
+		if _, err := strconv.ParseInt(hc.Port, 10, 0); err != nil {
+			return healthCheckConfig{}, fmt.Errorf("Invalid health check port '%v'", hc.Port)
+		}
+	}
+	return hc, nil
+}
+
 // EnsureLoadBalancer implements LoadBalancer.EnsureLoadBalancer
 func (c *Cloud) EnsureLoadBalancer(ctx context.Context, clusterName string, apiService *v1.Service, nodes []*v1.Node) (*v1.LoadBalancerStatus, error) {
 	annotations := apiService.Annotations
@@ -3837,11 +3930,10 @@ func (c *Cloud) EnsureLoadBalancer(ctx context.Context, clusterName string, apiS
 				FrontendProtocol: string(port.Protocol),
 				TrafficPort:      int64(port.NodePort),
 				TrafficProtocol:  string(port.Protocol),
-
-				// if externalTrafficPolicy == "Local", we'll override the
-				// health check later
-				HealthCheckPort:     int64(port.NodePort),
-				HealthCheckProtocol: elbv2.ProtocolEnumTcp,
+			}
+			var err error
+			if portMapping.HealthCheckConfig, err = c.buildNLBHealthCheckConfiguration(apiService); err != nil {
+				return nil, err
 			}
 
 			certificateARN := annotations[ServiceAnnotationLoadBalancerCertificate]
@@ -3889,15 +3981,6 @@ func (c *Cloud) EnsureLoadBalancer(ctx context.Context, clusterName string, apiS
 	}
 
 	if isNLB(annotations) {
-
-		if path, healthCheckNodePort := servicehelpers.GetServiceHealthCheckPathPort(apiService); path != "" {
-			for i := range v2Mappings {
-				v2Mappings[i].HealthCheckPort = int64(healthCheckNodePort)
-				v2Mappings[i].HealthCheckPath = path
-				v2Mappings[i].HealthCheckProtocol = elbv2.ProtocolEnumHttp
-			}
-		}
-
 		// Find the subnets that the ELB will live in
 		subnetIDs, err := c.getLoadBalancerSubnets(apiService, internalELB)
 		if err != nil {
@@ -4154,23 +4237,26 @@ func (c *Cloud) EnsureLoadBalancer(ctx context.Context, clusterName string, apiS
 		}
 	}
 
+	// We only configure a TCP health-check on the first port
+	var tcpHealthCheckPort int32
+	for _, listener := range listeners {
+		if listener.InstancePort == nil {
+			continue
+		}
+		tcpHealthCheckPort = int32(*listener.InstancePort)
+		break
+	}
 	if path, healthCheckNodePort := servicehelpers.GetServiceHealthCheckPathPort(apiService); path != "" {
 		klog.V(4).Infof("service %v (%v) needs health checks on :%d%s)", apiService.Name, loadBalancerName, healthCheckNodePort, path)
+		if annotations[ServiceAnnotationLoadBalancerHealthCheckPort] == defaultHealthCheckPort {
+			healthCheckNodePort = tcpHealthCheckPort
+		}
 		err = c.ensureLoadBalancerHealthCheck(loadBalancer, "HTTP", healthCheckNodePort, path, annotations)
 		if err != nil {
 			return nil, fmt.Errorf("Failed to ensure health check for localized service %v on node port %v: %q", loadBalancerName, healthCheckNodePort, err)
 		}
 	} else {
 		klog.V(4).Infof("service %v does not need custom health checks", apiService.Name)
-		// We only configure a TCP health-check on the first port
-		var tcpHealthCheckPort int32
-		for _, listener := range listeners {
-			if listener.InstancePort == nil {
-				continue
-			}
-			tcpHealthCheckPort = int32(*listener.InstancePort)
-			break
-		}
 		annotationProtocol := strings.ToLower(annotations[ServiceAnnotationLoadBalancerBEProtocol])
 		var hcProtocol string
 		if annotationProtocol == "https" || annotationProtocol == "ssl" {

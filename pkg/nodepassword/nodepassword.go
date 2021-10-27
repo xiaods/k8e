@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	coreclient "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	coreclient "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/authenticator/hash"
 	"github.com/xiaods/k8e/pkg/passwd"
