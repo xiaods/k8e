@@ -19,12 +19,28 @@ limitations under the License.
 package helm
 
 import (
+	"context"
+	"time"
+
+	clientset "github.com/k3s-io/helm-controller/pkg/generated/clientset/versioned"
+	scheme "github.com/k3s-io/helm-controller/pkg/generated/clientset/versioned/scheme"
+	informers "github.com/k3s-io/helm-controller/pkg/generated/informers/externalversions"
 	"github.com/rancher/wrangler/pkg/generic"
+	"github.com/rancher/wrangler/pkg/schemes"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 )
 
+func init() {
+	scheme.AddToScheme(schemes.All)
+}
+
 type Factory struct {
-	*generic.Factory
+	synced            bool
+	informerFactory   informers.SharedInformerFactory
+	clientset         clientset.Interface
+	controllerManager *generic.ControllerManager
+	threadiness       map[schema.GroupVersionKind]int
 }
 
 func NewFactoryFromConfigOrDie(config *rest.Config) *Factory {
@@ -45,23 +61,66 @@ func NewFactoryFromConfigWithNamespace(config *rest.Config, namespace string) (*
 	})
 }
 
-type FactoryOptions = generic.FactoryOptions
-
-func NewFactoryFromConfigWithOptions(config *rest.Config, opts *FactoryOptions) (*Factory, error) {
-	f, err := generic.NewFactoryFromConfigWithOptions(config, opts)
-	return &Factory{
-		Factory: f,
-	}, err
+type FactoryOptions struct {
+	Namespace string
+	Resync    time.Duration
 }
 
-func NewFactoryFromConfigWithOptionsOrDie(config *rest.Config, opts *FactoryOptions) *Factory {
-	f, err := NewFactoryFromConfigWithOptions(config, opts)
-	if err != nil {
-		panic(err)
+func NewFactoryFromConfigWithOptions(config *rest.Config, opts *FactoryOptions) (*Factory, error) {
+	if opts == nil {
+		opts = &FactoryOptions{}
 	}
-	return f
+
+	cs, err := clientset.NewForConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	resync := opts.Resync
+	if resync == 0 {
+		resync = 2 * time.Hour
+	}
+
+	if opts.Namespace == "" {
+		informerFactory := informers.NewSharedInformerFactory(cs, resync)
+		return NewFactory(cs, informerFactory), nil
+	}
+
+	informerFactory := informers.NewSharedInformerFactoryWithOptions(cs, resync, informers.WithNamespace(opts.Namespace))
+	return NewFactory(cs, informerFactory), nil
+}
+
+func NewFactory(clientset clientset.Interface, informerFactory informers.SharedInformerFactory) *Factory {
+	return &Factory{
+		threadiness:       map[schema.GroupVersionKind]int{},
+		controllerManager: &generic.ControllerManager{},
+		clientset:         clientset,
+		informerFactory:   informerFactory,
+	}
+}
+
+func (c *Factory) Controllers() map[schema.GroupVersionKind]*generic.Controller {
+	return c.controllerManager.Controllers()
+}
+
+func (c *Factory) SetThreadiness(gvk schema.GroupVersionKind, threadiness int) {
+	c.threadiness[gvk] = threadiness
+}
+
+func (c *Factory) Sync(ctx context.Context) error {
+	c.informerFactory.Start(ctx.Done())
+	c.informerFactory.WaitForCacheSync(ctx.Done())
+	return nil
+}
+
+func (c *Factory) Start(ctx context.Context, defaultThreadiness int) error {
+	if err := c.Sync(ctx); err != nil {
+		return err
+	}
+
+	return c.controllerManager.Start(ctx, defaultThreadiness, c.threadiness)
 }
 
 func (c *Factory) Helm() Interface {
-	return New(c.ControllerFactory())
+	return New(c.controllerManager, c.informerFactory.Helm(), c.clientset)
 }

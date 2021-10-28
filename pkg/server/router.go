@@ -18,12 +18,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
-	coreclient "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
-	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/version"
+	coreclient "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/json"
 )
 
@@ -38,7 +38,7 @@ func router(ctx context.Context, config *Config) http.Handler {
 	prefix := "/v1-" + version.Program
 	authed := mux.NewRouter()
 	authed.Use(authMiddleware(serverConfig, version.Program+":agent"))
-	authed.NotFoundHandler = serverConfig.Runtime.Handler
+	authed.NotFoundHandler = apiserver(serverConfig.Runtime)
 	authed.Path(prefix + "/serving-kubelet.crt").Handler(servingKubeletCert(serverConfig, serverConfig.Runtime.ServingKubeletKey, nodeAuth))
 	authed.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(serverConfig, serverConfig.Runtime.ClientKubeletKey, nodeAuth))
 	authed.Path(prefix + "/client-kube-proxy.crt").Handler(fileHandler(serverConfig.Runtime.ClientKubeProxyCert, serverConfig.Runtime.ClientKubeProxyKey))
@@ -68,6 +68,20 @@ func router(ctx context.Context, config *Config) http.Handler {
 	router.Path("/ping").Handler(ping())
 
 	return router
+}
+
+func apiserver(runtime *config.ControlRuntime) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		if runtime != nil && runtime.APIServer != nil {
+			runtime.APIServer.ServeHTTP(resp, req)
+		} else {
+			data := []byte("apiserver not ready")
+			resp.WriteHeader(http.StatusInternalServerError)
+			resp.Header().Set("Content-Type", "text/plain")
+			resp.Header().Set("Content-length", strconv.Itoa(len(data)))
+			resp.Write(data)
+		}
+	})
 }
 
 func cacerts(serverCA string) http.Handler {
@@ -262,7 +276,10 @@ func configHandler(server *config.Control) http.Handler {
 			return
 		}
 		resp.Header().Set("content-type", "application/json")
-		json.NewEncoder(resp).Encode(server)
+		if err := json.NewEncoder(resp).Encode(server); err != nil {
+			logrus.Errorf("Failed to encode agent config: %v", err)
+			resp.WriteHeader(http.StatusInternalServerError)
+		}
 	})
 }
 
@@ -333,7 +350,7 @@ func verifyLocalPassword(ctx context.Context, config *Config, once *sync.Once, n
 	if config.Rootless {
 		nodePasswordRoot = filepath.Join(config.ControlConfig.DataDir, "agent")
 	}
-	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
+	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "rancher", "node")
 	nodePasswordFile := filepath.Join(nodeConfigPath, "password")
 
 	passBytes, err := ioutil.ReadFile(nodePasswordFile)

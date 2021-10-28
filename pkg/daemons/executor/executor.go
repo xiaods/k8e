@@ -9,6 +9,8 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/xiaods/k8e/pkg/cli/cmds"
+	daemonconfig "github.com/xiaods/k8e/pkg/daemons/config"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 )
 
@@ -17,13 +19,16 @@ var (
 )
 
 type Executor interface {
+	Bootstrap(ctx context.Context, nodeConfig *daemonconfig.Node, cfg cmds.Agent) error
 	Kubelet(args []string) error
 	KubeProxy(args []string) error
-	APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) (authenticator.Request, http.Handler, error)
+	APIServerHandlers() (authenticator.Request, http.Handler, error)
+	APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) error
 	Scheduler(apiReady <-chan struct{}, args []string) error
 	ControllerManager(apiReady <-chan struct{}, args []string) error
 	CurrentETCDOptions() (InitialOptions, error)
 	ETCD(args ETCDConfig) error
+	CloudControllerManager(ccmRBACReady <-chan struct{}, args []string) error
 }
 
 type ETCDConfig struct {
@@ -81,6 +86,10 @@ func Set(driver Executor) {
 	executor = driver
 }
 
+func Bootstrap(ctx context.Context, nodeConfig *daemonconfig.Node, cfg cmds.Agent) error {
+	return executor.Bootstrap(ctx, nodeConfig, cfg)
+}
+
 func Kubelet(args []string) error {
 	return executor.Kubelet(args)
 }
@@ -89,7 +98,11 @@ func KubeProxy(args []string) error {
 	return executor.KubeProxy(args)
 }
 
-func APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) (authenticator.Request, http.Handler, error) {
+func APIServerHandlers() (authenticator.Request, http.Handler, error) {
+	return executor.APIServerHandlers()
+}
+
+func APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) error {
 	return executor.APIServer(ctx, etcdReady, args)
 }
 
@@ -107,4 +120,8 @@ func CurrentETCDOptions() (InitialOptions, error) {
 
 func ETCD(args ETCDConfig) error {
 	return executor.ETCD(args)
+}
+
+func CloudControllerManager(ccmRBACReady <-chan struct{}, args []string) error {
+	return executor.CloudControllerManager(ccmRBACReady, args)
 }

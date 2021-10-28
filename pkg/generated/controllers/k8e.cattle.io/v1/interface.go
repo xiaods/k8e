@@ -18,30 +18,31 @@ limitations under the License.
 package v1
 
 import (
-	"github.com/rancher/lasso/pkg/controller"
-	"github.com/rancher/wrangler/pkg/schemes"
+	"github.com/rancher/wrangler/pkg/generic"
 	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	clientset "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1"
+	informers "github.com/xiaods/k8e/pkg/generated/informers/externalversions/k8e.cattle.io/v1"
 )
-
-func init() {
-	schemes.Register(v1.AddToScheme)
-}
 
 type Interface interface {
 	Addon() AddonController
 }
 
-func New(controllerFactory controller.SharedControllerFactory) Interface {
+func New(controllerManager *generic.ControllerManager, client clientset.K8eV1Interface,
+	informers informers.Interface) Interface {
 	return &version{
-		controllerFactory: controllerFactory,
+		controllerManager: controllerManager,
+		client:            client,
+		informers:         informers,
 	}
 }
 
 type version struct {
-	controllerFactory controller.SharedControllerFactory
+	controllerManager *generic.ControllerManager
+	informers         informers.Interface
+	client            clientset.K8eV1Interface
 }
 
 func (c *version) Addon() AddonController {
-	return NewAddonController(schema.GroupVersionKind{Group: "k8e.cattle.io", Version: "v1", Kind: "Addon"}, "addons", true, c.controllerFactory)
+	return NewAddonController(v1.SchemeGroupVersion.WithKind("Addon"), c.controllerManager, c.client, c.informers.Addons())
 }

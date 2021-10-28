@@ -34,13 +34,6 @@ const (
 	writeLock lockType = unix.F_WRLCK
 )
 
-type cmdType int
-
-const (
-	tryLock  cmdType = unix.F_SETLK
-	waitLock cmdType = unix.F_SETLKW
-)
-
 type inode = uint64
 
 type inodeLock struct {
@@ -97,7 +90,7 @@ func (f *Flock) lock(locked *bool, flag lockType) error {
 		defer f.ensureFhState()
 	}
 
-	if _, err := f.doLock(waitLock, flag, true); err != nil {
+	if _, err := f.doLock(flag, true); err != nil {
 		return err
 	}
 
@@ -105,7 +98,7 @@ func (f *Flock) lock(locked *bool, flag lockType) error {
 	return nil
 }
 
-func (f *Flock) doLock(cmd cmdType, lt lockType, blocking bool) (bool, error) {
+func (f *Flock) doLock(lt lockType, blocking bool) (bool, error) {
 	// POSIX locks apply per inode and process, and the lock for an inode is
 	// released when *any* descriptor for that inode is closed. So we need to
 	// synchronize access to each inode internally, and must serialize lock and
@@ -150,13 +143,10 @@ func (f *Flock) doLock(cmd cmdType, lt lockType, blocking bool) (bool, error) {
 		wait <- f
 	}
 
-	err = setlkw(f.fh.Fd(), cmd, lt)
+	err = setlkw(f.fh.Fd(), lt)
 
 	if err != nil {
 		f.doUnlock()
-		if cmd == tryLock && err == unix.EACCES {
-			return false, nil
-		}
 		return false, err
 	}
 
@@ -196,7 +186,7 @@ func (f *Flock) doUnlock() (err error) {
 	mu.Unlock()
 
 	if owner == f {
-		err = setlkw(f.fh.Fd(), waitLock, unix.F_UNLCK)
+		err = setlkw(f.fh.Fd(), unix.F_UNLCK)
 	}
 
 	mu.Lock()
@@ -256,7 +246,7 @@ func (f *Flock) try(locked *bool, flag lockType) (bool, error) {
 		defer f.ensureFhState()
 	}
 
-	haslock, err := f.doLock(tryLock, flag, false)
+	haslock, err := f.doLock(flag, false)
 	if err != nil {
 		return false, err
 	}
@@ -265,10 +255,10 @@ func (f *Flock) try(locked *bool, flag lockType) (bool, error) {
 	return haslock, nil
 }
 
-// setlkw calls FcntlFlock with cmd for the entire file indicated by fd.
-func setlkw(fd uintptr, cmd cmdType, lt lockType) error {
+// setlkw calls FcntlFlock with F_SETLKW for the entire file indicated by fd.
+func setlkw(fd uintptr, lt lockType) error {
 	for {
-		err := unix.FcntlFlock(fd, int(cmd), &unix.Flock_t{
+		err := unix.FcntlFlock(fd, unix.F_SETLKW, &unix.Flock_t{
 			Type:   int16(lt),
 			Whence: io.SeekStart,
 			Start:  0,

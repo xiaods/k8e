@@ -7,11 +7,10 @@ import (
 	"io/ioutil"
 	"strings"
 
-	jsonpatch "github.com/evanphx/json-patch"
-	"github.com/pkg/errors"
 	data2 "github.com/rancher/wrangler/pkg/data"
+
+	"github.com/pkg/errors"
 	"github.com/rancher/wrangler/pkg/data/convert"
-	"github.com/rancher/wrangler/pkg/objectset"
 	patch2 "github.com/rancher/wrangler/pkg/patch"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -30,23 +29,8 @@ const (
 	LabelApplied = "objectset.rio.cattle.io/applied"
 )
 
-var (
-	knownListKeys = map[string]bool{
-		"apiVersion":    true,
-		"containerPort": true,
-		"devicePath":    true,
-		"ip":            true,
-		"kind":          true,
-		"mountPath":     true,
-		"name":          true,
-		"port":          true,
-		"topologyKey":   true,
-		"type":          true,
-	}
-)
-
 func prepareObjectForCreate(gvk schema.GroupVersionKind, obj runtime.Object) (runtime.Object, error) {
-	serialized, err := serializeApplied(obj)
+	serialized, err := json.Marshal(obj)
 	if err != nil {
 		return nil, err
 	}
@@ -132,11 +116,6 @@ func sanitizePatch(patch []byte, removeObjectSetAnnotation bool) ([]byte, error)
 		delete(data, "apiVersion")
 	}
 
-	if _, ok := data["status"]; ok {
-		mod = true
-		delete(data, "status")
-	}
-
 	if deleted := removeCreationTimestamp(data); deleted {
 		mod = true
 	}
@@ -169,7 +148,7 @@ func sanitizePatch(patch []byte, removeObjectSetAnnotation bool) ([]byte, error)
 	return json.Marshal(data)
 }
 
-func applyPatch(gvk schema.GroupVersionKind, reconciler Reconciler, patcher Patcher, debugID string, ignoreOriginal bool, oldObject, newObject runtime.Object, diffPatches [][]byte) (bool, error) {
+func applyPatch(gvk schema.GroupVersionKind, reconciler Reconciler, patcher Patcher, debugID string, oldObject, newObject runtime.Object) (bool, error) {
 	oldMetadata, err := meta.Accessor(oldObject)
 	if err != nil {
 		return false, err
@@ -179,17 +158,12 @@ func applyPatch(gvk schema.GroupVersionKind, reconciler Reconciler, patcher Patc
 	if err != nil {
 		return false, err
 	}
-
-	if ignoreOriginal {
-		original = nil
-	}
-
 	current, err := json.Marshal(oldObject)
 	if err != nil {
 		return false, err
 	}
 
-	patchType, patch, err := doPatch(gvk, original, modified, current, diffPatches)
+	patchType, patch, err := doPatch(gvk, original, modified, current)
 	if err != nil {
 		return false, errors.Wrap(err, "patch generation")
 	}
@@ -246,18 +220,7 @@ func (o *desiredSet) compareObjects(gvk schema.GroupVersionKind, reconciler Reco
 		o.plan.Objects = append(o.plan.Objects, oldObject)
 	}
 
-	diffPatches := o.diffPatches[patchKey{
-		GroupVersionKind: gvk,
-		ObjectKey: objectset.ObjectKey{
-			Namespace: oldMetadata.GetNamespace(),
-			Name:      oldMetadata.GetName(),
-		},
-	}]
-	diffPatches = append(diffPatches, o.diffPatches[patchKey{
-		GroupVersionKind: gvk,
-	}]...)
-
-	if ran, err := applyPatch(gvk, reconciler, patcher, debugID, o.ignorePreviousApplied, oldObject, newObject, diffPatches); err != nil {
+	if ran, err := applyPatch(gvk, reconciler, patcher, debugID, oldObject, newObject); err != nil {
 		return err
 	} else if !ran {
 		logrus.Debugf("DesiredSet - No change(2) %s %s/%s for %s", gvk, oldMetadata.GetNamespace(), oldMetadata.GetName(), debugID)
@@ -333,61 +296,10 @@ func appliedFromAnnotation(str string) []byte {
 	return b
 }
 
-func pruneList(data []interface{}) []interface{} {
-	result := make([]interface{}, 0, len(data))
-	for _, v := range data {
-		switch typed := v.(type) {
-		case map[string]interface{}:
-			result = append(result, pruneValues(typed, true))
-		case []interface{}:
-			result = append(result, pruneList(typed))
-		default:
-			result = append(result, v)
-		}
-	}
-	return result
-}
-
-func pruneValues(data map[string]interface{}, isList bool) map[string]interface{} {
-	result := map[string]interface{}{}
-	for k, v := range data {
-		switch typed := v.(type) {
-		case map[string]interface{}:
-			result[k] = pruneValues(typed, false)
-		case []interface{}:
-			result[k] = pruneList(typed)
-		default:
-			if isList && knownListKeys[k] {
-				result[k] = v
-			} else {
-				switch x := v.(type) {
-				case string:
-					if len(x) > 64 {
-						result[k] = x[:64]
-					} else {
-						result[k] = v
-					}
-				case []byte:
-					result[k] = nil
-				default:
-					result[k] = v
-				}
-			}
-		}
-	}
-	return result
-}
-
-func serializeApplied(obj runtime.Object) ([]byte, error) {
-	data, err := convert.EncodeToMap(obj)
-	if err != nil {
-		return nil, err
-	}
-	data = pruneValues(data, false)
-	return json.Marshal(data)
-}
-
 func appliedToAnnotation(b []byte) string {
+	if len(b) < 1024 {
+		return string(b)
+	}
 	buf := &bytes.Buffer{}
 	w := gzip.NewWriter(buf)
 	if _, err := w.Write(b); err != nil {
@@ -399,42 +311,11 @@ func appliedToAnnotation(b []byte) string {
 	return base64.RawStdEncoding.EncodeToString(buf.Bytes())
 }
 
-func stripIgnores(original, modified, current []byte, patches [][]byte) ([]byte, []byte, []byte, error) {
-	for _, patch := range patches {
-		patch, err := jsonpatch.DecodePatch(patch)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		if len(original) > 0 {
-			b, err := patch.Apply(original)
-			if err == nil {
-				original = b
-			}
-		}
-		b, err := patch.Apply(modified)
-		if err == nil {
-			modified = b
-		}
-		b, err = patch.Apply(current)
-		if err == nil {
-			current = b
-		}
-	}
-
-	return original, modified, current, nil
-}
-
 // doPatch is adapted from "kubectl apply"
-func doPatch(gvk schema.GroupVersionKind, original, modified, current []byte, diffPatch [][]byte) (types.PatchType, []byte, error) {
-	var (
-		patchType types.PatchType
-		patch     []byte
-	)
-
-	original, modified, current, err := stripIgnores(original, modified, current, diffPatch)
-	if err != nil {
-		return patchType, nil, err
-	}
+func doPatch(gvk schema.GroupVersionKind, original, modified, current []byte) (types.PatchType, []byte, error) {
+	var patchType types.PatchType
+	var patch []byte
+	var lookupPatchMeta strategicpatch.LookupPatchMeta
 
 	patchType, lookupPatchMeta, err := patch2.GetMergeStyle(gvk)
 	if err != nil {

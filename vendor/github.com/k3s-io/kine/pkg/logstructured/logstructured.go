@@ -17,7 +17,6 @@ type Log interface {
 	Watch(ctx context.Context, prefix string) <-chan []*server.Event
 	Count(ctx context.Context, prefix string) (int64, int64, error)
 	Append(ctx context.Context, event *server.Event) (int64, error)
-	DbSize(ctx context.Context) (int64, error)
 }
 
 type LogStructured struct {
@@ -367,8 +366,4 @@ func filter(events []*server.Event, rev int64) []*server.Event {
 	}
 
 	return events
-}
-
-func (l *LogStructured) DbSize(ctx context.Context) (int64, error) {
-	return l.log.DbSize(ctx)
 }

@@ -1,6 +1,7 @@
 // Apache License v2.0 (copyright Cloud Native Labs & Rancher Labs)
 // - modified from https://github.com/cloudnativelabs/kube-router/blob/73b1b03b32c5755b240f6c077bb097abe3888314/pkg/controllers/network_policy_controller_test.go
 
+//go:build !windows
 // +build !windows
 
 package netpol
@@ -424,6 +425,7 @@ func TestNewNetworkPolicySelectors(t *testing.T) {
 func TestNetworkPolicyBuilder(t *testing.T) {
 	port, port1 := intstr.FromInt(30000), intstr.FromInt(34000)
 	ingressPort := intstr.FromInt(37000)
+	endPort, endPort1 := int32(31000), int32(35000)
 	testCases := []tNetpolTestCase{
 		{
 			name: "Simple Egress Destination Port",
@@ -502,19 +504,21 @@ func TestNetworkPolicyBuilder(t *testing.T) {
 					{
 						Ports: []netv1.NetworkPolicyPort{
 							{
-								Port: &port,
+								Port:    &port,
+								EndPort: &endPort,
 							},
 							{
-								Port: &port1,
+								Port:    &port1,
+								EndPort: &endPort1,
 							},
 						},
 					},
 				},
 			},
-			expectedRule: "-A KUBE-NWPLCY-SQYQ7PVNG6A6Q3DU -m comment --comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\" --dport 30000 -j MARK --set-xmark 0x10000/0x10000 \n" +
-				"-A KUBE-NWPLCY-SQYQ7PVNG6A6Q3DU -m comment --comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\" --dport 30000 -m mark --mark 0x10000/0x10000 -j RETURN \n" +
-				"-A KUBE-NWPLCY-SQYQ7PVNG6A6Q3DU -m comment --comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\" --dport 34000 -j MARK --set-xmark 0x10000/0x10000 \n" +
-				"-A KUBE-NWPLCY-SQYQ7PVNG6A6Q3DU -m comment --comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\" --dport 34000 -m mark --mark 0x10000/0x10000 -j RETURN \n",
+			expectedRule: "-A KUBE-NWPLCY-SQYQ7PVNG6A6Q3DU -m comment --comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\" --dport 30000:31000 -j MARK --set-xmark 0x10000/0x10000 \n" +
+				"-A KUBE-NWPLCY-SQYQ7PVNG6A6Q3DU -m comment --comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\" --dport 30000:31000 -m mark --mark 0x10000/0x10000 -j RETURN \n" +
+				"-A KUBE-NWPLCY-SQYQ7PVNG6A6Q3DU -m comment --comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\" --dport 34000:35000 -j MARK --set-xmark 0x10000/0x10000 \n" +
+				"-A KUBE-NWPLCY-SQYQ7PVNG6A6Q3DU -m comment --comment \"rule to ACCEPT traffic from source pods to all destinations selected by policy name: simple-egress-pr namespace nsA\" --dport 34000:35000 -m mark --mark 0x10000/0x10000 -j RETURN \n",
 		},
 		{
 			name: "Port > EndPort (invalid condition, should drop endport)",
@@ -532,7 +536,8 @@ func TestNetworkPolicyBuilder(t *testing.T) {
 					{
 						Ports: []netv1.NetworkPolicyPort{
 							{
-								Port: &port1,
+								Port:    &port1,
+								EndPort: &endPort,
 							},
 						},
 					},

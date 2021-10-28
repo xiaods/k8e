@@ -23,8 +23,9 @@ import (
 	"time"
 
 	v1 "github.com/k3s-io/helm-controller/pkg/apis/helm.cattle.io/v1"
-	"github.com/rancher/lasso/pkg/client"
-	"github.com/rancher/lasso/pkg/controller"
+	clientset "github.com/k3s-io/helm-controller/pkg/generated/clientset/versioned/typed/helm.cattle.io/v1"
+	informers "github.com/k3s-io/helm-controller/pkg/generated/informers/externalversions/helm.cattle.io/v1"
+	listers "github.com/k3s-io/helm-controller/pkg/generated/listers/helm.cattle.io/v1"
 	"github.com/rancher/wrangler/pkg/apply"
 	"github.com/rancher/wrangler/pkg/condition"
 	"github.com/rancher/wrangler/pkg/generic"
@@ -77,22 +78,18 @@ type HelmChartCache interface {
 type HelmChartIndexer func(obj *v1.HelmChart) ([]string, error)
 
 type helmChartController struct {
-	controller    controller.SharedController
-	client        *client.Client
-	gvk           schema.GroupVersionKind
-	groupResource schema.GroupResource
+	controllerManager *generic.ControllerManager
+	clientGetter      clientset.HelmChartsGetter
+	informer          informers.HelmChartInformer
+	gvk               schema.GroupVersionKind
 }
 
-func NewHelmChartController(gvk schema.GroupVersionKind, resource string, namespaced bool, controller controller.SharedControllerFactory) HelmChartController {
-	c := controller.ForResourceKind(gvk.GroupVersion().WithResource(resource), gvk.Kind, namespaced)
+func NewHelmChartController(gvk schema.GroupVersionKind, controllerManager *generic.ControllerManager, clientGetter clientset.HelmChartsGetter, informer informers.HelmChartInformer) HelmChartController {
 	return &helmChartController{
-		controller: c,
-		client:     c.Client(),
-		gvk:        gvk,
-		groupResource: schema.GroupResource{
-			Group:    gvk.Group,
-			Resource: resource,
-		},
+		controllerManager: controllerManager,
+		clientGetter:      clientGetter,
+		informer:          informer,
+		gvk:               gvk,
 	}
 }
 
@@ -139,11 +136,12 @@ func UpdateHelmChartDeepCopyOnChange(client HelmChartClient, obj *v1.HelmChart, 
 }
 
 func (c *helmChartController) AddGenericHandler(ctx context.Context, name string, handler generic.Handler) {
-	c.controller.RegisterHandler(ctx, name, controller.SharedControllerHandlerFunc(handler))
+	c.controllerManager.AddHandler(ctx, c.gvk, c.informer.Informer(), name, handler)
 }
 
 func (c *helmChartController) AddGenericRemoveHandler(ctx context.Context, name string, handler generic.Handler) {
-	c.AddGenericHandler(ctx, name, generic.NewRemoveHandler(name, c.Updater(), handler))
+	removeHandler := generic.NewRemoveHandler(name, c.Updater(), handler)
+	c.controllerManager.AddHandler(ctx, c.gvk, c.informer.Informer(), name, removeHandler)
 }
 
 func (c *helmChartController) OnChange(ctx context.Context, name string, sync HelmChartHandler) {
@@ -151,19 +149,20 @@ func (c *helmChartController) OnChange(ctx context.Context, name string, sync He
 }
 
 func (c *helmChartController) OnRemove(ctx context.Context, name string, sync HelmChartHandler) {
-	c.AddGenericHandler(ctx, name, generic.NewRemoveHandler(name, c.Updater(), FromHelmChartHandlerToHandler(sync)))
+	removeHandler := generic.NewRemoveHandler(name, c.Updater(), FromHelmChartHandlerToHandler(sync))
+	c.AddGenericHandler(ctx, name, removeHandler)
 }
 
 func (c *helmChartController) Enqueue(namespace, name string) {
-	c.controller.Enqueue(namespace, name)
+	c.controllerManager.Enqueue(c.gvk, c.informer.Informer(), namespace, name)
 }
 
 func (c *helmChartController) EnqueueAfter(namespace, name string, duration time.Duration) {
-	c.controller.EnqueueAfter(namespace, name, duration)
+	c.controllerManager.EnqueueAfter(c.gvk, c.informer.Informer(), namespace, name, duration)
 }
 
 func (c *helmChartController) Informer() cache.SharedIndexInformer {
-	return c.controller.Informer()
+	return c.informer.Informer()
 }
 
 func (c *helmChartController) GroupVersionKind() schema.GroupVersionKind {
@@ -172,75 +171,57 @@ func (c *helmChartController) GroupVersionKind() schema.GroupVersionKind {
 
 func (c *helmChartController) Cache() HelmChartCache {
 	return &helmChartCache{
-		indexer:  c.Informer().GetIndexer(),
-		resource: c.groupResource,
+		lister:  c.informer.Lister(),
+		indexer: c.informer.Informer().GetIndexer(),
 	}
 }
 
 func (c *helmChartController) Create(obj *v1.HelmChart) (*v1.HelmChart, error) {
-	result := &v1.HelmChart{}
-	return result, c.client.Create(context.TODO(), obj.Namespace, obj, result, metav1.CreateOptions{})
+	return c.clientGetter.HelmCharts(obj.Namespace).Create(context.TODO(), obj, metav1.CreateOptions{})
 }
 
 func (c *helmChartController) Update(obj *v1.HelmChart) (*v1.HelmChart, error) {
-	result := &v1.HelmChart{}
-	return result, c.client.Update(context.TODO(), obj.Namespace, obj, result, metav1.UpdateOptions{})
+	return c.clientGetter.HelmCharts(obj.Namespace).Update(context.TODO(), obj, metav1.UpdateOptions{})
 }
 
 func (c *helmChartController) UpdateStatus(obj *v1.HelmChart) (*v1.HelmChart, error) {
-	result := &v1.HelmChart{}
-	return result, c.client.UpdateStatus(context.TODO(), obj.Namespace, obj, result, metav1.UpdateOptions{})
+	return c.clientGetter.HelmCharts(obj.Namespace).UpdateStatus(context.TODO(), obj, metav1.UpdateOptions{})
 }
 
 func (c *helmChartController) Delete(namespace, name string, options *metav1.DeleteOptions) error {
 	if options == nil {
 		options = &metav1.DeleteOptions{}
 	}
-	return c.client.Delete(context.TODO(), namespace, name, *options)
+	return c.clientGetter.HelmCharts(namespace).Delete(context.TODO(), name, *options)
 }
 
 func (c *helmChartController) Get(namespace, name string, options metav1.GetOptions) (*v1.HelmChart, error) {
-	result := &v1.HelmChart{}
-	return result, c.client.Get(context.TODO(), namespace, name, result, options)
+	return c.clientGetter.HelmCharts(namespace).Get(context.TODO(), name, options)
 }
 
 func (c *helmChartController) List(namespace string, opts metav1.ListOptions) (*v1.HelmChartList, error) {
-	result := &v1.HelmChartList{}
-	return result, c.client.List(context.TODO(), namespace, result, opts)
+	return c.clientGetter.HelmCharts(namespace).List(context.TODO(), opts)
 }
 
 func (c *helmChartController) Watch(namespace string, opts metav1.ListOptions) (watch.Interface, error) {
-	return c.client.Watch(context.TODO(), namespace, opts)
+	return c.clientGetter.HelmCharts(namespace).Watch(context.TODO(), opts)
 }
 
-func (c *helmChartController) Patch(namespace, name string, pt types.PatchType, data []byte, subresources ...string) (*v1.HelmChart, error) {
-	result := &v1.HelmChart{}
-	return result, c.client.Patch(context.TODO(), namespace, name, pt, data, result, metav1.PatchOptions{}, subresources...)
+func (c *helmChartController) Patch(namespace, name string, pt types.PatchType, data []byte, subresources ...string) (result *v1.HelmChart, err error) {
+	return c.clientGetter.HelmCharts(namespace).Patch(context.TODO(), name, pt, data, metav1.PatchOptions{}, subresources...)
 }
 
 type helmChartCache struct {
-	indexer  cache.Indexer
-	resource schema.GroupResource
+	lister  listers.HelmChartLister
+	indexer cache.Indexer
 }
 
 func (c *helmChartCache) Get(namespace, name string) (*v1.HelmChart, error) {
-	obj, exists, err := c.indexer.GetByKey(namespace + "/" + name)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, errors.NewNotFound(c.resource, name)
-	}
-	return obj.(*v1.HelmChart), nil
+	return c.lister.HelmCharts(namespace).Get(name)
 }
 
-func (c *helmChartCache) List(namespace string, selector labels.Selector) (ret []*v1.HelmChart, err error) {
-
-	err = cache.ListAllByNamespace(c.indexer, namespace, selector, func(m interface{}) {
-		ret = append(ret, m.(*v1.HelmChart))
-	})
-
-	return ret, err
+func (c *helmChartCache) List(namespace string, selector labels.Selector) ([]*v1.HelmChart, error) {
+	return c.lister.HelmCharts(namespace).List(selector)
 }
 
 func (c *helmChartCache) AddIndexer(indexName string, indexer HelmChartIndexer) {
@@ -318,19 +299,11 @@ func (a *helmChartStatusHandler) sync(key string, obj *v1.HelmChart) (*v1.HelmCh
 		}
 	}
 	if !equality.Semantic.DeepEqual(origStatus, &newStatus) {
-		if a.condition != "" {
-			// Since status has changed, update the lastUpdatedTime
-			a.condition.LastUpdated(&newStatus, time.Now().UTC().Format(time.RFC3339))
-		}
-
 		var newErr error
 		obj.Status = newStatus
-		newObj, newErr := a.client.UpdateStatus(obj)
+		obj, newErr = a.client.UpdateStatus(obj)
 		if err == nil {
 			err = newErr
-		}
-		if newErr == nil {
-			obj = newObj
 		}
 	}
 	return obj, err
@@ -360,10 +333,6 @@ func (a *helmChartGeneratingHandler) Remove(key string, obj *v1.HelmChart) (*v1.
 }
 
 func (a *helmChartGeneratingHandler) Handle(obj *v1.HelmChart, status v1.HelmChartStatus) (v1.HelmChartStatus, error) {
-	if !obj.DeletionTimestamp.IsZero() {
-		return status, nil
-	}
-
 	objs, newStatus, err := a.HelmChartGeneratingHandler(obj, status)
 	if err != nil {
 		return newStatus, err

@@ -38,16 +38,10 @@ import (
 )
 
 func Run(app *cli.Context) error {
-	if err := cmds.InitLogging(); err != nil {
-		return err
-	}
 	return run(app, &cmds.ServerConfig, server.CustomControllers{}, server.CustomControllers{})
 }
 
 func RunWithControllers(app *cli.Context, leaderControllers server.CustomControllers, controllers server.CustomControllers) error {
-	if err := cmds.InitLogging(); err != nil {
-		return err
-	}
 	return run(app, &cmds.ServerConfig, leaderControllers, controllers)
 }
 
@@ -59,6 +53,17 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	// hide process arguments from ps output, since they may contain
 	// database credentials or other secrets.
 	gspt.SetProcTitle(os.Args[0] + " server")
+
+	// Evacuate cgroup v2 before doing anything else that may fork.
+	if err := cmds.EvacuateCgroup2(); err != nil {
+		return err
+	}
+
+	// Initialize logging, and subprocess reaping if necessary.
+	// Log output redirection and subprocess reaping both require forking.
+	if err := cmds.InitLogging(); err != nil {
+		return err
+	}
 
 	if !cfg.DisableAgent && os.Getuid() != 0 && !cfg.Rootless {
 		return fmt.Errorf("must run as root unless --disable-agent is specified")
@@ -102,9 +107,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.DataDir = cfg.DataDir
 	serverConfig.ControlConfig.KubeConfigOutput = cfg.KubeConfigOutput
 	serverConfig.ControlConfig.KubeConfigMode = cfg.KubeConfigMode
-	serverConfig.ControlConfig.NoScheduler = cfg.DisableScheduler
 	serverConfig.Rootless = cfg.Rootless
-	serverConfig.ControlConfig.SANs = knownIPs(cfg.TLSSan)
+	serverConfig.ControlConfig.SANs = cfg.TLSSan
 	serverConfig.ControlConfig.BindAddress = cfg.BindAddress
 	serverConfig.ControlConfig.SupervisorPort = cfg.SupervisorPort
 	serverConfig.ControlConfig.HTTPSPort = cfg.HTTPSPort
@@ -115,14 +119,14 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.ExtraSchedulerAPIArgs = cfg.ExtraSchedulerArgs
 	serverConfig.ControlConfig.ClusterDomain = cfg.ClusterDomain
 	serverConfig.ControlConfig.Datastore.Endpoint = cfg.DatastoreEndpoint
-	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CAFile = cfg.DatastoreCAFile
-	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CertFile = cfg.DatastoreCertFile
+	serverConfig.ControlConfig.Datastore.CAFile = cfg.DatastoreCAFile
+	serverConfig.ControlConfig.Datastore.CertFile = cfg.DatastoreCertFile
+	serverConfig.ControlConfig.Datastore.KeyFile = cfg.DatastoreKeyFile
 	serverConfig.ControlConfig.AdvertiseIP = cfg.AdvertiseIP
 	serverConfig.ControlConfig.AdvertisePort = cfg.AdvertisePort
 	serverConfig.ControlConfig.ExtraCloudControllerArgs = cfg.ExtraCloudControllerArgs
 	serverConfig.ControlConfig.DisableCCM = cfg.DisableCCM
 	serverConfig.ControlConfig.DisableNPC = cfg.DisableNPC
-	serverConfig.ControlConfig.DisableHelmController = cfg.DisableHelmController
 	serverConfig.ControlConfig.DisableKubeProxy = cfg.DisableKubeProxy
 	serverConfig.ControlConfig.DisableETCD = cfg.DisableETCD
 	serverConfig.ControlConfig.DisableAPIServer = cfg.DisableAPIServer
@@ -147,12 +151,14 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		serverConfig.ControlConfig.EtcdS3BucketName = cfg.EtcdS3BucketName
 		serverConfig.ControlConfig.EtcdS3Region = cfg.EtcdS3Region
 		serverConfig.ControlConfig.EtcdS3Folder = cfg.EtcdS3Folder
+		serverConfig.ControlConfig.EtcdS3Insecure = cfg.EtcdS3Insecure
+		serverConfig.ControlConfig.EtcdS3Timeout = cfg.EtcdS3Timeout
 	} else {
 		logrus.Info("ETCD snapshots are disabled")
 	}
 
 	if cfg.ClusterResetRestorePath != "" && !cfg.ClusterReset {
-		return errors.New("invalid flag use. --cluster-reset required with --cluster-reset-restore-path")
+		return errors.New("invalid flag use; --cluster-reset required with --cluster-reset-restore-path")
 	}
 
 	// make sure components are disabled so we only perform a restore
@@ -171,13 +177,14 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 	serverConfig.ControlConfig.ClusterReset = cfg.ClusterReset
 	serverConfig.ControlConfig.ClusterResetRestorePath = cfg.ClusterResetRestorePath
+	serverConfig.ControlConfig.SystemDefaultRegistry = cfg.SystemDefaultRegistry
 
 	if serverConfig.ControlConfig.SupervisorPort == 0 {
 		serverConfig.ControlConfig.SupervisorPort = serverConfig.ControlConfig.HTTPSPort
 	}
 
 	if serverConfig.ControlConfig.DisableETCD && serverConfig.ControlConfig.JoinURL == "" {
-		return errors.New("invalid flag use. --server required with --disable-etcd")
+		return errors.New("invalid flag use; --server is required with --disable-etcd")
 	}
 
 	if serverConfig.ControlConfig.DisableAPIServer {
@@ -348,7 +355,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	tlsMinVersionArg := getArgValueFromList("tls-min-version", cfg.ExtraAPIArgs)
 	serverConfig.ControlConfig.TLSMinVersion, err = kubeapiserverflag.TLSVersion(tlsMinVersionArg)
 	if err != nil {
-		return errors.Wrap(err, "Invalid tls-min-version")
+		return errors.Wrap(err, "invalid tls-min-version")
 	}
 
 	serverConfig.StartupHooks = append(serverConfig.StartupHooks, cfg.StartupHooks...)
@@ -376,7 +383,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 	serverConfig.ControlConfig.TLSCipherSuites, err = kubeapiserverflag.TLSCipherSuites(tlsCipherSuites)
 	if err != nil {
-		return errors.Wrap(err, "Invalid tls-cipher-suites")
+		return errors.Wrap(err, "invalid tls-cipher-suites")
 	}
 
 	logrus.Info("Starting " + version.Program + " " + app.App.Version)
@@ -397,12 +404,13 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 
 		logrus.Info(version.Program + " is up and running")
-		if cfg.DisableAgent && os.Getenv("NOTIFY_SOCKET") != "" {
+		if (cfg.DisableAgent || cfg.DisableAPIServer) && os.Getenv("NOTIFY_SOCKET") != "" {
 			systemd.SdNotify(true, "READY=1\n")
 		}
 	}()
 
 	if cfg.DisableAgent {
+		close(agentReady)
 		<-ctx.Done()
 		return nil
 	}
@@ -419,6 +427,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 
 	agentConfig := cmds.AgentConfig
+	agentConfig.AgentReady = agentReady
 	agentConfig.Debug = app.GlobalBool("debug")
 	agentConfig.DataDir = filepath.Dir(serverConfig.ControlConfig.DataDir)
 	agentConfig.ServerURL = url
@@ -464,20 +473,12 @@ func validateNetworkConfiguration(serverConfig server.Config) error {
 	if (serverConfig.ControlConfig.DisableNPC == false) && (dualCluster || dualService) {
 		return errors.New("network policy enforcement are not compatible with dual-stack operation; server must be restarted with --disable-network-policy and an alternative CNI plugin deployed")
 	}
+
 	if dualDNS == true {
 		return errors.New("dual-stack cluster-dns is not supported")
 	}
 
 	return nil
-}
-
-func knownIPs(ips []string) []string {
-	ips = append(ips, "127.0.0.1")
-	ip, err := utilnet.ChooseHostInterface()
-	if err == nil {
-		ips = append(ips, ip.String())
-	}
-	return ips
 }
 
 func getArgValueFromList(searchArg string, argList []string) string {
@@ -494,8 +495,8 @@ func getArgValueFromList(searchArg string, argList []string) string {
 }
 
 // setAPIAddressChannel will try to get the api address key from etcd and when it succeed it will
-// set the APIAddressCh channel with its value, the function works for both K8e in case
-// of K8e we block returning back to the agent.Run until we get the api address, however in rke2
+// set the APIAddressCh channel with its value, the function works for both k8e and rke2 in case
+// of k8e we block returning back to the agent.Run until we get the api address, however in rke2
 // the code will not block operation and will run the operation in a goroutine
 func setAPIAddressChannel(ctx context.Context, serverConfig *server.Config, agentConfig *cmds.Agent) {
 	// start a goroutine to check for the server ip if set from etcd in case of rke2

@@ -2,7 +2,6 @@ package relatedresource
 
 import (
 	"context"
-	"time"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 
@@ -22,10 +21,6 @@ func NewKey(namespace, name string) Key {
 		Namespace: namespace,
 		Name:      name,
 	}
-}
-
-func FromString(key string) Key {
-	return NewKey(kv.RSplit(key, "/"))
 }
 
 type ControllerWrapper interface {
@@ -81,15 +76,12 @@ func watch(ctx context.Context, name string, enq Enqueuer, resolve Resolver, con
 				return
 			}
 
-			go func() {
-				time.Sleep(time.Second)
-				runResolve(meta.GetNamespace(), meta.GetName(), ro)
-			}()
+			runResolve(meta.GetNamespace(), meta.GetName(), ro)
 		},
 	})
 
 	controller.AddGenericHandler(ctx, name, func(key string, obj runtime.Object) (runtime.Object, error) {
-		ns, name := kv.RSplit(key, "/")
+		ns, name := kv.Split(key, "/")
 		return obj, runResolve(ns, name, obj)
 	})
 }

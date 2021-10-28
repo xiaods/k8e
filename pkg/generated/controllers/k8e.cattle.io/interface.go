@@ -18,8 +18,10 @@ limitations under the License.
 package k8e
 
 import (
-	"github.com/rancher/lasso/pkg/controller"
+	"github.com/rancher/wrangler/pkg/generic"
+	clientset "github.com/xiaods/k8e/pkg/generated/clientset/versioned"
 	v1 "github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io/v1"
+	informers "github.com/xiaods/k8e/pkg/generated/informers/externalversions/k8e.cattle.io"
 )
 
 type Interface interface {
@@ -27,16 +29,21 @@ type Interface interface {
 }
 
 type group struct {
-	controllerFactory controller.SharedControllerFactory
+	controllerManager *generic.ControllerManager
+	informers         informers.Interface
+	client            clientset.Interface
 }
 
 // New returns a new Interface.
-func New(controllerFactory controller.SharedControllerFactory) Interface {
+func New(controllerManager *generic.ControllerManager, informers informers.Interface,
+	client clientset.Interface) Interface {
 	return &group{
-		controllerFactory: controllerFactory,
+		controllerManager: controllerManager,
+		informers:         informers,
+		client:            client,
 	}
 }
 
 func (g *group) V1() v1.Interface {
-	return v1.New(g.controllerFactory)
+	return v1.New(g.controllerManager, g.client.K8eV1(), g.informers.V1())
 }

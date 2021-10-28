@@ -68,10 +68,6 @@ func New(ctx context.Context, dataSourceName string, tlsInfo tls.Config, connPoo
 	}
 
 	dialect.LastInsertID = true
-	dialect.GetSizeSQL = `
-		SELECT SUM(data_length + index_length)
-		FROM information_schema.TABLES
-		WHERE table_schema = DATABASE() AND table_name = 'kine'`
 	dialect.CompactSQL = `
 		DELETE kv FROM kine AS kv
 		INNER JOIN (
