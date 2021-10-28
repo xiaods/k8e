@@ -77,39 +77,28 @@ func executeOneGetRdmaLink(data []byte) (*RdmaLink, error) {
 	return &link, nil
 }
 
-func execRdmaSetLink(req *nl.NetlinkRequest) error {
-
-	_, err := req.Execute(unix.NETLINK_RDMA, 0)
-	return err
-}
-
-// RdmaLinkList gets a list of RDMA link devices.
-// Equivalent to: `rdma dev show`
-func RdmaLinkList() ([]*RdmaLink, error) {
-	return pkgHandle.RdmaLinkList()
-}
-
-// RdmaLinkList gets a list of RDMA link devices.
-// Equivalent to: `rdma dev show`
-func (h *Handle) RdmaLinkList() ([]*RdmaLink, error) {
-	proto := getProtoField(nl.RDMA_NL_NLDEV, nl.RDMA_NLDEV_CMD_GET)
-	req := h.newNetlinkRequest(proto, unix.NLM_F_ACK|unix.NLM_F_DUMP)
+func execRdmaGetLink(req *nl.NetlinkRequest, name string) (*RdmaLink, error) {
 
 	msgs, err := req.Execute(unix.NETLINK_RDMA, 0)
 	if err != nil {
 		return nil, err
 	}
-
-	var res []*RdmaLink
 	for _, m := range msgs {
 		link, err := executeOneGetRdmaLink(m)
 		if err != nil {
 			return nil, err
 		}
-		res = append(res, link)
+		if link.Attrs.Name == name {
+			return link, nil
+		}
 	}
+	return nil, fmt.Errorf("Rdma device %v not found", name)
+}
 
-	return res, nil
+func execRdmaSetLink(req *nl.NetlinkRequest) error {
+
+	_, err := req.Execute(unix.NETLINK_RDMA, 0)
+	return err
 }
 
 // RdmaLinkByName finds a link by name and returns a pointer to the object if
@@ -121,16 +110,11 @@ func RdmaLinkByName(name string) (*RdmaLink, error) {
 // RdmaLinkByName finds a link by name and returns a pointer to the object if
 // found and nil error, otherwise returns error code.
 func (h *Handle) RdmaLinkByName(name string) (*RdmaLink, error) {
-	links, err := h.RdmaLinkList()
-	if err != nil {
-		return nil, err
-	}
-	for _, link := range links {
-		if link.Attrs.Name == name {
-			return link, nil
-		}
-	}
-	return nil, fmt.Errorf("Rdma device %v not found", name)
+
+	proto := getProtoField(nl.RDMA_NL_NLDEV, nl.RDMA_NLDEV_CMD_GET)
+	req := h.newNetlinkRequest(proto, unix.NLM_F_ACK|unix.NLM_F_DUMP)
+
+	return execRdmaGetLink(req, name)
 }
 
 // RdmaLinkSetName sets the name of the rdma link device. Return nil on success

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containerd/cgroups"
+	cgroupsv2 "github.com/containerd/cgroups/v2"
 	systemd "github.com/coreos/go-systemd/daemon"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -24,11 +26,10 @@ import (
 	cp "github.com/xiaods/k8e/pkg/cloudprovider"
 	"github.com/xiaods/k8e/pkg/daemons/agent"
 	daemonconfig "github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/datadir"
+	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/nodeconfig"
 	"github.com/xiaods/k8e/pkg/rootless"
 	"github.com/xiaods/k8e/pkg/util"
-	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -39,12 +40,6 @@ import (
 	kubeproxyconfig "k8s.io/kubernetes/pkg/proxy/apis/config"
 	utilsnet "k8s.io/utils/net"
 	utilpointer "k8s.io/utils/pointer"
-)
-
-var (
-	InternalIPLabel = version.Program + ".io/internal-ip"
-	ExternalIPLabel = version.Program + ".io/external-ip"
-	HostnameLabel   = version.Program + ".io/hostname"
 )
 
 const (
@@ -65,9 +60,9 @@ func setupCriCtlConfig(cfg cmds.Agent, nodeConfig *daemonconfig.Node) error {
 		}
 	}
 
-	agentConfDir := datadir.DefaultDataDir + "/agent/etc"
+	agentConfDir := filepath.Join(cfg.DataDir, "agent", "etc")
 	if _, err := os.Stat(agentConfDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(agentConfDir, 0755); err != nil {
+		if err := os.MkdirAll(agentConfDir, 0700); err != nil {
 			return err
 		}
 	}
@@ -103,11 +98,26 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 		return err
 	}
 
+	if err := executor.Bootstrap(ctx, nodeConfig, cfg); err != nil {
+		return err
+	}
+
 	if !nodeConfig.Docker && nodeConfig.ContainerRuntimeEndpoint == "" {
 		if err := containerd.Run(ctx, nodeConfig); err != nil {
 			return err
 		}
 	}
+
+	// the agent runtime is ready to host workloads when containerd is up and the airgap
+	// images have finished loading, as that portion of startup may block for an arbitrary
+	// amount of time depending on how long it takes to import whatever the user has placed
+	// in the images directory.
+	if cfg.AgentReady != nil {
+		close(cfg.AgentReady)
+	}
+
+	notifySocket := os.Getenv("NOTIFY_SOCKET")
+	os.Unsetenv("NOTIFY_SOCKET")
 
 	if err := setupTunnelAndRunAgent(ctx, nodeConfig, cfg, proxy); err != nil {
 		return err
@@ -118,6 +128,8 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 		return err
 	}
 
+	util.WaitForAPIServerReady(coreClient, 30*time.Second)
+
 	if err := configureNode(ctx, &nodeConfig.AgentConfig, coreClient.CoreV1().Nodes()); err != nil {
 		return err
 	}
@@ -127,6 +139,9 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 			return err
 		}
 	}
+
+	os.Setenv("NOTIFY_SOCKET", notifySocket)
+	systemd.SdNotify(true, "READY=1\n")
 
 	<-ctx.Done()
 	return ctx.Err()
@@ -220,11 +235,17 @@ func Run(ctx context.Context, cfg cmds.Agent) error {
 		break
 	}
 
-	systemd.SdNotify(true, "READY=1\n")
 	return run(ctx, cfg, proxy)
 }
 
 func validate() error {
+	if cgroups.Mode() == cgroups.Unified {
+		return validateCgroupsV2()
+	}
+	return validateCgroupsV1()
+}
+
+func validateCgroupsV1() error {
 	cgroups, err := ioutil.ReadFile("/proc/self/cgroup")
 	if err != nil {
 		return err
@@ -240,6 +261,27 @@ func validate() error {
 		return errors.New("f" + msg)
 	}
 
+	return nil
+}
+
+func validateCgroupsV2() error {
+	manager, err := cgroupsv2.LoadManager("/sys/fs/cgroup", "/")
+	if err != nil {
+		return err
+	}
+	controllers, err := manager.RootControllers()
+	if err != nil {
+		return err
+	}
+	m := make(map[string]struct{})
+	for _, controller := range controllers {
+		m[controller] = struct{}{}
+	}
+	for _, controller := range []string{"cpu", "cpuset", "memory"} {
+		if _, ok := m[controller]; !ok {
+			return fmt.Errorf("failed to find %s cgroup (v2)", controller)
+		}
+	}
 	return nil
 }
 
@@ -376,6 +418,11 @@ func setupTunnelAndRunAgent(ctx context.Context, nodeConfig *daemonconfig.Node, 
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	} else if cfg.ClusterReset && proxy.IsAPIServerLBEnabled() {
+		if err := agent.Agent(&nodeConfig.AgentConfig); err != nil {
+			return err
+		}
+		agentRan = true
 	}
 
 	if err := tunnel.Setup(ctx, nodeConfig, proxy); err != nil {

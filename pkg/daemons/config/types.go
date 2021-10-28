@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
@@ -22,7 +23,12 @@ const (
 type Node struct {
 	Docker                   bool
 	ContainerRuntimeEndpoint string
+	NoFlannel                bool
 	SELinux                  bool
+	FlannelBackend           string
+	FlannelConf              string
+	FlannelConfOverride      bool
+	FlannelIface             *net.Interface
 	Containerd               Containerd
 	Images                   string
 	AgentConfig              Agent
@@ -77,11 +83,15 @@ type Agent struct {
 	CNIPlugin               bool
 	NodeTaints              []string
 	NodeLabels              []string
+	ImageCredProvBinDir     string
+	ImageCredProvConfig     string
+	IPSECPSK                string
+	StrongSwanDir           string
 	PrivateRegistry         string
+	SystemDefaultRegistry   string
 	AirgapExtraRegistry     []string
 	DisableCCM              bool
 	DisableNPC              bool
-	DisableHelmController   bool
 	DisableKubeProxy        bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
@@ -92,7 +102,7 @@ type Control struct {
 	AdvertiseIP   string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
-	// The port which custom K8e API runs on
+	// The port which custom k8e API runs on
 	SupervisorPort int
 	// The port which kube-apiserver runs on
 	APIServerPort            int
@@ -114,17 +124,18 @@ type Control struct {
 	Skips                    map[string]bool
 	Disables                 map[string]bool
 	Datastore                endpoint.Config
-	NoScheduler              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
 	ExtraCloudControllerArgs []string
 	ExtraSchedulerAPIArgs    []string
 	NoLeaderElect            bool
 	JoinURL                  string
+	FlannelBackend           string
+	IPSECPSK                 string
 	DefaultLocalStoragePath  string
+	SystemDefaultRegistry    string
 	DisableCCM               bool
 	DisableNPC               bool
-	DisableHelmController    bool
 	DisableKubeProxy         bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
@@ -151,6 +162,9 @@ type Control struct {
 	EtcdS3BucketName         string
 	EtcdS3Region             string
 	EtcdS3Folder             string
+	EtcdS3Timeout            time.Duration
+	EtcdS3Insecure           bool
+	ServerNodeName           string
 
 	BindAddress string
 	SANs        []string
@@ -171,16 +185,19 @@ type ControlRuntimeBootstrap struct {
 	PasswdFile         string
 	RequestHeaderCA    string
 	RequestHeaderCAKey string
+	IPSECKey           string
 	EncryptionConfig   string
 }
 
 type ControlRuntime struct {
 	ControlRuntimeBootstrap
 
-	HTTPBootstrap          bool
-	APIServerReady         <-chan struct{}
-	ETCDReady              <-chan struct{}
-	ClusterControllerStart func(ctx context.Context) error
+	HTTPBootstrap                       bool
+	APIServerReady                      <-chan struct{}
+	AgentReady                          <-chan struct{}
+	ETCDReady                           <-chan struct{}
+	ClusterControllerStart              func(ctx context.Context) error
+	LeaderElectedClusterControllerStart func(ctx context.Context) error
 
 	ClientKubeAPICert string
 	ClientKubeAPIKey  string
@@ -197,6 +214,7 @@ type ControlRuntime struct {
 	ServingKubeletKey  string
 	ServerToken        string
 	AgentToken         string
+	APIServer          http.Handler
 	Handler            http.Handler
 	Tunnel             http.Handler
 	Authenticator      authenticator.Request

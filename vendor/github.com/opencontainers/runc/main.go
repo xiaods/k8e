@@ -4,19 +4,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/opencontainers/runc/libcontainer/logs"
-
+	"github.com/opencontainers/runc/libcontainer/seccomp"
 	"github.com/opencontainers/runtime-spec/specs-go"
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 )
 
-// version will be populated by the Makefile, read from
-// VERSION file of the source code.
-var version = ""
+// version must be set from the contents of VERSION file by go build's
+// -X main.version= option in the Makefile.
+var version = "unknown"
 
 // gitCommit will be the hash that the binary was built from
 // and will be populated by the Makefile
@@ -54,14 +55,18 @@ func main() {
 	app.Name = "runc"
 	app.Usage = usage
 
-	var v []string
-	if version != "" {
-		v = append(v, version)
-	}
+	v := []string{version}
+
 	if gitCommit != "" {
-		v = append(v, fmt.Sprintf("commit: %s", gitCommit))
+		v = append(v, "commit: "+gitCommit)
 	}
-	v = append(v, fmt.Sprintf("spec: %s", specs.Version))
+	v = append(v, "spec: "+specs.Version)
+	v = append(v, "go: "+runtime.Version())
+
+	major, minor, micro := seccomp.Version()
+	if major+minor+micro > 0 {
+		v = append(v, fmt.Sprintf("libseccomp: %d.%d.%d", major, minor, micro))
+	}
 	app.Version = strings.Join(v, "\n")
 
 	xdgRuntimeDir := ""
@@ -132,14 +137,21 @@ func main() {
 			// According to the XDG specification, we need to set anything in
 			// XDG_RUNTIME_DIR to have a sticky bit if we don't want it to get
 			// auto-pruned.
-			if err := os.MkdirAll(root, 0700); err != nil {
+			if err := os.MkdirAll(root, 0o700); err != nil {
 				fmt.Fprintln(os.Stderr, "the path in $XDG_RUNTIME_DIR must be writable by the user")
 				fatal(err)
 			}
-			if err := os.Chmod(root, 0700|os.ModeSticky); err != nil {
+			if err := os.Chmod(root, os.FileMode(0o700)|os.ModeSticky); err != nil {
 				fmt.Fprintln(os.Stderr, "you should check permission of the path in $XDG_RUNTIME_DIR")
 				fatal(err)
 			}
+		}
+		if err := reviseRootDir(context); err != nil {
+			return err
+		}
+		// let init configure logging on its own
+		if args := context.Args(); args != nil && args.First() == "init" {
+			return nil
 		}
 		return logs.ConfigureLogging(createLogConfig(context))
 	}
@@ -167,15 +179,16 @@ func (f *FatalWriter) Write(p []byte) (n int, err error) {
 
 func createLogConfig(context *cli.Context) logs.Config {
 	logFilePath := context.GlobalString("log")
-	logPipeFd := ""
+	logPipeFd := 0
 	if logFilePath == "" {
-		logPipeFd = "2"
+		logPipeFd = 2
 	}
 	config := logs.Config{
 		LogPipeFd:   logPipeFd,
 		LogLevel:    logrus.InfoLevel,
 		LogFilePath: logFilePath,
 		LogFormat:   context.GlobalString("log-format"),
+		LogCaller:   context.GlobalBool("debug"),
 	}
 	if context.GlobalBool("debug") {
 		config.LogLevel = logrus.DebugLevel

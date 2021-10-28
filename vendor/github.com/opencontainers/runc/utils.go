@@ -39,7 +39,7 @@ func checkArgs(context *cli.Context, expected, checkType int) error {
 
 	if err != nil {
 		fmt.Printf("Incorrect Usage.\n\n")
-		cli.ShowCommandHelp(context, cmdName)
+		_ = cli.ShowCommandHelp(context, cmdName)
 		return err
 	}
 	return nil
@@ -55,6 +55,8 @@ func logrusToStderr() bool {
 func fatal(err error) {
 	// make sure the error is written to the logger
 	logrus.Error(err)
+	// If debug is enabled and pkg/errors was used, show its stack trace.
+	logrus.Debugf("%+v", err)
 	if !logrusToStderr() {
 		fmt.Fprintln(os.Stderr, err)
 	}
@@ -90,6 +92,21 @@ func revisePidFile(context *cli.Context) error {
 		return err
 	}
 	return context.Set("pid-file", pidFile)
+}
+
+// reviseRootDir convert the root to absolute path
+func reviseRootDir(context *cli.Context) error {
+	root := context.GlobalString("root")
+	if root == "" {
+		return nil
+	}
+
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+
+	return context.GlobalSet("root", root)
 }
 
 // parseBoolOrAuto returns (nil, nil) if s is empty or "auto"

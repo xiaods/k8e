@@ -2,14 +2,13 @@ package cmds
 
 import (
 	"context"
+	"time"
 
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
 const (
-	DisableItems = "coredns, servicelb, local-storage, metrics-server"
-
 	defaultSnapshotRentention    = 5
 	defaultSnapshotIntervalHours = 12
 )
@@ -51,10 +50,10 @@ type Server struct {
 	AdvertisePort            int
 	DisableScheduler         bool
 	ServerURL                string
+	FlannelBackend           string
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
 	DisableNPC               bool
-	DisableHelmController    bool
 	DisableKubeProxy         bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
@@ -63,6 +62,7 @@ type Server struct {
 	ClusterReset             bool
 	ClusterResetRestorePath  string
 	EncryptSecrets           bool
+	SystemDefaultRegistry    string
 	StartupHooks             []func(context.Context, <-chan struct{}, string) error
 	EtcdSnapshotName         string
 	EtcdDisableSnapshots     bool
@@ -79,38 +79,11 @@ type Server struct {
 	EtcdS3BucketName         string
 	EtcdS3Region             string
 	EtcdS3Folder             string
+	EtcdS3Timeout            time.Duration
+	EtcdS3Insecure           bool
 }
 
-var (
-	ServerConfig Server
-	ClusterCIDR  = cli.StringSliceFlag{
-		Name:  "cluster-cidr",
-		Usage: "(networking) IPv4/IPv6 network CIDRs to use for pod IPs (default: 10.42.0.0/16)",
-		Value: &ServerConfig.ClusterCIDR,
-	}
-	ServiceCIDR = cli.StringSliceFlag{
-		Name:  "service-cidr",
-		Usage: "(networking) IPv4/IPv6 network CIDRs to use for service IPs (default: 10.43.0.0/16)",
-		Value: &ServerConfig.ServiceCIDR,
-	}
-	ServiceNodePortRange = cli.StringFlag{
-		Name:        "service-node-port-range",
-		Usage:       "(networking) Port range to reserve for services with NodePort visibility",
-		Destination: &ServerConfig.ServiceNodePortRange,
-		Value:       "30000-32767",
-	}
-	ClusterDNS = cli.StringSliceFlag{
-		Name:  "cluster-dns",
-		Usage: "(networking) IPv4 Cluster IP for coredns service. Should be in your service-cidr range (default: 10.43.0.10)",
-		Value: &ServerConfig.ClusterDNS,
-	}
-	ClusterDomain = cli.StringFlag{
-		Name:        "cluster-domain",
-		Usage:       "(networking) Cluster Domain",
-		Destination: &ServerConfig.ClusterDomain,
-		Value:       "cluster.local",
-	}
-)
+var ServerConfig Server
 
 func NewServerCommand(action func(*cli.Context) error) cli.Command {
 	return cli.Command{
@@ -139,7 +112,7 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			},
 			cli.StringFlag{
 				Name:        "advertise-address",
-				Usage:       "(listener) IP address that apiserver uses to advertise to members of the cluster (default: node-external-ip/node-ip)",
+				Usage:       "(listener) IPv4 address that apiserver uses to advertise to members of the cluster (default: node-external-ip/node-ip)",
 				Destination: &ServerConfig.AdvertiseIP,
 			},
 			cli.IntFlag{
@@ -149,19 +122,47 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			},
 			cli.StringSliceFlag{
 				Name:  "tls-san",
-				Usage: "(listener) Add additional hostname or IP as a Subject Alternative Name in the TLS cert",
+				Usage: "(listener) Add additional hostnames or IPv4/IPv6 addresses as Subject Alternative Names on the server TLS cert",
 				Value: &ServerConfig.TLSSan,
 			},
 			cli.StringFlag{
 				Name:        "data-dir,d",
-				Usage:       "(data) Folder to hold state default /var/lib/" + version.Program + " or ${HOME}/." + version.Program + "/ if not root",
+				Usage:       "(data) Folder to hold state default /var/lib/rancher/" + version.Program + " or ${HOME}/.rancher/" + version.Program + " if not root",
 				Destination: &ServerConfig.DataDir,
 			},
-			ClusterCIDR,
-			ServiceCIDR,
-			ServiceNodePortRange,
-			ClusterDNS,
-			ClusterDomain,
+			cli.StringSliceFlag{
+				Name:  "cluster-cidr",
+				Usage: "(networking) IPv4/IPv6 network CIDRs to use for pod IPs (default: 10.42.0.0/16)",
+				Value: &ServerConfig.ClusterCIDR,
+			},
+			cli.StringSliceFlag{
+				Name:  "service-cidr",
+				Usage: "(networking) IPv4/IPv6 network CIDRs to use for service IPs (default: 10.43.0.0/16)",
+				Value: &ServerConfig.ServiceCIDR,
+			},
+			cli.StringFlag{
+				Name:        "service-node-port-range",
+				Usage:       "(networking) Port range to reserve for services with NodePort visibility",
+				Destination: &ServerConfig.ServiceNodePortRange,
+				Value:       "30000-32767",
+			},
+			cli.StringSliceFlag{
+				Name:  "cluster-dns",
+				Usage: "(networking) IPv4 Cluster IP for coredns service. Should be in your service-cidr range (default: 10.43.0.10)",
+				Value: &ServerConfig.ClusterDNS,
+			},
+			cli.StringFlag{
+				Name:        "cluster-domain",
+				Usage:       "(networking) Cluster Domain",
+				Destination: &ServerConfig.ClusterDomain,
+				Value:       "cluster.local",
+			},
+			cli.StringFlag{
+				Name:        "flannel-backend",
+				Usage:       "(networking) One of 'none', 'vxlan', 'ipsec', 'host-gw', or 'wireguard'",
+				Destination: &ServerConfig.FlannelBackend,
+				Value:       "vxlan",
+			},
 			cli.StringFlag{
 				Name:        "token,t",
 				Usage:       "(cluster) Shared secret used to join a server or agent to a cluster",
@@ -254,7 +255,7 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			},
 			&cli.IntFlag{
 				Name:        "etcd-snapshot-retention",
-				Usage:       "(db) Number of snapshots to retain",
+				Usage:       "(db) Number of snapshots to retain Default: 5",
 				Destination: &ServerConfig.EtcdSnapshotRetention,
 				Value:       defaultSnapshotRentention,
 			},
@@ -312,6 +313,17 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Usage:       "(db) S3 folder",
 				Destination: &ServerConfig.EtcdS3Folder,
 			},
+			&cli.BoolFlag{
+				Name:        "etcd-s3-insecure",
+				Usage:       "(db) Disables S3 over HTTPS",
+				Destination: &ServerConfig.EtcdS3Insecure,
+			},
+			&cli.DurationFlag{
+				Name:        "etcd-s3-timeout",
+				Usage:       "(db) S3 timeout",
+				Destination: &ServerConfig.EtcdS3Timeout,
+				Value:       30 * time.Second,
+			},
 			cli.StringFlag{
 				Name:        "default-local-storage-path",
 				Usage:       "(storage) Default local storage path for local provisioner storage class",
@@ -342,11 +354,6 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Destination: &ServerConfig.DisableNPC,
 			},
 			cli.BoolFlag{
-				Name:        "disable-helm-controller",
-				Usage:       "(components) Disable Helm controller",
-				Destination: &ServerConfig.DisableHelmController,
-			},
-			cli.BoolFlag{
 				Name:        "disable-apiserver",
 				Hidden:      true,
 				Usage:       "(experimental/components) Disable running api server",
@@ -368,11 +375,14 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 			WithNodeIDFlag,
 			NodeLabels,
 			NodeTaints,
+			ImageCredProvBinDirFlag,
+			ImageCredProvConfigFlag,
 			DockerFlag,
 			CRIEndpointFlag,
 			PauseImageFlag,
 			SnapshotterFlag,
 			PrivateRegistryFlag,
+			AirgapExtraRegistryFlag,
 			NodeIPFlag,
 			NodeExternalIPFlag,
 			ResolvConfFlag,
@@ -423,6 +433,12 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Name:        "secrets-encryption",
 				Usage:       "(experimental) Enable Secret encryption at rest",
 				Destination: &ServerConfig.EncryptSecrets,
+			},
+			cli.StringFlag{
+				Name:        "system-default-registry",
+				Usage:       "(image) Private registry to be used for all system images",
+				EnvVar:      version.ProgramUpper + "_SYSTEM_DEFAULT_REGISTRY",
+				Destination: &ServerConfig.SystemDefaultRegistry,
 			},
 			&SELinuxFlag,
 			LBServerPortFlag,

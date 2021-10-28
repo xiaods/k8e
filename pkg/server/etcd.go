@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/etcd"
+	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -80,14 +80,14 @@ func setETCDLabelsAndAnnotations(ctx context.Context, config *Config) error {
 			continue
 		}
 		etcdNodeName := string(data)
-		node.Annotations[etcd.NodeID] = etcdNodeName
+		node.Annotations[etcd.NodeNameAnnotation] = etcdNodeName
 
 		address, err := etcd.GetAdvertiseAddress(controlConfig.PrivateIP)
 		if err != nil {
 			logrus.Infof("Waiting for etcd node address to be available: %v", err)
 			continue
 		}
-		node.Annotations[etcd.NodeAddress] = address
+		node.Annotations[etcd.NodeAddressAnnotation] = address
 
 		_, err = nodes.Update(node)
 		if err == nil {

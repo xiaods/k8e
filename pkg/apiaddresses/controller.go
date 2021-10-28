@@ -10,7 +10,7 @@ import (
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
-	"go.etcd.io/etcd/clientv3"
+	etcdv3 "go.etcd.io/etcd/clientv3"
 	v1 "k8s.io/api/core/v1"
 )
 
@@ -38,7 +38,7 @@ type handler struct {
 	endpointsController controllerv1.EndpointsController
 	runtime             *config.ControlRuntime
 	ctx                 context.Context
-	etcdClient          *clientv3.Client
+	etcdClient          *etcdv3.Client
 }
 
 // This controller will update the version.program/apiaddresses etcd key with a list of

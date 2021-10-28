@@ -11,6 +11,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// IFA_FLAGS is a u32 attribute.
+const IFA_FLAGS = 0x8
+
 // AddrAdd will add an IP address to a link device.
 //
 // Equivalent to: `ip addr add $addr dev $link`
@@ -122,7 +125,7 @@ func (h *Handle) addrHandle(link Link, addr *Addr, req *nl.NetlinkRequest) error
 		} else {
 			b := make([]byte, 4)
 			native.PutUint32(b, uint32(addr.Flags))
-			flagsData := nl.NewRtAttr(unix.IFA_FLAGS, b)
+			flagsData := nl.NewRtAttr(IFA_FLAGS, b)
 			req.AddData(flagsData)
 		}
 	}
@@ -153,10 +156,10 @@ func (h *Handle) addrHandle(link Link, addr *Addr, req *nl.NetlinkRequest) error
 	// value should be "forever". To compensate for that, only add the attributes if at least one of the values is
 	// non-zero, which means the caller has explicitly set them
 	if addr.ValidLft > 0 || addr.PreferedLft > 0 {
-		cachedata := nl.IfaCacheInfo{unix.IfaCacheinfo{
-			Valid:    uint32(addr.ValidLft),
-			Prefered: uint32(addr.PreferedLft),
-		}}
+		cachedata := nl.IfaCacheInfo{
+			IfaValid:    uint32(addr.ValidLft),
+			IfaPrefered: uint32(addr.PreferedLft),
+		}
 		req.AddData(nl.NewRtAttr(unix.IFA_CACHEINFO, cachedata.Serialize()))
 	}
 
@@ -193,12 +196,12 @@ func (h *Handle) AddrList(link Link, family int) ([]Addr, error) {
 
 	var res []Addr
 	for _, m := range msgs {
-		addr, msgFamily, err := parseAddr(m)
+		addr, msgFamily, ifindex, err := parseAddr(m)
 		if err != nil {
 			return res, err
 		}
 
-		if link != nil && addr.LinkIndex != indexFilter {
+		if link != nil && ifindex != indexFilter {
 			// Ignore messages from other interfaces
 			continue
 		}
@@ -213,11 +216,11 @@ func (h *Handle) AddrList(link Link, family int) ([]Addr, error) {
 	return res, nil
 }
 
-func parseAddr(m []byte) (addr Addr, family int, err error) {
+func parseAddr(m []byte) (addr Addr, family, index int, err error) {
 	msg := nl.DeserializeIfAddrmsg(m)
 
 	family = -1
-	addr.LinkIndex = -1
+	index = -1
 
 	attrs, err1 := nl.ParseRouteAttr(m[msg.Len():])
 	if err1 != nil {
@@ -226,7 +229,7 @@ func parseAddr(m []byte) (addr Addr, family int, err error) {
 	}
 
 	family = int(msg.Family)
-	addr.LinkIndex = int(msg.Index)
+	index = int(msg.Index)
 
 	var local, dst *net.IPNet
 	for _, attr := range attrs {
@@ -251,12 +254,12 @@ func parseAddr(m []byte) (addr Addr, family int, err error) {
 			addr.Broadcast = attr.Value
 		case unix.IFA_LABEL:
 			addr.Label = string(attr.Value[:len(attr.Value)-1])
-		case unix.IFA_FLAGS:
+		case IFA_FLAGS:
 			addr.Flags = int(native.Uint32(attr.Value[0:4]))
-		case unix.IFA_CACHEINFO:
+		case nl.IFA_CACHEINFO:
 			ci := nl.DeserializeIfaCacheInfo(attr.Value)
-			addr.PreferedLft = int(ci.Prefered)
-			addr.ValidLft = int(ci.Valid)
+			addr.PreferedLft = int(ci.IfaPrefered)
+			addr.ValidLft = int(ci.IfaValid)
 		}
 	}
 
@@ -391,7 +394,7 @@ func addrSubscribeAt(newNs, curNs netns.NsHandle, ch chan<- AddrUpdate, done <-c
 					continue
 				}
 
-				addr, _, err := parseAddr(m.Data)
+				addr, _, ifindex, err := parseAddr(m.Data)
 				if err != nil {
 					if cberr != nil {
 						cberr(fmt.Errorf("could not parse address: %v", err))
@@ -400,7 +403,7 @@ func addrSubscribeAt(newNs, curNs netns.NsHandle, ch chan<- AddrUpdate, done <-c
 				}
 
 				ch <- AddrUpdate{LinkAddress: *addr.IPNet,
-					LinkIndex:   addr.LinkIndex,
+					LinkIndex:   ifindex,
 					NewAddr:     msgType == unix.RTM_NEWADDR,
 					Flags:       addr.Flags,
 					Scope:       addr.Scope,

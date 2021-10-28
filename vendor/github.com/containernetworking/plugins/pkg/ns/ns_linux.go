@@ -26,11 +26,6 @@ import (
 
 // Returns an object representing the current OS thread's network namespace
 func GetCurrentNS() (NetNS, error) {
-	// Lock the thread in case other goroutine executes in it and changes its
-	// network namespace after getCurrentThreadNetNSPath(), otherwise it might
-	// return an unexpected network namespace.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 	return GetNS(getCurrentThreadNetNSPath())
 }
 

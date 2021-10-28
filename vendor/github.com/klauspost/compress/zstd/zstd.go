@@ -15,12 +15,6 @@ import (
 // enable debug printing
 const debug = false
 
-// enable encoding debug printing
-const debugEncoder = debug
-
-// enable decoding debug printing
-const debugDecoder = debug
-
 // Enable extra assertions.
 const debugAsserts = debug || false
 
@@ -88,13 +82,13 @@ var (
 )
 
 func println(a ...interface{}) {
-	if debug || debugDecoder || debugEncoder {
+	if debug {
 		log.Println(a...)
 	}
 }
 
 func printf(format string, a ...interface{}) {
-	if debug || debugDecoder || debugEncoder {
+	if debug {
 		log.Printf(format, a...)
 	}
 }

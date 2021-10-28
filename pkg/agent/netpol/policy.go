@@ -1,6 +1,7 @@
 // Apache License v2.0 (copyright Cloud Native Labs & Rancher Labs)
 // - modified from https://github.com/cloudnativelabs/kube-router/blob/73b1b03b32c5755b240f6c077bb097abe3888314/pkg/controllers/netpol/policy.go
 
+//go:build !windows
 // +build !windows
 
 package netpol
@@ -656,6 +657,11 @@ func (npc *NetworkPolicyController) processNetworkPolicyPorts(npPorts []networki
 			numericPorts = append(numericPorts, protocolAndPort{port: "", protocol: protocol})
 		} else if npPort.Port.Type == intstr.Int {
 			var portproto protocolAndPort
+			if npPort.EndPort != nil {
+				if *npPort.EndPort >= npPort.Port.IntVal {
+					portproto.endport = strconv.Itoa(int(*npPort.EndPort))
+				}
+			}
 			portproto.protocol, portproto.port = protocol, npPort.Port.String()
 			numericPorts = append(numericPorts, portproto)
 		} else {

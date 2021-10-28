@@ -16,10 +16,6 @@ import (
 
 	"github.com/k3s-io/helm-controller/pkg/helm"
 	"github.com/pkg/errors"
-	v1 "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
-	"github.com/rancher/wrangler/pkg/leader"
-	"github.com/rancher/wrangler/pkg/resolvehome"
-	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/apiaddresses"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -33,6 +29,10 @@ import (
 	"github.com/xiaods/k8e/pkg/static"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	v1 "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	"github.com/rancher/wrangler/pkg/leader"
+	"github.com/rancher/wrangler/pkg/resolvehome"
+	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/net"
 )
@@ -144,6 +144,11 @@ func runControllers(ctx context.Context, config *Config) error {
 		if err := coreControllers(ctx, sc, config); err != nil {
 			panic(err)
 		}
+		if controlConfig.Runtime.LeaderElectedClusterControllerStart != nil {
+			if err := controlConfig.Runtime.LeaderElectedClusterControllerStart(ctx); err != nil {
+				panic(errors.Wrap(err, "failed to start leader elected cluster controllers"))
+			}
+		}
 		for _, controller := range config.LeaderControllers {
 			if err := controller(ctx, sc); err != nil {
 				panic(errors.Wrap(err, "leader controller"))
@@ -180,17 +185,20 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		return err
 	}
 
-	if !config.ControlConfig.DisableHelmController {
-		helm.Register(ctx,
-			sc.Apply,
-			sc.Helm.Helm().V1().HelmChart(),
-			sc.Helm.Helm().V1().HelmChartConfig(),
-			sc.Batch.Batch().V1().Job(),
-			sc.Auth.Rbac().V1().ClusterRoleBinding(),
-			sc.Core.Core().V1().ServiceAccount(),
-			sc.Core.Core().V1().ConfigMap())
+	// apply SystemDefaultRegistry setting to Helm and ServiceLB before starting controllers
+	if config.ControlConfig.SystemDefaultRegistry != "" {
+		helm.DefaultJobImage = config.ControlConfig.SystemDefaultRegistry + "/" + helm.DefaultJobImage
+		servicelb.DefaultLBImage = config.ControlConfig.SystemDefaultRegistry + "/" + servicelb.DefaultLBImage
 	}
 
+	helm.Register(ctx,
+		sc.Apply,
+		sc.Helm.Helm().V1().HelmChart(),
+		sc.Helm.Helm().V1().HelmChartConfig(),
+		sc.Batch.Batch().V1().Job(),
+		sc.Auth.Rbac().V1().ClusterRoleBinding(),
+		sc.Core.Core().V1().ServiceAccount(),
+		sc.Core.Core().V1().ConfigMap())
 	if err := servicelb.Register(ctx,
 		sc.K8s,
 		sc.Apply,
@@ -226,12 +234,18 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 	}
 	dataDir = filepath.Join(controlConfig.DataDir, "manifests")
 	templateVars := map[string]string{
-		"%{CLUSTER_DNS}%":                controlConfig.ClusterDNS.String(),
-		"%{CLUSTER_DOMAIN}%":             controlConfig.ClusterDomain,
-		"%{DEFAULT_LOCAL_STORAGE_PATH}%": controlConfig.DefaultLocalStoragePath,
+		"%{CLUSTER_DNS}%":                 controlConfig.ClusterDNS.String(),
+		"%{CLUSTER_DOMAIN}%":              controlConfig.ClusterDomain,
+		"%{DEFAULT_LOCAL_STORAGE_PATH}%":  controlConfig.DefaultLocalStoragePath,
+		"%{SYSTEM_DEFAULT_REGISTRY}%":     registryTemplate(controlConfig.SystemDefaultRegistry),
+		"%{SYSTEM_DEFAULT_REGISTRY_RAW}%": controlConfig.SystemDefaultRegistry,
 	}
 
 	skip := controlConfig.Skips
+	if !skip["traefik"] && isHelmChartTraefikV1(sc) {
+		logrus.Warn("Skipping Traefik v2 deployment due to existing Traefik v1 installation")
+		skip["traefik"] = true
+	}
 	if err := deploy.Stage(dataDir, templateVars, skip); err != nil {
 		return err
 	}

@@ -132,7 +132,7 @@ func (c *tlsTransportCache) get(config *rest.Config) (http.RoundTripper, error) 
 
 type tlsCacheKey struct {
 	certData string
-	keyData  string
+	keyData  string `datapolicy:"secret-key"`
 }
 
 func tlsConfigKey(c *rest.Config) tlsCacheKey {
@@ -472,8 +472,8 @@ func (c *AvailableConditionController) Run(threadiness int, stopCh <-chan struct
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
-	klog.Infof("Starting AvailableConditionController")
-	defer klog.Infof("Shutting down AvailableConditionController")
+	klog.Info("Starting AvailableConditionController")
+	defer klog.Info("Shutting down AvailableConditionController")
 
 	if !controllers.WaitForCacheSync("AvailableConditionController", stopCh, c.apiServiceSynced, c.servicesSynced, c.endpointsSynced) {
 		return
