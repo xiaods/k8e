@@ -149,21 +149,6 @@ download_and_setup() {
          
     $SUDO mv $TMP_DIR/k8e $BIN_DIR/k8e
 
-    $SUDO curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-start-bootstrap.sh -o $BIN_DIR/k8e-start-bootstrap.sh && \
-    $SUDO chmod +x $BIN_DIR/k8e-start-bootstrap.sh
-
-    $SUDO curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-start-server.sh -o $BIN_DIR/k8e-start-server.sh && \
-    $SUDO  chmod +x $BIN_DIR/k8e-start-server.sh
-
-    $SUDO curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-start-agent.sh -o $BIN_DIR/k8e-start-agent.sh &&  \
-    $SUDO chmod +x $BIN_DIR/k8e-start-agent.sh
-
-    $SUDO curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-stop.sh -o $BIN_DIR/k8e-stop.sh && \
-    $SUDO  chmod +x $BIN_DIR/k8e-stop.sh
-
-    $SUDO curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-killall.sh -o $BIN_DIR/k8e-killall.sh && \
-    $SUDO   chmod +x $BIN_DIR/k8e-killall.sh
-
     $SUDO curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-uninstall.sh -o $BIN_DIR/k8e-uninstall.sh && \
     $SUDO  chmod +x $BIN_DIR/k8e-uninstall.sh
 
