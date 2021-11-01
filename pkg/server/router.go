@@ -18,12 +18,12 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
+	coreclient "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/version"
-	coreclient "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
-	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/json"
 )
 
@@ -350,7 +350,7 @@ func verifyLocalPassword(ctx context.Context, config *Config, once *sync.Once, n
 	if config.Rootless {
 		nodePasswordRoot = filepath.Join(config.ControlConfig.DataDir, "agent")
 	}
-	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "rancher", "node")
+	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
 	nodePasswordFile := filepath.Join(nodeConfigPath, "password")
 
 	passBytes, err := ioutil.ReadFile(nodePasswordFile)
