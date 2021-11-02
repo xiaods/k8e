@@ -17,14 +17,14 @@ fatal()
 }
 
 
-rm -rf /etc/k8e/k8e
+rm -rf /etc/k8e
 rm -rf /run/k8e
-rm -rf /var/lib/k8e/k8e
+rm -rf /var/lib/k8e
 rm -rf /var/lib/kubelet
 
 BIN_DIR=/usr/local/bin
 
-for cmd in kubectl crictl ctr nerdctl calicoctl; do
+for cmd in kubectl crictl ctr nerdctl cilium; do
     if [ -L ${BIN_DIR}/\$cmd ]; then
         rm -f ${BIN_DIR}/\$cmd
     fi
