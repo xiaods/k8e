@@ -50,7 +50,6 @@ type Server struct {
 	AdvertisePort            int
 	DisableScheduler         bool
 	ServerURL                string
-	FlannelBackend           string
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
 	DisableNPC               bool
@@ -156,12 +155,6 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 				Usage:       "(networking) Cluster Domain",
 				Destination: &ServerConfig.ClusterDomain,
 				Value:       "cluster.local",
-			},
-			cli.StringFlag{
-				Name:        "flannel-backend",
-				Usage:       "(networking) One of 'none', 'vxlan', 'ipsec', 'host-gw', or 'wireguard'",
-				Destination: &ServerConfig.FlannelBackend,
-				Value:       "vxlan",
 			},
 			cli.StringFlag{
 				Name:        "token,t",
