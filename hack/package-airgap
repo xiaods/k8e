@@ -9,8 +9,9 @@ airgap_image_file='hack/airgap/image-list.txt'
 images=$(cat "${airgap_image_file}")
 xargs -n1 docker pull <<< "${images}"
 docker save ${images} -o dist/artifacts/k8e-airgap-images-${ARCH}.tar
-zstd -T0 -16 -f --long=25 dist/artifacts/k8e-airgap-images-${ARCH}.tar -o dist/artifacts/k8e-airgap-images-${ARCH}.tar.zst
 gzip -v -c dist/artifacts/k8e-airgap-images-${ARCH}.tar > dist/artifacts/k8e-airgap-images-${ARCH}.tar.gz
 if [ ${ARCH} = amd64 ]; then
-  cp "${airgap_image_file}" dist/artifacts/k8e-images.txt
+  cp "${airgap_image_file}" dist/artifacts/k8e-images-amd64.txt
+elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
+    cp "${airgap_image_file}" dist/artifacts/k8e-images-arm64.txt
 fi

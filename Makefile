@@ -2,11 +2,15 @@ TARGETS := $(shell ls hack | grep -v \\.sh | grep -v package-airgap| grep -v cle
 
 .dapper:
 	@echo Downloading dapper
-	@curl -sL https://releases.rancher.com/dapper/v0.5.1/dapper-$$(uname -s)-$$(uname -m) > .dapper.tmp
-	@@chmod +x .dapper.tmp
-	@./.dapper.tmp -v
-	@mv .dapper.tmp .dapper
-
+	@curl -s https://api.github.com/repos/rancher/dapper/releases/latest \
+		| grep browser_download_url \
+		| grep dapper \
+		| cut -d '"' -f 4 \
+		| wget -qi -
+	@mv dapper .dapper
+	@@chmod +x .dapper
+	@./.dapper -v
+	
 $(TARGETS): .dapper
 	./.dapper $@
 
