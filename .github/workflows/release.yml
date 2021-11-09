@@ -9,6 +9,13 @@ jobs:
   build:
     name: Build & Release
     runs-on: [ubuntu-latest]
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            goos: linux
+          - goarch: arm64
+            goos: linux
     env:
       DRONE_TAG: v1.21.5+k8e1
     steps:
