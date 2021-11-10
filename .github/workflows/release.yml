@@ -1,14 +1,12 @@
-name: Go for k8e
-
 on:
-  pull_request:
-    branches: [ master ]
-
+  release:
+    types:
+    - published
+name: Build Release
 jobs:
-
   build:
     name: Build & Release
-    runs-on: [ubuntu-latest]
+    runs-on: ubuntu-20.04
     strategy:
       matrix:
         include:
@@ -19,34 +17,26 @@ jobs:
     env:
       DRONE_TAG: v1.21.5+k8e1
     steps:
-    - name: Set up Go 1.x
+    - uses: actions/checkout@master
+    - name: Set up Go
       uses: actions/setup-go@v2
       with:
-        go-version: ^1.15
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v2
-
+        go-version: 1.16
     - name: check depends
       run: sudo apt-get install -y libseccomp-dev
-
     - name: generate resources
       run: make generate
-
-    - name: Test
-      run: go get -u github.com/rakyll/gotest && go mod vendor && gotest -v ./...
-
     - name: package bin
       run: SKIP_VALIDATE=true make
-
-    - name: Deploy to qiniu
-      uses: saltbo/uptoc@master
-      with:
-        driver: qiniu
-        region: ap-southeast-1
-        bucket: k8e
-        exclude: .cache,test
-        dist: dist/artifacts
       env:
-        UPTOC_UPLOADER_AK: ${{ secrets.UPTOC_UPLOADER_KEYID }}
-        UPTOC_UPLOADER_SK: ${{ secrets.UPTOC_UPLOADER_KEYSECRET }}
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+    - name: package image
+      run: make package-airgap
+    - name: Uploading assets...
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/artifacts/k8e-${{ matrix.goarch }}
+          dist/artifacts/k8e-airgap-images-${{ matrix.goarch }}.tar.gz
+          dist/artifacts/k8e-images-${{ matrix.goarch }}.txt
