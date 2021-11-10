@@ -27,7 +27,7 @@ deps:
 .PHONY: generate
 generate: build/data
 	./hack/download
-	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go generate
+	CGO_ENABLED=0 GOARCH=$(GOARCH) go generate
 
 build/data:
 	mkdir -p $@
