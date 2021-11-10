@@ -16,6 +16,8 @@ jobs:
             goos: linux
     env:
       RELEASE_TAG: v1.21.5+k8e2
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
     steps:
     - uses: actions/checkout@master
     - name: Set up Go
@@ -28,9 +30,6 @@ jobs:
       run: make generate
     - name: package bin
       run: SKIP_VALIDATE=true make
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
     - name: package image
       run: make package-airgap
     - name: Uploading assets...
