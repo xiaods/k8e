@@ -27,7 +27,7 @@ deps:
 .PHONY: generate
 generate: build/data
 	./hack/download
-	go generate
+	# go generate
 
 build/data:
 	mkdir -p $@

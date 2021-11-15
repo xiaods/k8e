@@ -16,10 +16,6 @@ RUN if [ "$(go env GOARCH)" = "arm64" ]; then                                   
     wget https://github.com/aquasecurity/trivy/releases/download/v0.16.0/trivy_0.16.0_Linux-ARM64.tar.gz && \
     tar -zxvf trivy_0.16.0_Linux-ARM64.tar.gz                                                            && \
     mv trivy /usr/local/bin;                                                                                \
-    elif [ "$(go env GOARCH)" = "arm" ]; then                                                               \
-    wget https://github.com/aquasecurity/trivy/releases/download/v0.16.0/trivy_0.16.0_Linux-ARM.tar.gz   && \
-    tar -zxvf trivy_0.16.0_Linux-ARM.tar.gz                                                              && \
-    mv trivy /usr/local/bin;                                                                                \
     else                                                                                                    \
     wget https://github.com/aquasecurity/trivy/releases/download/v0.16.0/trivy_0.16.0_Linux-64bit.tar.gz && \
     tar -zxvf trivy_0.16.0_Linux-64bit.tar.gz                                                            && \
@@ -41,7 +37,7 @@ ENV SELINUX $SELINUX
 
 ENV GO111MODULE off
 ENV DAPPER_RUN_ARGS --privileged -v k3s-cache:/go/src/github.com/xiaods/k8e/.cache -v trivy-cache:/root/.cache/trivy
-ENV DAPPER_ENV REPO TAG RELEASE_TAG IMAGE_NAME SKIP_VALIDATE GCLOUD_AUTH GITHUB_TOKEN GOLANG
+ENV DAPPER_ENV REPO TAG RELEASE_TAG IMAGE_NAME SKIP_VALIDATE GCLOUD_AUTH GITHUB_TOKEN GOLANG GOOS GOARCH
 ENV DAPPER_SOURCE /go/src/github.com/xiaods/k8e/
 ENV DAPPER_OUTPUT ./bin ./dist ./build/out
 ENV DAPPER_DOCKER_SOCKET true
