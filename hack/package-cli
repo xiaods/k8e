@@ -52,7 +52,7 @@ LDFLAGS="
     -w -s
 "
 STATIC="-extldflags '-static'"
-CGO_ENABLED=0 "${GO}" build -ldflags "$LDFLAGS $STATIC" -o ${CMD_NAME} ./cmd/k8e/main.go
+CGO_ENABLED=0 GOOS=${GOOS} "${GO}" build -ldflags "$LDFLAGS $STATIC" -o ${CMD_NAME} ./cmd/k8e/main.go
 
 stat ${CMD_NAME}
 

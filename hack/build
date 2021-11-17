@@ -90,11 +90,11 @@ if [ ! -x ${INSTALLBIN}/cni ]; then
     WORKDIR=$TMPDIR/src/github.com/containernetworking/plugins
     git clone -b $VERSION_CNIPLUGINS https://github.com/rancher/plugins.git $WORKDIR
     cd $WORKDIR
-    GOPATH=$TMPDIR CGO_ENABLED=0 "${GO}" build -tags "$TAGS" -ldflags "$LDFLAGS $STATIC" -o $INSTALLBIN/cni
+    GOPATH=$TMPDIR CGO_ENABLED=0 GOOS=${GOOS} "${GO}" build -tags "$TAGS" -ldflags "$LDFLAGS $STATIC" -o $INSTALLBIN/cni
 )
 fi
 echo Building server
-CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC_SQLITE" -o bin/containerd ./cmd/server/main.go
+CGO_ENABLED=1 GOOS=${GOOS} "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC_SQLITE" -o bin/containerd ./cmd/server/main.go
 ln -s containerd ./bin/k8e-agent
 ln -s containerd ./bin/k8e-server
 ln -s containerd ./bin/k8e-etcd-snapshot

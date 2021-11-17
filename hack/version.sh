@@ -1,7 +1,7 @@
 #!/bin/bash
 
 GO=${GO-go}
-ARCH=${ARCH:-$("${GO}" env GOARCH)}
+ARCH=${ARCH:-${GOARCH}}
 SUFFIX="-${ARCH}"
 GIT_TAG=$RELEASE_TAG
 TREE_STATE=clean
