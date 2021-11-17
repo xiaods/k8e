@@ -7,9 +7,6 @@ import (
 	"runtime"
 
 	"github.com/k3s-io/helm-controller/pkg/generated/controllers/helm.cattle.io"
-	"github.com/xiaods/k8e/pkg/deploy"
-	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/apps"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/batch"
 	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
@@ -18,6 +15,9 @@ import (
 	"github.com/rancher/wrangler/pkg/crd"
 	"github.com/rancher/wrangler/pkg/start"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/deploy"
+	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
+	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -59,7 +59,10 @@ func NewContext(ctx context.Context, cfg string) (*Context, error) {
 		return nil, err
 	}
 
-	k8s := kubernetes.NewForConfigOrDie(restConfig)
+	k8s, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, err
+	}
 	return &Context{
 		K8e:   k8e.NewFactoryFromConfigOrDie(restConfig),
 		Helm:  helm.NewFactoryFromConfigOrDie(restConfig),
