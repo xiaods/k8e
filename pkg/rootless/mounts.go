@@ -1,3 +1,4 @@
+//go:build !windows
 // +build !windows
 
 package rootless
@@ -14,9 +15,17 @@ import (
 )
 
 func setupMounts(stateDir string) error {
+	// Remove symlinks to the rootful files, so that we can create our own files.
+	removeList := []string{
+		"/var/run/netns",
+		"/run/containerd",
+		"/run/xtables.lock",
+	}
+	for _, f := range removeList {
+		_ = os.RemoveAll(f)
+	}
+
 	mountMap := [][]string{
-		{"/run", ""},
-		{"/var/run", ""},
 		{"/var/log", filepath.Join(stateDir, "logs")},
 		{"/var/lib/cni", filepath.Join(stateDir, "cni")},
 		{"/var/lib/kubelet", filepath.Join(stateDir, "kubelet")},
@@ -26,6 +35,18 @@ func setupMounts(stateDir string) error {
 	for _, v := range mountMap {
 		if err := setupMount(v[0], v[1]); err != nil {
 			return errors.Wrapf(err, "failed to setup mount %s => %s", v[0], v[1])
+		}
+	}
+
+	if devKmsg, err := os.Open("/dev/kmsg"); err == nil {
+		devKmsg.Close()
+	} else {
+		// kubelet requires /dev/kmsg to be readable
+		// https://github.com/rootless-containers/usernetes/issues/204
+		// https://github.com/rootless-containers/usernetes/pull/214
+		logrus.Debugf("`kernel.dmesg_restrict` seems to be set, bind-mounting /dev/null into /dev/kmsg")
+		if err := unix.Mount("/dev/null", "/dev/kmsg", "none", unix.MS_BIND, ""); err != nil {
+			return err
 		}
 	}
 
