@@ -14,7 +14,7 @@ import (
 	"github.com/erikdubbelboer/gspt"
 	"github.com/natefinch/lumberjack"
 	"github.com/pkg/errors"
-	"github.com/rancher/k3s/pkg/version"
+	"github.com/xiaods/k8e/pkg/version"
 	"golang.org/x/sys/unix"
 )
 

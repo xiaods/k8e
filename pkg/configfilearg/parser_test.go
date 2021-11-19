@@ -150,8 +150,9 @@ func TestConfigFile(t *testing.T) {
 
 func TestParse(t *testing.T) {
 	testDataOutput := []string{
-		"--foo-bar=baz",
+		"--foo-bar=bar-foo",
 		"--a-slice=1",
+		"--a-slice=1.5",
 		"--a-slice=2",
 		"--a-slice=",
 		"--a-slice=three",
@@ -159,6 +160,15 @@ func TestParse(t *testing.T) {
 		"-c=b",
 		"--isfalse=false",
 		"--islast=true",
+		"--b-string=one",
+		"--b-string=two",
+		"--c-slice=one",
+		"--c-slice=two",
+		"--c-slice=three",
+		"--d-slice=three",
+		"--d-slice=four",
+		"--e-slice=one",
+		"--e-slice=two",
 	}
 
 	defParser := Parser{
@@ -205,7 +215,7 @@ func TestParse(t *testing.T) {
 			input:  []string{"server", "-c=missing"},
 			output: []string{"server", "-c=missing"},
 			what:   "fail when missing config",
-			err:    "open missing: no such file or directory",
+			err:    "stat missing: no such file or directory",
 		},
 		{
 			parser: Parser{
@@ -216,6 +226,24 @@ func TestParse(t *testing.T) {
 			input:  []string{"before", "server", "before", "-c", "./testdata/data.yaml", "after"},
 			output: append(append([]string{"before", "server"}, testDataOutput...), "before", "-c", "./testdata/data.yaml", "after"),
 			what:   "read config file",
+		},
+		{
+			parser: Parser{
+				After:         []string{"server", "agent"},
+				FlagNames:     []string{"-c", "--config"},
+				DefaultConfig: "missing",
+			},
+			input: []string{"before", "server", "before", "-c", "./testdata/data.yaml.d/02-data.yaml", "after"},
+			output: []string{"before", "server",
+				"--foo-bar=bar-foo",
+				"--b-string=two",
+				"--c-slice=three",
+				"--d-slice=three",
+				"--d-slice=four",
+				"--e-slice=one",
+				"--e-slice=two",
+				"before", "-c", "./testdata/data.yaml.d/02-data.yaml", "after"},
+			what: "read single config file",
 		},
 	}
 
