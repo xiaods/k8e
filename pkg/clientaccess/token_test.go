@@ -13,9 +13,9 @@ import (
 
 	"github.com/rancher/dynamiclistener/cert"
 	"github.com/rancher/dynamiclistener/factory"
+	"github.com/stretchr/testify/assert"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -320,7 +320,7 @@ func newTLSServer(t *testing.T, username, password string, sendWrongCA bool) *ht
 			}
 			bootstrapData := &config.ControlRuntimeBootstrap{}
 			w.Header().Set("Content-Type", "application/json")
-			if err := bootstrap.Write(w, bootstrapData); err != nil {
+			if err := bootstrap.ReadFromDisk(w, bootstrapData); err != nil {
 				t.Errorf("failed to write bootstrap: %v", err)
 			}
 			return

@@ -15,11 +15,11 @@ import (
 	"github.com/rancher/dynamiclistener/storage/file"
 	"github.com/rancher/dynamiclistener/storage/kubernetes"
 	"github.com/rancher/dynamiclistener/storage/memory"
+	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
-	"github.com/sirupsen/logrus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -79,7 +79,8 @@ func (c *Cluster) initClusterAndHTTPS(ctx context.Context) error {
 
 	// Create a HTTP server with the registered request handlers, using logrus for logging
 	server := http.Server{
-		Handler: handler}
+		Handler: handler,
+	}
 	if logrus.IsLevelEnabled(logrus.DebugLevel) {
 		server.ErrorLog = log.New(logrus.StandardLogger().Writer(), "Cluster-Http-Server ", log.LstdFlags)
 	} else {

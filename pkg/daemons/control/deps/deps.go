@@ -246,7 +246,11 @@ func genEncryptedNetworkInfo(controlConfig *config.Control, runtime *config.Cont
 	}
 
 	controlConfig.IPSECPSK = psk
-	return ioutil.WriteFile(runtime.IPSECKey, []byte(psk+"\n"), 0600)
+	if err := ioutil.WriteFile(runtime.IPSECKey, []byte(psk+"\n"), 0600); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func getServerPass(passwd *passwd.Passwd, config *config.Control) (string, error) {
@@ -341,7 +345,7 @@ func genClientCerts(config *config.Control, runtime *config.ControlRuntime) erro
 	if _, err = factory("system:kube-proxy", nil, runtime.ClientKubeProxyCert, runtime.ClientKubeProxyKey); err != nil {
 		return err
 	}
-	// This user (system:k8e-controller by default) must be bound to a role in rolebindings.yaml or the downstream equivalent
+	// This user (system:k3s-controller by default) must be bound to a role in rolebindings.yaml or the downstream equivalent
 	if _, err = factory("system:"+version.Program+"-controller", nil, runtime.ClientK8eControllerCert, runtime.ClientK8eControllerKey); err != nil {
 		return err
 	}

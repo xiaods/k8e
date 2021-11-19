@@ -6,9 +6,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/rancher/wrangler/pkg/data/convert"
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/agent/util"
 	"gopkg.in/yaml.v2"
 )
 
@@ -17,9 +23,10 @@ type Parser struct {
 	FlagNames     []string
 	EnvName       string
 	DefaultConfig string
+	ValidFlags    map[string][]cli.Flag
 }
 
-// Parser will parse an os.Args style slice looking for Parser.FlagNames after Parse.After.
+// Parse will parse an os.Args style slice looking for Parser.FlagNames after Parse.After.
 // It will read the parameter value of Parse.FlagNames and read the file, appending all flags directly after
 // the Parser.After value. This means a the non-config file flags will override, or if a slice append to, the config
 // file values.
@@ -40,10 +47,79 @@ func (p *Parser) Parse(args []string) ([]string, error) {
 		} else if err != nil {
 			return nil, err
 		}
+		if len(args) > 1 {
+			values, err = p.stripInvalidFlags(args[1], values)
+			if err != nil {
+				return nil, err
+			}
+		}
 		return append(prefix, append(values, suffix...)...), nil
 	}
 
 	return args, nil
+}
+
+func (p *Parser) stripInvalidFlags(command string, args []string) ([]string, error) {
+	var result []string
+	var cmdFlags []cli.Flag
+	for k, v := range p.ValidFlags {
+		if k == command {
+			cmdFlags = v
+		}
+	}
+	if len(cmdFlags) == 0 {
+		return args, nil
+	}
+	validFlags := make(map[string]bool, len(cmdFlags))
+	for _, f := range cmdFlags {
+		//split flags with aliases into 2 entries
+		for _, s := range strings.Split(f.GetName(), ",") {
+			validFlags[s] = true
+		}
+	}
+
+	re, err := regexp.Compile("^-+([^=]*)=")
+	if err != nil {
+		return args, err
+	}
+	for _, arg := range args {
+		mArg := arg
+		if match := re.FindAllStringSubmatch(arg, -1); match != nil {
+			mArg = match[0][1]
+		}
+		if validFlags[mArg] {
+			result = append(result, arg)
+		} else {
+			logrus.Warnf("Unknown flag %s found in config.yaml, skipping\n", strings.Split(arg, "=")[0])
+		}
+	}
+	return result, nil
+}
+
+func (p *Parser) FindString(args []string, target string) (string, error) {
+	configFile, isSet := p.findConfigFileFlag(args)
+	if configFile != "" {
+		bytes, err := readConfigFileData(configFile)
+		if !isSet && os.IsNotExist(err) {
+			return "", nil
+		} else if err != nil {
+			return "", err
+		}
+
+		data := yaml.MapSlice{}
+		if err := yaml.Unmarshal(bytes, &data); err != nil {
+			return "", err
+		}
+
+		for _, i := range data {
+			k, v := convert.ToString(i.Key), convert.ToString(i.Value)
+			if k == target {
+				return v, nil
+			}
+		}
+	}
+
+	return "", nil
 }
 
 func (p *Parser) findConfigFileFlag(args []string) (string, bool) {
@@ -72,31 +148,107 @@ func (p *Parser) findStart(args []string) ([]string, []string, bool) {
 	if len(p.After) == 0 {
 		return []string{}, args, true
 	}
-
-	for i, val := range args {
-		for _, test := range p.After {
-			if val == test {
-				return args[0 : i+1], args[i+1:], true
+	afterTemp := append([]string{}, p.After...)
+	afterIndex := make(map[string]int)
+	re, err := regexp.Compile(`(.+):(\d+)`)
+	if err != nil {
+		return args, nil, false
+	}
+	// After keywords ending with ":<NUM>" can set + NUM of arguments as the split point.
+	// used for matching on subcommmands
+	for i, arg := range afterTemp {
+		if match := re.FindAllStringSubmatch(arg, -1); match != nil {
+			afterTemp[i] = match[0][1]
+			afterIndex[match[0][1]], err = strconv.Atoi(match[0][2])
+			if err != nil {
+				return args, nil, false
 			}
 		}
 	}
 
+	for i, val := range args {
+		for _, test := range afterTemp {
+			if val == test {
+				if skip := afterIndex[test]; skip != 0 {
+					if len(args) <= i+skip || strings.HasPrefix(args[i+skip], "-") {
+						return args[0 : i+1], args[i+1:], true
+					}
+					return args[0 : i+skip+1], args[i+skip+1:], true
+				}
+				return args[0 : i+1], args[i+1:], true
+			}
+		}
+	}
 	return args, nil, false
 }
 
+func dotDFiles(basefile string) (result []string, _ error) {
+	files, err := ioutil.ReadDir(basefile + ".d")
+	if os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		if file.IsDir() || !util.HasSuffixI(file.Name(), ".yaml", ".yml") {
+			continue
+		}
+		result = append(result, filepath.Join(basefile+".d", file.Name()))
+	}
+	return
+}
+
 func readConfigFile(file string) (result []string, _ error) {
-	bytes, err := readConfigFileData(file)
+	files, err := dotDFiles(file)
 	if err != nil {
 		return nil, err
 	}
 
-	data := yaml.MapSlice{}
-	if err := yaml.Unmarshal(bytes, &data); err != nil {
+	_, err = os.Stat(file)
+	if os.IsNotExist(err) && len(files) > 0 {
+	} else if err != nil {
 		return nil, err
+	} else {
+		files = append([]string{file}, files...)
 	}
 
-	for _, i := range data {
-		k, v := convert.ToString(i.Key), i.Value
+	var (
+		keySeen  = map[string]bool{}
+		keyOrder []string
+		values   = map[string]interface{}{}
+	)
+	for _, file := range files {
+		bytes, err := readConfigFileData(file)
+		if err != nil {
+			return nil, err
+		}
+
+		data := yaml.MapSlice{}
+		if err := yaml.Unmarshal(bytes, &data); err != nil {
+			return nil, err
+		}
+
+		for _, i := range data {
+			k, v := convert.ToString(i.Key), i.Value
+			isAppend := strings.HasSuffix(k, "+")
+			k = strings.TrimSuffix(k, "+")
+
+			if !keySeen[k] {
+				keySeen[k] = true
+				keyOrder = append(keyOrder, k)
+			}
+
+			if oldValue, ok := values[k]; ok && isAppend {
+				values[k] = append(toSlice(oldValue), toSlice(v)...)
+			} else {
+				values[k] = v
+			}
+		}
+	}
+
+	for _, k := range keyOrder {
+		v := values[k]
+
 		prefix := "--"
 		if len(k) == 1 {
 			prefix = "-"
@@ -113,6 +265,21 @@ func readConfigFile(file string) (result []string, _ error) {
 	}
 
 	return
+}
+
+func toSlice(v interface{}) []interface{} {
+	switch k := v.(type) {
+	case string:
+		return []interface{}{k}
+	case []interface{}:
+		return k
+	default:
+		str := strings.TrimSpace(convert.ToString(v))
+		if str == "" {
+			return nil
+		}
+		return []interface{}{str}
+	}
 }
 
 func readConfigFileData(file string) ([]byte, error) {
