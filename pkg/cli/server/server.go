@@ -482,7 +482,7 @@ func validateNetworkConfiguration(serverConfig server.Config) error {
 	}
 
 	if (serverConfig.ControlConfig.DisableNPC == false) && (dualCluster || dualService) {
-		return errors.New("network policy enforcement are not compatible with dual-stack operation; server must be restarted with --disable-network-policy and an alternative CNI plugin deployed")
+		return errors.New("network policy enforcement is not compatible with dual-stack operation; server must be restarted with --disable-network-policy")
 	}
 
 	if dualDNS == true {
