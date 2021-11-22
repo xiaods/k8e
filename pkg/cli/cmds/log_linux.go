@@ -23,7 +23,7 @@ import (
 // as pid 1.
 func forkIfLoggingOrReaping() error {
 	var stdout, stderr io.Writer = os.Stdout, os.Stderr
-	enableLogRedirect := LogConfig.LogFile != "" && os.Getenv("_K3S_LOG_REEXEC_") == ""
+	enableLogRedirect := LogConfig.LogFile != "" && os.Getenv("_K8E_LOG_REEXEC_") == ""
 	enableReaping := os.Getpid() == 1
 
 	if enableLogRedirect {
@@ -57,7 +57,7 @@ func forkIfLoggingOrReaping() error {
 		}
 
 		args := append([]string{version.Program}, os.Args[1:]...)
-		env := append(os.Environ(), "_K3S_LOG_REEXEC_=true", "NOTIFY_SOCKET=")
+		env := append(os.Environ(), "_K8E_LOG_REEXEC_=true", "NOTIFY_SOCKET=")
 		cmd := &exec.Cmd{
 			Path:   "/proc/self/exe",
 			Dir:    pwd,
