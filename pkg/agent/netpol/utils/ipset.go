@@ -1,12 +1,14 @@
 // Apache License v2.0 (copyright Cloud Native Labs & Rancher Labs)
 // - modified from https://github.com/cloudnativelabs/kube-router/blob/73b1b03b32c5755b240f6c077bb097abe3888314/pkg/utils/ipset.go
 
+//go:build !windows
 // +build !windows
 
 package utils
 
 import (
 	"bytes"
+	// nolint:gosec // we don't use this hash in a sensitive capacity, so we don't care that its weak
 	"crypto/sha1"
 	"encoding/base32"
 	"errors"
@@ -428,6 +430,7 @@ func buildIPSetRestore(ipset *IPSet) string {
 		tmpSetName := tmpSets[setOptions]
 		if tmpSetName == "" {
 			// create a temporary set per unique set-options:
+			// nolint:gosec // we don't use this hash in a sensitive capacity, so we don't care that its weak
 			hash := sha1.Sum([]byte("tmp:" + setOptions))
 			tmpSetName = tmpIPSetPrefix + base32.StdEncoding.EncodeToString(hash[:10])
 			ipSetRestore.WriteString(fmt.Sprintf("create %s %s\n", tmpSetName, setOptions))

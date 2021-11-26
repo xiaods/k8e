@@ -4,6 +4,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+
+	// nolint:gosec // we don't use this hash in a sensitive capacity, so we don't care that its weak
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
