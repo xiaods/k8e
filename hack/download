@@ -6,15 +6,17 @@ cd $(dirname $0)/..
 . ./hack/version.sh
 
 RUNC_VERSION=v1.0.2
-CHARTS_DIR=build/static/charts
 RUNC_DIR=build/src/github.com/opencontainers/runc
 DATA_DIR=build/data
+CHARTS_DIR=build/static/charts
+NERDCTL_VERSION=0.14.0
+CILIUMCLI_VERSION=v0.9.3
 
 umask 022
 rm -rf ${CHARTS_DIR}
 rm -rf ${RUNC_DIR}
-mkdir -p ${CHARTS_DIR}
 mkdir -p ${DATA_DIR}
+mkdir -p ${CHARTS_DIR}
 mkdir -p bin
 
 git clone --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR} || true
@@ -23,18 +25,18 @@ git fetch --all --tags
 git checkout ${RUNC_VERSION} -b k8e
 popd
 
-#nerdctl for containerd , v0.12.1
+#nerdctl for containerd , 0.14.0
 echo "download nerdctl..."
 if [ ${ARCH} = amd64 ]; then
-  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.12.1/nerdctl-0.12.1-linux-amd64.tar.gz | tar zxf - -C bin
+  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-amd64.tar.gz | tar zxf - -C bin
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v0.12.1/nerdctl-0.12.1-linux-arm64.tar.gz | tar zxf - -C bin
+  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-arm64.tar.gz | tar zxf - -C bin
 fi
 
 # Cilium
 echo "download Cilium..."
 if [ ${ARCH} = amd64 ]; then
-  curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/v0.9.2/cilium-linux-amd64.tar.gz | tar zxf - -C bin
+  curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-amd64.tar.gz | tar zxf - -C bin
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-  curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/v0.9.2/cilium-linux-arm64.tar.gz | tar zxf - -C bin
+  curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-arm64.tar.gz | tar zxf - -C bin
 fi
