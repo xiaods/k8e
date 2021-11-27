@@ -73,7 +73,7 @@ func setupCriCtlConfig(cfg cmds.Agent, nodeConfig *daemonconfig.Node) error {
 	return ioutil.WriteFile(agentConfDir+"/crictl.yaml", []byte(crp), 0600)
 }
 
-func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
+func runFunc(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 	nodeConfig := config.Get(ctx, cfg, proxy)
 
 	dualCluster, err := utilsnet.IsDualStackCIDRs(nodeConfig.AgentConfig.ClusterCIDRs)
@@ -240,7 +240,7 @@ func Run(ctx context.Context, cfg cmds.Agent) error {
 		break
 	}
 
-	return run(ctx, cfg, proxy)
+	return runFunc(ctx, cfg, proxy)
 }
 
 func validate() error {

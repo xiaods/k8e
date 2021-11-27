@@ -9,7 +9,7 @@ import (
 )
 
 func GetIPFromInterface(ifaceName string) string {
-	ip, err := getIPFromInterface(ifaceName)
+	ip, err := getIPFromInterfaceFunc(ifaceName)
 	if err != nil {
 		logrus.Warn(errors.Wrap(err, "unable to get global unicast ip from interface name"))
 	} else {
@@ -18,7 +18,7 @@ func GetIPFromInterface(ifaceName string) string {
 	return ip
 }
 
-func getIPFromInterface(ifaceName string) (string, error) {
+func getIPFromInterfaceFunc(ifaceName string) (string, error) {
 	iface, err := net.InterfaceByName(ifaceName)
 	if err != nil {
 		return "", err
