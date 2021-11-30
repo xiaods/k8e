@@ -10,7 +10,7 @@ metadata:
   name: local-path-provisioner-role
 rules:
 - apiGroups: [""]
-  resources: ["nodes", "persistentvolumeclaims"]
+  resources: ["nodes", "persistentvolumeclaims", "configmaps"]
   verbs: ["get", "list", "watch"]
 - apiGroups: [""]
   resources: ["endpoints", "persistentvolumes", "pods"]
@@ -50,16 +50,20 @@ spec:
       labels:
         app: local-path-provisioner
     spec:
+      priorityClassName: "system-node-critical"
       serviceAccountName: local-path-provisioner-service-account
       tolerations:
           - key: "CriticalAddonsOnly"
             operator: "Exists"
+          - key: "node-role.kubernetes.io/control-plane"
+            operator: "Exists"
+            effect: "NoSchedule"
           - key: "node-role.kubernetes.io/master"
             operator: "Exists"
             effect: "NoSchedule"
       containers:
       - name: local-path-provisioner
-        image: rancher/local-path-provisioner:v0.0.19
+        image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/local-path-provisioner:v0.0.19
         imagePullPolicy: IfNotPresent
         command:
         - local-path-provisioner
@@ -74,8 +78,6 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
-        - name: HELPER_IMAGE
-          value: rancher/library-busybox:1.32.1
       volumes:
         - name: config-volume
           configMap:
@@ -98,11 +100,55 @@ metadata:
   namespace: kube-system
 data:
   config.json: |-
-        {
-                "nodePathMap":[
-                {
-                        "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
-                        "paths":["%{DEFAULT_LOCAL_STORAGE_PATH}%"]
-                }
-                ]
-        }
+    {
+      "nodePathMap":[
+      {
+        "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
+        "paths":["%{DEFAULT_LOCAL_STORAGE_PATH}%"]
+      }
+      ]
+    }
+  setup: |-
+    #!/bin/sh
+    while getopts "m:s:p:" opt
+    do
+        case $opt in
+            p)
+            absolutePath=$OPTARG
+            ;;
+            s)
+            sizeInBytes=$OPTARG
+            ;;
+            m)
+            volMode=$OPTARG
+            ;;
+        esac
+    done
+    mkdir -m 0777 -p ${absolutePath}
+    chmod 701 ${absolutePath}/..
+  teardown: |-
+    #!/bin/sh
+    while getopts "m:s:p:" opt
+    do
+        case $opt in
+            p)
+            absolutePath=$OPTARG
+            ;;
+            s)
+            sizeInBytes=$OPTARG
+            ;;
+            m)
+            volMode=$OPTARG
+            ;;
+        esac
+    done
+    rm -rf ${absolutePath}
+  helperPod.yaml: |-
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: helper-pod
+    spec:
+      containers:
+      - name: helper-pod
+        image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/library-busybox:1.32.1
