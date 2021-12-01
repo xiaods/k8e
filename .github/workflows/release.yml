@@ -13,7 +13,7 @@ jobs:
           - goarch: amd64
             goos: linux
     env:
-      RELEASE_TAG: v1.21.6+k8e1
+      RELEASE_TAG: v1.21.7+k8e1
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
     steps:
@@ -29,6 +29,10 @@ jobs:
       run: SKIP_VALIDATE=true make
     - name: package airgap image
       run: make package-airgap
+    - uses: MCJack123/ghaction-generate-release-hashes@v1
+      with:
+        hash-type: sha256
+        file-name: dist/artifacts/k8e-hashes.txt
     - name: Uploading assets...
       uses: softprops/action-gh-release@v1
       with:
@@ -36,3 +40,4 @@ jobs:
           dist/artifacts/k8e-${{ matrix.goarch }}
           dist/artifacts/k8e-airgap-images-${{ matrix.goarch }}.tar.gz
           dist/artifacts/k8e-images-${{ matrix.goarch }}.txt
+          dist/artifacts/k8e-hashes.txt
