@@ -46,6 +46,7 @@ func (c *Cluster) save(ctx context.Context, override bool) error {
 	if err != nil {
 		return err
 	}
+	defer storageClient.Close()
 
 	if _, err := c.getBootstrapKeyFromStorage(ctx, storageClient, normalizedToken, token); err != nil {
 		return err
@@ -100,6 +101,7 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer storageClient.Close()
 
 	token := c.config.Token
 	if token == "" {
