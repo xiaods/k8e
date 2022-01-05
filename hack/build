@@ -10,35 +10,34 @@ GO=${GO-go}
 PKG="github.com/xiaods/k8e"
 PKG_CONTAINERD="github.com/containerd/containerd"
 PKG_CRICTL="github.com/kubernetes-sigs/cri-tools"
+PKG_K8S_BASE="k8s.io/component-base"
+PKG_K8S_CLIENT="k8s.io/client-go/pkg"
 
 buildDate=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-VENDOR_PREFIX="${PKG}/vendor/"
 VERSIONFLAGS="
     -X ${PKG}/pkg/version.Version=${VERSION}
     -X ${PKG}/pkg/version.GitCommit=${COMMIT:0:8}
 
-    -X ${VENDOR_PREFIX}k8s.io/client-go/pkg/version.gitVersion=${VERSION}
-    -X ${VENDOR_PREFIX}k8s.io/client-go/pkg/version.gitCommit=${COMMIT}
-    -X ${VENDOR_PREFIX}k8s.io/client-go/pkg/version.gitTreeState=${TREE_STATE}
-    -X ${VENDOR_PREFIX}k8s.io/client-go/pkg/version.buildDate=${buildDate}
+    -X ${PKG_K8S_CLIENT}/version.gitVersion=${VERSION}
+    -X ${PKG_K8S_CLIENT}/version.gitCommit=${COMMIT}
+    -X ${PKG_K8S_CLIENT}/version.gitTreeState=${TREE_STATE}
+    -X ${PKG_K8S_CLIENT}/version.buildDate=${buildDate}
 
-    -X ${VENDOR_PREFIX}k8s.io/component-base/version.gitVersion=${VERSION}
-    -X ${VENDOR_PREFIX}k8s.io/component-base/version.gitCommit=${COMMIT}
-    -X ${VENDOR_PREFIX}k8s.io/component-base/version.gitTreeState=${TREE_STATE}
-    -X ${VENDOR_PREFIX}k8s.io/component-base/version.buildDate=${buildDate}
+    -X ${PKG_K8S_BASE}/version.gitVersion=${VERSION}
+    -X ${PKG_K8S_BASE}/version.gitCommit=${COMMIT}
+    -X ${PKG_K8S_BASE}/version.gitTreeState=${TREE_STATE}
+    -X ${PKG_K8S_BASE}/version.buildDate=${buildDate}
 
-    -X ${VENDOR_PREFIX}${PKG_CONTAINERD}/version.Version=${VERSION_CONTAINERD}
-    -X ${VENDOR_PREFIX}${PKG_CONTAINERD}/version.Package=${PKG_CONTAINERD}
-    -X ${VENDOR_PREFIX}${PKG_CRICTL}/pkg/version.Version=${VERSION_CRICTL}
+    -X ${PKG_CRICTL}/version.Version=${VERSION_CRICTL}
+
+    -X ${PKG_CONTAINERD}/version.Version=${VERSION_CONTAINERD}
+    -X ${PKG_CRICTL}/pkg/version.Version=${VERSION_CRICTL}
 "
 LDFLAGS="
     -w -s"
-STATIC="
-    -extldflags '-static'
-"
 
-STATIC_SQLITE="
+STATIC="
     -extldflags '-static -lm -ldl -lz -lpthread'
 "
 TAGS="ctrd apparmor seccomp no_btrfs netcgo osusergo providerless"
@@ -53,8 +52,6 @@ fi
 if [ "$STATIC_BUILD" != "true" ]; then
     STATIC="
 "
-    STATIC_SQLITE="
-"
     RUNC_STATIC=""
 else
     TAGS="static_build libsqlite3 $TAGS"
@@ -64,16 +61,15 @@ mkdir -p bin
 
 rm -f \
     bin/k8e-agent \
-    bin/containerd \
-    bin/runc \
-    bin/containerd-shim \
-    bin/containerd-shim-runc-v1 \
-    bin/containerd-shim-runc-v2 \
     bin/k8e-server \
     bin/k8e-etcd-snapshot \
     bin/kubectl \
     bin/crictl \
-    bin/ctr
+    bin/ctr \
+    bin/containerd \
+    bin/containerd-shim \
+    bin/containerd-shim-runc-v2 \
+    bin/runc
 
 cleanup() {
     exit_status=$?
@@ -90,11 +86,12 @@ if [ ! -x ${INSTALLBIN}/cni ]; then
     WORKDIR=$TMPDIR/src/github.com/containernetworking/plugins
     git clone -b $VERSION_CNIPLUGINS https://github.com/rancher/plugins.git $WORKDIR
     cd $WORKDIR
-    GOPATH=$TMPDIR CGO_ENABLED=0 GOOS=${GOOS} "${GO}" build -tags "$TAGS" -ldflags "$LDFLAGS $STATIC" -o $INSTALLBIN/cni
+    GO111MODULE=off GOPATH=$TMPDIR CGO_ENABLED=0 GOOS=${GOOS} "${GO}" build -tags "$TAGS" -ldflags "$LDFLAGS $STATIC" -o $INSTALLBIN/cni
 )
 fi
-echo Building server
-CGO_ENABLED=1 GOOS=${GOOS} "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC_SQLITE" -o bin/containerd ./cmd/server/main.go
+
+echo Building k8e
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/containerd ./cmd/server/main.go
 ln -s containerd ./bin/k8e-agent
 ln -s containerd ./bin/k8e-server
 ln -s containerd ./bin/k8e-etcd-snapshot
@@ -104,15 +101,15 @@ ln -s containerd ./bin/ctr
 
 echo Building runc
 rm -f ./build/src/github.com/opencontainers/runc/runc
-make GOPATH=$(pwd)/build EXTRA_LDFLAGS="-w -s" BUILDTAGS="$RUNC_TAGS" -C ./build/src/github.com/opencontainers/runc $RUNC_STATIC
+GO111MODULE=off make GOPATH=$(pwd)/build EXTRA_LDFLAGS="-w -s" BUILDTAGS="$RUNC_TAGS" -C ./build/src/github.com/opencontainers/runc $RUNC_STATIC
 cp -f ./build/src/github.com/opencontainers/runc/runc ./bin/runc
 
 echo Building containerd-shim
 rm -f ./vendor/github.com/containerd/containerd/bin/containerd-shim
-make -C ./vendor/github.com/containerd/containerd bin/containerd-shim
+GO111MODULE=off make -C ./vendor/github.com/containerd/containerd bin/containerd-shim
 cp -f ./vendor/github.com/containerd/containerd/bin/containerd-shim ./bin/containerd-shim
 
 echo Building containerd-shim-runc-v2
 rm -f ./vendor/github.com/containerd/containerd/bin/containerd-shim-runc-v2
-make -C ./vendor/github.com/containerd/containerd bin/containerd-shim-runc-v2
+GO111MODULE=off make -C ./vendor/github.com/containerd/containerd bin/containerd-shim-runc-v2
 cp -f ./vendor/github.com/containerd/containerd/bin/containerd-shim-runc-v2 ./bin/containerd-shim-runc-v2

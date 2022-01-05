@@ -5,7 +5,6 @@ cd $(dirname $0)/..
 
 . ./hack/version.sh
 
-RUNC_VERSION=v1.0.2
 RUNC_DIR=build/src/github.com/opencontainers/runc
 DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
@@ -19,11 +18,7 @@ mkdir -p ${DATA_DIR}
 mkdir -p ${CHARTS_DIR}
 mkdir -p bin
 
-git clone --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR} || true
-pushd ${RUNC_DIR}
-git fetch --all --tags
-git checkout ${RUNC_VERSION} -b k8e
-popd
+git clone --single-branch --branch=${VERSION_RUNC} --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR}
 
 #nerdctl for containerd , 0.14.0
 echo "download nerdctl..."
@@ -33,8 +28,8 @@ elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
   curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-arm64.tar.gz | tar zxf - -C bin
 fi
 
-# Cilium
-echo "download Cilium..."
+# Cilium-cli
+echo "download Cilium-cli..."
 if [ ${ARCH} = amd64 ]; then
   curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-amd64.tar.gz | tar zxf - -C bin
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then

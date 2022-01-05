@@ -21,8 +21,8 @@ RUN if [ "$(go env GOARCH)" = "arm64" ]; then                                   
     tar -zxvf trivy_0.16.0_Linux-64bit.tar.gz                                                            && \
     mv trivy /usr/local/bin;                                                                                \
     fi
-# this works for go 1.17
-RUN GO111MODULE=on GOPROXY=direct go get golang.org/x/tools/cmd/goimports@gopls/v0.7.1
+# this works for both go 1.15 and 1.16
+RUN GOPROXY=direct go get golang.org/x/tools/cmd/goimports@gopls/v0.6.9
 RUN rm -rf /go/src /go/pkg
 
 RUN if [ "$(go env GOARCH)" = "amd64" ]; then \
@@ -35,7 +35,6 @@ RUN wget -O - ${YQ_URL}_$(go env GOARCH) > /usr/bin/yq && chmod +x /usr/bin/yq
 ARG SELINUX=true
 ENV SELINUX $SELINUX
 
-ENV GO111MODULE off
 ENV DAPPER_RUN_ARGS --privileged -v k8e-cache:/go/src/github.com/xiaods/k8e/.cache -v trivy-cache:/root/.cache/trivy
 ENV DAPPER_ENV REPO TAG RELEASE_TAG IMAGE_NAME SKIP_VALIDATE GCLOUD_AUTH GITHUB_TOKEN GOLANG GOOS GOARCH
 ENV DAPPER_SOURCE /go/src/github.com/xiaods/k8e/
