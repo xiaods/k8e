@@ -88,7 +88,7 @@ require (
 	github.com/gorilla/websocket v1.4.2
 	github.com/k3s-io/helm-controller v0.10.8
 	github.com/k3s-io/kine v0.6.2
-	github.com/klauspost/compress v1.12.2
+	github.com/klauspost/compress v1.13.6
 	github.com/kubernetes-sigs/cri-tools v0.0.0-00010101000000-000000000000
 	github.com/lib/pq v1.8.0
 	github.com/mattn/go-sqlite3 v1.14.4
@@ -115,8 +115,6 @@ require (
 	github.com/urfave/cli v1.22.4
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea
 	golang.org/x/crypto v0.0.0-20210322153248-0c34fe9e7dc2
-	golang.org/x/sys v0.0.0-20210426230700-d19ff857e887
-	golang.org/x/net v0.0.0-20211005215030-d2e5035098b3
 	golang.org/x/sys v0.0.0-20211004093028-2c5d950f24ef
 	google.golang.org/grpc v1.41.0
 	gopkg.in/yaml.v2 v2.4.0
