@@ -9,6 +9,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/cli/agent"
+	"github.com/xiaods/k8e/pkg/cli/cert"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/cli/crictl"
 	"github.com/xiaods/k8e/pkg/cli/ctr"
@@ -49,6 +50,10 @@ func main() {
 				etcdsnapshot.List,
 				etcdsnapshot.Prune,
 				etcdsnapshot.Run),
+		),
+		cmds.NewCertCommand(
+			cmds.NewCertSubcommands(
+				cert.Run),
 		),
 	}
 

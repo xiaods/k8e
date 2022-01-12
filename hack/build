@@ -63,6 +63,7 @@ rm -f \
     bin/k8e-agent \
     bin/k8e-server \
     bin/k8e-etcd-snapshot \
+    bin/k8e-certificate \
     bin/kubectl \
     bin/crictl \
     bin/ctr \
@@ -95,6 +96,7 @@ CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STAT
 ln -s containerd ./bin/k8e-agent
 ln -s containerd ./bin/k8e-server
 ln -s containerd ./bin/k8e-etcd-snapshot
+ln -s containerd ./bin/k8e-certificate
 ln -s containerd ./bin/kubectl
 ln -s containerd ./bin/crictl
 ln -s containerd ./bin/ctr
