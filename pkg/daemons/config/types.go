@@ -143,6 +143,7 @@ type Control struct {
 	JoinURL                  string
 	IPSECPSK                 string
 	DefaultLocalStoragePath  string
+	Skips                    map[string]bool
 	SystemDefaultRegistry    string
 	ClusterInit              bool
 	ClusterReset             bool
