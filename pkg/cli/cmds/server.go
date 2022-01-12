@@ -62,6 +62,8 @@ type Server struct {
 	ClusterReset             bool
 	ClusterResetRestorePath  string
 	EncryptSecrets           bool
+	EncryptForce             bool
+	EncryptSkip              bool
 	SystemDefaultRegistry    string
 	StartupHooks             []func(context.Context, <-chan struct{}, string) error
 	EtcdSnapshotName         string
@@ -85,7 +87,18 @@ type Server struct {
 
 var (
 	ServerConfig Server
-	ClusterCIDR  = cli.StringSliceFlag{
+	DataDirFlag  = cli.StringFlag{
+		Name:        "data-dir,d",
+		Usage:       "(data) Folder to hold state default /var/lib/" + version.Program + "/ or ${HOME}/." + version.Program + "/ if not root",
+		Destination: &ServerConfig.DataDir,
+	}
+	ServerToken = cli.StringFlag{
+		Name:        "token,t",
+		Usage:       "(cluster) Shared secret used to join a server or agent to a cluster",
+		Destination: &ServerConfig.Token,
+		EnvVar:      version.ProgramUpper + "_TOKEN",
+	}
+	ClusterCIDR = cli.StringSliceFlag{
 		Name:  "cluster-cidr",
 		Usage: "(networking) IPv4/IPv6 network CIDRs to use for pod IPs (default: 10.42.0.0/16)",
 		Value: &ServerConfig.ClusterCIDR,
@@ -167,22 +180,13 @@ var ServerFlags = []cli.Flag{
 		Usage: "(listener) Add additional hostnames or IPv4/IPv6 addresses as Subject Alternative Names on the server TLS cert",
 		Value: &ServerConfig.TLSSan,
 	},
-	cli.StringFlag{
-		Name:        "data-dir,d",
-		Usage:       "(data) Folder to hold state default /var/lib/" + version.Program + " or ${HOME}/." + version.Program + " if not root",
-		Destination: &ServerConfig.DataDir,
-	},
+	DataDirFlag,
 	ClusterCIDR,
 	ServiceCIDR,
 	ServiceNodePortRange,
 	ClusterDNS,
 	ClusterDomain,
-	cli.StringFlag{
-		Name:        "token,t",
-		Usage:       "(cluster) Shared secret used to join a server or agent to a cluster",
-		Destination: &ServerConfig.Token,
-		EnvVar:      version.ProgramUpper + "_TOKEN",
-	},
+	ServerToken,
 	cli.StringFlag{
 		Name:        "token-file",
 		Usage:       "(cluster) File containing the cluster-secret/token",

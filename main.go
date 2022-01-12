@@ -17,6 +17,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/crictl"
 	"github.com/xiaods/k8e/pkg/cli/etcdsnapshot"
 	"github.com/xiaods/k8e/pkg/cli/kubectl"
+	"github.com/xiaods/k8e/pkg/cli/secretsencrypt"
 	"github.com/xiaods/k8e/pkg/cli/server"
 	"github.com/xiaods/k8e/pkg/configfilearg"
 )
@@ -34,6 +35,15 @@ func main() {
 				etcdsnapshot.List,
 				etcdsnapshot.Prune,
 				etcdsnapshot.Run),
+		),
+		cmds.NewSecretsEncryptCommand(cli.ShowAppHelp,
+			cmds.NewSecretsEncryptSubcommands(
+				secretsencrypt.Status,
+				secretsencrypt.Enable,
+				secretsencrypt.Disable,
+				secretsencrypt.Prepare,
+				secretsencrypt.Rotate,
+				secretsencrypt.Reencrypt),
 		),
 		cmds.NewCertCommand(
 			cmds.NewCertSubcommands(
