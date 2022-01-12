@@ -55,6 +55,8 @@ func router(ctx context.Context, config *Config) http.Handler {
 	serverAuthed := mux.NewRouter()
 	serverAuthed.Use(authMiddleware(serverConfig, version.Program+":server"))
 	serverAuthed.NotFoundHandler = nodeAuthed
+	serverAuthed.Path(prefix + "/encrypt/status").Handler(encryptionStatusHandler(serverConfig))
+	serverAuthed.Path(prefix + "/encrypt/config").Handler(encryptionConfigHandler(ctx, serverConfig))
 	serverAuthed.Path("/db/info").Handler(nodeAuthed)
 	if serverConfig.Runtime.HTTPBootstrap {
 		serverAuthed.Path(prefix + "/server-bootstrap").Handler(bootstrap.Handler(&serverConfig.Runtime.ControlRuntimeBootstrap))

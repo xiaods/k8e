@@ -192,15 +192,22 @@ func (e *ETCD) Reset(ctx context.Context, rebootstrap func() error) error {
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
 		for range t.C {
+			// resetting the apiaddresses to nil since we are doing a restoration
+			if _, err := e.client.Put(ctx, AddressKey, ""); err != nil {
+				logrus.Warnf("failed to reset api addresses key in etcd: %v", err)
+				continue
+			}
 			if err := e.Test(ctx); err == nil {
 				members, err := e.client.MemberList(ctx)
 				if err != nil {
 					continue
 				}
 
-				// storageBootstrap() - runtime structure has been written with correct certificate data
-				if err := rebootstrap(); err != nil {
-					logrus.Fatal(err)
+				if rebootstrap != nil {
+					// storageBootstrap() - runtime structure has been written with correct certificate data
+					if err := rebootstrap(); err != nil {
+						logrus.Fatal(err)
+					}
 				}
 
 				// call functions to rewrite them from daemons/control/server.go (prepare())
@@ -348,31 +355,42 @@ func (e *ETCD) join(ctx context.Context, clientAccessInfo *clientaccess.Info) er
 	}
 
 	for _, member := range members.Members {
-		lastHyphen := strings.LastIndex(member.Name, "-")
-		memberNodeName := member.Name[:lastHyphen]
-		if memberNodeName == e.config.ServerNodeName {
-			// make sure to remove the name file if a duplicate node name is used
-			nameFile := nameFile(e.config)
-			if err := os.Remove(nameFile); err != nil {
-				logrus.Errorf("Failed to remove etcd name file %s: %v", nameFile, err)
-			}
-			return errors.New("duplicate node name found, please use a unique name for this node")
-		}
 		for _, peer := range member.PeerURLs {
 			u, err := url.Parse(peer)
 			if err != nil {
 				return err
 			}
-			// An uninitialized member won't have a name
-			if u.Hostname() == e.address && (member.Name == e.name || member.Name == "") {
-				add = false
-			}
+			// An uninitialized joining member won't have a name; if it has our
+			// address it must be us.
 			if member.Name == "" && u.Hostname() == e.address {
 				member.Name = e.name
 			}
+
+			// If we're already in the cluster, don't try to add ourselves.
+			if member.Name == e.name && u.Hostname() == e.address {
+				add = false
+			}
+
 			if len(member.PeerURLs) > 0 {
 				cluster = append(cluster, fmt.Sprintf("%s=%s", member.Name, member.PeerURLs[0]))
 			}
+		}
+
+		// Try to get the node name from the member name
+		memberNodeName := member.Name
+		if lastHyphen := strings.LastIndex(member.Name, "-"); lastHyphen > 1 {
+			memberNodeName = member.Name[:lastHyphen]
+		}
+
+		// Make sure there's not already a member in the cluster with a duplicate node name
+		if member.Name != e.name && memberNodeName == e.config.ServerNodeName {
+			// make sure to remove the name file if a duplicate node name is used, so that we
+			// generate a new member name when our node name is fixed.
+			nameFile := nameFile(e.config)
+			if err := os.Remove(nameFile); err != nil {
+				logrus.Errorf("Failed to remove etcd name file %s: %v", nameFile, err)
+			}
+			return errors.New("duplicate node name found, please use a unique name for this node")
 		}
 	}
 
