@@ -104,7 +104,6 @@ type CriticalControlArgs struct {
 	DisableCCM       bool
 	DisableNPC       bool
 	DisableServiceLB bool
-	FlannelBackend   string
 	NoCoreDNS        bool
 	ServiceIPRange   *net.IPNet
 	ServiceIPRanges  []*net.IPNet
