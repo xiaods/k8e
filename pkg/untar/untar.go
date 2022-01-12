@@ -15,8 +15,11 @@ import (
 	"time"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/rancher/wharfie/pkg/tarfile"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	MaxDecoderMemory = uint64(1 << 27)
 )
 
 // TODO(bradfitz): this was copied from x/build/cmd/buildlet/buildlet.go
@@ -39,7 +42,7 @@ func untar(r io.Reader, dir string) (err error) {
 			logrus.Printf("error extracting tarball into %s after %d files, %d dirs, %v: %v", dir, nFiles, len(madeDir), td, err)
 		}
 	}()
-	zr, err := zstd.NewReader(r, zstd.WithDecoderMaxMemory(tarfile.MaxDecoderMemory))
+	zr, err := zstd.NewReader(r, zstd.WithDecoderMaxMemory(MaxDecoderMemory))
 	if err != nil {
 		return fmt.Errorf("error extracting zstd-compressed body: %v", err)
 	}
