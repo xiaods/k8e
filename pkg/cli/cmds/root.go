@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/version"
 )
@@ -38,19 +37,6 @@ func NewApp() *cli.App {
 	app.Flags = []cli.Flag{
 		DebugFlag,
 	}
-	app.Before = SetupDebug(nil)
 
 	return app
-}
-
-func SetupDebug(next func(ctx *cli.Context) error) func(ctx *cli.Context) error {
-	return func(ctx *cli.Context) error {
-		if Debug {
-			logrus.SetLevel(logrus.DebugLevel)
-		}
-		if next != nil {
-			return next(ctx)
-		}
-		return nil
-	}
 }
