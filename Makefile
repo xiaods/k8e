@@ -24,11 +24,6 @@ deps:
 
 .PHONY: $(TARGETS)
 
-.PHONY: generate
-generate: build/data
-	./hack/download
-	# go generate
-
 build/data:
 	mkdir -p $@
 
