@@ -8,6 +8,7 @@ package netpol
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	"github.com/cloudnativelabs/kube-router/pkg/controllers/netpol"
@@ -86,6 +87,9 @@ func Run(ctx context.Context, nodeConfig *config.Node) error {
 	podInformer.AddEventHandler(npc.PodEventHandler)
 	nsInformer.AddEventHandler(npc.NamespaceEventHandler)
 	npInformer.AddEventHandler(npc.NetworkPolicyEventHandler)
+
+	// Initialize all healthcheck timers. Otherwise, the system reports incorrect heartbeat missing messages
+	hc.SetAlive()
 
 	wg.Add(1)
 	logrus.Info("Starting the netpol controller")
