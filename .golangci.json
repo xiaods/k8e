@@ -35,11 +35,7 @@
 			},
 			{
 				"linters": "revive",
-				"text": "comment on exported"
-			},
-			{
-				"linters": "revive",
-				"text": "if-return: redundant if"
+				"text": "exported"
 			}
 		]
 	}
