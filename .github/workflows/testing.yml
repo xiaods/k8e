@@ -23,6 +23,6 @@ jobs:
       with:
         go-version: 1.16
     - name: generate resources
-      run: mkdir -p build/data && mkdir -p build/static && go generate
+      run: mkdir -p {build/data,build/static} && go generate
     - name: Test
       run: go get -u github.com/rakyll/gotest && gotest -v ./...
