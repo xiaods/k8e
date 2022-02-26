@@ -24,7 +24,7 @@ jobs:
     - name: check depends
       run: sudo apt-get install -y libseccomp-dev
     - name: generate resources
-      run: make generate
+      run: mkdir -p {build/data,build/static} && make generate
     - name: package bin
       run: SKIP_VALIDATE=true make
     - name: package airgap image
