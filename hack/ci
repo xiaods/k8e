@@ -1,9 +1,14 @@
 #!/bin/bash
 set -e
 
-cd $(dirname $0)/..
+SCRIPT_DIR=$(dirname $0)
+pushd $SCRIPT_DIR
 
-./hack/validate
-./hack/build
-./hack/package
-./hack/binary_size_check.sh
+./download
+./validate
+./build
+./package
+
+popd
+
+$SCRIPT_DIR/binary_size_check.sh
