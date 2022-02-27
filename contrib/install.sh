@@ -269,10 +269,6 @@ download_and_setup() {
     echo "Download complete."
     $SUDO mv "$targetFile" $BIN_DIR/$REPO
 
-    $SUDO curl -sSL https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-uninstall.sh --output $BIN_DIR/k8e-uninstall.sh
-    $SUDO  chmod +x $BIN_DIR/k8e-uninstall.sh
-
-
     create_symlinks
     source_profile
     create_killall
