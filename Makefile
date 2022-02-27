@@ -1,16 +1,12 @@
-TARGETS := $(shell ls hack | grep -v \\.sh | grep -v package-airgap| grep -v clean)
+TARGETS := $(shell ls hack | grep -v \\.sh)
 
 .dapper:
 	@echo Downloading dapper
-	@curl -s https://api.github.com/repos/rancher/dapper/releases/latest \
-		| grep browser_download_url \
-		| grep dapper \
-		| cut -d '"' -f 4 \
-		| wget -qi -
-	@mv dapper .dapper
-	@@chmod +x .dapper
-	@./.dapper -v
-	
+	@curl -sL https://releases.rancher.com/dapper/v0.5.1/dapper-$$(uname -s)-$$(uname -m) > .dapper.tmp
+	@@chmod +x .dapper.tmp
+	@./.dapper.tmp -v
+	@mv .dapper.tmp .dapper
+
 $(TARGETS): .dapper
 	./.dapper $@
 
@@ -28,7 +24,5 @@ build/data:
 	mkdir -p $@
 
 package-airgap:
-	./hack/package-airgap
+	./hack/package-airgap.sh
 
-clean:
-	./hack/clean
