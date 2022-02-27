@@ -2,15 +2,22 @@
 set -e
 set -o noglob
 
-# ---use binary install directory
+#########################
+# Repo specific content #
+#########################
+OWNER="xiaods"
+REPO="k8e"
+############################
+# Systemd specific content #
+############################
 TMP_DIR=/tmp
 BIN_DIR=/usr/local/bin
 PROFILE=~/.bashrc
 SYSTEM_NAME=k8e
-# --- use systemd directory if defined or create default ---
 SYSTEMD_DIR=/etc/systemd/system
-# --- set related files from system name ---
 SERVICE_K8E=${SYSTEM_NAME}.service
+UNINSTALL_K8E_SH=${UNINSTALL_K8E_SH:-${BIN_DIR}/${SYSTEM_NAME}-uninstall.sh}
+KILLALL_K8E_SH=${KILLALL_K8E_SH:-${BIN_DIR}/${SYSTEM_NAME}-killall.sh}
 FILE_K8E_SERVICE=${SYSTEMD_DIR}/${SERVICE_K8E}
 FILE_K8E_ENV=${SYSTEMD_DIR}/${SERVICE_K8E}.env
 SYSTEMD_TYPE=notify
@@ -64,13 +71,13 @@ create_symlinks() {
 # --- seutp profile ---
 source_profile() {
     if ! grep -s 'containerd\.sock' "$PROFILE"; then
-        $SUDO echo 'export CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock' >> "$PROFILE"
+        $SUDO echo 'export CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock' >> $PROFILE
     fi
     if ! grep -s '\/usr\/local\/bin' "$PROFILE"; then
-        $SUDO echo 'export PATH=$PATH:/usr/local/bin' >> ~/.bashrc
+        $SUDO echo 'export PATH=$PATH:/usr/local/bin' >> $PROFILE
     fi
     if ! grep -s 'docker=nerdctl' "$PROFILE"; then
-        $SUDO echo 'alias docker=nerdctl' >> ~/.bashrc
+        $SUDO echo 'alias docker=nerdctl' >> $PROFILE
     fi
 }
 
@@ -127,34 +134,149 @@ ExecStart=/usr/local/bin/k8e server --write-kubeconfig-mode 644
 EOF
 }
 
+# --- create killall script ---
+create_killall() {
+    info "Creating killall script ${KILLALL_K8E_SH}"
+    $SUDO tee ${KILLALL_K8E_SH} >/dev/null << \EOF
+#!/bin/sh
+set -x
+for service in /etc/systemd/system/k8e*.service; do
+    [ -s $service ] && systemctl stop $(basename $service)
+done
+pschildren() {
+    ps -e -o ppid= -o pid= | \
+    sed -e 's/^\s*//g; s/\s\s*/\t/g;' | \
+    grep -w "^$1" | \
+    cut -f2
+}
+pstree() {
+    for pid in $@; do
+        echo $pid
+        for child in $(pschildren $pid); do
+            pstree $child
+        done
+    done
+}
+killtree() {
+    kill -9 $(
+        { set +x; } 2>/dev/null;
+        pstree $@;
+        set -x;
+    ) 2>/dev/null
+}
+getshims() {
+    ps -e -o pid= -o args= | sed -e 's/^ *//; s/\s\s*/\t/;' | grep -w 'k8e/data/[^/]*/bin/containerd-shim' | cut -f1
+}
+killtree $({ set +x; } 2>/dev/null; getshims; set -x)
+do_unmount_and_remove() {
+    set +x
+    while read -r _ path _; do
+        case "$path" in $1*) echo "$path" ;; esac
+    done < /proc/self/mounts | sort -r | xargs -r -t -n 1 sh -c 'umount "$0" && rm -rf "$0"'
+    set -x
+}
+do_unmount_and_remove '/run/k8e'
+do_unmount_and_remove '/var/lib/k8e'
+do_unmount_and_remove '/var/lib/kubelet/pods'
+do_unmount_and_remove '/var/lib/kubelet/plugins'
+do_unmount_and_remove '/run/netns/cni-'
+# Remove CNI namespaces
+ip netns show 2>/dev/null | grep cni- | xargs -r -t -n 1 ip netns delete
+rm -rf /var/lib/cni/
+EOF
+    $SUDO chmod 755 ${KILLALL_K8E_SH}
+    $SUDO chown root:root ${KILLALL_K8E_SH}
+}
+
+# --- create uninstall script ---
+create_uninstall() {
+    info "Creating uninstall script ${UNINSTALL_K8E_SH}"
+    $SUDO tee ${UNINSTALL_K8E_SH} >/dev/null << EOF
+#!/bin/sh
+set -x
+[ \$(id -u) -eq 0 ] || exec sudo \$0 \$@
+${KILLALL_K8E_SH}
+if command -v systemctl; then
+    systemctl disable ${SYSTEM_NAME}
+    systemctl reset-failed ${SYSTEM_NAME}
+    systemctl daemon-reload
+fi
+if command -v rc-update; then
+    rc-update delete ${SYSTEM_NAME} default
+fi
+rm -f ${FILE_K8E_SERVICE}
+rm -f ${FILE_K8E_ENV}
+remove_uninstall() {
+    rm -f ${UNINSTALL_K8E_SH}
+}
+trap remove_uninstall EXIT
+if (ls ${SYSTEMD_DIR}/k3s*.service || ls /etc/init.d/k3s*) >/dev/null 2>&1; then
+    set +x; echo 'Additional k3s services installed, skipping uninstall of k3s'; set -x
+    exit
+fi
+for cmd in kubectl crictl ctr; do
+    if [ -L ${BIN_DIR}/\$cmd ]; then
+        rm -f ${BIN_DIR}/\$cmd
+    fi
+done
+rm -rf /etc/k8e
+rm -rf /run/k8e
+rm -rf /var/lib/k8e
+rm -rf /var/lib/kubelet
+rm -f ${BIN_DIR}/k8e
+rm -f ${KILLALL_K8E_SH}
+EOF
+    $SUDO chmod 755 ${UNINSTALL_K8E_SH}
+    $SUDO chown root:root ${UNINSTALL_K8E_SH}
+}
+
+
+
 # --- download k8e and setup all-in-one functions
 download_and_setup() {
 
-    # --- use /usr/local/bin if root can write to it, otherwise use /opt/bin if it exists
-    if ! $SUDO sh -c "touch ${BIN_DIR}/k8e-ro-test && rm -rf ${BIN_DIR}/k8e-ro-test"; then
-        if [ -d /opt/bin ]; then
-            BIN_DIR=/opt/bin
-        fi
-    fi
- 
-    info "Install... k8e binary to ${BIN_DIR}"
-    cd $TMP_DIR &&
-    $SUDO curl -s https://api.github.com/repos/xiaods/k8e/releases/latest \
-        | grep "browser_download_url.*k8e" \
-        | cut -d '"' -f 4 \
-        | wget -qi - && \
-         $SUDO chmod +x k8e && \
-         $SUDO chmod 755 k8e && \
-         $SUDO chown root:root k8e
-         
-    $SUDO mv $TMP_DIR/k8e $BIN_DIR/k8e
+    version=""
+    echo "Finding latest version from GitHub"
+    version=$(curl -sI https://github.com/$OWNER/$REPO/releases/latest | grep -i "location:" | awk -F"/" '{ printf "%s", $NF }' | tr -d '\r')
+    echo $version
 
-    $SUDO curl https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-uninstall.sh -o $BIN_DIR/k8e-uninstall.sh && \
+    if [ ! $version ]; then
+        echo "Failed while attempting to install $REPO. Please manually install:"
+        echo ""
+        echo "1. Open your web browser and go to https://github.com/$OWNER/$REPO/releases"
+        echo "2. Download the latest release for your platform. Call it '$REPO'."
+        echo "3. chmod +x ./$REPO"
+        echo "4. mv ./$REPO $BIN_DIR"
+        exit 1
+    fi
+
+    uname=$(uname)
+    userid=$(id -u)
+
+    targetFile="/tmp/$REPO"
+    if [ "$userid" != "0" ]; then
+        targetFile="$(pwd)/$REPO"
+    fi
+
+    if [ -e "$targetFile" ]; then
+        rm "$targetFile"
+    fi
+
+    url=https://github.com/$OWNER/$REPO/releases/download/$version/$REPO
+    echo "Downloading package $url as $targetFile"
+    $SUDO curl -sSL $url --output "$targetFile"
+    $SUDO chmod +x "$targetFile"
+    echo "Download complete."
+    $SUDO mv "$targetFile" $BIN_DIR/$REPO
+
+    $SUDO curl -sSL https://raw.githubusercontent.com/xiaods/k8e/master/contrib/k8e-uninstall.sh --output $BIN_DIR/k8e-uninstall.sh
     $SUDO  chmod +x $BIN_DIR/k8e-uninstall.sh
 
 
     create_symlinks
     source_profile
+    create_killall
+    create_uninstall
     systemd_disable
     create_env_file
     create_systemd_service_file

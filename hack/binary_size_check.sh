@@ -12,7 +12,7 @@ cd $(dirname $0)/..
 MAX_BINARY_SIZE=81000000
 BIN_SUFFIX="-${ARCH}"
 if [ ${ARCH} = amd64 ]; then
-    BIN_SUFFIX="-amd64"
+    BIN_SUFFIX=""
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
     BIN_SUFFIX="-arm64"
 fi
