@@ -17,7 +17,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/config"
 	"github.com/xiaods/k8e/pkg/agent/containerd"
-	"github.com/xiaods/k8e/pkg/agent/netpol"
 	"github.com/xiaods/k8e/pkg/agent/proxy"
 	"github.com/xiaods/k8e/pkg/agent/syssetup"
 	"github.com/xiaods/k8e/pkg/agent/tunnel"
@@ -137,12 +136,6 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 
 	if err := configureNode(ctx, &nodeConfig.AgentConfig, coreClient.CoreV1().Nodes()); err != nil {
 		return err
-	}
-
-	if !nodeConfig.AgentConfig.DisableNPC {
-		if err := netpol.Run(ctx, nodeConfig); err != nil {
-			return err
-		}
 	}
 
 	os.Setenv("NOTIFY_SOCKET", notifySocket)
