@@ -2,10 +2,12 @@ package etcdsnapshot
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/server"
 	util2 "github.com/xiaods/k8e/pkg/util"
+	"gopkg.in/yaml.v2"
 )
 
 // commandSetup setups up common things needed
@@ -41,6 +44,7 @@ func commandSetup(app *cli.Context, cfg *cmds.Server, sc *server.Config) (string
 	sc.ControlConfig.EtcdSnapshotName = cfg.EtcdSnapshotName
 	sc.ControlConfig.EtcdSnapshotDir = cfg.EtcdSnapshotDir
 	sc.ControlConfig.EtcdSnapshotCompress = cfg.EtcdSnapshotCompress
+	sc.ControlConfig.EtcdListFormat = strings.ToLower(cfg.EtcdListFormat)
 	sc.ControlConfig.EtcdS3 = cfg.EtcdS3
 	sc.ControlConfig.EtcdS3Endpoint = cfg.EtcdS3Endpoint
 	sc.ControlConfig.EtcdS3EndpointCA = cfg.EtcdS3EndpointCA
@@ -151,6 +155,17 @@ func List(app *cli.Context) error {
 	return list(app, &cmds.ServerConfig)
 }
 
+var etcdListFormats = []string{"json", "yaml"}
+
+func validEtcdListFormat(format string) bool {
+	for _, supportedFormat := range etcdListFormats {
+		if format == supportedFormat {
+			return true
+		}
+	}
+	return false
+}
+
 func list(app *cli.Context, cfg *cmds.Server) error {
 	var serverConfig server.Config
 
@@ -170,21 +185,38 @@ func list(app *cli.Context, cfg *cmds.Server) error {
 		return err
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
-	defer w.Flush()
+	if cfg.EtcdListFormat != "" && !validEtcdListFormat(cfg.EtcdListFormat) {
+		return errors.New("invalid output format: " + cfg.EtcdListFormat)
+	}
 
-	if cfg.EtcdS3 {
-		fmt.Fprint(w, "Name\tSize\tCreated\n")
-		for _, s := range sf {
-			if s.NodeName == "s3" {
-				fmt.Fprintf(w, "%s\t%d\t%s\n", s.Name, s.Size, s.CreatedAt.Format(time.RFC3339))
-			}
+	switch cfg.EtcdListFormat {
+	case "json":
+		if err := json.NewEncoder(os.Stdout).Encode(sf); err != nil {
+			return err
 		}
-	} else {
-		fmt.Fprint(w, "Name\tLocation\tSize\tCreated\n")
-		for _, s := range sf {
-			if s.NodeName != "s3" {
-				fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", s.Name, s.Location, s.Size, s.CreatedAt.Format(time.RFC3339))
+		return nil
+	case "yaml":
+		if err := yaml.NewEncoder(os.Stdout).Encode(sf); err != nil {
+			return err
+		}
+		return nil
+	default:
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
+		defer w.Flush()
+
+		if cfg.EtcdS3 {
+			fmt.Fprint(w, "Name\tSize\tCreated\n")
+			for _, s := range sf {
+				if s.NodeName == "s3" {
+					fmt.Fprintf(w, "%s\t%d\t%s\n", s.Name, s.Size, s.CreatedAt.Format(time.RFC3339))
+				}
+			}
+		} else {
+			fmt.Fprint(w, "Name\tLocation\tSize\tCreated\n")
+			for _, s := range sf {
+				if s.NodeName != "s3" {
+					fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", s.Name, s.Location, s.Size, s.CreatedAt.Format(time.RFC3339))
+				}
 			}
 		}
 	}
