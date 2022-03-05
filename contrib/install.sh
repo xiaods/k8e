@@ -2,6 +2,30 @@
 set -e
 set -o noglob
 
+# Example:
+#   Installing a server with only etcd:
+#     curl ... | INSTALL_K8E_EXEC="--disable-apiserver --disable-controller-manager --disable-scheduler" sh -
+#   Installing an agent to point at a server:
+#     curl ... | K8E_TOKEN=xxx K8E_URL=https://server-url:6443 sh -
+
+# Environment variables:
+#   - K8E_*
+#     Environment variables which begin with K8E_ will be preserved for the
+#     systemd service to use. Setting K8E_URL without explicitly setting
+#     a systemd exec command will default the command to "agent", and we
+#     enforce that K8E_TOKEN or K8E_CLUSTER_SECRET is also set.
+#
+#   - INSTALL_K8E_EXEC or script arguments
+#     Command with flags to use for launching k8e in the systemd service, if
+#     the command is not specified will default to "agent" if K8E_URL is set
+#     or "server" if not. The final systemd command resolves to a combination
+#     of EXEC and script args ($@).
+#
+#     The following commands result in the same behavior:
+#       curl ... | INSTALL_K8E_EXEC="server --disable-etcd" sh -s -
+#       curl ... | INSTALL_K8E_EXEC="server" sh -s - --disable-etcd
+
+
 #########################
 # Repo specific content #
 #########################
@@ -22,6 +46,7 @@ FILE_K8E_SERVICE=${SYSTEMD_DIR}/${SERVICE_K8E}
 FILE_K8E_ENV=${SYSTEMD_DIR}/${SERVICE_K8E}.env
 SYSTEMD_TYPE=notify
 
+
 # --- helper functions for logs ---
 info()
 {
@@ -37,14 +62,176 @@ fatal()
     exit 1
 }
 
+# --- add quotes to command arguments ---
+quote() {
+    for arg in "$@"; do
+        printf '%s\n' "$arg" | sed "s/'/'\\\\''/g;1s/^/'/;\$s/\$/'/"
+    done
+}
+
+# --- add indentation and trailing slash to quoted args ---
+quote_indent() {
+    printf ' \\\n'
+    for arg in "$@"; do
+        printf '\t%s \\\n' "$(quote "$arg")"
+    done
+}
+
+# --- escape most punctuation characters, except quotes, forward slash, and space ---
+escape() {
+    printf '%s' "$@" | sed -e 's/\([][!#$%&()*;<=>?\_`{|}]\)/\\\1/g;'
+}
+
+# --- escape double quotes ---
+escape_dq() {
+    printf '%s' "$@" | sed -e 's/"/\\"/g'
+}
+
+# --- ensures $K8E_URL is empty or begins with https://, exiting fatally otherwise ---
+verify_k8e_url() {
+    case "${K8E_URL}" in
+        "")
+            ;;
+        https://*)
+            ;;
+        *)
+            fatal "Only https:// URLs are supported for K8E_URL (have ${K8E_URL})"
+            ;;
+    esac
+}
+
+# --- fatal if no systemd or openrc ---
+verify_system() {
+    if [ -x /bin/systemctl ] || type systemctl > /dev/null 2>&1; then
+        HAS_SYSTEMD=true
+        return
+    fi
+    fatal 'Can not find systemd or openrc to use as a process supervisor for k8e'
+}
+
 # --- define needed environment variables ---
 setup_env() {
+    # --- use command args if passed or create default ---
+    case "$1" in
+        # --- if we only have flags discover if command should be server or agent ---
+        (-*|"")
+            if [ -z "${K8E_URL}" ]; then
+                CMD_K8E=server
+            else
+                if [ -z "${K8E_TOKEN}" ] && [ -z "${K8E_TOKEN_FILE}" ] && [ -z "${K8E_CLUSTER_SECRET}" ]; then
+                    fatal "Defaulted k8e exec command to 'agent' because K8E_URL is defined, but K8E_TOKEN, K8E_TOKEN_FILE or K8E_CLUSTER_SECRET is not defined."
+                fi
+                CMD_K8E=agent
+            fi
+        ;;
+        # --- command is provided ---
+        (*)
+            CMD_K8E=$1
+            shift
+        ;;
+    esac
+
+    verify_k8e_url
+
+    CMD_K8E_EXEC="${CMD_K8E}$(quote_indent "$@")"
+
     # --- use sudo if we are not already root ---
     SUDO=sudo
     if [ $(id -u) -eq 0 ]; then
         SUDO=
     fi
 
+    # --- use systemd type if defined or create default ---
+    if [ -n "${INSTALL_K8E_TYPE}" ]; then
+        SYSTEMD_TYPE=${INSTALL_K8E_TYPE}
+    else
+        if [ "${CMD_K8E}" = server ]; then
+            SYSTEMD_TYPE=notify
+        else
+            SYSTEMD_TYPE=exec
+        fi
+    fi
+
+    # --- use binary install directory if defined or create default ---
+    if [ -n "${INSTALL_K8E_BIN_DIR}" ]; then
+        BIN_DIR=${INSTALL_K8E_BIN_DIR}
+    else
+        # --- use /usr/local/bin if root can write to it, otherwise use /opt/bin if it exists
+        BIN_DIR=/usr/local/bin
+        if ! $SUDO sh -c "touch ${BIN_DIR}/k8e-ro-test && rm -rf ${BIN_DIR}/k8e-ro-test"; then
+            if [ -d /opt/bin ]; then
+                BIN_DIR=/opt/bin
+            fi
+        fi
+    fi
+
+    # --- use systemd directory if defined or create default ---
+    if [ -n "${INSTALL_K8E_SYSTEMD_DIR}" ]; then
+        SYSTEMD_DIR="${INSTALL_K8E_SYSTEMD_DIR}"
+    else
+        SYSTEMD_DIR=/etc/systemd/system
+    fi
+
+    # --- set related files from system name ---
+    SERVICE_K8E=${SYSTEM_NAME}.service
+    UNINSTALL_K8E_SH=${UNINSTALL_K8E_SH:-${BIN_DIR}/${SYSTEM_NAME}-uninstall.sh}
+    KILLALL_K8E_SH=${KILLALL_K8E_SH:-${BIN_DIR}/k8e-killall.sh}
+
+    # --- if bin directory is read only skip download ---
+    if [ "${INSTALL_K8E_BIN_DIR_READ_ONLY}" = true ]; then
+        INSTALL_K8E_SKIP_DOWNLOAD=true
+    fi
+}
+
+# --- check if skip download environment variable set ---
+can_skip_download() {
+    if [ "${INSTALL_K8E_SKIP_DOWNLOAD}" != true ]; then
+        return 1
+    fi
+}
+
+# --- verify an executable k8e binary is installed ---
+verify_k8e_is_executable() {
+    if [ ! -x ${BIN_DIR}/k8e ]; then
+        fatal "Executable k8e binary not found at ${BIN_DIR}/k8e"
+    fi
+}
+
+# --- set arch and suffix, fatal if architecture not supported ---
+setup_verify_arch() {
+    if [ -z "$ARCH" ]; then
+        ARCH=$(uname -m)
+    fi
+    case $ARCH in
+        amd64)
+            ARCH=amd64
+            SUFFIX=
+            ;;
+        x86_64)
+            ARCH=amd64
+            SUFFIX=
+            ;;
+        arm64)
+            ARCH=arm64
+            SUFFIX=-${ARCH}
+            ;;
+        aarch64)
+            ARCH=arm64
+            SUFFIX=-${ARCH}
+            ;;
+        *)
+            fatal "Unsupported architecture $ARCH"
+    esac
+}
+
+# --- verify existence of network downloader executable ---
+verify_downloader() {
+    # Return failure if it doesn't exist or is no executable
+    [ -x "$(command -v $1)" ] || return 1
+
+    # Set verified executable as our downloader program and return success
+    DOWNLOADER=$1
+    return 0
 }
 
 # --- add additional utility links ---
@@ -88,7 +275,7 @@ systemd_disable() {
     $SUDO rm -f /etc/systemd/system/${SERVICE_K8E}.env || true
 }
 
-# --- capture current env and create file containing k3s_ variables ---
+# --- capture current env and create file containing k8e_ variables ---
 create_env_file() {
     info "env: Creating environment file ${FILE_K8E_ENV}"
     $SUDO touch ${FILE_K8E_ENV}
@@ -130,8 +317,16 @@ RestartSec=5s
 ExecStartPre=/bin/sh -xc '! /usr/bin/systemctl is-enabled --quiet nm-cloud-setup.service'
 ExecStartPre=-/sbin/modprobe br_netfilter
 ExecStartPre=-/sbin/modprobe overlay
-ExecStart=/usr/local/bin/k8e server --write-kubeconfig-mode 644
+ExecStart=${BIN_DIR}/k8e \\
+    ${CMD_K8E_EXEC}
+
 EOF
+}
+
+# --- write systemd or openrc service file ---
+create_service_file() {
+    [ "${HAS_SYSTEMD}" = true ] && create_systemd_service_file
+    return 0
 }
 
 # --- create killall script ---
@@ -210,8 +405,8 @@ remove_uninstall() {
     rm -f ${UNINSTALL_K8E_SH}
 }
 trap remove_uninstall EXIT
-if (ls ${SYSTEMD_DIR}/k3s*.service || ls /etc/init.d/k3s*) >/dev/null 2>&1; then
-    set +x; echo 'Additional k3s services installed, skipping uninstall of k3s'; set -x
+if (ls ${SYSTEMD_DIR}/k8e*.service || ls /etc/init.d/k8e*) >/dev/null 2>&1; then
+    set +x; echo 'Additional k8e services installed, skipping uninstall of k8e'; set -x
     exit
 fi
 for cmd in kubectl crictl ctr; do
@@ -231,9 +426,48 @@ EOF
 }
 
 
+# --- enable and start systemd service ---
+systemd_enable() {
+    info "systemd: Enabling ${SYSTEM_NAME} unit"
+    $SUDO systemctl enable ${FILE_K8E_SERVICE} >/dev/null
+    $SUDO systemctl daemon-reload >/dev/null
+}
+
+systemd_start() {
+    info "systemd: Starting ${SYSTEM_NAME}"
+    $SUDO systemctl restart ${SYSTEM_NAME}
+}
+
+
+# --- startup systemd or openrc service ---
+service_enable_and_start() {
+    [ "${INSTALL_K8E_SKIP_ENABLE}" = true ] && return
+    [ "${HAS_SYSTEMD}" = true ] && systemd_enable
+    [ "${INSTALL_K8E_SKIP_START}" = true ] && return
+
+    [ "${HAS_SYSTEMD}" = true ] && systemd_start
+    return 0
+}
+
+# --- install cilium network cni/operator ---
+setup_cilium() {
+    info 'install cilium operator and setup cilium cni'
+    sleep 1
+    KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml 
+    $SUDO chmod 666 ${KUBECONFIG}
+    cilium install
+}
 
 # --- download k8e and setup all-in-one functions
 download_and_setup() {
+    if can_skip_download; then
+       info 'Skipping k8e download and verify'
+       verify_k8e_is_executable
+       return
+    fi
+
+    setup_verify_arch
+    verify_downloader curl || verify_downloader wget || fatal 'Can not find curl or wget for downloading files'
 
     version=""
     echo "Finding latest version from GitHub"
@@ -266,8 +500,9 @@ download_and_setup() {
     echo "Downloading package $url as $targetFile"
     $SUDO curl -sSL $url --output "$targetFile"
     $SUDO chmod +x "$targetFile"
+    $SUDO chown root:root "$targetFile"
     echo "Download complete."
-    $SUDO mv "$targetFile" $BIN_DIR/$REPO
+    $SUDO mv -f "$targetFile" $BIN_DIR/$REPO
 
     create_symlinks
     source_profile
@@ -275,14 +510,20 @@ download_and_setup() {
     create_uninstall
     systemd_disable
     create_env_file
-    create_systemd_service_file
+    create_service_file
+    service_enable_and_start
+    setup_cilium
 
     $SUDO $BIN_DIR/k8e check-config
     info "Done! Happy deployment."
 }
 
+# --- re-evaluate args to include env command ---
+eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
+
 # --- run the install process --
 {
-    setup_env
+    verify_system
+    setup_env "$@"
     download_and_setup
 }
