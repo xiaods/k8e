@@ -451,11 +451,15 @@ service_enable_and_start() {
 
 # --- install cilium network cni/operator ---
 setup_cilium() {
-    info 'install cilium operator and setup cilium cni'
+    # waiting for k8e extract cilium binary
     sleep 1
-    KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml 
-    $SUDO chmod 666 ${KUBECONFIG}
-    cilium install
+
+    if [[ ${CMD_K8E} == *"server"* ]]; then
+        info 'install cilium operator and setup cilium cni'
+        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml 
+        $SUDO chmod 666 ${KUBECONFIG}
+        cilium install
+    fi
 }
 
 # --- download k8e and setup all-in-one functions
