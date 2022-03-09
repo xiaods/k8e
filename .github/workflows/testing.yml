@@ -26,3 +26,9 @@ jobs:
       run: mkdir -p {build/data,build/static} && go generate
     - name: Test
       run: go get -u github.com/rakyll/gotest && gotest -v ./...
+    - uses: MCJack123/ghaction-generate-release-hashes@v1
+      with:
+        hash-type: sha256
+        file-name: hashes.txt
+    - name: test hashes.txt
+      run: cat hashes.txt
