@@ -29,10 +29,8 @@ jobs:
       run: SKIP_VALIDATE=true make
     - name: package airgap image
       run: make package-airgap
-    - uses: MCJack123/ghaction-generate-release-hashes@v1
-      with:
-        hash-type: sha256
-        file-name: k8e-hashes.txt
+    - name: sha256sum artifacts
+      run: sha256sum dist/artifacts/k8e dist/artifacts/k8e-airgap-images.tar.gz >> k8e-hashes.txt
     - name: Uploading assets...
       uses: softprops/action-gh-release@v1
       with:
