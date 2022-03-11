@@ -456,9 +456,9 @@ setup_cilium() {
 
     if [[ ${CMD_K8E} == *"server"* ]]; then
         info 'install cilium operator and setup cilium cni'
-        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml 
+        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml
         $SUDO chmod 666 ${KUBECONFIG}
-        cilium install
+        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml cilium install
     fi
 }
 
