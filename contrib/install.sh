@@ -456,14 +456,14 @@ setup_cilium() {
 
     if [[ ${CMD_K8E} == *"server"* ]]; then
         info 'install cilium operator and setup cilium cni'
-        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml
+        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml 
         $SUDO chmod 666 ${KUBECONFIG}
         KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml cilium install
     fi
 }
 
-# --- download k8e and setup all-in-one functions
-download_and_setup() {
+# --- download and verify k8e ---
+download_and_verify() {
     if can_skip_download; then
        info 'Skipping k8e download and verify'
        verify_k8e_is_executable
@@ -507,19 +507,13 @@ download_and_setup() {
     $SUDO chown root:root "$targetFile"
     echo "Download complete."
     $SUDO mv -f "$targetFile" $BIN_DIR/$REPO
+    
+}
 
-    create_symlinks
-    source_profile
-    create_killall
-    create_uninstall
-    systemd_disable
-    create_env_file
-    create_service_file
-    service_enable_and_start
-    setup_cilium
-
+# --- check-config  ---
+check_config() {
+    info "Checking k8e configuration"
     $SUDO $BIN_DIR/k8e check-config
-    info "Done! Happy deployment."
 }
 
 # --- re-evaluate args to include env command ---
@@ -529,5 +523,16 @@ eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
 {
     verify_system
     setup_env "$@"
-    download_and_setup
+    download_and_verify
+    create_symlinks
+    source_profile
+    create_killall
+    create_uninstall
+    systemd_disable
+    create_env_file
+    create_service_file
+    service_enable_and_start
+    check_config
+    setup_cilium
+    info "Done! Happy deployment."
 }
