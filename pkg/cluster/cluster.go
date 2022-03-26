@@ -118,6 +118,9 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 		}()
 	}
 
+	c.config.Runtime.EtcdConfig.Endpoints = strings.Split(c.config.Datastore.Endpoint, ",")
+	c.config.Runtime.EtcdConfig.TLSConfig = c.config.Datastore.Config
+
 	return ready, nil
 }
 
