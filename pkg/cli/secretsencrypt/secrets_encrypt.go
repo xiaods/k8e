@@ -7,48 +7,43 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/erikdubbelboer/gspt"
+	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
-	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/secretsencrypt"
 	"github.com/xiaods/k8e/pkg/server"
 	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/utils/pointer"
 )
 
-func commandPrep(app *cli.Context, cfg *cmds.Server) (config.Control, *clientaccess.Info, error) {
-	var controlConfig config.Control
-	var err error
+func commandPrep(app *cli.Context, cfg *cmds.Server) (*clientaccess.Info, error) {
 	// hide process arguments from ps output, since they may contain
 	// database credentials or other secrets.
 	gspt.SetProcTitle(os.Args[0] + " secrets-encrypt")
 
-	controlConfig.DataDir, err = server.ResolveDataDir(cfg.DataDir)
+	dataDir, err := server.ResolveDataDir(cfg.DataDir)
 	if err != nil {
-		return controlConfig, nil, err
+		return nil, err
 	}
 
 	if cfg.Token == "" {
-		fp := filepath.Join(controlConfig.DataDir, "token")
+		fp := filepath.Join(dataDir, "token")
 		tokenByte, err := ioutil.ReadFile(fp)
 		if err != nil {
-			return controlConfig, nil, err
+			return nil, err
 		}
-		controlConfig.Token = string(bytes.TrimRight(tokenByte, "\n"))
-	} else {
-		controlConfig.Token = cfg.Token
+		cfg.Token = string(bytes.TrimRight(tokenByte, "\n"))
 	}
-	controlConfig.EncryptForce = cfg.EncryptForce
-	controlConfig.EncryptSkip = cfg.EncryptSkip
-	info, err := clientaccess.ParseAndValidateTokenForUser(cmds.ServerConfig.ServerURL, controlConfig.Token, "server")
-	if err != nil {
-		return controlConfig, nil, err
-	}
-	return controlConfig, info, nil
+	return clientaccess.ParseAndValidateTokenForUser(cmds.ServerConfig.ServerURL, cfg.Token, "server")
+}
+
+func wrapServerError(err error) error {
+	return errors.Wrap(err, "see server log for details")
 }
 
 func Enable(app *cli.Context) error {
@@ -56,7 +51,7 @@ func Enable(app *cli.Context) error {
 	if err = cmds.InitLogging(); err != nil {
 		return err
 	}
-	_, info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(app, &cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
@@ -65,7 +60,7 @@ func Enable(app *cli.Context) error {
 		return err
 	}
 	if err = info.Put("/v1-"+version.Program+"/encrypt/config", b); err != nil {
-		return err
+		return wrapServerError(err)
 	}
 	fmt.Println("secrets-encryption enabled")
 	return nil
@@ -76,7 +71,7 @@ func Disable(app *cli.Context) error {
 	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	_, info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(app, &cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
@@ -85,7 +80,7 @@ func Disable(app *cli.Context) error {
 		return err
 	}
 	if err = info.Put("/v1-"+version.Program+"/encrypt/config", b); err != nil {
-		return err
+		return wrapServerError(err)
 	}
 	fmt.Println("secrets-encryption disabled")
 	return nil
@@ -95,17 +90,26 @@ func Status(app *cli.Context) error {
 	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	_, info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(app, &cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
 	data, err := info.Get("/v1-" + version.Program + "/encrypt/status")
 	if err != nil {
-		return err
+		return wrapServerError(err)
 	}
 	status := server.EncryptionState{}
 	if err := json.Unmarshal(data, &status); err != nil {
 		return err
+	}
+
+	if strings.ToLower(cmds.ServerConfig.EncryptOutput) == "json" {
+		json, err := json.MarshalIndent(status, "", "\t")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(json))
+		return nil
 	}
 
 	if status.Enable == nil {
@@ -148,19 +152,19 @@ func Prepare(app *cli.Context) error {
 	if err = cmds.InitLogging(); err != nil {
 		return err
 	}
-	controlConfig, info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(app, &cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
 	b, err := json.Marshal(server.EncryptionRequest{
 		Stage: pointer.StringPtr(secretsencrypt.EncryptionPrepare),
-		Force: controlConfig.EncryptForce,
+		Force: cmds.ServerConfig.EncryptForce,
 	})
 	if err != nil {
 		return err
 	}
 	if err = info.Put("/v1-"+version.Program+"/encrypt/config", b); err != nil {
-		return err
+		return wrapServerError(err)
 	}
 	fmt.Println("prepare completed successfully")
 	return nil
@@ -170,19 +174,19 @@ func Rotate(app *cli.Context) error {
 	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	controlConfig, info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(app, &cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
 	b, err := json.Marshal(server.EncryptionRequest{
 		Stage: pointer.StringPtr(secretsencrypt.EncryptionRotate),
-		Force: controlConfig.EncryptForce,
+		Force: cmds.ServerConfig.EncryptForce,
 	})
 	if err != nil {
 		return err
 	}
 	if err = info.Put("/v1-"+version.Program+"/encrypt/config", b); err != nil {
-		return err
+		return wrapServerError(err)
 	}
 	fmt.Println("rotate completed successfully")
 	return nil
@@ -193,20 +197,20 @@ func Reencrypt(app *cli.Context) error {
 	if err = cmds.InitLogging(); err != nil {
 		return err
 	}
-	controlConfig, info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(app, &cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
 	b, err := json.Marshal(server.EncryptionRequest{
 		Stage: pointer.StringPtr(secretsencrypt.EncryptionReencryptActive),
-		Force: controlConfig.EncryptForce,
-		Skip:  controlConfig.EncryptSkip,
+		Force: cmds.ServerConfig.EncryptForce,
+		Skip:  cmds.ServerConfig.EncryptSkip,
 	})
 	if err != nil {
 		return err
 	}
 	if err = info.Put("/v1-"+version.Program+"/encrypt/config", b); err != nil {
-		return err
+		return wrapServerError(err)
 	}
 	fmt.Println("reencryption started")
 	return nil

@@ -12,6 +12,7 @@ import (
 	"github.com/xiaods/k8e/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"k8s.io/client-go/kubernetes"
@@ -25,6 +26,7 @@ const (
 	secretsProgressEvent       string = "SecretsProgress"
 	secretsUpdateCompleteEvent string = "SecretsUpdateComplete"
 	secretsUpdateErrorEvent    string = "SecretsUpdateError"
+	controlPlaneRoleLabelKey   string = "node-role.kubernetes.io/control-plane"
 )
 
 type handler struct {
@@ -120,7 +122,7 @@ func (h *handler) onChangeNode(key string, node *corev1.Node) (*corev1.Node, err
 		h.recorder.Event(node, corev1.EventTypeWarning, secretsUpdateErrorEvent, err.Error())
 		return node, err
 	}
-	if err := cluster.Save(h.ctx, h.controlConfig, h.controlConfig.Runtime.EtcdConfig, true); err != nil {
+	if err := cluster.Save(h.ctx, h.controlConfig, true); err != nil {
 		h.recorder.Event(node, corev1.EventTypeWarning, secretsUpdateErrorEvent, err.Error())
 		return node, err
 	}
@@ -130,7 +132,6 @@ func (h *handler) onChangeNode(key string, node *corev1.Node) (*corev1.Node, err
 // validateReencryptStage ensures that the request for reencryption is valid and
 // that there is only one active reencryption at a time
 func (h *handler) validateReencryptStage(node *corev1.Node, annotation string) (bool, error) {
-
 	split := strings.Split(annotation, "-")
 	if len(split) != 2 {
 		err := fmt.Errorf("invalid annotation %s found on node %s", annotation, node.ObjectMeta.Name)
@@ -150,11 +151,12 @@ func (h *handler) validateReencryptStage(node *corev1.Node, annotation string) (
 		return false, err
 	}
 
-	nodes, err := h.nodes.List(metav1.ListOptions{})
+	reencryptActiveHash, err := GenReencryptHash(h.controlConfig.Runtime, EncryptionReencryptActive)
 	if err != nil {
 		return false, err
 	}
-	reencryptActiveHash, err := GenReencryptHash(h.controlConfig.Runtime, EncryptionReencryptActive)
+	labelSelector := labels.Set{controlPlaneRoleLabelKey: "true"}.String()
+	nodes, err := h.nodes.List(metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		return false, err
 	}

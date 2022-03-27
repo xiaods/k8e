@@ -18,9 +18,7 @@ import (
 type Cluster struct {
 	clientAccessInfo *clientaccess.Info
 	config           *config.Control
-	runtime          *config.ControlRuntime
 	managedDB        managed.Driver
-	EtcdConfig       endpoint.ETCDConfig
 	joining          bool
 	storageStarted   bool
 	saveBootstrap    bool
@@ -86,7 +84,7 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 
 	// if necessary, store bootstrap data to datastore
 	if c.saveBootstrap {
-		if err := Save(ctx, c.config, c.EtcdConfig, false); err != nil {
+		if err := Save(ctx, c.config, false); err != nil {
 			return nil, err
 		}
 	}
@@ -100,7 +98,7 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 			for {
 				select {
 				case <-ready:
-					if err := Save(ctx, c.config, c.EtcdConfig, false); err != nil {
+					if err := Save(ctx, c.config, false); err != nil {
 						panic(err)
 					}
 
@@ -117,6 +115,9 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 			}
 		}()
 	}
+
+	c.config.Runtime.EtcdConfig.Endpoints = strings.Split(c.config.Datastore.Endpoint, ",")
+	c.config.Runtime.EtcdConfig.TLSConfig = c.config.Datastore.Config
 
 	return ready, nil
 }
@@ -140,7 +141,7 @@ func (c *Cluster) startStorage(ctx context.Context) error {
 	// Persist the returned etcd configuration. We decide if we're doing leader election for embedded controllers
 	// based on what the kine wrapper tells us about the datastore. Single-node datastores like sqlite don't require
 	// leader election, while basically all others (etcd, external database, etc) do since they allow multiple servers.
-	c.EtcdConfig = etcdConfig
+	c.config.Runtime.EtcdConfig = etcdConfig
 	c.config.Datastore.Config = etcdConfig.TLSConfig
 	c.config.Datastore.Endpoint = strings.Join(etcdConfig.Endpoints, ",")
 	c.config.NoLeaderElect = !etcdConfig.LeaderElect
@@ -150,7 +151,6 @@ func (c *Cluster) startStorage(ctx context.Context) error {
 // New creates an initial cluster using the provided configuration.
 func New(config *config.Control) *Cluster {
 	return &Cluster{
-		config:  config,
-		runtime: config.Runtime,
+		config: config,
 	}
 }

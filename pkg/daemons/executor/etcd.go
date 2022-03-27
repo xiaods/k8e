@@ -1,24 +1,23 @@
-//go:build !no_embedded_executor
-// +build !no_embedded_executor
-
 package executor
 
 import (
+	"context"
 	"io/ioutil"
 	"path/filepath"
 	"strings"
 
 	"github.com/sirupsen/logrus"
+	daemonconfig "github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
 	"go.etcd.io/etcd/embed"
 	"go.etcd.io/etcd/etcdserver"
 )
 
-func (e Embedded) CurrentETCDOptions() (InitialOptions, error) {
-	return InitialOptions{}, nil
+type Embedded struct {
+	nodeConfig *daemonconfig.Node
 }
 
-func (e Embedded) ETCD(args ETCDConfig, extraArgs []string) error {
+func (e *Embedded) ETCD(ctx context.Context, args ETCDConfig, extraArgs []string) error {
 	configFile, err := args.ToConfigFile(extraArgs)
 	if err != nil {
 		return err
@@ -45,6 +44,9 @@ func (e Embedded) ETCD(args ETCDConfig, extraArgs []string) error {
 				return
 			}
 
+		case <-ctx.Done():
+			logrus.Infof("stopping etcd")
+			etcd.Close()
 		case <-etcd.Server.StopNotify():
 			logrus.Fatalf("etcd stopped")
 		case err := <-etcd.Err():
