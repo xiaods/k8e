@@ -21,6 +21,7 @@ import (
 	coreclient "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
+	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/version"
@@ -31,14 +32,13 @@ const (
 	staticURL = "/static/"
 )
 
-func router(ctx context.Context, config *Config) http.Handler {
+func router(ctx context.Context, config *Config, cfg *cmds.Server) http.Handler {
 	serverConfig := &config.ControlConfig
 	nodeAuth := passwordBootstrap(ctx, config)
 
 	prefix := "/v1-" + version.Program
 	authed := mux.NewRouter()
 	authed.Use(authMiddleware(serverConfig, version.Program+":agent"))
-	authed.NotFoundHandler = apiserver(serverConfig.Runtime)
 	authed.Path(prefix + "/serving-kubelet.crt").Handler(servingKubeletCert(serverConfig, serverConfig.Runtime.ServingKubeletKey, nodeAuth))
 	authed.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(serverConfig, serverConfig.Runtime.ClientKubeletKey, nodeAuth))
 	authed.Path(prefix + "/client-kube-proxy.crt").Handler(fileHandler(serverConfig.Runtime.ClientKubeProxyCert, serverConfig.Runtime.ClientKubeProxyKey))
@@ -46,6 +46,12 @@ func router(ctx context.Context, config *Config) http.Handler {
 	authed.Path(prefix + "/client-ca.crt").Handler(fileHandler(serverConfig.Runtime.ClientCA))
 	authed.Path(prefix + "/server-ca.crt").Handler(fileHandler(serverConfig.Runtime.ServerCA))
 	authed.Path(prefix + "/config").Handler(configHandler(serverConfig))
+
+	if cfg.DisableAPIServer {
+		authed.NotFoundHandler = apiserverDisabled()
+	} else {
+		authed.NotFoundHandler = apiserver(serverConfig.Runtime)
+	}
 
 	nodeAuthed := mux.NewRouter()
 	nodeAuthed.Use(authMiddleware(serverConfig, "system:nodes"))
@@ -83,6 +89,16 @@ func apiserver(runtime *config.ControlRuntime) http.Handler {
 			resp.Header().Set("Content-length", strconv.Itoa(len(data)))
 			resp.Write(data)
 		}
+	})
+}
+
+func apiserverDisabled() http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		data := []byte("apiserver disabled")
+		resp.WriteHeader(http.StatusServiceUnavailable)
+		resp.Header().Set("Content-Type", "text/plain")
+		resp.Header().Set("Content-length", strconv.Itoa(len(data)))
+		resp.Write(data)
 	})
 }
 
