@@ -79,8 +79,10 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 			return err
 		}
 		cfg.DataDir = dataDir
-		if err := rootless.Rootless(dataDir); err != nil {
-			return err
+		if !cfg.DisableAgent {
+			if err := rootless.Rootless(dataDir); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -430,12 +432,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 	}()
 
-	if cfg.DisableAgent {
-		close(agentReady)
-		<-ctx.Done()
-		return nil
-	}
-
 	ip := serverConfig.ControlConfig.BindAddress
 	if ip == "" {
 		ip = "127.0.0.1"
@@ -457,7 +453,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	agentConfig.DisableServiceLB = serverConfig.DisableServiceLB
 	agentConfig.ETCDAgent = serverConfig.ControlConfig.DisableAPIServer
 	agentConfig.ClusterReset = serverConfig.ControlConfig.ClusterReset
-
 	agentConfig.Rootless = cfg.Rootless
 
 	if agentConfig.Rootless {
@@ -473,6 +468,12 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		agentConfig.APIAddressCh = make(chan []string)
 		go getAPIAddressFromEtcd(ctx, serverConfig, agentConfig)
 	}
+
+	if cfg.DisableAgent {
+		agentConfig.ContainerRuntimeEndpoint = "/dev/null"
+		return agent.RunStandalone(ctx, agentConfig)
+	}
+
 	return agent.Run(ctx, agentConfig)
 }
 
