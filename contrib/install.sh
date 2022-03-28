@@ -454,7 +454,7 @@ setup_cilium() {
     # waiting for k8e extract cilium binary
     sleep 1
 
-    if [[ ${CMD_K8E} == *"server"* ]]; then
+    if [[ ${K8E_CLUSTER_INIT} = true ]]; then
         info 'install cilium operator and setup cilium cni'
         KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml 
         $SUDO chmod 666 ${KUBECONFIG}
