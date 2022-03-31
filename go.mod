@@ -29,6 +29,7 @@ replace (
 	// LOOK TO scripts/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
 	github.com/opencontainers/runc => github.com/opencontainers/runc v1.0.3
 	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.0.3-0.20210316141917-a8c4a9ee0f6b
+	github.com/rancher/dynamiclistener => github.com/xiaods/dynamiclistener v0.2.3-k8e1
 	github.com/rancher/wrangler => github.com/rancher/wrangler v0.6.2
 	github.com/xiaods/k8e/pkg/data => ./pkg/data
 	go.etcd.io/etcd => github.com/k3s-io/etcd v0.5.0-alpha.5.0.20220113195313-6c2233a709e8 //k3s-release-3.4

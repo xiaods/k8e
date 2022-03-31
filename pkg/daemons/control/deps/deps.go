@@ -34,7 +34,8 @@ const (
 	ipsecTokenSize = 48
 	aescbcKeySize  = 32
 
-	RequestHeaderCN = "system:auth-proxy"
+	RequestHeaderCN                    = "system:auth-proxy"
+	defaultNewSignedCertExpirationDays = time.Hour * 24 * 365 * 10
 )
 
 var (
@@ -579,6 +580,7 @@ func createClientCertKey(regen bool, commonName string, organization []string, a
 		CommonName:   commonName,
 		Organization: organization,
 		Usages:       extKeyUsage,
+		ExpiresAt:    defaultNewSignedCertExpirationDays,
 	}
 	if altNames != nil {
 		cfg.AltNames = *altNames
