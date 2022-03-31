@@ -7,10 +7,12 @@ The k8e 🚀 (said 'kuber easy') project builds on upstream project [K3s](https:
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/xiaods/k8e)](https://goreportcard.com/report/github.com/xiaods/k8e) [![Hex.pm](https://img.shields.io/hexpm/l/apa)](https://github.com/xiaods/k8e/blob/master/LICENSE)
 
-Great for:
-* CI
-* Development
-* Enterprise Deployment
+# ✅ Features
+- [x] Support image airgap package, v1.21 airgap package support containerd integration
+- [x] 10 year certificate, support cluster backup, upgrade
+- [x] No dependency on ansible haproxy keepalived, a binary tool, 0 dependency
+- [x] natively support cilium network
+
 
 Quick-Start - Building && Installing
 --------------
