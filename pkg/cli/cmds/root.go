@@ -1,8 +1,10 @@
 package cmds
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/version"
@@ -17,6 +19,8 @@ var (
 		EnvVar:      version.ProgramUpper + "_DEBUG",
 	}
 )
+
+var ErrCommandNoArgs = errors.New("this command does not take any arguments")
 
 func init() {
 	// hack - force "file,dns" lookup order if go dns is used
@@ -33,9 +37,14 @@ func NewApp() *cli.App {
 	cli.VersionPrinter = func(c *cli.Context) {
 		version.PrintK8eASCIIArt()
 		fmt.Printf("%s version %s\n", app.Name, app.Version)
+		fmt.Printf("go version %s\n", runtime.Version())
 	}
 	app.Flags = []cli.Flag{
 		DebugFlag,
+		cli.StringFlag{
+			Name:  "data-dir,d",
+			Usage: "(data) Folder to hold state default /var/lib/" + version.Program + "/ or ${HOME}/." + version.Program + "/ if not root",
+		},
 	}
 
 	return app
