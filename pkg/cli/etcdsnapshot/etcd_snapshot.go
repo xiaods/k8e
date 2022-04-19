@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -18,7 +19,6 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/server"
-	util2 "github.com/xiaods/k8e/pkg/util"
 	"gopkg.in/yaml.v2"
 )
 
@@ -58,7 +58,13 @@ func commandSetup(app *cli.Context, cfg *cmds.Server, sc *server.Config) error {
 	sc.ControlConfig.EtcdS3BucketName = cfg.EtcdS3BucketName
 	sc.ControlConfig.EtcdS3Region = cfg.EtcdS3Region
 	sc.ControlConfig.EtcdS3Folder = cfg.EtcdS3Folder
+	sc.ControlConfig.EtcdS3Insecure = cfg.EtcdS3Insecure
+	sc.ControlConfig.EtcdS3Timeout = cfg.EtcdS3Timeout
 	sc.ControlConfig.Runtime = &config.ControlRuntime{}
+	sc.ControlConfig.Runtime.ETCDServerCA = filepath.Join(dataDir, "tls", "etcd", "server-ca.crt")
+	sc.ControlConfig.Runtime.ClientETCDCert = filepath.Join(dataDir, "tls", "etcd", "client.crt")
+	sc.ControlConfig.Runtime.ClientETCDKey = filepath.Join(dataDir, "tls", "etcd", "client.key")
+	sc.ControlConfig.Runtime.KubeConfigAdmin = filepath.Join(dataDir, "cred", "admin.kubeconfig")
 
 	return nil
 }
@@ -84,7 +90,7 @@ func save(app *cli.Context, cfg *cmds.Server) error {
 	}
 
 	if len(app.Args()) > 0 {
-		return util2.ErrCommandNoArgs
+		return cmds.ErrCommandNoArgs
 	}
 
 	serverConfig.ControlConfig.EtcdSnapshotRetention = 0 // disable retention check
