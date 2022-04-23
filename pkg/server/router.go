@@ -24,7 +24,9 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/nodepassword"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/json"
 )
 
@@ -45,6 +47,7 @@ func router(ctx context.Context, config *Config, cfg *cmds.Server) http.Handler 
 	authed.Path(prefix + "/client-" + version.Program + "-controller.crt").Handler(fileHandler(serverConfig.Runtime.ClientK8eControllerCert, serverConfig.Runtime.ClientK8eControllerKey))
 	authed.Path(prefix + "/client-ca.crt").Handler(fileHandler(serverConfig.Runtime.ClientCA))
 	authed.Path(prefix + "/server-ca.crt").Handler(fileHandler(serverConfig.Runtime.ServerCA))
+	authed.Path(prefix + "/apiservers").Handler(apiserversHandler(serverConfig))
 	authed.Path(prefix + "/config").Handler(configHandler(serverConfig, cfg))
 	authed.Path(prefix + "/readyz").Handler(readyzHandler(serverConfig))
 
@@ -284,6 +287,29 @@ func fileHandler(fileName ...string) http.Handler {
 				return
 			}
 			resp.Write(bytes)
+		}
+	})
+}
+
+func apiserversHandler(server *config.Control) http.Handler {
+	var endpointsClient coreclient.EndpointsClient
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		var endpoints []string
+		if endpointsClient == nil {
+			if server.Runtime.Core != nil {
+				endpointsClient = server.Runtime.Core.Core().V1().Endpoints()
+			}
+		}
+		if endpointsClient != nil {
+			if endpoint, _ := endpointsClient.Get("default", "kubernetes", metav1.GetOptions{}); endpoint != nil {
+				endpoints = util.GetAddresses(endpoint)
+			}
+		}
+
+		resp.Header().Set("content-type", "application/json")
+		if err := json.NewEncoder(resp).Encode(endpoints); err != nil {
+			logrus.Errorf("Failed to encode apiserver endpoints: %v", err)
+			resp.WriteHeader(http.StatusInternalServerError)
 		}
 	})
 }
