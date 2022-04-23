@@ -86,7 +86,6 @@ type Agent struct {
 	SystemDefaultRegistry   string
 	AirgapExtraRegistry     []string
 	DisableCCM              bool
-	DisableNPC              bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
 	DisableServiceLB        bool
@@ -101,7 +100,6 @@ type CriticalControlArgs struct {
 	ClusterDomain    string
 	ClusterIPRange   *net.IPNet
 	DisableCCM       bool
-	DisableNPC       bool
 	DisableServiceLB bool
 	NoCoreDNS        bool
 	ServiceIPRange   *net.IPNet

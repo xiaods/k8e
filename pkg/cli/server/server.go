@@ -133,7 +133,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.AdvertisePort = cfg.AdvertisePort
 	serverConfig.ControlConfig.ExtraCloudControllerArgs = cfg.ExtraCloudControllerArgs
 	serverConfig.ControlConfig.DisableCCM = cfg.DisableCCM
-	serverConfig.ControlConfig.DisableNPC = cfg.DisableNPC
 	serverConfig.ControlConfig.DisableKubeProxy = cfg.DisableKubeProxy
 	serverConfig.ControlConfig.DisableETCD = cfg.DisableETCD
 	serverConfig.ControlConfig.DisableAPIServer = cfg.DisableAPIServer
