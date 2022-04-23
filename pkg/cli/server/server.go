@@ -491,21 +491,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 func validateNetworkConfiguration(serverConfig server.Config) error {
 	// Dual-stack operation requires fairly extensive manual configuration at the moment -
 	// enable dual-stack DNS (which we don't currently support since it's not easy to template)
-	dualCluster, err := utilsnet.IsDualStackCIDRs(serverConfig.ControlConfig.ClusterIPRanges)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate cluster-cidr")
-	}
-	dualService, err := utilsnet.IsDualStackCIDRs(serverConfig.ControlConfig.ServiceIPRanges)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate service-cidr")
-	}
 	dualDNS, err := utilsnet.IsDualStackIPs(serverConfig.ControlConfig.ClusterDNSs)
 	if err != nil {
 		return errors.Wrap(err, "failed to validate cluster-dns")
-	}
-
-	if (serverConfig.ControlConfig.DisableNPC == false) && (dualCluster || dualService) {
-		return errors.New("network policy enforcement is not compatible with dual-stack operation; server must be restarted with --disable-network-policy")
 	}
 
 	if dualDNS == true {

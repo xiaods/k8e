@@ -5,6 +5,7 @@ go 1.16
 replace (
 	github.com/Microsoft/hcsshim => github.com/Microsoft/hcsshim v0.8.20
 	github.com/benmoss/go-powershell => github.com/k3s-io/go-powershell v0.0.0-20201118222746-51f4c451fbd7
+	github.com/cloudnativelabs/kube-router => github.com/k3s-io/kube-router v1.3.3-0.20220405142336-8ea9a06dc0e3
 	github.com/containerd/aufs => github.com/containerd/aufs v1.0.0
 	github.com/containerd/btrfs => github.com/containerd/btrfs v1.0.0
 	github.com/containerd/cgroups => github.com/containerd/cgroups v1.0.1
@@ -71,14 +72,14 @@ replace (
 )
 
 require (
-	github.com/aws/aws-sdk-go v1.38.70 // indirect
+	github.com/cloudnativelabs/kube-router v1.3.2
 	github.com/containerd/cgroups v1.0.1
 	github.com/containerd/containerd v1.5.7
 	github.com/containerd/cri v1.11.1-0.20200820101445-b0cc07999aa5
 	github.com/containerd/fuse-overlayfs-snapshotter v1.0.2
 	github.com/containerd/go-cni v1.0.2 // indirect
 	github.com/containerd/imgcrypt v1.1.1 // indirect
-	github.com/containernetworking/plugins v0.9.1 // indirect
+	github.com/coreos/go-iptables v0.6.0
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f
 	github.com/docker/docker v20.10.10+incompatible
 	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
@@ -99,13 +100,11 @@ require (
 	github.com/moby/sys/symlink v0.1.0 // indirect
 	github.com/morikuni/aec v1.0.0
 	github.com/natefinch/lumberjack v2.0.0+incompatible
-	github.com/onsi/ginkgo v1.16.4 // indirect
 	// LOOK TO scripts/download FOR THE VERSION OF runc THAT WE ARE BUILDING/SHIPPING
 	github.com/opencontainers/runc v1.0.3
 	github.com/opencontainers/selinux v1.8.2
 	github.com/otiai10/copy v1.7.0
 	github.com/pkg/errors v0.9.1
-	github.com/prometheus/client_golang v1.11.0 // indirect
 	github.com/rancher/dynamiclistener v0.2.3-k3s1
 	github.com/rancher/remotedialer v0.2.0
 	github.com/rancher/wharfie v0.5.1
@@ -118,7 +117,6 @@ require (
 	github.com/stretchr/testify v1.7.0
 	github.com/tchap/go-patricia v2.3.0+incompatible // indirect
 	github.com/urfave/cli v1.22.4
-	github.com/vishvananda/netns v0.0.0-20210104183010-2eb08e3e575f // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20201208200253-50621aee4aea
 	golang.org/x/crypto v0.0.0-20210322153248-0c34fe9e7dc2
 	golang.org/x/sys v0.0.0-20211004093028-2c5d950f24ef
@@ -134,7 +132,6 @@ require (
 	k8s.io/controller-manager v0.21.11 // indirect
 	k8s.io/cri-api v0.21.11
 	k8s.io/klog v1.0.0
-	k8s.io/klog/v2 v2.10.0 // indirect
 	k8s.io/kubectl v0.21.11
 	k8s.io/kubernetes v1.21.11
 	k8s.io/utils v0.0.0-20211116205334-6203023598ed
