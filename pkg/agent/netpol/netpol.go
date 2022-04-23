@@ -29,7 +29,7 @@ import (
 // Run creates and starts a new instance of the kube-router network policy controller
 // The code in this function is cribbed from the upstream controller at:
 // https://github.com/cloudnativelabs/kube-router/blob/ee9f6d890d10609284098229fa1e283ab5d83b93/pkg/cmd/kube-router.go#L78
-// It converts the k3s config.Node into kube-router configuration (only the
+// It converts the k8e config.Node into kube-router configuration (only the
 // subset of options needed for netpol controller).
 func Run(ctx context.Context, nodeConfig *config.Node) error {
 	set, err := utils.NewIPSet(false)
@@ -43,7 +43,7 @@ func Run(ctx context.Context, nodeConfig *config.Node) error {
 		return nil
 	}
 
-	restConfig, err := clientcmd.BuildConfigFromFlags("", nodeConfig.AgentConfig.KubeConfigK3sController)
+	restConfig, err := clientcmd.BuildConfigFromFlags("", nodeConfig.AgentConfig.KubeConfigK8eController)
 	if err != nil {
 		return err
 	}
