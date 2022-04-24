@@ -133,7 +133,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.AdvertisePort = cfg.AdvertisePort
 	serverConfig.ControlConfig.ExtraCloudControllerArgs = cfg.ExtraCloudControllerArgs
 	serverConfig.ControlConfig.DisableCCM = cfg.DisableCCM
-	serverConfig.ControlConfig.DisableNPC = cfg.DisableNPC
 	serverConfig.ControlConfig.DisableKubeProxy = cfg.DisableKubeProxy
 	serverConfig.ControlConfig.DisableETCD = cfg.DisableETCD
 	serverConfig.ControlConfig.DisableAPIServer = cfg.DisableAPIServer
@@ -411,6 +410,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 	logrus.Info("Starting " + version.Program + " " + app.App.Version)
 
+	notifySocket := os.Getenv("NOTIFY_SOCKET")
+
 	ctx := signals.SetupSignalHandler(context.Background())
 
 	if err := server.StartServer(ctx, &serverConfig, cfg); err != nil {
@@ -427,7 +428,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 
 		logrus.Info(version.Program + " is up and running")
-		if (cfg.DisableAgent || cfg.DisableAPIServer) && os.Getenv("NOTIFY_SOCKET") != "" {
+		if (cfg.DisableAgent || cfg.DisableAPIServer) && notifySocket != "" {
+			os.Setenv("NOTIFY_SOCKET", notifySocket)
 			systemd.SdNotify(true, "READY=1\n")
 		}
 	}()
@@ -491,21 +493,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 func validateNetworkConfiguration(serverConfig server.Config) error {
 	// Dual-stack operation requires fairly extensive manual configuration at the moment -
 	// enable dual-stack DNS (which we don't currently support since it's not easy to template)
-	dualCluster, err := utilsnet.IsDualStackCIDRs(serverConfig.ControlConfig.ClusterIPRanges)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate cluster-cidr")
-	}
-	dualService, err := utilsnet.IsDualStackCIDRs(serverConfig.ControlConfig.ServiceIPRanges)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate service-cidr")
-	}
 	dualDNS, err := utilsnet.IsDualStackIPs(serverConfig.ControlConfig.ClusterDNSs)
 	if err != nil {
 		return errors.Wrap(err, "failed to validate cluster-dns")
-	}
-
-	if (serverConfig.ControlConfig.DisableNPC == false) && (dualCluster || dualService) {
-		return errors.New("network policy enforcement is not compatible with dual-stack operation; server must be restarted with --disable-network-policy")
 	}
 
 	if dualDNS == true {

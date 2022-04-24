@@ -19,7 +19,6 @@ import (
 	"github.com/rancher/wrangler/pkg/leader"
 	"github.com/rancher/wrangler/pkg/resolvehome"
 	"github.com/sirupsen/logrus"
-	"github.com/xiaods/k8e/pkg/apiaddresses"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -211,10 +210,6 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		sc.Core.Core().V1().Endpoints(),
 		!config.DisableServiceLB,
 		config.Rootless); err != nil {
-		return err
-	}
-
-	if err := apiaddresses.Register(ctx, config.ControlConfig.Runtime, sc.Core.Core().V1().Endpoints()); err != nil {
 		return err
 	}
 

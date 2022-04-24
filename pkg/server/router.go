@@ -24,8 +24,11 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/nodepassword"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apiserver/pkg/authentication/user"
 )
 
 const (
@@ -45,7 +48,9 @@ func router(ctx context.Context, config *Config, cfg *cmds.Server) http.Handler 
 	authed.Path(prefix + "/client-" + version.Program + "-controller.crt").Handler(fileHandler(serverConfig.Runtime.ClientK8eControllerCert, serverConfig.Runtime.ClientK8eControllerKey))
 	authed.Path(prefix + "/client-ca.crt").Handler(fileHandler(serverConfig.Runtime.ClientCA))
 	authed.Path(prefix + "/server-ca.crt").Handler(fileHandler(serverConfig.Runtime.ServerCA))
-	authed.Path(prefix + "/config").Handler(configHandler(serverConfig))
+	authed.Path(prefix + "/apiservers").Handler(apiserversHandler(serverConfig))
+	authed.Path(prefix + "/config").Handler(configHandler(serverConfig, cfg))
+	authed.Path(prefix + "/readyz").Handler(readyzHandler(serverConfig))
 
 	if cfg.DisableAPIServer {
 		authed.NotFoundHandler = apiserverDisabled()
@@ -54,7 +59,7 @@ func router(ctx context.Context, config *Config, cfg *cmds.Server) http.Handler 
 	}
 
 	nodeAuthed := mux.NewRouter()
-	nodeAuthed.Use(authMiddleware(serverConfig, "system:nodes"))
+	nodeAuthed.Use(authMiddleware(serverConfig, user.NodesGroup))
 	nodeAuthed.Path(prefix + "/connect").Handler(serverConfig.Runtime.Tunnel)
 	nodeAuthed.NotFoundHandler = authed
 
@@ -64,9 +69,7 @@ func router(ctx context.Context, config *Config, cfg *cmds.Server) http.Handler 
 	serverAuthed.Path(prefix + "/encrypt/status").Handler(encryptionStatusHandler(serverConfig))
 	serverAuthed.Path(prefix + "/encrypt/config").Handler(encryptionConfigHandler(ctx, serverConfig))
 	serverAuthed.Path("/db/info").Handler(nodeAuthed)
-	if serverConfig.Runtime.HTTPBootstrap {
-		serverAuthed.Path(prefix + "/server-bootstrap").Handler(bootstrap.Handler(&serverConfig.Runtime.ControlRuntimeBootstrap))
-	}
+	serverAuthed.Path(prefix + "/server-bootstrap").Handler(bootstrapHandler(serverConfig.Runtime))
 
 	staticDir := filepath.Join(serverConfig.DataDir, "static")
 	router := mux.NewRouter()
@@ -96,6 +99,20 @@ func apiserverDisabled() http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		data := []byte("apiserver disabled")
 		resp.WriteHeader(http.StatusServiceUnavailable)
+		resp.Header().Set("Content-Type", "text/plain")
+		resp.Header().Set("Content-length", strconv.Itoa(len(data)))
+		resp.Write(data)
+	})
+}
+
+func bootstrapHandler(runtime *config.ControlRuntime) http.Handler {
+	if runtime.HTTPBootstrap {
+		return bootstrap.Handler(&runtime.ControlRuntimeBootstrap)
+	}
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		logrus.Warnf("Received HTTP bootstrap request from %s, but embedded etcd is not enabled.", req.RemoteAddr)
+		data := []byte("etcd disabled")
+		resp.WriteHeader(http.StatusBadRequest)
 		resp.Header().Set("Content-Type", "text/plain")
 		resp.Header().Set("Content-length", strconv.Itoa(len(data)))
 		resp.Write(data)
@@ -243,7 +260,7 @@ func clientKubeletCert(server *config.Control, keyFile string, auth nodePassBoot
 
 		cert, err := certutil.NewSignedCert(certutil.Config{
 			CommonName:   "system:node:" + nodeName,
-			Organization: []string{"system:nodes"},
+			Organization: []string{user.NodesGroup},
 			Usages:       []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		}, key, caCert[0], caKey)
 		if err != nil {
@@ -287,17 +304,60 @@ func fileHandler(fileName ...string) http.Handler {
 	})
 }
 
-func configHandler(server *config.Control) http.Handler {
+func apiserversHandler(server *config.Control) http.Handler {
+	var endpointsClient coreclient.EndpointsClient
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		var endpoints []string
+		if endpointsClient == nil {
+			if server.Runtime.Core != nil {
+				endpointsClient = server.Runtime.Core.Core().V1().Endpoints()
+			}
+		}
+		if endpointsClient != nil {
+			if endpoint, _ := endpointsClient.Get("default", "kubernetes", metav1.GetOptions{}); endpoint != nil {
+				endpoints = util.GetAddresses(endpoint)
+			}
+		}
+
+		resp.Header().Set("content-type", "application/json")
+		if err := json.NewEncoder(resp).Encode(endpoints); err != nil {
+			logrus.Errorf("Failed to encode apiserver endpoints: %v", err)
+			resp.WriteHeader(http.StatusInternalServerError)
+		}
+	})
+}
+
+func configHandler(server *config.Control, cfg *cmds.Server) http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		if req.TLS == nil {
 			resp.WriteHeader(http.StatusNotFound)
 			return
 		}
+		// Startup hooks may read and modify cmds.Server in a goroutine, but as these are copied into
+		// config.Control before the startup hooks are called, any modifications need to be sync'd back
+		// into the struct before it is sent to agents.
+		// At this time we don't sync all the fields, just those known to be touched by startup hooks.
+		server.DisableKubeProxy = cfg.DisableKubeProxy
 		resp.Header().Set("content-type", "application/json")
 		if err := json.NewEncoder(resp).Encode(server); err != nil {
 			logrus.Errorf("Failed to encode agent config: %v", err)
 			resp.WriteHeader(http.StatusInternalServerError)
 		}
+	})
+}
+
+func readyzHandler(server *config.Control) http.Handler {
+	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		code := http.StatusOK
+		data := []byte("ok")
+		if server.Runtime.Core == nil {
+			code = http.StatusInternalServerError
+			data = []byte("runtime core not ready")
+		}
+		resp.WriteHeader(code)
+		resp.Header().Set("Content-Type", "text/plain")
+		resp.Header().Set("Content-length", strconv.Itoa(len(data)))
+		resp.Write(data)
 	})
 }
 

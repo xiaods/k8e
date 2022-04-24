@@ -53,7 +53,6 @@ type Server struct {
 	ServerURL                string
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
-	DisableNPC               bool
 	DisableKubeProxy         bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
@@ -362,11 +361,6 @@ var ServerFlags = []cli.Flag{
 		Name:        "disable-kube-proxy",
 		Usage:       "(components) Disable running kube-proxy",
 		Destination: &ServerConfig.DisableKubeProxy,
-	},
-	cli.BoolFlag{
-		Name:        "disable-network-policy",
-		Usage:       "(components) Disable " + version.Program + " default network policy controller",
-		Destination: &ServerConfig.DisableNPC,
 	},
 	cli.BoolFlag{
 		Name:        "disable-apiserver",

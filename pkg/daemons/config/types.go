@@ -27,7 +27,7 @@ type Node struct {
 	Containerd               Containerd
 	Images                   string
 	AgentConfig              Agent
-	CACerts                  []byte
+	Token                    string
 	Certificate              *tls.Certificate
 	ServerHTTPSPort          int
 }
@@ -86,8 +86,6 @@ type Agent struct {
 	SystemDefaultRegistry   string
 	AirgapExtraRegistry     []string
 	DisableCCM              bool
-	DisableNPC              bool
-	DisableKubeProxy        bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
 	DisableServiceLB        bool
@@ -102,7 +100,6 @@ type CriticalControlArgs struct {
 	ClusterDomain    string
 	ClusterIPRange   *net.IPNet
 	DisableCCM       bool
-	DisableNPC       bool
 	DisableServiceLB bool
 	NoCoreDNS        bool
 	ServiceIPRange   *net.IPNet
@@ -126,7 +123,7 @@ type Control struct {
 	KubeConfigOutput         string
 	KubeConfigMode           string
 	DataDir                  string
-	Datastore                endpoint.Config
+	Datastore                endpoint.Config `json:"-"`
 	DisableAPIServer         bool
 	DisableControllerManager bool
 	DisableETCD              bool
@@ -152,25 +149,25 @@ type Control struct {
 	EncryptSkip              bool
 	TLSMinVersion            uint16
 	TLSCipherSuites          []uint16
-	EtcdSnapshotName         string
-	EtcdDisableSnapshots     bool
-	EtcdExposeMetrics        bool
-	EtcdSnapshotDir          string
-	EtcdSnapshotCron         string
-	EtcdSnapshotRetention    int
-	EtcdSnapshotCompress     bool
-	EtcdListFormat           string
-	EtcdS3                   bool
-	EtcdS3Endpoint           string
-	EtcdS3EndpointCA         string
-	EtcdS3SkipSSLVerify      bool
-	EtcdS3AccessKey          string
-	EtcdS3SecretKey          string
-	EtcdS3BucketName         string
-	EtcdS3Region             string
-	EtcdS3Folder             string
-	EtcdS3Timeout            time.Duration
-	EtcdS3Insecure           bool
+	EtcdSnapshotName         string        `json:"-"`
+	EtcdDisableSnapshots     bool          `json:"-"`
+	EtcdExposeMetrics        bool          `json:"-"`
+	EtcdSnapshotDir          string        `json:"-"`
+	EtcdSnapshotCron         string        `json:"-"`
+	EtcdSnapshotRetention    int           `json:"-"`
+	EtcdSnapshotCompress     bool          `json:"-"`
+	EtcdListFormat           string        `json:"-"`
+	EtcdS3                   bool          `json:"-"`
+	EtcdS3Endpoint           string        `json:"-"`
+	EtcdS3EndpointCA         string        `json:"-"`
+	EtcdS3SkipSSLVerify      bool          `json:"-"`
+	EtcdS3AccessKey          string        `json:"-"`
+	EtcdS3SecretKey          string        `json:"-"`
+	EtcdS3BucketName         string        `json:"-"`
+	EtcdS3Region             string        `json:"-"`
+	EtcdS3Folder             string        `json:"-"`
+	EtcdS3Timeout            time.Duration `json:"-"`
+	EtcdS3Insecure           bool          `json:"-"`
 	ServerNodeName           string
 
 	BindAddress string
