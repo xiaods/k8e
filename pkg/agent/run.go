@@ -30,6 +30,7 @@ import (
 	"github.com/xiaods/k8e/pkg/nodeconfig"
 	"github.com/xiaods/k8e/pkg/rootless"
 	"github.com/xiaods/k8e/pkg/util"
+	"github.com/xiaods/k8e/pkg/version"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -139,8 +140,13 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 		return err
 	}
 
-	os.Setenv("NOTIFY_SOCKET", notifySocket)
-	systemd.SdNotify(true, "READY=1\n")
+	// By default, the server is responsible for notifying systemd
+	// On agent-only nodes, the agent will notify systemd
+	if notifySocket != "" {
+		logrus.Info(version.Program + " agent is up and running")
+		os.Setenv("NOTIFY_SOCKET", notifySocket)
+		systemd.SdNotify(true, "READY=1\n")
+	}
 
 	<-ctx.Done()
 	return ctx.Err()
