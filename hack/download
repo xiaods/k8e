@@ -8,8 +8,8 @@ cd $(dirname $0)/..
 RUNC_DIR=build/src/github.com/opencontainers/runc
 DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
-NERDCTL_VERSION=0.18.0
-CILIUMCLI_VERSION=v0.10.4
+NERDCTL_VERSION=0.20.0
+CILIUMCLI_VERSION=v0.11.8
 
 umask 022
 rm -rf ${CHARTS_DIR}
