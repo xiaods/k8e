@@ -1,0 +1,39 @@
+on:
+  release:
+    types:
+    - published
+name: Build Release
+jobs:
+  build:
+    name: Build & Release
+    runs-on: [self-hosted, linux, ARM64]
+    strategy:
+      matrix:
+        include:
+          - goarch: arm64
+            goos: linux
+    env:
+      RELEASE_TAG: ${{secrets.RELEASE_TAG}}
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+    - uses: actions/checkout@master
+    - uses: actions/setup-go@v2
+      with:
+        go-version: 1.16
+    - name: generate resources
+      run: mkdir -p {build/data,build/static}
+    - name: package bin
+      run: SKIP_VALIDATE=true make
+    - name: package airgap image
+      run: make package-airgap
+    - name: sha256sum artifacts
+      run: sha256sum dist/artifacts/k8e-${{ matrix.goarch }} dist/artifacts/k8e-airgap-images-${{ matrix.goarch }}.tar.gz >> k8e-hashes-${{ matrix.goarch }}.txt
+    - name: Uploading assets...
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/artifacts/k8e-${{ matrix.goarch }}
+          dist/artifacts/k8e-airgap-images-${{ matrix.goarch }}.tar.gz
+          dist/artifacts/k8e-images-${{ matrix.goarch }}.txt
+          k8e-hashes-${{ matrix.goarch }}.txt
