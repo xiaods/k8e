@@ -1,8 +1,6 @@
 name: Build Release for arm64
 on:
   push:
-    branches:
-      - arm64-builder
 jobs:
   build:
     name: Build & Release
