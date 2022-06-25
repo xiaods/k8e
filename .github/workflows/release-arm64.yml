@@ -2,11 +2,11 @@ on:
   push:
     branches:
       - arm64-builder
-name: Build Release
+name: Build Release for arm64
 jobs:
   build:
     name: Build & Release
-    runs-on: ["self-hosted"]
+    runs-on: ['self-hosted','ARM64','ubuntu-08']
     strategy:
       matrix:
         include:
