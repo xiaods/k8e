@@ -266,6 +266,9 @@ source_profile() {
     if ! grep -s 'docker=nerdctl' "$PROFILE"; then
         $SUDO echo 'alias docker=nerdctl' >> $PROFILE
     fi
+    if ! grep -s 'KUBECONFIG=' "$PROFILE"; then
+        $SUDO echo "export KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml" >> $PROFILE
+    fi
 }
 
 # --- disable current service if loaded --
@@ -454,12 +457,11 @@ setup_cilium() {
     # waiting for k8e extract cilium binary
     sleep 1
 
-    if [[ ${K8E_CLUSTER_INIT} = true ]]; then
-        info 'install cilium operator and setup cilium cni'
-        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml 
-        $SUDO chmod 666 ${KUBECONFIG}
-        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml cilium install
-    fi
+    case "${INSTALL_K8E_EXEC}" in
+        *"cluster-init"*) info "Installing cilium network cni/operator"
+        $SUDO chmod 666 /etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml
+        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml cilium install;;
+    esac
 }
 
 # --- download and verify k8e ---
