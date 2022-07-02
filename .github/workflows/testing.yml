@@ -1,7 +1,7 @@
 on:
-  push:
+  pull_request:
     branches:
-      - dev
+      - master
 name: Build Test
 jobs:
   build:
@@ -25,4 +25,18 @@ jobs:
     - name: generate resources
       run: mkdir -p {build/data,build/static} && go generate
     - name: Test
-      run: go get -u github.com/rakyll/gotest && gotest -v ./...
+      id: gotest
+      run: |
+        export GOPATH="$HOME/go/"
+        export PATH=$PATH:$GOPATH/bin
+        go install github.com/rakyll/gotest@latest
+        go generate ./...
+        echo "::set-output name=GREET::$(gotest -v ./...)"
+    - name: Comment PR
+      uses: thollander/actions-comment-pull-request@v1
+      with:
+        message: |
+          ```
+            ${{ steps.gotest.outputs.GREET }}
+          ```
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
