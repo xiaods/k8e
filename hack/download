@@ -5,18 +5,20 @@ cd $(dirname $0)/..
 
 . ./hack/version.sh
 
+CHARTS_DIR=build/static/charts
 RUNC_DIR=build/src/github.com/opencontainers/runc
 DATA_DIR=build/data
-CHARTS_DIR=build/static/charts
-NERDCTL_VERSION=0.20.0
-CILIUMCLI_VERSION=v0.11.10
+NERDCTL_VERSION=0.22.0
+CILIUMCLI_VERSION=v0.12.0
+CILIUM_CHART_VERSION=1.12.0
+CILIUM_URL=https://helm.cilium.io/cilium-${CILIUM_CHART_VERSION}.tgz
+CILIUM_FILE=cilium-${CILIUM_CHART_VERSION}.tgz
 
 umask 022
 rm -rf ${CHARTS_DIR}
 rm -rf ${RUNC_DIR}
 mkdir -p ${DATA_DIR}
 mkdir -p ${CHARTS_DIR}
-mkdir -p bin
 
 git clone --single-branch --branch=${VERSION_RUNC} --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR}
 
@@ -35,3 +37,16 @@ if [ ${ARCH} = amd64 ]; then
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
   curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-arm64.tar.gz | tar zxf - -C bin
 fi
+
+download_and_package_cilium () {
+  echo "Downloading Cilium Helm chart from ${CILIUM_URL}"
+  curl -sfL ${CILIUM_URL} -o ${CHARTS_DIR}/${CILIUM_FILE}
+  code=$?
+
+  if [ $code -ne 0 ]; then
+    echo "Error: Failed to download Cilium Helm chart!"
+    exit $code
+  fi
+}
+
+download_and_package_cilium
