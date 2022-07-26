@@ -2,7 +2,6 @@
 // sources:
 // manifests/.DS_Store
 // manifests/ccm.yaml
-// manifests/cilium.yaml
 // manifests/coredns.yaml
 // manifests/local-storage.yaml
 // manifests/metrics-server/aggregated-metrics-reader.yaml
@@ -128,26 +127,6 @@ func ccmYaml() (*asset, error) {
 	}
 
 	info := bindataFileInfo{name: "ccm.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
-	a := &asset{bytes: bytes, info: info}
-	return a, nil
-}
-
-var _ciliumYaml = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\x74\xcd\xc1\x4a\xc3\x40\x10\x06\xe0\xfb\x3e\xc5\x10\xe8\x31\xbb\x4d\x29\x1e\xe6\xa6\xb5\x60\x11\x25\xb4\xea\x55\xc6\xcd\x60\x96\xec\x66\x97\xec\x24\x60\xd5\x77\x97\xd4\x78\xf4\x36\xc3\x7c\xf3\xff\x94\xdc\x0b\x0f\xd9\xc5\x1e\xa1\x65\x1f\xb4\x25\x11\xcf\xda\x45\x33\x55\xaa\x73\x7d\x83\x70\xc7\x3e\xec\x5a\x1a\x44\x05\x16\x6a\x48\x08\x15\x40\x4f\x81\x11\xac\xf3\x6e\x0c\xcb\x9a\x13\x59\x46\xe8\xc6\x37\x2e\xf3\x47\x16\x0e\x2a\x27\xb6\xb3\xb6\xf3\x3f\x42\x2b\x92\x32\x1a\xb3\xfa\xbc\x7f\xbe\xd9\x1f\x1f\xf7\x4f\xfb\xd3\xeb\x75\x7d\xf8\x5e\x99\x2c\x24\xce\x9a\x0b\xcc\xe6\x37\xb7\xac\x74\xb5\xd1\x6b\x2d\xef\x67\x05\x30\x91\x1f\x39\xef\x62\x2f\xdc\x0b\xc2\x57\xa9\x00\x00\x5c\xa2\x80\x97\x09\x20\xc4\x86\x11\x0a\xeb\xc7\x2c\x3c\x94\x29\x46\x5f\x2c\xa7\x98\x78\x20\x89\xc3\x1f\x05\x58\x54\x1d\xa3\x3f\xd4\xd3\xb6\x8e\xcd\xee\x70\x7b\x44\x28\xaa\xb5\xde\xce\xad\x6b\x53\x5d\x15\xff\xf1\x07\xca\xdd\xc9\x9d\x19\x61\xb3\xfd\x09\x00\x00\xff\xff\xe1\x99\xfd\x7d\x45\x01\x00\x00")
-
-func ciliumYamlBytes() ([]byte, error) {
-	return bindataRead(
-		_ciliumYaml,
-		"cilium.yaml",
-	)
-}
-
-func ciliumYaml() (*asset, error) {
-	bytes, err := ciliumYamlBytes()
-	if err != nil {
-		return nil, err
-	}
-
-	info := bindataFileInfo{name: "cilium.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -406,7 +385,6 @@ func AssetNames() []string {
 var _bindata = map[string]func() (*asset, error){
 	".DS_Store":          Ds_store,
 	"ccm.yaml":           ccmYaml,
-	"cilium.yaml":        ciliumYaml,
 	"coredns.yaml":       corednsYaml,
 	"local-storage.yaml": localStorageYaml,
 	"metrics-server/aggregated-metrics-reader.yaml": metricsServerAggregatedMetricsReaderYaml,
@@ -462,7 +440,6 @@ type bintree struct {
 var _bintree = &bintree{nil, map[string]*bintree{
 	".DS_Store":          &bintree{Ds_store, map[string]*bintree{}},
 	"ccm.yaml":           &bintree{ccmYaml, map[string]*bintree{}},
-	"cilium.yaml":        &bintree{ciliumYaml, map[string]*bintree{}},
 	"coredns.yaml":       &bintree{corednsYaml, map[string]*bintree{}},
 	"local-storage.yaml": &bintree{localStorageYaml, map[string]*bintree{}},
 	"metrics-server": &bintree{nil, map[string]*bintree{
