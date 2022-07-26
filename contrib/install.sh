@@ -459,8 +459,8 @@ setup_cilium() {
 
     case "${INSTALL_K8E_EXEC}" in
         *"cluster-init"*) info "Installing cilium network cni/operator"
-        $SUDO chmod 666 /etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml
-        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml cilium install;;
+        $SUDO chmod 644 /etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml
+        KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml cilium install --helm-set ipam.operator.clusterPoolIPv4PodCIDR="10.42.0.0/16";;
     esac
 }
 
