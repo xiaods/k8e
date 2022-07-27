@@ -10,6 +10,7 @@ DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
 NERDCTL_VERSION=0.22.0
 CILIUMCLI_VERSION=v0.12.0
+OSMEDGE_VERSION=v1.1.0
 
 umask 022
 rm -rf ${CHARTS_DIR}
@@ -20,18 +21,33 @@ mkdir -p bin
 
 git clone --single-branch --branch=${VERSION_RUNC} --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR}
 
-#nerdctl for containerd , 0.14.0
+download_and_package_nerdctl() {
 echo "download nerdctl..."
 if [ ${ARCH} = amd64 ]; then
   curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-amd64.tar.gz | tar zxf - -C bin
 elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
   curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-arm64.tar.gz | tar zxf - -C bin
 fi
+}
 
-# Cilium-cli
-echo "download Cilium-cli..."
-if [ ${ARCH} = amd64 ]; then
-  curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-amd64.tar.gz | tar zxf - -C bin
-elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-  curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-arm64.tar.gz | tar zxf - -C bin
-fi
+download_and_package_cilium() {
+  echo "download Cilium-cli..."
+  if [ ${ARCH} = amd64 ]; then
+    curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-amd64.tar.gz | tar zxf - -C bin
+  elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
+    curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-arm64.tar.gz | tar zxf - -C bin
+  fi
+}
+
+download_and_package_osm() {
+  echo "Downloading OSM Edge..."
+  if [ ${ARCH} = amd64 ]; then
+    curl --compressed -sfL https://github.com/flomesh-io/osm-edge/releases/download/${OSMEDGE_VERSION}/osm-edge-${OSMEDGE_VERSION}-linux-amd64.tar.gz | tar zxf - -C bin --strip-components 1 --exclude=LICENSE --exclude=README.md|grep osm
+  elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
+    curl --compressed -sfL https://github.com/flomesh-io/osm-edge/releases/download/${OSMEDGE_VERSION}/osm-edge-${OSMEDGE_VERSION}-linux-arm64.tar.gz | tar zxf - -C bin --strip-components 1 --exclude=LICENSE --exclude=README.md|grep osm
+  fi
+}
+
+download_and_package_nerdctl
+download_and_package_cilium
+download_and_package_osm
