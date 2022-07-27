@@ -8,7 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
-	"io/ioutil"
+	"io"
 	sysnet "net"
 	"net/http"
 	"net/url"
@@ -111,7 +111,7 @@ func Request(path string, info *clientaccess.Info, requester HTTPRequester) ([]b
 
 func getNodeNamedCrt(nodeName string, nodeIPs []sysnet.IP, nodePasswordFile string) HTTPRequester {
 	return func(u string, client *http.Client, username, password string) ([]byte, error) {
-		req, err := http.NewRequest(http.MethodGet, u, nil)
+		req, err := http.NewRequest(http.MethodGet, u, http.NoBody)
 		if err != nil {
 			return nil, err
 		}
@@ -142,13 +142,13 @@ func getNodeNamedCrt(nodeName string, nodeIPs []sysnet.IP, nodePasswordFile stri
 			return nil, fmt.Errorf("%s: %s", u, resp.Status)
 		}
 
-		return ioutil.ReadAll(resp.Body)
+		return io.ReadAll(resp.Body)
 	}
 }
 
 func ensureNodeID(nodeIDFile string) (string, error) {
 	if _, err := os.Stat(nodeIDFile); err == nil {
-		id, err := ioutil.ReadFile(nodeIDFile)
+		id, err := os.ReadFile(nodeIDFile)
 		return strings.TrimSpace(string(id)), err
 	}
 	id := make([]byte, 4, 4)
@@ -157,12 +157,12 @@ func ensureNodeID(nodeIDFile string) (string, error) {
 		return "", err
 	}
 	nodeID := hex.EncodeToString(id)
-	return nodeID, ioutil.WriteFile(nodeIDFile, []byte(nodeID+"\n"), 0644)
+	return nodeID, os.WriteFile(nodeIDFile, []byte(nodeID+"\n"), 0644)
 }
 
 func ensureNodePassword(nodePasswordFile string) (string, error) {
 	if _, err := os.Stat(nodePasswordFile); err == nil {
-		password, err := ioutil.ReadFile(nodePasswordFile)
+		password, err := os.ReadFile(nodePasswordFile)
 		return strings.TrimSpace(string(password)), err
 	}
 	password := make([]byte, 16, 16)
@@ -171,15 +171,15 @@ func ensureNodePassword(nodePasswordFile string) (string, error) {
 		return "", err
 	}
 	nodePassword := hex.EncodeToString(password)
-	return nodePassword, ioutil.WriteFile(nodePasswordFile, []byte(nodePassword+"\n"), 0600)
+	return nodePassword, os.WriteFile(nodePasswordFile, []byte(nodePassword+"\n"), 0600)
 }
 
 func upgradeOldNodePasswordPath(oldNodePasswordFile, newNodePasswordFile string) {
-	password, err := ioutil.ReadFile(oldNodePasswordFile)
+	password, err := os.ReadFile(oldNodePasswordFile)
 	if err != nil {
 		return
 	}
-	if err := ioutil.WriteFile(newNodePasswordFile, password, 0600); err != nil {
+	if err := os.WriteFile(newNodePasswordFile, password, 0600); err != nil {
 		logrus.Warnf("Unable to write password file: %v", err)
 		return
 	}
@@ -197,11 +197,11 @@ func getServingCert(nodeName string, nodeIPs []sysnet.IP, servingCertFile, servi
 
 	servingCert, servingKey := splitCertKeyPEM(servingCert)
 
-	if err := ioutil.WriteFile(servingCertFile, servingCert, 0600); err != nil {
+	if err := os.WriteFile(servingCertFile, servingCert, 0600); err != nil {
 		return nil, errors.Wrapf(err, "failed to write node cert")
 	}
 
-	if err := ioutil.WriteFile(servingKeyFile, servingKey, 0600); err != nil {
+	if err := os.WriteFile(servingKeyFile, servingKey, 0600); err != nil {
 		return nil, errors.Wrapf(err, "failed to write node key")
 	}
 
@@ -219,15 +219,15 @@ func getHostFile(filename, keyFile string, info *clientaccess.Info) error {
 		return err
 	}
 	if keyFile == "" {
-		if err := ioutil.WriteFile(filename, fileBytes, 0600); err != nil {
+		if err := os.WriteFile(filename, fileBytes, 0600); err != nil {
 			return errors.Wrapf(err, "failed to write cert %s", filename)
 		}
 	} else {
 		fileBytes, keyBytes := splitCertKeyPEM(fileBytes)
-		if err := ioutil.WriteFile(filename, fileBytes, 0600); err != nil {
+		if err := os.WriteFile(filename, fileBytes, 0600); err != nil {
 			return errors.Wrapf(err, "failed to write cert %s", filename)
 		}
-		if err := ioutil.WriteFile(keyFile, keyBytes, 0600); err != nil {
+		if err := os.WriteFile(keyFile, keyBytes, 0600); err != nil {
 			return errors.Wrapf(err, "failed to write key %s", filename)
 		}
 	}
@@ -260,10 +260,10 @@ func getNodeNamedHostFile(filename, keyFile, nodeName string, nodeIPs []sysnet.I
 	}
 	fileBytes, keyBytes := splitCertKeyPEM(fileBytes)
 
-	if err := ioutil.WriteFile(filename, fileBytes, 0600); err != nil {
+	if err := os.WriteFile(filename, fileBytes, 0600); err != nil {
 		return errors.Wrapf(err, "failed to write cert %s", filename)
 	}
-	if err := ioutil.WriteFile(keyFile, keyBytes, 0600); err != nil {
+	if err := os.WriteFile(keyFile, keyBytes, 0600); err != nil {
 		return errors.Wrapf(err, "failed to write key %s", filename)
 	}
 	return nil
@@ -341,7 +341,7 @@ func locateOrGenerateResolvConf(envInfo *cmds.Agent) string {
 	}
 
 	tmpConf := filepath.Join(os.TempDir(), version.Program+"-resolv.conf")
-	if err := ioutil.WriteFile(tmpConf, []byte("nameserver 8.8.8.8\n"), 0444); err != nil {
+	if err := os.WriteFile(tmpConf, []byte("nameserver 8.8.8.8\n"), 0444); err != nil {
 		logrus.Errorf("Failed to write %s: %v", tmpConf, err)
 		return ""
 	}
@@ -554,7 +554,6 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.AgentConfig.Rootless = envInfo.Rootless
 	nodeConfig.AgentConfig.PodManifests = filepath.Join(envInfo.DataDir, "agent", DefaultPodManifestPath)
 	nodeConfig.AgentConfig.ProtectKernelDefaults = envInfo.ProtectKernelDefaults
-	nodeConfig.AgentConfig.DisableServiceLB = envInfo.DisableServiceLB
 
 	if err := validateNetworkConfig(nodeConfig); err != nil {
 		return nil, err

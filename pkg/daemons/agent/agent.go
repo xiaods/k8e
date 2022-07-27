@@ -197,10 +197,6 @@ func startKubelet(cfg *daemonconfig.Agent) error {
 		argsMap["protect-kernel-defaults"] = "true"
 	}
 
-	if !cfg.DisableServiceLB && cfg.EnableIPv6 {
-		argsMap["allowed-unsafe-sysctls"] = "net.ipv6.conf.all.forwarding"
-	}
-
 	args := daemonconfig.GetArgsList(argsMap, cfg.ExtraKubeletArgs)
 	logrus.Infof("Running kubelet %s", daemonconfig.ArgString(args))
 

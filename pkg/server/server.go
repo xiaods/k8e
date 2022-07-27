@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	net2 "net"
 	"os"
 	"path/filepath"
@@ -28,9 +27,7 @@ import (
 	"github.com/xiaods/k8e/pkg/deploy"
 	"github.com/xiaods/k8e/pkg/node"
 	"github.com/xiaods/k8e/pkg/nodepassword"
-	"github.com/xiaods/k8e/pkg/rootlessports"
 	"github.com/xiaods/k8e/pkg/secretsencrypt"
-	"github.com/xiaods/k8e/pkg/servicelb"
 	"github.com/xiaods/k8e/pkg/static"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
@@ -188,10 +185,9 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		return err
 	}
 
-	// apply SystemDefaultRegistry setting to Helm and ServiceLB before starting controllers
+	// apply SystemDefaultRegistry setting to Helm before starting controllers
 	if config.ControlConfig.SystemDefaultRegistry != "" {
 		helm.DefaultJobImage = config.ControlConfig.SystemDefaultRegistry + "/" + helm.DefaultJobImage
-		servicelb.DefaultLBImage = config.ControlConfig.SystemDefaultRegistry + "/" + servicelb.DefaultLBImage
 	}
 
 	helm.Register(ctx,
@@ -202,19 +198,6 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		sc.Auth.Rbac().V1().ClusterRoleBinding(),
 		sc.Core.Core().V1().ServiceAccount(),
 		sc.Core.Core().V1().ConfigMap())
-	if err := servicelb.Register(ctx,
-		sc.K8s,
-		sc.Apply,
-		sc.Apps.Apps().V1().DaemonSet(),
-		sc.Apps.Apps().V1().Deployment(),
-		sc.Core.Core().V1().Node(),
-		sc.Core.Core().V1().Pod(),
-		sc.Core.Core().V1().Service(),
-		sc.Core.Core().V1().Endpoints(),
-		!config.DisableServiceLB,
-		config.Rootless); err != nil {
-		return err
-	}
 
 	if config.ControlConfig.EncryptSecrets {
 		if err := secretsencrypt.Register(ctx,
@@ -224,13 +207,6 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 			sc.Core.Core().V1().Secret()); err != nil {
 			return err
 		}
-	}
-
-	if config.Rootless {
-		return rootlessports.Register(ctx,
-			sc.Core.Core().V1().Service(),
-			!config.DisableServiceLB,
-			config.ControlConfig.HTTPSPort)
 	}
 
 	return nil
@@ -429,7 +405,7 @@ func writeToken(token, file, certs string) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(file, []byte(token+"\n"), 0600)
+	return os.WriteFile(file, []byte(token+"\n"), 0600)
 }
 
 func setNoProxyEnv(config *config.Control) error {

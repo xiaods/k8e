@@ -8,7 +8,6 @@ import (
 
 type Config struct {
 	DisableAgent      bool
-	DisableServiceLB  bool
 	ControlConfig     config.Control
 	Rootless          bool
 	SupervisorPort    int
