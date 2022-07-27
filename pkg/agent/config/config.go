@@ -111,7 +111,7 @@ func Request(path string, info *clientaccess.Info, requester HTTPRequester) ([]b
 
 func getNodeNamedCrt(nodeName string, nodeIPs []sysnet.IP, nodePasswordFile string) HTTPRequester {
 	return func(u string, client *http.Client, username, password string) ([]byte, error) {
-		req, err := http.NewRequest(http.MethodGet, u, nil)
+		req, err := http.NewRequest(http.MethodGet, u, http.NoBody)
 		if err != nil {
 			return nil, err
 		}
