@@ -9,7 +9,7 @@ cd $(dirname $0)/..
 
 . ./hack/version.sh
 
-MAX_BINARY_SIZE=81000000
+MAX_BINARY_SIZE=90000000
 BIN_SUFFIX="-${ARCH}"
 if [ ${ARCH} = amd64 ]; then
     BIN_SUFFIX=""
