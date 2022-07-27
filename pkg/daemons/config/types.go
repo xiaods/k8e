@@ -89,22 +89,20 @@ type Agent struct {
 	DisableCCM              bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
-	DisableServiceLB        bool
 	EnableIPv6              bool
 }
 
 // CriticalControlArgs contains parameters that all control plane nodes in HA must share
 type CriticalControlArgs struct {
-	ClusterDNSs      []net.IP
-	ClusterIPRanges  []*net.IPNet
-	ClusterDNS       net.IP
-	ClusterDomain    string
-	ClusterIPRange   *net.IPNet
-	DisableCCM       bool
-	DisableServiceLB bool
-	NoCoreDNS        bool
-	ServiceIPRange   *net.IPNet
-	ServiceIPRanges  []*net.IPNet
+	ClusterDNSs     []net.IP
+	ClusterIPRanges []*net.IPNet
+	ClusterDNS      net.IP
+	ClusterDomain   string
+	ClusterIPRange  *net.IPNet
+	DisableCCM      bool
+	NoCoreDNS       bool
+	ServiceIPRange  *net.IPNet
+	ServiceIPRanges []*net.IPNet
 }
 
 type Control struct {

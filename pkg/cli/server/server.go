@@ -335,9 +335,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 			serverConfig.ControlConfig.Disables[v] = true
 		}
 	}
-	if serverConfig.ControlConfig.Skips["servicelb"] {
-		serverConfig.DisableServiceLB = true
-	}
 
 	if serverConfig.ControlConfig.DisableCCM {
 		serverConfig.ControlConfig.Skips["ccm"] = true
@@ -453,7 +450,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	agentConfig.ServerURL = url
 	agentConfig.Token = token
 	agentConfig.DisableLoadBalancer = !serverConfig.ControlConfig.DisableAPIServer
-	agentConfig.DisableServiceLB = serverConfig.DisableServiceLB
 	agentConfig.ETCDAgent = serverConfig.ControlConfig.DisableAPIServer
 	agentConfig.ClusterReset = serverConfig.ControlConfig.ClusterReset
 	agentConfig.Rootless = cfg.Rootless
