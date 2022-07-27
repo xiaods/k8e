@@ -253,6 +253,8 @@ create_symlinks() {
     $SUDO ln -sf /var/lib/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
     info "Create cilium ctl symlink for k8e"
     $SUDO ln -sf /var/lib/k8e/data/current/bin/cilium ${BIN_DIR}/cilium
+    info "Create osm edge symlink for k8e"
+    $SUDO ln -sf /var/lib/k8e/data/current/bin/osm ${BIN_DIR}/osm
 }
 
 # --- seutp profile ---
