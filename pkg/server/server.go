@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	net2 "net"
 	"os"
 	"path/filepath"
@@ -406,7 +405,7 @@ func writeToken(token, file, certs string) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(file, []byte(token+"\n"), 0600)
+	return os.WriteFile(file, []byte(token+"\n"), 0600)
 }
 
 func setNoProxyEnv(config *config.Control) error {
