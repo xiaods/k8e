@@ -12,6 +12,7 @@ PKG_CONTAINERD="github.com/containerd/containerd"
 PKG_CRICTL="github.com/kubernetes-sigs/cri-tools"
 PKG_K8S_BASE="k8s.io/component-base"
 PKG_K8S_CLIENT="k8s.io/client-go/pkg"
+PKG_CNI_PLUGINS="github.com/containernetworking/plugins"
 
 buildDate=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 
@@ -32,7 +33,8 @@ VERSIONFLAGS="
     -X ${PKG_CRICTL}/version.Version=${VERSION_CRICTL}
 
     -X ${PKG_CONTAINERD}/version.Version=${VERSION_CONTAINERD}
-    -X ${PKG_CRICTL}/pkg/version.Version=${VERSION_CRICTL}
+
+    -X ${PKG_CNI_PLUGINS}/pkg/utils/buildversion.BuildVersion=${VERSION_CNIPLUGINS}
 "
 LDFLAGS="
     -w -s"
@@ -40,7 +42,7 @@ LDFLAGS="
 STATIC="
     -extldflags '-static -lm -ldl -lz -lpthread'
 "
-TAGS="ctrd apparmor seccomp no_btrfs netcgo osusergo providerless"
+TAGS="apparmor seccomp netcgo osusergo providerless urfave_cli_no_docs"
 RUNC_TAGS="apparmor seccomp"
 RUNC_STATIC="static"
 
@@ -65,6 +67,7 @@ rm -f \
     bin/k8e-etcd-snapshot \
     bin/k8e-secrets-encrypt \
     bin/k8e-certificate \
+    bin/k8e-completion \
     bin/kubectl \
     bin/crictl \
     bin/ctr \
@@ -93,27 +96,30 @@ if [ ! -x ${INSTALLBIN}/cni ]; then
 fi
 
 echo Building k8e
-CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/containerd ./cmd/server/main.go
-ln -s containerd ./bin/k8e-agent
-ln -s containerd ./bin/k8e-server
-ln -s containerd ./bin/k8e-etcd-snapshot
-ln -s containerd ./bin/k8e-secrets-encrypt
-ln -s containerd ./bin/k8e-certificate
-ln -s containerd ./bin/kubectl
-ln -s containerd ./bin/crictl
-ln -s containerd ./bin/ctr
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/k8e ./cmd/server/main.go
+ln -s k8e ./bin/k8e-agent
+ln -s k8e ./bin/k8e-server
+ln -s k8e ./bin/k8e-etcd-snapshot
+ln -s k8e ./bin/k8e-secrets-encrypt
+ln -s k8e ./bin/k8e-certificate
+ln -s k8e ./bin/k8e-completion
+ln -s k8e ./bin/kubectl
+ln -s k8e ./bin/crictl
+ln -s k8e ./bin/ctr
+
+export GOPATH=$(pwd)/build
+
+echo Building containerd
+pushd ./build/src/github.com/containerd/containerd
+TAGS="${TAGS/netcgo/netgo}"
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/containerd              ./cmd/containerd
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/containerd-shim-runc-v2 ./cmd/containerd-shim-runc-v2
+popd
+cp -vf ./build/src/github.com/containerd/containerd/bin/* ./bin/
 
 echo Building runc
-rm -f ./build/src/github.com/opencontainers/runc/runc
-GO111MODULE=off make GOPATH=$(pwd)/build EXTRA_LDFLAGS="-w -s" BUILDTAGS="$RUNC_TAGS" -C ./build/src/github.com/opencontainers/runc $RUNC_STATIC
-cp -f ./build/src/github.com/opencontainers/runc/runc ./bin/runc
-
-echo Building containerd-shim
-rm -f ./vendor/github.com/containerd/containerd/bin/containerd-shim
-GO111MODULE=off make -C ./vendor/github.com/containerd/containerd bin/containerd-shim
-cp -f ./vendor/github.com/containerd/containerd/bin/containerd-shim ./bin/containerd-shim
-
-echo Building containerd-shim-runc-v2
-rm -f ./vendor/github.com/containerd/containerd/bin/containerd-shim-runc-v2
-GO111MODULE=off make -C ./vendor/github.com/containerd/containerd bin/containerd-shim-runc-v2
-cp -f ./vendor/github.com/containerd/containerd/bin/containerd-shim-runc-v2 ./bin/containerd-shim-runc-v2
+pushd ./build/src/github.com/opencontainers/runc
+rm -f runc
+make EXTRA_LDFLAGS="-w -s" BUILDTAGS="$RUNC_TAGS" $RUNC_STATIC
+popd
+cp -vf ./build/src/github.com/opencontainers/runc/runc ./bin/

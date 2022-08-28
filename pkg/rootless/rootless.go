@@ -83,8 +83,8 @@ func validateSysctl() error {
 		"kernel.unprivileged_userns_clone": "1",
 
 		// net.ipv4.ip_forward should not need to be 1 in the parent namespace.
-		// However, the current k3s implementation has a bug that requires net.ipv4.ip_forward=1
-		// https://github.com/rancher/k3s/issues/2420#issuecomment-715051120
+		// However, the current k8e implementation has a bug that requires net.ipv4.ip_forward=1
+		// https://github.com/k3s-io/k3s/issues/2420#issuecomment-715051120
 		"net.ipv4.ip_forward": "1",
 	}
 	for key, expectedValue := range expected {
@@ -148,9 +148,9 @@ func createParentOpt(stateDir string) (*parent.Opt, error) {
 	} else {
 		selfCgroup2Dir := filepath.Join("/sys/fs/cgroup", selfCgroup2)
 		if unix.Access(selfCgroup2Dir, unix.W_OK) == nil {
-			opt.EvacuateCgroup2 = "k3s_evac"
+			opt.EvacuateCgroup2 = "k8e_evac"
 		} else {
-			logrus.Warn("cannot set cgroup2 evacuation, make sure to run k3s as a systemd unit")
+			logrus.Warn("cannot set cgroup2 evacuation, make sure to run k8e as a systemd unit")
 		}
 	}
 

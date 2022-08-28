@@ -12,20 +12,37 @@ import (
 	"time"
 
 	"github.com/k3s-io/kine/pkg/endpoint"
-	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
+	"github.com/rancher/wrangler/pkg/generated/controllers/core"
+	"github.com/xiaods/k8e/pkg/util"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
+	utilsnet "k8s.io/utils/net"
 )
 
 const (
-	CertificateRenewDays = 90
+	EgressSelectorModeAgent    = "agent"
+	EgressSelectorModeCluster  = "cluster"
+	EgressSelectorModeDisabled = "disabled"
+	EgressSelectorModePod      = "pod"
+	CertificateRenewDays       = 90
+	StreamServerPort           = "10010"
+	KubeletPort                = "10250"
 )
+
+// These ports can always be accessed via the tunnel server, at the loopback address.
+// Other addresses and ports are only accessible via the tunnel on newer agents, when used by a pod.
+var KubeletReservedPorts = map[string]bool{
+	StreamServerPort: true,
+	KubeletPort:      true,
+}
 
 type Node struct {
 	Docker                   bool
 	ContainerRuntimeEndpoint string
 	SELinux                  bool
+	EgressSelectorMode       string
 	Containerd               Containerd
+	CRIDockerd               CRIDockerd
 	Images                   string
 	AgentConfig              Agent
 	Token                    string
@@ -42,6 +59,11 @@ type Containerd struct {
 	Opt      string
 	Template string
 	SELinux  bool
+}
+
+type CRIDockerd struct {
+	Address string
+	Root    string
 }
 
 type Agent struct {
@@ -68,6 +90,7 @@ type Agent struct {
 	NodeExternalIP          string
 	NodeExternalIPs         []net.IP
 	RuntimeSocket           string
+	ImageServiceSocket      string
 	ListenAddress           string
 	ClientCA                string
 	CNIBinDir               string
@@ -76,6 +99,7 @@ type Agent struct {
 	ExtraKubeProxyArgs      []string
 	PauseImage              string
 	Snapshotter             string
+	Systemd                 bool
 	CNIPlugin               bool
 	NodeTaints              []string
 	NodeLabels              []string
@@ -89,20 +113,23 @@ type Agent struct {
 	DisableCCM              bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
+	EnableIPv4              bool
 	EnableIPv6              bool
 }
 
 // CriticalControlArgs contains parameters that all control plane nodes in HA must share
 type CriticalControlArgs struct {
-	ClusterDNSs     []net.IP
-	ClusterIPRanges []*net.IPNet
-	ClusterDNS      net.IP
-	ClusterDomain   string
-	ClusterIPRange  *net.IPNet
-	DisableCCM      bool
-	NoCoreDNS       bool
-	ServiceIPRange  *net.IPNet
-	ServiceIPRanges []*net.IPNet
+	ClusterDNSs           []net.IP
+	ClusterIPRanges       []*net.IPNet
+	ClusterDNS            net.IP
+	ClusterDomain         string
+	ClusterIPRange        *net.IPNet
+	DisableCCM            bool
+	DisableHelmController bool
+	EgressSelectorMode    string
+	NoCoreDNS             bool
+	ServiceIPRange        *net.IPNet
+	ServiceIPRanges       []*net.IPNet
 }
 
 type Control struct {
@@ -123,12 +150,13 @@ type Control struct {
 	KubeConfigMode           string
 	DataDir                  string
 	Datastore                endpoint.Config `json:"-"`
+	Disables                 map[string]bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
 	DisableETCD              bool
 	DisableKubeProxy         bool
 	DisableScheduler         bool
-	Disables                 map[string]bool
+	EnablePProf              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
 	ExtraCloudControllerArgs []string
@@ -173,6 +201,40 @@ type Control struct {
 	SANs        []string
 	PrivateIP   string
 	Runtime     *ControlRuntime `json:"-"`
+}
+
+// BindAddressOrLoopback returns an IPv4 or IPv6 address suitable for embedding in
+// server URLs. If a bind address was configured, that is returned. If the
+// chooseHostInterface parameter is true, and a suitable default interface can be
+// found, that interface's address is returned.  If neither of the previous were used,
+// the loopback address is returned. If the urlSafe parameter is true, IPv6 addresses
+// are enclosed in square brackets, as per RFC2732.
+func (c *Control) BindAddressOrLoopback(chooseHostInterface, urlSafe bool) string {
+	ip := c.BindAddress
+	if ip == "" && chooseHostInterface {
+		if hostIP, _ := utilnet.ChooseHostInterface(); len(hostIP) > 0 {
+			ip = hostIP.String()
+		}
+	}
+	if urlSafe && utilsnet.IsIPv6String(ip) {
+		return fmt.Sprintf("[%s]", ip)
+	} else if ip != "" {
+		return ip
+	}
+	return c.Loopback(urlSafe)
+}
+
+// Loopback returns an IPv4 or IPv6 loopback address, depending on whether the cluster
+// service CIDRs indicate an IPv4/Dual-Stack or IPv6 only cluster. If the urlSafe
+// parameter is true, IPv6 addresses are enclosed in square brackets, as per RFC2732.
+func (c *Control) Loopback(urlSafe bool) string {
+	if IPv6OnlyService, _ := util.IsIPv6OnlyCIDRs(c.ServiceIPRanges); IPv6OnlyService {
+		if urlSafe {
+			return "[::1]"
+		}
+		return "::1"
+	}
+	return "127.0.0.1"
 }
 
 type ControlRuntimeBootstrap struct {
@@ -224,6 +286,8 @@ type ControlRuntime struct {
 	Tunnel             http.Handler
 	Authenticator      authenticator.Request
 
+	EgressSelectorConfig string
+
 	ClientAuthProxyCert string
 	ClientAuthProxyKey  string
 
@@ -265,21 +329,78 @@ func (a ArgString) String() string {
 	return b.String()
 }
 
-func GetArgsList(argsMap map[string]string, extraArgs []string) []string {
-	// add extra args to args map to override any default option
-	for _, arg := range extraArgs {
-		splitArg := strings.SplitN(arg, "=", 2)
-		if len(splitArg) < 2 {
-			argsMap[splitArg[0]] = "true"
-			continue
+// GetArgs appends extra arguments to existing arguments with logic to override any default
+// arguments whilst also allowing to prefix and suffix default string slice arguments.
+func GetArgs(initialArgs map[string]string, extraArgs []string) []string {
+	const hyphens = "--"
+
+	multiArgs := make(map[string][]string)
+
+	for _, unsplitArg := range extraArgs {
+		splitArg := strings.SplitN(strings.TrimPrefix(unsplitArg, hyphens), "=", 2)
+		arg := splitArg[0]
+		value := "true"
+		if len(splitArg) > 1 {
+			value = splitArg[1]
 		}
-		argsMap[splitArg[0]] = splitArg[1]
+
+		// After the first iteration, initial args will be empty when handling
+		// duplicate arguments as they will form part of existingValues
+		cleanedArg := strings.TrimRight(arg, "-+")
+		initialValue, initialValueExists := initialArgs[cleanedArg]
+		existingValues, existingValuesFound := multiArgs[cleanedArg]
+
+		newValues := make([]string, 0)
+		if strings.HasSuffix(arg, "+") { // Append value to initial args
+			if initialValueExists {
+				newValues = append(newValues, initialValue)
+			}
+			if existingValuesFound {
+				newValues = append(newValues, existingValues...)
+			}
+			newValues = append(newValues, value)
+
+		} else if strings.HasSuffix(arg, "-") { // Prepend value to initial args
+			newValues = append(newValues, value)
+			if initialValueExists {
+				newValues = append(newValues, initialValue)
+			}
+			if existingValuesFound {
+				newValues = append(newValues, existingValues...)
+			}
+		} else { // Append value ignoring initial args
+			if existingValuesFound {
+				newValues = append(newValues, existingValues...)
+			}
+			newValues = append(newValues, value)
+		}
+
+		delete(initialArgs, cleanedArg)
+		multiArgs[cleanedArg] = newValues
+
 	}
+
+	// Add any remaining initial args to the map
+	for arg, value := range initialArgs {
+		multiArgs[arg] = []string{value}
+	}
+
+	// Get args so we can output them sorted whilst preserving the order of
+	// repeated keys
+	var keys []string
+	for arg := range multiArgs {
+		keys = append(keys, arg)
+	}
+	sort.Strings(keys)
+
 	var args []string
-	for arg, value := range argsMap {
-		cmd := fmt.Sprintf("--%s=%s", arg, value)
-		args = append(args, cmd)
+	for _, arg := range keys {
+		values := multiArgs[arg]
+		for _, value := range values {
+			cmd := fmt.Sprintf("%s%s=%s", hyphens, strings.TrimPrefix(arg, hyphens), value)
+			args = append(args, cmd)
+		}
 	}
-	sort.Strings(args)
+
 	return args
 }

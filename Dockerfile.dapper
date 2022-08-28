@@ -1,4 +1,4 @@
-ARG GOLANG=golang:1.16.10-alpine3.13
+ARG GOLANG=golang:1.19.0-alpine3.15
 FROM ${GOLANG}
 
 ARG http_proxy=$http_proxy
@@ -11,7 +11,12 @@ ENV no_proxy=$no_proxy
 RUN apk -U --no-cache add bash git gcc musl-dev docker vim less file curl wget ca-certificates jq linux-headers \
     zlib-dev tar zip squashfs-tools npm coreutils python3 openssl-dev libffi-dev libseccomp libseccomp-dev \
     libseccomp-static make libuv-static sqlite-dev sqlite-static libselinux libselinux-dev zlib-dev zlib-static \
-    zstd gzip alpine-sdk binutils-gold
+    zstd pigz alpine-sdk binutils-gold btrfs-progs-dev btrfs-progs-static gawk yq \
+    && \
+    if [ "$(go env GOARCH)" = "amd64" ]; then \
+    apk -U --no-cache add mingw-w64-gcc; \
+    fi
+
 RUN if [ "$(go env GOARCH)" = "arm64" ]; then                                                               \
     wget https://github.com/aquasecurity/trivy/releases/download/v0.25.3/trivy_0.25.3_Linux-ARM64.tar.gz && \
     tar -zxvf trivy_0.25.3_Linux-ARM64.tar.gz                                                            && \
@@ -21,16 +26,13 @@ RUN if [ "$(go env GOARCH)" = "arm64" ]; then                                   
     tar -zxvf trivy_0.25.3_Linux-64bit.tar.gz                                                            && \
     mv trivy /usr/local/bin;                                                                                \
     fi
-# this works for both go 1.15 and 1.16
-RUN GOPROXY=direct go get golang.org/x/tools/cmd/goimports@gopls/v0.6.9
+# this works for both go 1.17 and 1.18
+RUN GOPROXY=direct go install golang.org/x/tools/cmd/goimports@gopls/v0.8.2
 RUN rm -rf /go/src /go/pkg
 
 RUN if [ "$(go env GOARCH)" = "amd64" ]; then \
-    curl -sL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s v1.40.0; \
+    curl -sL https://raw.githubusercontent.com/golangci/golangci-lint/v1.45.2/install.sh | sh -s;  \
     fi
-
-ENV YQ_URL=https://github.com/mikefarah/yq/releases/download/v4.6.2/yq_linux
-RUN wget -O - ${YQ_URL}_$(go env GOARCH) > /usr/bin/yq && chmod +x /usr/bin/yq
 
 ARG SELINUX=true
 ENV SELINUX $SELINUX
@@ -39,6 +41,7 @@ ENV DAPPER_RUN_ARGS --privileged -v k8e-cache:/go/src/github.com/xiaods/k8e/.cac
 ENV DAPPER_ENV REPO TAG RELEASE_TAG IMAGE_NAME SKIP_VALIDATE GCLOUD_AUTH GITHUB_TOKEN GOLANG GOOS GOARCH
 ENV DAPPER_SOURCE /go/src/github.com/xiaods/k8e/
 ENV DAPPER_OUTPUT ./bin ./dist ./build/out ./build/static ./pkg/static ./pkg/deploy
+
 ENV DAPPER_DOCKER_SOCKET true
 ENV HOME ${DAPPER_SOURCE}
 ENV CROSS true

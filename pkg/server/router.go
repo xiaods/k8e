@@ -18,17 +18,21 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
-	coreclient "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	coreclient "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/generated/clientset/versioned/scheme"
 	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 )
 
 const (
@@ -40,7 +44,7 @@ func router(ctx context.Context, config *Config, cfg *cmds.Server) http.Handler 
 	nodeAuth := passwordBootstrap(ctx, config)
 
 	prefix := "/v1-" + version.Program
-	authed := mux.NewRouter()
+	authed := mux.NewRouter().SkipClean(true)
 	authed.Use(authMiddleware(serverConfig, version.Program+":agent"))
 	authed.Path(prefix + "/serving-kubelet.crt").Handler(servingKubeletCert(serverConfig, serverConfig.Runtime.ServingKubeletKey, nodeAuth))
 	authed.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(serverConfig, serverConfig.Runtime.ClientKubeletKey, nodeAuth))
@@ -58,22 +62,28 @@ func router(ctx context.Context, config *Config, cfg *cmds.Server) http.Handler 
 		authed.NotFoundHandler = apiserver(serverConfig.Runtime)
 	}
 
-	nodeAuthed := mux.NewRouter()
+	nodeAuthed := mux.NewRouter().SkipClean(true)
+	nodeAuthed.NotFoundHandler = authed
 	nodeAuthed.Use(authMiddleware(serverConfig, user.NodesGroup))
 	nodeAuthed.Path(prefix + "/connect").Handler(serverConfig.Runtime.Tunnel)
-	nodeAuthed.NotFoundHandler = authed
 
-	serverAuthed := mux.NewRouter()
-	serverAuthed.Use(authMiddleware(serverConfig, version.Program+":server"))
+	serverAuthed := mux.NewRouter().SkipClean(true)
 	serverAuthed.NotFoundHandler = nodeAuthed
+	serverAuthed.Use(authMiddleware(serverConfig, version.Program+":server"))
 	serverAuthed.Path(prefix + "/encrypt/status").Handler(encryptionStatusHandler(serverConfig))
 	serverAuthed.Path(prefix + "/encrypt/config").Handler(encryptionConfigHandler(ctx, serverConfig))
 	serverAuthed.Path("/db/info").Handler(nodeAuthed)
 	serverAuthed.Path(prefix + "/server-bootstrap").Handler(bootstrapHandler(serverConfig.Runtime))
 
+	systemAuthed := mux.NewRouter().SkipClean(true)
+	systemAuthed.NotFoundHandler = serverAuthed
+	systemAuthed.MethodNotAllowedHandler = serverAuthed
+	systemAuthed.Use(authMiddleware(serverConfig, user.SystemPrivilegedGroup))
+	systemAuthed.Methods(http.MethodConnect).Handler(serverConfig.Runtime.Tunnel)
+
 	staticDir := filepath.Join(serverConfig.DataDir, "static")
-	router := mux.NewRouter()
-	router.NotFoundHandler = serverAuthed
+	router := mux.NewRouter().SkipClean(true)
+	router.NotFoundHandler = systemAuthed
 	router.PathPrefix(staticURL).Handler(serveStatic(staticURL, staticDir))
 	router.Path("/cacerts").Handler(cacerts(serverConfig.Runtime.ServerCA))
 	router.Path("/ping").Handler(ping())
@@ -86,22 +96,20 @@ func apiserver(runtime *config.ControlRuntime) http.Handler {
 		if runtime != nil && runtime.APIServer != nil {
 			runtime.APIServer.ServeHTTP(resp, req)
 		} else {
-			data := []byte("apiserver not ready")
-			resp.WriteHeader(http.StatusInternalServerError)
-			resp.Header().Set("Content-Type", "text/plain")
-			resp.Header().Set("Content-length", strconv.Itoa(len(data)))
-			resp.Write(data)
+			responsewriters.ErrorNegotiated(
+				apierrors.NewServiceUnavailable("apiserver not ready"),
+				scheme.Codecs.WithoutConversion(), schema.GroupVersion{}, resp, req,
+			)
 		}
 	})
 }
 
 func apiserverDisabled() http.Handler {
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
-		data := []byte("apiserver disabled")
-		resp.WriteHeader(http.StatusServiceUnavailable)
-		resp.Header().Set("Content-Type", "text/plain")
-		resp.Header().Set("Content-length", strconv.Itoa(len(data)))
-		resp.Write(data)
+		responsewriters.ErrorNegotiated(
+			apierrors.NewServiceUnavailable("apiserver disabled"),
+			scheme.Codecs.WithoutConversion(), schema.GroupVersion{}, resp, req,
+		)
 	})
 }
 
@@ -111,11 +119,10 @@ func bootstrapHandler(runtime *config.ControlRuntime) http.Handler {
 	}
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
 		logrus.Warnf("Received HTTP bootstrap request from %s, but embedded etcd is not enabled.", req.RemoteAddr)
-		data := []byte("etcd disabled")
-		resp.WriteHeader(http.StatusBadRequest)
-		resp.Header().Set("Content-Type", "text/plain")
-		resp.Header().Set("Content-length", strconv.Itoa(len(data)))
-		resp.Write(data)
+		responsewriters.ErrorNegotiated(
+			apierrors.NewBadRequest("etcd disabled"),
+			scheme.Codecs.WithoutConversion(), schema.GroupVersion{}, resp, req,
+		)
 	})
 }
 
@@ -432,7 +439,7 @@ func verifyLocalPassword(ctx context.Context, config *Config, mu *sync.Mutex, de
 	if config.Rootless {
 		nodePasswordRoot = filepath.Join(config.ControlConfig.DataDir, "agent")
 	}
-	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
+	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "rancher", "node")
 	nodePasswordFile := filepath.Join(nodeConfigPath, "password")
 
 	passBytes, err := ioutil.ReadFile(nodePasswordFile)

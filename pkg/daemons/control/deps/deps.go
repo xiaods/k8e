@@ -27,6 +27,7 @@ import (
 	"github.com/xiaods/k8e/pkg/version"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apiserver/pkg/apis/apiserver"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
 )
@@ -137,6 +138,8 @@ func CreateRuntimeCertFiles(config *config.Control) {
 	runtime.ClientKubeletKey = filepath.Join(config.DataDir, "tls", "client-kubelet.key")
 	runtime.ServingKubeletKey = filepath.Join(config.DataDir, "tls", "serving-kubelet.key")
 
+	runtime.EgressSelectorConfig = filepath.Join(config.DataDir, "etc", "egress-selector-config.yaml")
+
 	runtime.ClientAuthProxyCert = filepath.Join(config.DataDir, "tls", "client-auth-proxy.crt")
 	runtime.ClientAuthProxyKey = filepath.Join(config.DataDir, "tls", "client-auth-proxy.key")
 
@@ -153,6 +156,7 @@ func CreateRuntimeCertFiles(config *config.Control) {
 
 	if config.EncryptSecrets {
 		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
+		runtime.EncryptionHash = filepath.Join(config.DataDir, "cred", "encryption-state.json")
 	}
 }
 
@@ -177,6 +181,10 @@ func GenServerDeps(config *config.Control) error {
 	}
 
 	if err := genEncryptionConfigAndState(config); err != nil {
+		return err
+	}
+
+	if err := genEgressSelectorConfig(config); err != nil {
 		return err
 	}
 
@@ -255,11 +263,7 @@ func genEncryptedNetworkInfo(controlConfig *config.Control) error {
 	}
 
 	controlConfig.IPSECPSK = psk
-	if err := ioutil.WriteFile(runtime.IPSECKey, []byte(psk+"\n"), 0600); err != nil {
-		return err
-	}
-
-	return nil
+	return ioutil.WriteFile(runtime.IPSECKey, []byte(psk+"\n"), 0600)
 }
 
 func getServerPass(passwd *passwd.Passwd, config *config.Control) (string, error) {
@@ -310,7 +314,8 @@ func genClientCerts(config *config.Control) error {
 	factory := getSigningCertFactory(regen, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, runtime.ClientCA, runtime.ClientCAKey)
 
 	var certGen bool
-	apiEndpoint := fmt.Sprintf("https://127.0.0.1:%d", config.APIServerPort)
+
+	apiEndpoint := fmt.Sprintf("https://%s:%d", config.Loopback(true), config.APIServerPort)
 
 	certGen, err = factory("system:admin", []string{user.SystemPrivilegedGroup}, runtime.ClientAdminCert, runtime.ClientAdminKey)
 	if err != nil {
@@ -717,4 +722,47 @@ func genEncryptionConfigAndState(controlConfig *config.Control) error {
 	encryptionConfigHash := sha256.Sum256(b)
 	ann := "start-" + hex.EncodeToString(encryptionConfigHash[:])
 	return ioutil.WriteFile(controlConfig.Runtime.EncryptionHash, []byte(ann), 0600)
+}
+
+func genEgressSelectorConfig(controlConfig *config.Control) error {
+	var clusterConn apiserver.Connection
+
+	if controlConfig.EgressSelectorMode == config.EgressSelectorModeDisabled {
+		clusterConn = apiserver.Connection{
+			ProxyProtocol: apiserver.ProtocolDirect,
+		}
+	} else {
+		clusterConn = apiserver.Connection{
+			ProxyProtocol: apiserver.ProtocolHTTPConnect,
+			Transport: &apiserver.Transport{
+				TCP: &apiserver.TCPTransport{
+					URL: fmt.Sprintf("https://%s:%d", controlConfig.BindAddressOrLoopback(false, true), controlConfig.SupervisorPort),
+					TLSConfig: &apiserver.TLSConfig{
+						CABundle:   controlConfig.Runtime.ServerCA,
+						ClientKey:  controlConfig.Runtime.ClientKubeAPIKey,
+						ClientCert: controlConfig.Runtime.ClientKubeAPICert,
+					},
+				},
+			},
+		}
+	}
+
+	egressConfig := apiserver.EgressSelectorConfiguration{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "EgressSelectorConfiguration",
+			APIVersion: "apiserver.k8s.io/v1beta1",
+		},
+		EgressSelections: []apiserver.EgressSelection{
+			{
+				Name:       "cluster",
+				Connection: clusterConn,
+			},
+		},
+	}
+
+	b, err := json.Marshal(egressConfig)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(controlConfig.Runtime.EgressSelectorConfig, b, 0600)
 }

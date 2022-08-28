@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/xiaods/k8e/pkg/configfilearg"
 	"github.com/xiaods/k8e/pkg/version"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -17,6 +18,7 @@ var (
 	NodeArgsAnnotation       = version.Program + ".io/node-args"
 	NodeEnvAnnotation        = version.Program + ".io/node-env"
 	NodeConfigHashAnnotation = version.Program + ".io/node-config-hash"
+	ClusterEgressLabel       = "egress." + version.Program + ".io/cluster"
 )
 
 const (
@@ -25,7 +27,7 @@ const (
 
 func getNodeArgs() (string, error) {
 	nodeArgsList := []string{}
-	for _, arg := range os.Args[1:] {
+	for _, arg := range configfilearg.MustParse(os.Args[1:]) {
 		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "=") {
 			parsedArg := strings.SplitN(arg, "=", 2)
 			nodeArgsList = append(nodeArgsList, parsedArg...)
@@ -48,25 +50,29 @@ func getNodeArgs() (string, error) {
 }
 
 func getNodeEnv() (string, error) {
-	k8eEnv := make(map[string]string)
+	k3sEnv := make(map[string]string)
 	for _, v := range os.Environ() {
 		keyValue := strings.SplitN(v, "=", 2)
 		if strings.HasPrefix(keyValue[0], version.ProgramUpper+"_") {
-			k8eEnv[keyValue[0]] = keyValue[1]
+			k3sEnv[keyValue[0]] = keyValue[1]
 		}
 	}
-	for key := range k8eEnv {
+	for key := range k3sEnv {
 		if isSecret(key) {
-			k8eEnv[key] = OmittedValue
+			k3sEnv[key] = OmittedValue
 		}
 	}
-	k8eEnvJSON, err := json.Marshal(k8eEnv)
+	k3sEnvJSON, err := json.Marshal(k3sEnv)
 	if err != nil {
 		return "", errors.Wrap(err, "Failed to retrieve environment map for node")
 	}
-	return string(k8eEnvJSON), nil
+	return string(k3sEnvJSON), nil
 }
 
+// SetNodeConfigAnnotations stores a redacted version of the k3s cli args and
+// environment variables as annotations on the node object. It also stores a
+// hash of the combined args + variables. These are used by other components
+// to determine if the node configuration has been changed.
 func SetNodeConfigAnnotations(node *corev1.Node) (bool, error) {
 	nodeArgs, err := getNodeArgs()
 	if err != nil {
@@ -94,6 +100,21 @@ func SetNodeConfigAnnotations(node *corev1.Node) (bool, error) {
 	node.Annotations[NodeArgsAnnotation] = nodeArgs
 	node.Annotations[NodeConfigHashAnnotation] = encoded
 	return true, nil
+}
+
+// SetNodeConfigLabels adds labels for functionality flags
+// that may not be present on down-level or up-level nodes.
+// These labels are used by other components to determine whether
+// or not a node supports particular functionality.
+func SetNodeConfigLabels(node *corev1.Node) (bool, error) {
+	if node.Labels == nil {
+		node.Labels = make(map[string]string)
+	}
+	if _, ok := node.Labels[ClusterEgressLabel]; !ok {
+		node.Labels[ClusterEgressLabel] = "true"
+		return true, nil
+	}
+	return false, nil
 }
 
 func isSecret(key string) bool {

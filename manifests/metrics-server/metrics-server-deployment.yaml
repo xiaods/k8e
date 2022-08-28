@@ -22,10 +22,14 @@ spec:
       labels:
         k8s-app: metrics-server
     spec:
+      priorityClassName: "system-node-critical"
       serviceAccountName: metrics-server
       tolerations:
         - key: "CriticalAddonsOnly"
           operator: "Exists"
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
         - key: "node-role.kubernetes.io/master"
           operator: "Exists"
           effect: "NoSchedule"
@@ -78,4 +82,3 @@ spec:
         volumeMounts:
         - name: tmp-dir
           mountPath: /tmp
-

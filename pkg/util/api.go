@@ -14,10 +14,13 @@ import (
 	"github.com/rancher/wrangler/pkg/schemes"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	clientset "k8s.io/client-go/kubernetes"
 	coregetter "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -50,17 +53,34 @@ func GetAddresses(endpoint *v1.Endpoints) []string {
 // WaitForAPIServerReady waits for the API Server's /readyz endpoint to report "ok" with timeout.
 // This is modified from WaitForAPIServer from the Kubernetes controller-manager app, but checks the
 // readyz endpoint instead of the deprecated healthz endpoint, and supports context.
-func WaitForAPIServerReady(ctx context.Context, client clientset.Interface, timeout time.Duration) error {
+func WaitForAPIServerReady(ctx context.Context, kubeconfigPath string, timeout time.Duration) error {
 	var lastErr error
-	restClient := client.Discovery().RESTClient()
+	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return err
+	}
 
-	err := wait.PollImmediate(time.Second, timeout, func() (bool, error) {
+	// By default, idle connections to the apiserver are returned to a global pool
+	// between requests.  Explicitly flag this client's request for closure so that
+	// we re-dial through the loadbalancer in case the endpoints have changed.
+	restConfig.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+		return roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			req.Close = true
+			return rt.RoundTrip(req)
+		})
+	})
+
+	restConfig = dynamic.ConfigFor(restConfig)
+	restConfig.GroupVersion = &schema.GroupVersion{}
+	restClient, err := rest.RESTClientFor(restConfig)
+	if err != nil {
+		return err
+	}
+
+	err = wait.PollImmediateWithContext(ctx, time.Second, timeout, func(ctx context.Context) (bool, error) {
 		healthStatus := 0
 		result := restClient.Get().AbsPath("/readyz").Do(ctx).StatusCode(&healthStatus)
 		if rerr := result.Error(); rerr != nil {
-			if errors.Is(rerr, context.Canceled) {
-				return false, rerr
-			}
 			lastErr = errors.Wrap(rerr, "failed to get apiserver /readyz status")
 			return false, nil
 		}
@@ -81,11 +101,17 @@ func WaitForAPIServerReady(ctx context.Context, client clientset.Interface, time
 	return nil
 }
 
-func BuildControllerEventRecorder(k8s clientset.Interface, controllerName string) record.EventRecorder {
+func BuildControllerEventRecorder(k8s clientset.Interface, controllerName, namespace string) record.EventRecorder {
 	logrus.Infof("Creating %s event broadcaster", controllerName)
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(logrus.Infof)
-	eventBroadcaster.StartRecordingToSink(&coregetter.EventSinkImpl{Interface: k8s.CoreV1().Events(metav1.NamespaceSystem)})
+	eventBroadcaster.StartRecordingToSink(&coregetter.EventSinkImpl{Interface: k8s.CoreV1().Events(namespace)})
 	nodeName := os.Getenv("NODE_NAME")
 	return eventBroadcaster.NewRecorder(schemes.All, v1.EventSource{Component: controllerName, Host: nodeName})
+}
+
+type roundTripFunc func(req *http.Request) (*http.Response, error)
+
+func (w roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return w(req)
 }

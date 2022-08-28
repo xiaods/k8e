@@ -10,6 +10,10 @@ import (
 	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
 )
 
+var (
+	basePackage = "github.com/xiaods/k8e/types"
+)
+
 func main() {
 	os.Unsetenv("GOPATH")
 	bc := &bindata.Config{
@@ -71,7 +75,8 @@ func main() {
 				Types: []interface{}{
 					v1.Addon{},
 				},
-				GenerateTypes: true,
+				GenerateTypes:   true,
+				GenerateClients: true,
 			},
 		},
 	})

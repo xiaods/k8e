@@ -3,19 +3,18 @@ package server
 import (
 	"context"
 	"fmt"
-	net2 "net"
+	"io/ioutil"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-
 	"github.com/k3s-io/helm-controller/pkg/helm"
 	"github.com/pkg/errors"
-	v1 "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	v1 "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
 	"github.com/rancher/wrangler/pkg/leader"
 	"github.com/rancher/wrangler/pkg/resolvehome"
 	"github.com/sirupsen/logrus"
@@ -27,12 +26,13 @@ import (
 	"github.com/xiaods/k8e/pkg/deploy"
 	"github.com/xiaods/k8e/pkg/node"
 	"github.com/xiaods/k8e/pkg/nodepassword"
+	"github.com/xiaods/k8e/pkg/rootlessports"
 	"github.com/xiaods/k8e/pkg/secretsencrypt"
 	"github.com/xiaods/k8e/pkg/static"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/net"
 )
 
 const (
@@ -59,7 +59,23 @@ func StartServer(ctx context.Context, config *Config, cfg *cmds.Server) error {
 		return errors.Wrap(err, "starting kubernetes")
 	}
 
+	wg := &sync.WaitGroup{}
+	wg.Add(len(config.StartupHooks))
+
 	config.ControlConfig.Runtime.Handler = router(ctx, config, cfg)
+	config.ControlConfig.Runtime.StartupHooksWg = wg
+
+	shArgs := cmds.StartupHookArgs{
+		APIServerReady:  config.ControlConfig.Runtime.APIServerReady,
+		KubeConfigAdmin: config.ControlConfig.Runtime.KubeConfigAdmin,
+		Skips:           config.ControlConfig.Skips,
+		Disables:        config.ControlConfig.Disables,
+	}
+	for _, hook := range config.StartupHooks {
+		if err := hook(ctx, wg, shArgs); err != nil {
+			return errors.Wrap(err, "startup hook")
+		}
+	}
 
 	if config.ControlConfig.DisableAPIServer {
 		go setETCDLabelsAndAnnotations(ctx, config)
@@ -67,25 +83,7 @@ func StartServer(ctx context.Context, config *Config, cfg *cmds.Server) error {
 		go startOnAPIServerReady(ctx, config)
 	}
 
-	config.ControlConfig.Runtime.StartupHooksWg = &sync.WaitGroup{}
-	config.ControlConfig.Runtime.StartupHooksWg.Add(len(config.StartupHooks))
-	for _, hook := range config.StartupHooks {
-		if err := hook(ctx, config.ControlConfig.Runtime.APIServerReady, config.ControlConfig.Runtime.KubeConfigAdmin); err != nil {
-			return errors.Wrap(err, "startup hook")
-		}
-	}
-
-	ip := net2.ParseIP(config.ControlConfig.BindAddress)
-	if ip == nil {
-		hostIP, err := net.ChooseHostInterface()
-		if err == nil {
-			ip = hostIP
-		} else {
-			ip = net2.ParseIP("127.0.0.1")
-		}
-	}
-
-	if err := printTokens(ip.String(), &config.ControlConfig); err != nil {
+	if err := printTokens(&config.ControlConfig); err != nil {
 		return err
 	}
 
@@ -108,11 +106,12 @@ func runControllers(ctx context.Context, config *Config) error {
 
 	sc, err := NewContext(ctx, controlConfig.Runtime.KubeConfigAdmin)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to create new server context")
 	}
 
+	controlConfig.Runtime.StartupHooksWg.Wait()
 	if err := stageFiles(ctx, sc, controlConfig); err != nil {
-		return err
+		return errors.Wrap(err, "failed to stage files")
 	}
 
 	// run migration before we set controlConfig.Runtime.Core
@@ -120,24 +119,24 @@ func runControllers(ctx context.Context, config *Config) error {
 		sc.Core.Core().V1().Secret(),
 		sc.Core.Core().V1().Node(),
 		controlConfig.Runtime.NodePasswdFile); err != nil {
-		logrus.Warn(errors.Wrapf(err, "error migrating node-password file"))
+		logrus.Warn(errors.Wrap(err, "error migrating node-password file"))
 	}
 	controlConfig.Runtime.Core = sc.Core
 
 	if controlConfig.Runtime.ClusterControllerStart != nil {
 		if err := controlConfig.Runtime.ClusterControllerStart(ctx); err != nil {
-			return errors.Wrapf(err, "starting cluster controllers")
+			return errors.Wrap(err, "failed to start cluster controllers")
 		}
 	}
 
 	for _, controller := range config.Controllers {
 		if err := controller(ctx, sc); err != nil {
-			return errors.Wrap(err, "controller")
+			return errors.Wrapf(err, "failed to start custom controller %s", util.GetFunctionName(controller))
 		}
 	}
 
 	if err := sc.Start(ctx); err != nil {
-		return err
+		return errors.Wrap(err, "failed to start wranger controllers")
 	}
 
 	start := func(ctx context.Context) {
@@ -167,7 +166,9 @@ func runControllers(ctx context.Context, config *Config) error {
 		go func() {
 			start(ctx)
 			<-ctx.Done()
-			logrus.Fatal("controllers exited")
+			if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) {
+				logrus.Fatalf("controllers exited: %v", err)
+			}
 		}()
 	} else {
 		go leader.RunOrDie(ctx, "", version.Program, sc.K8s, start)
@@ -190,14 +191,17 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		helm.DefaultJobImage = config.ControlConfig.SystemDefaultRegistry + "/" + helm.DefaultJobImage
 	}
 
-	helm.Register(ctx,
-		sc.Apply,
-		sc.Helm.Helm().V1().HelmChart(),
-		sc.Helm.Helm().V1().HelmChartConfig(),
-		sc.Batch.Batch().V1().Job(),
-		sc.Auth.Rbac().V1().ClusterRoleBinding(),
-		sc.Core.Core().V1().ServiceAccount(),
-		sc.Core.Core().V1().ConfigMap())
+	if !config.ControlConfig.DisableHelmController {
+		helm.Register(ctx,
+			sc.K8s,
+			sc.Apply,
+			sc.Helm.Helm().V1().HelmChart(),
+			sc.Helm.Helm().V1().HelmChartConfig(),
+			sc.Batch.Batch().V1().Job(),
+			sc.Auth.Rbac().V1().ClusterRoleBinding(),
+			sc.Core.Core().V1().ServiceAccount(),
+			sc.Core.Core().V1().ConfigMap())
+	}
 
 	if config.ControlConfig.EncryptSecrets {
 		if err := secretsencrypt.Register(ctx,
@@ -207,6 +211,12 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 			sc.Core.Core().V1().Secret()); err != nil {
 			return err
 		}
+	}
+
+	if config.Rootless {
+		return rootlessports.Register(ctx,
+			sc.Core.Core().V1().Service(),
+			config.ControlConfig.HTTPSPort)
 	}
 
 	return nil
@@ -227,6 +237,10 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 	}
 
 	skip := controlConfig.Skips
+	if !skip["traefik"] && isHelmChartTraefikV1(sc) {
+		logrus.Warn("Skipping Traefik v2 deployment due to existing Traefik v1 installation")
+		skip["traefik"] = true
+	}
 	if err := deploy.Stage(dataDir, templateVars, skip); err != nil {
 		return err
 	}
@@ -249,6 +263,23 @@ func registryTemplate(registry string) string {
 	return registry + "/"
 }
 
+// isHelmChartTraefikV1 checks for an existing HelmChart resource with spec.chart containing traefik-1,
+// as deployed by the legacy chart (https://%{KUBERNETES_API}%/static/charts/traefik-1.81.0.tgz)
+func isHelmChartTraefikV1(sc *Context) bool {
+	prefix := "traefik-1."
+	helmChart, err := sc.Helm.Helm().V1().HelmChart().Get(metav1.NamespaceSystem, "traefik", metav1.GetOptions{})
+	if err != nil {
+		logrus.WithError(err).Info("Failed to get existing traefik HelmChart")
+		return false
+	}
+	chart := path.Base(helmChart.Spec.Chart)
+	if strings.HasPrefix(chart, prefix) {
+		logrus.WithField("chart", chart).Info("Found existing traefik v1 HelmChart")
+		return true
+	}
+	return false
+}
+
 func HomeKubeConfig(write, rootless bool) (string, error) {
 	if write {
 		if os.Getuid() == 0 && !rootless {
@@ -264,20 +295,12 @@ func HomeKubeConfig(write, rootless bool) (string, error) {
 	return resolvehome.Resolve(datadir.HomeConfig)
 }
 
-func printTokens(advertiseIP string, config *config.Control) error {
-	var (
-		nodeFile string
-	)
-
-	if advertiseIP == "" {
-		advertiseIP = "127.0.0.1"
-	}
-
-	if len(config.Runtime.ServerToken) > 0 {
-		p := filepath.Join(config.DataDir, "token")
-		if err := writeToken(config.Runtime.ServerToken, p, config.Runtime.ServerCA); err == nil {
-			logrus.Infof("Node token is available at %s", p)
-			nodeFile = p
+func printTokens(config *config.Control) error {
+	var serverTokenFile string
+	if config.Runtime.ServerToken != "" {
+		serverTokenFile = filepath.Join(config.DataDir, "token")
+		if err := writeToken(config.Runtime.ServerToken, serverTokenFile, config.Runtime.ServerCA); err != nil {
+			return err
 		}
 
 		// backwards compatibility
@@ -286,28 +309,54 @@ func printTokens(advertiseIP string, config *config.Control) error {
 			if err := os.RemoveAll(np); err != nil {
 				return err
 			}
-			if err := os.Symlink(p, np); err != nil {
+			if err := os.Symlink(serverTokenFile, np); err != nil {
 				return err
+			}
+		}
+
+		logrus.Infof("Server node token is available at %s", serverTokenFile)
+		printToken(config.SupervisorPort, config.BindAddressOrLoopback(true, true), "To join server node to cluster:", "server", "SERVER_NODE_TOKEN")
+	}
+
+	var agentTokenFile string
+	if config.Runtime.AgentToken != "" {
+		if config.AgentToken != "" {
+			agentTokenFile = filepath.Join(config.DataDir, "agent-token")
+			if isSymlink(agentTokenFile) {
+				if err := os.RemoveAll(agentTokenFile); err != nil {
+					return err
+				}
+			}
+			if err := writeToken(config.Runtime.AgentToken, agentTokenFile, config.Runtime.ServerCA); err != nil {
+				return err
+			}
+		} else if serverTokenFile != "" {
+			agentTokenFile = filepath.Join(config.DataDir, "agent-token")
+			if !isSymlink(agentTokenFile) {
+				if err := os.RemoveAll(agentTokenFile); err != nil {
+					return err
+				}
+				if err := os.Symlink(serverTokenFile, agentTokenFile); err != nil {
+					return err
+				}
 			}
 		}
 	}
 
-	if len(nodeFile) > 0 {
-		printToken(config.SupervisorPort, advertiseIP, "To join node to cluster:", "agent")
+	if agentTokenFile != "" {
+		logrus.Infof("Agent node token is available at %s", agentTokenFile)
+		printToken(config.SupervisorPort, config.BindAddressOrLoopback(true, true), "To join agent node to cluster:", "agent", "AGENT_NODE_TOKEN")
 	}
 
 	return nil
 }
 
 func writeKubeConfig(certs string, config *Config) error {
-	ip := config.ControlConfig.BindAddress
-	if ip == "" {
-		ip = "127.0.0.1"
-	}
+	ip := config.ControlConfig.BindAddressOrLoopback(false, true)
 	port := config.ControlConfig.HTTPSPort
 	// on servers without a local apiserver, tunnel access via the loadbalancer
 	if config.ControlConfig.DisableAPIServer {
-		ip = "127.0.0.1"
+		ip = config.ControlConfig.Loopback(true)
 		port = config.ControlConfig.APIServerPort
 	}
 	url := fmt.Sprintf("https://%s:%d", ip, port)
@@ -383,17 +432,8 @@ func setupDataDirAndChdir(config *config.Control) error {
 	return nil
 }
 
-func printToken(httpsPort int, advertiseIP, prefix, cmd string) {
-	ip := advertiseIP
-	if ip == "" {
-		hostIP, err := net.ChooseHostInterface()
-		if err != nil {
-			logrus.Errorf("Failed to choose interface: %v", err)
-		}
-		ip = hostIP.String()
-	}
-
-	logrus.Infof("%s %s %s -s https://%s:%d -t ${NODE_TOKEN}", prefix, version.Program, cmd, ip, httpsPort)
+func printToken(httpsPort int, advertiseIP, prefix, cmd, varName string) {
+	logrus.Infof("%s %s %s -s https://%s:%d -t ${%s}", prefix, version.Program, cmd, advertiseIP, httpsPort, varName)
 }
 
 func writeToken(token, file, certs string) error {
@@ -405,7 +445,7 @@ func writeToken(token, file, certs string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(file, []byte(token+"\n"), 0600)
+	return ioutil.WriteFile(file, []byte(token+"\n"), 0600)
 }
 
 func setNoProxyEnv(config *config.Control) error {

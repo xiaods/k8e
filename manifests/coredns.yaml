@@ -4,7 +4,7 @@ metadata:
   name: coredns
   namespace: kube-system
 ---
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:
@@ -29,7 +29,7 @@ rules:
   - list
   - watch
 ---
-apiVersion: rbac.authorization.k8s.io/v1beta1
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   annotations:
@@ -73,6 +73,7 @@ data:
         reload
         loadbalance
     }
+    import /etc/coredns/custom/*.server
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -109,6 +110,13 @@ spec:
           effect: "NoSchedule"
       nodeSelector:
         beta.kubernetes.io/os: linux
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              k8s-app: kube-dns
       containers:
       - name: coredns
         image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/mirrored-coredns-coredns:1.9.1
@@ -123,6 +131,9 @@ spec:
         volumeMounts:
         - name: config-volume
           mountPath: /etc/coredns
+          readOnly: true
+        - name: custom-config-volume
+          mountPath: /etc/coredns/custom
           readOnly: true
         ports:
         - containerPort: 53
@@ -172,6 +183,10 @@ spec:
               path: Corefile
             - key: NodeHosts
               path: NodeHosts
+        - name: custom-config-volume
+          configMap:
+            name: coredns-custom
+            optional: true
 ---
 apiVersion: v1
 kind: Service

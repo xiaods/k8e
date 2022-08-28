@@ -87,6 +87,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 
 	if cfg.Token == "" && cfg.ClusterSecret != "" {
+		logrus.Warn("cluster-secret is deprecated, it will be removed in v1.25. Use --token instead.")
 		cfg.Token = cfg.ClusterSecret
 	}
 
@@ -120,19 +121,22 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.HTTPSPort = cfg.HTTPSPort
 	serverConfig.ControlConfig.APIServerPort = cfg.APIServerPort
 	serverConfig.ControlConfig.APIServerBindAddress = cfg.APIServerBindAddress
+	serverConfig.ControlConfig.EnablePProf = cfg.EnablePProf
 	serverConfig.ControlConfig.ExtraAPIArgs = cfg.ExtraAPIArgs
 	serverConfig.ControlConfig.ExtraControllerArgs = cfg.ExtraControllerArgs
 	serverConfig.ControlConfig.ExtraEtcdArgs = cfg.ExtraEtcdArgs
 	serverConfig.ControlConfig.ExtraSchedulerAPIArgs = cfg.ExtraSchedulerArgs
 	serverConfig.ControlConfig.ClusterDomain = cfg.ClusterDomain
 	serverConfig.ControlConfig.Datastore.Endpoint = cfg.DatastoreEndpoint
-	serverConfig.ControlConfig.Datastore.CAFile = cfg.DatastoreCAFile
-	serverConfig.ControlConfig.Datastore.CertFile = cfg.DatastoreCertFile
-	serverConfig.ControlConfig.Datastore.KeyFile = cfg.DatastoreKeyFile
+	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CAFile = cfg.DatastoreCAFile
+	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CertFile = cfg.DatastoreCertFile
+	serverConfig.ControlConfig.Datastore.BackendTLSConfig.KeyFile = cfg.DatastoreKeyFile
 	serverConfig.ControlConfig.AdvertiseIP = cfg.AdvertiseIP
 	serverConfig.ControlConfig.AdvertisePort = cfg.AdvertisePort
+	serverConfig.ControlConfig.EgressSelectorMode = cfg.EgressSelectorMode
 	serverConfig.ControlConfig.ExtraCloudControllerArgs = cfg.ExtraCloudControllerArgs
 	serverConfig.ControlConfig.DisableCCM = cfg.DisableCCM
+	serverConfig.ControlConfig.DisableHelmController = cfg.DisableHelmController
 	serverConfig.ControlConfig.DisableKubeProxy = cfg.DisableKubeProxy
 	serverConfig.ControlConfig.DisableETCD = cfg.DisableETCD
 	serverConfig.ControlConfig.DisableAPIServer = cfg.DisableAPIServer
@@ -144,6 +148,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots
 
 	if !cfg.EtcdDisableSnapshots {
+		serverConfig.ControlConfig.EtcdSnapshotCompress = cfg.EtcdSnapshotCompress
 		serverConfig.ControlConfig.EtcdSnapshotName = cfg.EtcdSnapshotName
 		serverConfig.ControlConfig.EtcdSnapshotCron = cfg.EtcdSnapshotCron
 		serverConfig.ControlConfig.EtcdSnapshotDir = cfg.EtcdSnapshotDir
@@ -191,17 +196,17 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 	if serverConfig.ControlConfig.PrivateIP == "" && len(cmds.AgentConfig.NodeIP) != 0 {
 		// ignoring the error here is fine since etcd will fall back to the interface's IPv4 address
-		serverConfig.ControlConfig.PrivateIP, _ = util.GetFirst4String(cmds.AgentConfig.NodeIP)
+		serverConfig.ControlConfig.PrivateIP, _, _ = util.GetFirstString(cmds.AgentConfig.NodeIP)
 	}
 
 	// if not set, try setting advertise-ip from agent node-external-ip
 	if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeExternalIP) != 0 {
-		serverConfig.ControlConfig.AdvertiseIP, _ = util.GetFirst4String(cmds.AgentConfig.NodeExternalIP)
+		serverConfig.ControlConfig.AdvertiseIP, _, _ = util.GetFirstString(cmds.AgentConfig.NodeExternalIP)
 	}
 
-	// if not set, try setting advertise-up from agent node-ip
+	// if not set, try setting advertise-ip from agent node-ip
 	if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeIP) != 0 {
-		serverConfig.ControlConfig.AdvertiseIP, _ = util.GetFirst4String(cmds.AgentConfig.NodeIP)
+		serverConfig.ControlConfig.AdvertiseIP, _, _ = util.GetFirstString(cmds.AgentConfig.NodeIP)
 	}
 
 	// if we ended up with any advertise-ips, ensure they're added to the SAN list;
@@ -219,14 +224,19 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		return err
 	}
 	serverConfig.ControlConfig.ServerNodeName = nodeName
-	serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, "127.0.0.1", "localhost", nodeName)
+	serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, "127.0.0.1", "::1", "localhost", nodeName)
 	for _, ip := range nodeIPs {
 		serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, ip.String())
 	}
 
 	// configure ClusterIPRanges
+	_, _, IPv6only, _ := util.GetFirstIP(nodeIPs)
 	if len(cmds.ServerConfig.ClusterCIDR) == 0 {
-		cmds.ServerConfig.ClusterCIDR.Set("10.42.0.0/16")
+		clusterCIDR := "10.42.0.0/16"
+		if IPv6only {
+			clusterCIDR = "fd00:42::/56"
+		}
+		cmds.ServerConfig.ClusterCIDR.Set(clusterCIDR)
 	}
 	for _, cidr := range cmds.ServerConfig.ClusterCIDR {
 		for _, v := range strings.Split(cidr, ",") {
@@ -239,15 +249,20 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 
 	// set ClusterIPRange to the first IPv4 block, for legacy clients
-	clusterIPRange, err := util.GetFirst4Net(serverConfig.ControlConfig.ClusterIPRanges)
+	// unless only IPv6 range given
+	clusterIPRange, err := util.GetFirstNet(serverConfig.ControlConfig.ClusterIPRanges)
 	if err != nil {
-		return errors.Wrap(err, "cannot configure IPv4 cluster-cidr")
+		return errors.Wrap(err, "cannot configure IPv4/IPv6 cluster-cidr")
 	}
 	serverConfig.ControlConfig.ClusterIPRange = clusterIPRange
 
 	// configure ServiceIPRanges
 	if len(cmds.ServerConfig.ServiceCIDR) == 0 {
-		cmds.ServerConfig.ServiceCIDR.Set("10.43.0.0/16")
+		serviceCIDR := "10.43.0.0/16"
+		if IPv6only {
+			serviceCIDR = "fd00:43::/112"
+		}
+		cmds.ServerConfig.ServiceCIDR.Set(serviceCIDR)
 	}
 	for _, cidr := range cmds.ServerConfig.ServiceCIDR {
 		for _, v := range strings.Split(cidr, ",") {
@@ -260,9 +275,10 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 
 	// set ServiceIPRange to the first IPv4 block, for legacy clients
-	serviceIPRange, err := util.GetFirst4Net(serverConfig.ControlConfig.ServiceIPRanges)
+	// unless only IPv6 range given
+	serviceIPRange, err := util.GetFirstNet(serverConfig.ControlConfig.ServiceIPRanges)
 	if err != nil {
-		return errors.Wrap(err, "cannot configure IPv4 service-cidr")
+		return errors.Wrap(err, "cannot configure IPv4/IPv6 service-cidr")
 	}
 	serverConfig.ControlConfig.ServiceIPRange = serviceIPRange
 
@@ -280,7 +296,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 	// If cluster-dns CLI arg is not set, we set ClusterDNS address to be the first IPv4 ServiceCIDR network + 10,
 	// i.e. when you set service-cidr to 192.168.0.0/16 and don't provide cluster-dns, it will be set to 192.168.0.10
-	// If there are no IPv4 ServiceCIDRs, an error will be raised.
+	// If there are no IPv4 ServiceCIDRs, an IPv6 ServiceCIDRs will be used.
+	// If neither of IPv4 or IPv6 are found an error is raised.
 	if len(cmds.ServerConfig.ClusterDNS) == 0 {
 		clusterDNS, err := utilsnet.GetIndexedIP(serverConfig.ControlConfig.ServiceIPRange, 10)
 		if err != nil {
@@ -299,9 +316,10 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 			}
 		}
 		// Set ClusterDNS to the first IPv4 address, for legacy clients
-		clusterDNS, err := util.GetFirst4(serverConfig.ControlConfig.ClusterDNSs)
+		// unless only IPv6 range given
+		clusterDNS, _, _, err := util.GetFirstIP(serverConfig.ControlConfig.ClusterDNSs)
 		if err != nil {
-			return errors.Wrap(err, "cannot configure IPv4 cluster-dns address")
+			return errors.Wrap(err, "cannot configure IPv4/IPv6 cluster-dns address")
 		}
 		serverConfig.ControlConfig.ClusterDNS = clusterDNS
 	}
@@ -322,6 +340,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 	serverConfig.ControlConfig.Skips = map[string]bool{}
 	for _, noDeploy := range app.StringSlice("no-deploy") {
+		logrus.Warn("no-deploy flag is deprecated, it will be removed in v1.25. Use --skip-deploy instead.")
 		for _, v := range strings.Split(noDeploy, ",") {
 			v = strings.TrimSpace(v)
 			serverConfig.ControlConfig.Skips[v] = true
@@ -375,14 +394,20 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		return errors.Wrap(err, "invalid tls-cipher-suites")
 	}
 
-	// make sure components are disabled so we only perform a restore
-	// and bail out
-	if cfg.ClusterResetRestorePath != "" && cfg.ClusterReset {
+	// If performing a cluster reset, make sure control-plane components are
+	// disabled so we only perform a reset or restore and bail out.
+	if cfg.ClusterReset {
 		serverConfig.ControlConfig.ClusterInit = true
 		serverConfig.ControlConfig.DisableAPIServer = true
 		serverConfig.ControlConfig.DisableControllerManager = true
 		serverConfig.ControlConfig.DisableScheduler = true
 		serverConfig.ControlConfig.DisableCCM = true
+
+		// If the supervisor and apiserver are on the same port, everything is running embedded
+		// and we don't need the kubelet or containerd up to perform a cluster reset.
+		if serverConfig.ControlConfig.SupervisorPort == serverConfig.ControlConfig.HTTPSPort {
+			cfg.DisableAgent = true
+		}
 
 		dataDir, err := datadir.LocalHome(cfg.DataDir, false)
 		if err != nil {
@@ -392,14 +417,16 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		loadbalancer.ResetLoadBalancer(filepath.Join(dataDir, "agent"), loadbalancer.SupervisorServiceName)
 		loadbalancer.ResetLoadBalancer(filepath.Join(dataDir, "agent"), loadbalancer.APIServerServiceName)
 
-		// at this point we're doing a restore. Check to see if we've
-		// passed in a token and if not, check if the token file exists.
-		// If it doesn't, return an error indicating the token is necessary.
-		if cfg.Token == "" {
-			tokenFile := filepath.Join(dataDir, "server", "token")
-			if _, err := os.Stat(tokenFile); err != nil {
-				if os.IsNotExist(err) {
-					return errors.New(tokenFile + " does not exist, please pass --token to complete the restoration")
+		if cfg.ClusterResetRestorePath != "" {
+			// at this point we're doing a restore. Check to see if we've
+			// passed in a token and if not, check if the token file exists.
+			// If it doesn't, return an error indicating the token is necessary.
+			if cfg.Token == "" {
+				tokenFile := filepath.Join(dataDir, "server", "token")
+				if _, err := os.Stat(tokenFile); err != nil {
+					if os.IsNotExist(err) {
+						return errors.New(tokenFile + " does not exist, please pass --token to complete the restoration")
+					}
 				}
 			}
 		}
@@ -410,7 +437,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	notifySocket := os.Getenv("NOTIFY_SOCKET")
 	os.Unsetenv("NOTIFY_SOCKET")
 
-	ctx := signals.SetupSignalHandler(context.Background())
+	ctx := signals.SetupSignalContext()
 
 	if err := server.StartServer(ctx, &serverConfig, cfg); err != nil {
 		return err
@@ -432,12 +459,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		systemd.SdNotify(true, "READY=1\n")
 	}()
 
-	ip := serverConfig.ControlConfig.BindAddress
-	if ip == "" {
-		ip = "127.0.0.1"
-	}
-
-	url := fmt.Sprintf("https://%s:%d", ip, serverConfig.ControlConfig.SupervisorPort)
+	url := fmt.Sprintf("https://%s:%d", serverConfig.ControlConfig.BindAddressOrLoopback(false, true), serverConfig.ControlConfig.SupervisorPort)
 	token, err := clientaccess.FormatToken(serverConfig.ControlConfig.Runtime.AgentToken, serverConfig.ControlConfig.Runtime.ServerCA)
 	if err != nil {
 		return err
@@ -488,7 +510,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 // validateNetworkConfig ensures that the network configuration values make sense.
 func validateNetworkConfiguration(serverConfig server.Config) error {
-	// Dual-stack operation requires fairly extensive manual configuration at the moment -
+	// Dual-stack operation requires fairly extensive manual configuration at the moment - do some
+	// preflight checks to make sure that the user isn't trying to use npc, or trying to
 	// enable dual-stack DNS (which we don't currently support since it's not easy to template)
 	dualDNS, err := utilsnet.IsDualStackIPs(serverConfig.ControlConfig.ClusterDNSs)
 	if err != nil {
@@ -497,6 +520,13 @@ func validateNetworkConfiguration(serverConfig server.Config) error {
 
 	if dualDNS == true {
 		return errors.New("dual-stack cluster-dns is not supported")
+	}
+
+	switch serverConfig.ControlConfig.EgressSelectorMode {
+	case config.EgressSelectorModeAgent, config.EgressSelectorModeCluster,
+		config.EgressSelectorModeDisabled, config.EgressSelectorModePod:
+	default:
+		return fmt.Errorf("invalid egress-selector-mode %s", serverConfig.ControlConfig.EgressSelectorMode)
 	}
 
 	return nil

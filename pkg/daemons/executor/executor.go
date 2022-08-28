@@ -23,33 +23,34 @@ var (
 
 type Executor interface {
 	Bootstrap(ctx context.Context, nodeConfig *daemonconfig.Node, cfg cmds.Agent) error
-	Kubelet(args []string) error
-	KubeProxy(args []string) error
-	APIServerHandlers() (authenticator.Request, http.Handler, error)
+	Kubelet(ctx context.Context, args []string) error
+	KubeProxy(ctx context.Context, args []string) error
+	APIServerHandlers(ctx context.Context) (authenticator.Request, http.Handler, error)
 	APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) error
-	Scheduler(apiReady <-chan struct{}, args []string) error
-	ControllerManager(apiReady <-chan struct{}, args []string) error
+	Scheduler(ctx context.Context, apiReady <-chan struct{}, args []string) error
+	ControllerManager(ctx context.Context, apiReady <-chan struct{}, args []string) error
 	CurrentETCDOptions() (InitialOptions, error)
 	ETCD(ctx context.Context, args ETCDConfig, extraArgs []string) error
-	CloudControllerManager(ccmRBACReady <-chan struct{}, args []string) error
+	CloudControllerManager(ctx context.Context, ccmRBACReady <-chan struct{}, args []string) error
 }
 
 type ETCDConfig struct {
-	InitialOptions      `json:",inline"`
-	Name                string      `json:"name,omitempty"`
-	ListenClientURLs    string      `json:"listen-client-urls,omitempty"`
-	ListenMetricsURLs   string      `json:"listen-metrics-urls,omitempty"`
-	ListenPeerURLs      string      `json:"listen-peer-urls,omitempty"`
-	AdvertiseClientURLs string      `json:"advertise-client-urls,omitempty"`
-	DataDir             string      `json:"data-dir,omitempty"`
-	SnapshotCount       int         `json:"snapshot-count,omitempty"`
-	ServerTrust         ServerTrust `json:"client-transport-security"`
-	PeerTrust           PeerTrust   `json:"peer-transport-security"`
-	ForceNewCluster     bool        `json:"force-new-cluster,omitempty"`
-	HeartbeatInterval   int         `json:"heartbeat-interval"`
-	ElectionTimeout     int         `json:"election-timeout"`
-	Logger              string      `json:"logger"`
-	LogOutputs          []string    `json:"log-outputs"`
+	InitialOptions                  `json:",inline"`
+	Name                            string      `json:"name,omitempty"`
+	ListenClientURLs                string      `json:"listen-client-urls,omitempty"`
+	ListenMetricsURLs               string      `json:"listen-metrics-urls,omitempty"`
+	ListenPeerURLs                  string      `json:"listen-peer-urls,omitempty"`
+	AdvertiseClientURLs             string      `json:"advertise-client-urls,omitempty"`
+	DataDir                         string      `json:"data-dir,omitempty"`
+	SnapshotCount                   int         `json:"snapshot-count,omitempty"`
+	ServerTrust                     ServerTrust `json:"client-transport-security"`
+	PeerTrust                       PeerTrust   `json:"peer-transport-security"`
+	ForceNewCluster                 bool        `json:"force-new-cluster,omitempty"`
+	HeartbeatInterval               int         `json:"heartbeat-interval"`
+	ElectionTimeout                 int         `json:"election-timeout"`
+	Logger                          string      `json:"logger"`
+	LogOutputs                      []string    `json:"log-outputs"`
+	ExperimentalInitialCorruptCheck bool        `json:"experimental-initial-corrupt-check"`
 }
 
 type ServerTrust struct {
@@ -133,28 +134,28 @@ func Bootstrap(ctx context.Context, nodeConfig *daemonconfig.Node, cfg cmds.Agen
 	return executor.Bootstrap(ctx, nodeConfig, cfg)
 }
 
-func Kubelet(args []string) error {
-	return executor.Kubelet(args)
+func Kubelet(ctx context.Context, args []string) error {
+	return executor.Kubelet(ctx, args)
 }
 
-func KubeProxy(args []string) error {
-	return executor.KubeProxy(args)
+func KubeProxy(ctx context.Context, args []string) error {
+	return executor.KubeProxy(ctx, args)
 }
 
-func APIServerHandlers() (authenticator.Request, http.Handler, error) {
-	return executor.APIServerHandlers()
+func APIServerHandlers(ctx context.Context) (authenticator.Request, http.Handler, error) {
+	return executor.APIServerHandlers(ctx)
 }
 
 func APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) error {
 	return executor.APIServer(ctx, etcdReady, args)
 }
 
-func Scheduler(apiReady <-chan struct{}, args []string) error {
-	return executor.Scheduler(apiReady, args)
+func Scheduler(ctx context.Context, apiReady <-chan struct{}, args []string) error {
+	return executor.Scheduler(ctx, apiReady, args)
 }
 
-func ControllerManager(apiReady <-chan struct{}, args []string) error {
-	return executor.ControllerManager(apiReady, args)
+func ControllerManager(ctx context.Context, apiReady <-chan struct{}, args []string) error {
+	return executor.ControllerManager(ctx, apiReady, args)
 }
 
 func CurrentETCDOptions() (InitialOptions, error) {
@@ -165,6 +166,6 @@ func ETCD(ctx context.Context, args ETCDConfig, extraArgs []string) error {
 	return executor.ETCD(ctx, args, extraArgs)
 }
 
-func CloudControllerManager(ccmRBACReady <-chan struct{}, args []string) error {
-	return executor.CloudControllerManager(ccmRBACReady, args)
+func CloudControllerManager(ctx context.Context, ccmRBACReady <-chan struct{}, args []string) error {
+	return executor.CloudControllerManager(ctx, ccmRBACReady, args)
 }

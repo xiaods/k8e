@@ -3,16 +3,14 @@ package loadbalancer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
-	"syscall"
 
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/version"
-	"golang.org/x/sys/unix"
 	"inet.af/tcpproxy"
 )
 
@@ -42,9 +40,15 @@ var (
 	ETCDServerServiceName = version.Program + "-etcd-server-load-balancer"
 )
 
-func New(ctx context.Context, dataDir, serviceName, serverURL string, lbServerPort int) (_lb *LoadBalancer, _err error) {
+func New(ctx context.Context, dataDir, serviceName, serverURL string, lbServerPort int, isIPv6 bool) (_lb *LoadBalancer, _err error) {
 	config := net.ListenConfig{Control: reusePort}
-	listener, err := config.Listen(ctx, "tcp", "127.0.0.1:"+strconv.Itoa(lbServerPort))
+	var localAddress string
+	if isIPv6 {
+		localAddress = fmt.Sprintf("[::1]:%d", lbServerPort)
+	} else {
+		localAddress = fmt.Sprintf("127.0.0.1:%d", lbServerPort)
+	}
+	listener, err := config.Listen(ctx, "tcp", localAddress)
 	defer func() {
 		if _err != nil {
 			logrus.Warnf("Error starting load balancer: %s", _err)
@@ -56,7 +60,9 @@ func New(ctx context.Context, dataDir, serviceName, serverURL string, lbServerPo
 	if err != nil {
 		return nil, err
 	}
-	localAddress := listener.Addr().String()
+
+	// if lbServerPort was 0, the port was assigned by the OS when bound - see what we ended up with.
+	localAddress = listener.Addr().String()
 
 	defaultServerAddress, localServerURL, err := parseURL(serverURL, localAddress)
 	if err != nil {
@@ -163,12 +169,6 @@ func (lb *LoadBalancer) dialContext(ctx context.Context, network, address string
 func onDialError(src net.Conn, dstDialErr error) {
 	logrus.Debugf("Incoming conn %v, error dialing load balancer servers: %v", src.RemoteAddr().String(), dstDialErr)
 	src.Close()
-}
-
-func reusePort(network, address string, conn syscall.RawConn) error {
-	return conn.Control(func(descriptor uintptr) {
-		syscall.SetsockoptInt(int(descriptor), unix.SOL_SOCKET, unix.SO_REUSEPORT, 1)
-	})
 }
 
 // ResetLoadBalancer will delete the local state file for the load balancer on disk

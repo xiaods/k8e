@@ -18,7 +18,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// forkIfLoggingOrReaping handles forking off the actual k3s process if it is necessary to
+// forkIfLoggingOrReaping handles forking off the actual k8e process if it is necessary to
 // capture log output, or reap child processes. Reaping is only necessary when running
 // as pid 1.
 func forkIfLoggingOrReaping() error {

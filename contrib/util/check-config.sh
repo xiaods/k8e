@@ -3,7 +3,7 @@ set -e
 
 EXITCODE=0
 
-# rancher/k3s modified from
+# rancher/k8e modified from
 # https://github.com/moby/moby/blob/c831882/contrib/check-config.sh
 
 # bits of this were adapted from lxc-checkconfig for moby

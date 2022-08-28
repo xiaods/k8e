@@ -14,52 +14,52 @@ func Test_UnitMustParse(t *testing.T) {
 	}{
 		{
 			name: "Basic server",
-			args: []string{"k3s", "server"},
+			args: []string{"k8e", "server"},
 
-			want: []string{"k3s", "server"},
+			want: []string{"k8e", "server"},
 		},
 		{
 			name: "Server with known flags",
-			args: []string{"k3s", "server", "-t 12345", "--write-kubeconfig-mode 644"},
+			args: []string{"k8e", "server", "-t 12345", "--write-kubeconfig-mode 644"},
 
-			want: []string{"k3s", "server", "-t 12345", "--write-kubeconfig-mode 644"},
+			want: []string{"k8e", "server", "-t 12345", "--write-kubeconfig-mode 644"},
 		},
 		{
 			name:   "Server with known flags and config with known and unknown flags",
-			args:   []string{"k3s", "server", "--write-kubeconfig-mode 644"},
+			args:   []string{"k8e", "server", "--write-kubeconfig-mode 644"},
 			config: "./testdata/defaultdata.yaml",
-			want: []string{"k3s", "server", "--token=12345", "--node-label=DEAFBEEF",
+			want: []string{"k8e", "server", "--token=12345", "--node-label=DEAFBEEF",
 				"--etcd-s3=true", "--etcd-s3-bucket=my-backup", "--kubelet-arg=max-pods=999", "--write-kubeconfig-mode 644"},
 		},
 		{
 			name: "Basic etcd-snapshot",
-			args: []string{"k3s", "etcd-snapshot", "save"},
+			args: []string{"k8e", "etcd-snapshot", "save"},
 
-			want: []string{"k3s", "etcd-snapshot", "save"},
+			want: []string{"k8e", "etcd-snapshot", "save"},
 		},
 		{
 			name: "Etcd-snapshot with known flags",
-			args: []string{"k3s", "etcd-snapshot", "save", "--s3=true"},
+			args: []string{"k8e", "etcd-snapshot", "save", "--s3=true"},
 
-			want: []string{"k3s", "etcd-snapshot", "save", "--s3=true"},
+			want: []string{"k8e", "etcd-snapshot", "save", "--s3=true"},
 		},
 		{
 			name:   "Etcd-snapshot with config with known and unknown flags",
-			args:   []string{"k3s", "etcd-snapshot", "save"},
+			args:   []string{"k8e", "etcd-snapshot", "save"},
 			config: "./testdata/defaultdata.yaml",
-			want:   []string{"k3s", "etcd-snapshot", "save", "--etcd-s3=true", "--etcd-s3-bucket=my-backup"},
+			want:   []string{"k8e", "etcd-snapshot", "save", "--etcd-s3=true", "--etcd-s3-bucket=my-backup"},
 		},
 		{
 			name: "Agent with known flags",
-			args: []string{"k3s", "agent", "--token=12345"},
+			args: []string{"k8e", "agent", "--token=12345"},
 
-			want: []string{"k3s", "agent", "--token=12345"},
+			want: []string{"k8e", "agent", "--token=12345"},
 		},
 		{
 			name:   "Agent with config with known and unknown flags, flags are not skipped",
-			args:   []string{"k3s", "agent"},
+			args:   []string{"k8e", "agent"},
 			config: "./testdata/defaultdata.yaml",
-			want: []string{"k3s", "agent", "--token=12345", "--node-label=DEAFBEEF",
+			want: []string{"k8e", "agent", "--token=12345", "--node-label=DEAFBEEF",
 				"--etcd-s3=true", "--etcd-s3-bucket=my-backup", "--notaflag=true", "--kubelet-arg=max-pods=999"},
 		},
 	}

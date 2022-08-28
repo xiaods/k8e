@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,11 +24,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/k3s-io/kine/pkg/client"
+	endpoint2 "github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/minio/minio-go/v7"
 	cp "github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
-	controllerv1 "github.com/rancher/wrangler-api/pkg/generated/controllers/core/v1"
+	controllerv1 "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
 	"github.com/robfig/cron/v3"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/clientaccess"
@@ -35,11 +38,13 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/control/deps"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/version"
-	"go.etcd.io/etcd/clientv3"
-	etcd "go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/snapshot"
-	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
-	"go.etcd.io/etcd/etcdserver/etcdserverpb"
+	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
+	"go.etcd.io/etcd/client/pkg/v3/logutil"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/etcdutl/v3/snapshot"
+	"go.uber.org/zap"
+	"golang.org/x/sync/semaphore"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,8 +53,7 @@ import (
 )
 
 const (
-	defaultEndpoint      = "https://127.0.0.1:2379"
-	testTimeout          = time.Second * 10
+	testTimeout          = time.Second * 30
 	manageTickerTime     = time.Second * 15
 	learnerMaxStallTime  = time.Minute * 5
 	memberRemovalTimeout = time.Minute * 1
@@ -60,7 +64,9 @@ const (
 	defaultKeepAliveTime    = 30 * time.Second
 	defaultKeepAliveTimeout = 10 * time.Second
 
-	maxBackupRetention = 5
+	maxBackupRetention     = 5
+	maxConcurrentSnapshots = 1
+	compressedExtension    = ".zip"
 
 	MasterLabel       = "node-role.kubernetes.io/master"
 	ControlPlaneLabel = "node-role.kubernetes.io/control-plane"
@@ -87,12 +93,14 @@ var (
 type NodeControllerGetter func() controllerv1.NodeController
 
 type ETCD struct {
-	client  *etcd.Client
-	config  *config.Control
-	name    string
-	address string
-	cron    *cron.Cron
-	s3      *S3
+	client      *clientv3.Client
+	config      *config.Control
+	name        string
+	address     string
+	cron        *cron.Cron
+	s3          *S3
+	cancel      context.CancelFunc
+	snapshotSem *semaphore.Weighted
 }
 
 type learnerProgress struct {
@@ -144,7 +152,7 @@ func (e *ETCD) EndpointName() string {
 func (e *ETCD) SetControlConfig(ctx context.Context, config *config.Control) error {
 	e.config = config
 
-	client, err := GetClient(ctx, e.config.Runtime)
+	client, err := GetClient(ctx, e.config)
 	if err != nil {
 		return err
 	}
@@ -172,7 +180,7 @@ func (e *ETCD) Test(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, testTimeout)
 	defer cancel()
 
-	endpoints := getEndpoints(e.config.Runtime)
+	endpoints := getEndpoints(e.config)
 	status, err := e.client.Status(ctx, endpoints[0])
 	if err != nil {
 		return err
@@ -216,7 +224,7 @@ func (e *ETCD) Test(ctx context.Context) error {
 			memberNameUrls = append(memberNameUrls, member.Name+"="+member.PeerURLs[0])
 		}
 	}
-	return &MembershipError{Members: memberNameUrls, Self: e.name + "=" + e.address}
+	return &MembershipError{Members: memberNameUrls, Self: e.name + "=" + e.peerURL()}
 }
 
 // DBDir returns the path to dataDir/db/etcd
@@ -227,6 +235,10 @@ func DBDir(config *config.Control) string {
 // walDir returns the path to etcdDBDir/member/wal
 func walDir(config *config.Control) string {
 	return filepath.Join(DBDir(config), "member", "wal")
+}
+
+func sqliteFile(config *config.Control) string {
+	return filepath.Join(config.DataDir, "db", "state.db")
 }
 
 // nameFile returns the path to etcdDBDir/name.
@@ -284,7 +296,11 @@ func (e *ETCD) Reset(ctx context.Context, rebootstrap func() error) error {
 				}
 
 				if len(members.Members) == 1 && members.Members[0].Name == e.name {
-					logrus.Infof("Etcd is running, restart without --cluster-reset flag now. Backup and delete ${datadir}/server/db on each peer etcd server and rejoin the nodes")
+					// Cancel the etcd server context and allow it time to shutdown cleanly.
+					// Ideally we would use a waitgroup and properly sequence shutdown of the various components.
+					e.cancel()
+					time.Sleep(time.Second * 5)
+					logrus.Infof("Managed etcd cluster membership has been reset, restart without --cluster-reset flag now. Backup and delete ${datadir}/server/db on each peer etcd server and rejoin the nodes")
 					os.Exit(0)
 				}
 			} else {
@@ -414,7 +430,7 @@ func (e *ETCD) join(ctx context.Context, clientAccessInfo *clientaccess.Info) er
 		return err
 	}
 
-	client, err := GetClient(clientCtx, e.config.Runtime, clientURLs...)
+	client, err := GetClient(clientCtx, e.config, clientURLs...)
 	if err != nil {
 		return err
 	}
@@ -423,7 +439,7 @@ func (e *ETCD) join(ctx context.Context, clientAccessInfo *clientaccess.Info) er
 	members, err := client.MemberList(clientCtx)
 	if err != nil {
 		logrus.Errorf("Failed to get member list from etcd cluster. Will assume this member is already added")
-		members = &etcd.MemberListResponse{
+		members = &clientv3.MemberListResponse{
 			Members: append(memberList.Members, &etcdserverpb.Member{
 				Name:     e.name,
 				PeerURLs: []string{e.peerURL()},
@@ -491,7 +507,7 @@ func (e *ETCD) join(ctx context.Context, clientAccessInfo *clientaccess.Info) er
 func (e *ETCD) Register(ctx context.Context, config *config.Control, handler http.Handler) (http.Handler, error) {
 	e.config = config
 
-	client, err := GetClient(ctx, e.config.Runtime)
+	client, err := GetClient(ctx, e.config)
 	if err != nil {
 		return nil, err
 	}
@@ -508,11 +524,11 @@ func (e *ETCD) Register(ctx context.Context, config *config.Control, handler htt
 	}
 	e.address = address
 
-	endpoints := getEndpoints(config.Runtime)
+	endpoints := getEndpoints(config)
 	e.config.Datastore.Endpoint = endpoints[0]
-	e.config.Datastore.Config.CAFile = e.config.Runtime.ETCDServerCA
-	e.config.Datastore.Config.CertFile = e.config.Runtime.ClientETCDCert
-	e.config.Datastore.Config.KeyFile = e.config.Runtime.ClientETCDKey
+	e.config.Datastore.BackendTLSConfig.CAFile = e.config.Runtime.ETCDServerCA
+	e.config.Datastore.BackendTLSConfig.CertFile = e.config.Runtime.ClientETCDCert
+	e.config.Datastore.BackendTLSConfig.KeyFile = e.config.Runtime.ClientETCDKey
 
 	tombstoneFile := filepath.Join(DBDir(e.config), "tombstone")
 	if _, err := os.Stat(tombstoneFile); err == nil {
@@ -561,7 +577,7 @@ func (e *ETCD) setName(force bool) error {
 
 // handler wraps the handler with routes for database info
 func (e *ETCD) handler(next http.Handler) http.Handler {
-	mux := mux.NewRouter()
+	mux := mux.NewRouter().SkipClean(true)
 	mux.Handle("/db/info", e.infoHandler())
 	mux.NotFoundHandler = next
 	return mux
@@ -599,22 +615,24 @@ func (e *ETCD) infoHandler() http.Handler {
 // If the runtime config does not list any endpoints, the default endpoint is used.
 // The returned client should be closed when no longer needed, in order to avoid leaking GRPC
 // client goroutines.
-func GetClient(ctx context.Context, runtime *config.ControlRuntime, endpoints ...string) (*etcd.Client, error) {
-	cfg, err := getClientConfig(ctx, runtime, endpoints...)
+func GetClient(ctx context.Context, control *config.Control, endpoints ...string) (*clientv3.Client, error) {
+	cfg, err := getClientConfig(ctx, control, endpoints...)
 	if err != nil {
 		return nil, err
 	}
-	return etcd.New(*cfg)
+
+	return clientv3.New(*cfg)
 }
 
 // getClientConfig generates an etcd client config connected to the specified endpoints.
 // If no endpoints are provided, getEndpoints is called to provide defaults.
-func getClientConfig(ctx context.Context, runtime *config.ControlRuntime, endpoints ...string) (*etcd.Config, error) {
+func getClientConfig(ctx context.Context, control *config.Control, endpoints ...string) (*clientv3.Config, error) {
+	runtime := control.Runtime
 	if len(endpoints) == 0 {
-		endpoints = getEndpoints(runtime)
+		endpoints = getEndpoints(control)
 	}
 
-	config := &etcd.Config{
+	config := &clientv3.Config{
 		Endpoints:            endpoints,
 		Context:              ctx,
 		DialTimeout:          defaultDialTimeout,
@@ -630,11 +648,12 @@ func getClientConfig(ctx context.Context, runtime *config.ControlRuntime, endpoi
 }
 
 // getEndpoints returns the endpoints from the runtime config if set, otherwise the default endpoint.
-func getEndpoints(runtime *config.ControlRuntime) []string {
+func getEndpoints(control *config.Control) []string {
+	runtime := control.Runtime
 	if len(runtime.EtcdConfig.Endpoints) > 0 {
 		return runtime.EtcdConfig.Endpoints
 	}
-	return []string{defaultEndpoint}
+	return []string{fmt.Sprintf("https://%s:2379", control.Loopback(true))}
 }
 
 // toTLSConfig converts the ControlRuntime configuration to TLS configuration suitable
@@ -677,41 +696,121 @@ func GetAdvertiseAddress(advertiseIP string) (string, error) {
 // newCluster returns options to set up etcd for a new cluster
 func (e *ETCD) newCluster(ctx context.Context, reset bool) error {
 	logrus.Infof("Starting etcd for new cluster")
-	return e.cluster(ctx, reset, executor.InitialOptions{
+	err := e.cluster(ctx, reset, executor.InitialOptions{
 		AdvertisePeerURL: e.peerURL(),
 		Cluster:          fmt.Sprintf("%s=%s", e.name, e.peerURL()),
 		State:            "new",
 	})
-}
-
-// peerURL returns the peer access address for the local node
-func (e *ETCD) peerURL() string {
-	return fmt.Sprintf("https://%s:2380", e.address)
-}
-
-// clientURL returns the client access address for the local node
-func (e *ETCD) clientURL() string {
-	return fmt.Sprintf("https://%s:2379", e.address)
-}
-
-// metricsURL returns the metrics access address
-func (e *ETCD) metricsURL(expose bool) string {
-	address := "http://127.0.0.1:2381"
-	if expose {
-		address = fmt.Sprintf("http://%s:2381,%s", e.address, address)
+	if err != nil {
+		return err
 	}
-	return address
+	if err := e.migrateFromSQLite(ctx); err != nil {
+		return fmt.Errorf("failed to migrate content from sqlite to etcd: %w", err)
+	}
+	return nil
 }
 
-// cluster returns ETCDConfig for a cluster
-func (e *ETCD) cluster(ctx context.Context, forceNew bool, options executor.InitialOptions) error {
+func (e *ETCD) migrateFromSQLite(ctx context.Context) error {
+	_, err := os.Stat(sqliteFile(e.config))
+	if os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	logrus.Infof("Migrating content from sqlite to etcd")
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	_, err = endpoint2.Listen(ctx, endpoint2.Config{
+		Endpoint: endpoint2.SQLiteBackend,
+	})
+	if err != nil {
+		return err
+	}
+
+	sqliteClient, err := client.New(endpoint2.ETCDConfig{
+		Endpoints: []string{"unix://kine.sock"},
+	})
+	if err != nil {
+		return err
+	}
+	defer sqliteClient.Close()
+
+	etcdClient, err := GetClient(ctx, e.config)
+	if err != nil {
+		return err
+	}
+	defer etcdClient.Close()
+
+	values, err := sqliteClient.List(ctx, "/registry/", 0)
+	if err != nil {
+		return err
+	}
+
+	for _, value := range values {
+		logrus.Infof("Migrating etcd key %s", value.Key)
+		_, err := etcdClient.Put(ctx, string(value.Key), string(value.Data))
+		if err != nil {
+			return err
+		}
+	}
+
+	return os.Rename(sqliteFile(e.config), sqliteFile(e.config)+".migrated")
+}
+
+// peerURL returns the external peer access address for the local node.
+func (e *ETCD) peerURL() string {
+	return fmt.Sprintf("https://%s", net.JoinHostPort(e.address, "2380"))
+}
+
+// listenClientURLs returns a list of URLs to bind to for peer connections.
+// During cluster reset/restore, we only listen on loopback to avoid having peers
+// connect mid-process.
+func (e *ETCD) listenPeerURLs(reset bool) string {
+	peerURLs := fmt.Sprintf("https://%s:2380", e.config.Loopback(true))
+	if !reset {
+		peerURLs += "," + e.peerURL()
+	}
+	return peerURLs
+}
+
+// clientURL returns the external client access address for the local node.
+func (e *ETCD) clientURL() string {
+	return fmt.Sprintf("https://%s", net.JoinHostPort(e.address, "2379"))
+}
+
+// listenClientURLs returns a list of URLs to bind to for client connections.
+// During cluster reset/restore, we only listen on loopback to avoid having the apiserver
+// connect mid-process.
+func (e *ETCD) listenClientURLs(reset bool) string {
+	clientURLs := fmt.Sprintf("https://%s:2379", e.config.Loopback(true))
+	if !reset {
+		clientURLs += "," + e.clientURL()
+	}
+	return clientURLs
+}
+
+// listenMetricsURLs returns a list of URLs to bind to for metrics connections.
+func (e *ETCD) listenMetricsURLs(reset bool) string {
+	metricsURLs := fmt.Sprintf("http://%s:2381", e.config.Loopback(true))
+	if !reset && e.config.EtcdExposeMetrics {
+		metricsURLs += "," + fmt.Sprintf("http://%s", net.JoinHostPort(e.address, "2381"))
+	}
+	return metricsURLs
+}
+
+// cluster calls the executor to start etcd running with the provided configuration.
+func (e *ETCD) cluster(ctx context.Context, reset bool, options executor.InitialOptions) error {
+	ctx, e.cancel = context.WithCancel(ctx)
 	return executor.ETCD(ctx, executor.ETCDConfig{
 		Name:                e.name,
 		InitialOptions:      options,
-		ForceNewCluster:     forceNew,
-		ListenClientURLs:    e.clientURL() + ",https://127.0.0.1:2379",
-		ListenMetricsURLs:   e.metricsURL(e.config.EtcdExposeMetrics),
-		ListenPeerURLs:      e.peerURL(),
+		ForceNewCluster:     reset,
+		ListenClientURLs:    e.listenClientURLs(reset),
+		ListenMetricsURLs:   e.listenMetricsURLs(reset),
+		ListenPeerURLs:      e.listenPeerURLs(reset),
 		AdvertiseClientURLs: e.clientURL(),
 		DataDir:             DBDir(e.config),
 		ServerTrust: executor.ServerTrust{
@@ -726,10 +825,12 @@ func (e *ETCD) cluster(ctx context.Context, forceNew bool, options executor.Init
 			ClientCertAuth: true,
 			TrustedCAFile:  e.config.Runtime.ETCDPeerCA,
 		},
-		ElectionTimeout:   5000,
-		HeartbeatInterval: 500,
-		Logger:            "zap",
-		LogOutputs:        []string{"stderr"},
+		SnapshotCount:                   10000,
+		ElectionTimeout:                 5000,
+		HeartbeatInterval:               500,
+		Logger:                          "zap",
+		LogOutputs:                      []string{"stderr"},
+		ExperimentalInitialCorruptCheck: true,
 	}, e.config.ExtraEtcdArgs)
 }
 
@@ -749,7 +850,7 @@ func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
 		return err
 	}
 
-	endpoints := getEndpoints(e.config.Runtime)
+	endpoints := getEndpoints(e.config)
 	clientURL := endpoints[0]
 	peerURL, err := addPort(endpoints[0], 1)
 	if err != nil {
@@ -757,18 +858,21 @@ func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
 	}
 
 	embedded := executor.Embedded{}
+	ctx, e.cancel = context.WithCancel(ctx)
 	return embedded.ETCD(ctx, executor.ETCDConfig{
-		InitialOptions:      executor.InitialOptions{AdvertisePeerURL: peerURL},
-		DataDir:             tmpDataDir,
-		ForceNewCluster:     true,
-		AdvertiseClientURLs: clientURL,
-		ListenClientURLs:    clientURL,
-		ListenPeerURLs:      peerURL,
-		Logger:              "zap",
-		HeartbeatInterval:   500,
-		ElectionTimeout:     5000,
-		Name:                e.name,
-		LogOutputs:          []string{"stderr"},
+		InitialOptions:                  executor.InitialOptions{AdvertisePeerURL: peerURL},
+		DataDir:                         tmpDataDir,
+		ForceNewCluster:                 true,
+		AdvertiseClientURLs:             clientURL,
+		ListenClientURLs:                clientURL,
+		ListenPeerURLs:                  peerURL,
+		Logger:                          "zap",
+		HeartbeatInterval:               500,
+		ElectionTimeout:                 5000,
+		SnapshotCount:                   10000,
+		Name:                            e.name,
+		LogOutputs:                      []string{"stderr"},
+		ExperimentalInitialCorruptCheck: true,
 	}, append(e.config.ExtraAPIArgs, "--max-snapshots=0", "--max-wals=0"))
 }
 
@@ -829,7 +933,7 @@ func (e *ETCD) manageLearners(ctx context.Context) {
 	defer t.Stop()
 
 	for range t.C {
-		ctx, cancel := context.WithTimeout(ctx, testTimeout)
+		ctx, cancel := context.WithTimeout(ctx, manageTickerTime)
 		defer cancel()
 
 		// Check to see if the local node is the leader. Only the leader should do learner management.
@@ -837,7 +941,7 @@ func (e *ETCD) manageLearners(ctx context.Context) {
 			logrus.Debug("Etcd client was nil")
 			continue
 		}
-		endpoints := getEndpoints(e.config.Runtime)
+		endpoints := getEndpoints(e.config)
 		if status, err := e.client.Status(ctx, endpoints[0]); err != nil {
 			logrus.Errorf("Failed to check local etcd status for learner management: %v", err)
 			continue
@@ -993,7 +1097,7 @@ func (e *ETCD) defragment(ctx context.Context) error {
 	}
 
 	logrus.Infof("Defragmenting etcd database")
-	endpoints := getEndpoints(e.config.Runtime)
+	endpoints := getEndpoints(e.config)
 	_, err := e.client.Defragment(ctx, endpoints[0])
 	return err
 }
@@ -1062,11 +1166,14 @@ func snapshotDir(config *config.Control, create bool) (string, error) {
 // to perform an Etcd snapshot. This is necessary primarily for on-demand
 // snapshots since they're performed before normal Etcd setup is completed.
 func (e *ETCD) preSnapshotSetup(ctx context.Context, config *config.Control) error {
+	if e.snapshotSem == nil {
+		e.snapshotSem = semaphore.NewWeighted(maxConcurrentSnapshots)
+	}
 	if e.client == nil {
 		if e.config == nil {
 			e.config = config
 		}
-		client, err := GetClient(ctx, e.config.Runtime)
+		client, err := GetClient(ctx, e.config)
 		if err != nil {
 			return err
 		}
@@ -1079,8 +1186,6 @@ func (e *ETCD) preSnapshotSetup(ctx context.Context, config *config.Control) err
 	}
 	return nil
 }
-
-const compressedExtension = ".zip"
 
 // compressSnapshot compresses the given snapshot and provides the
 // caller with the path to the file.
@@ -1174,6 +1279,10 @@ func (e *ETCD) Snapshot(ctx context.Context, config *config.Control) error {
 	if err := e.preSnapshotSetup(ctx, config); err != nil {
 		return err
 	}
+	if !e.snapshotSem.TryAcquire(maxConcurrentSnapshots) {
+		return fmt.Errorf("%d snapshots already in progress", maxConcurrentSnapshots)
+	}
+	defer e.snapshotSem.Release(maxConcurrentSnapshots)
 
 	// make sure the core.Factory is initialized before attempting to add snapshot metadata
 	var extraMetadata string
@@ -1194,7 +1303,7 @@ func (e *ETCD) Snapshot(ctx context.Context, config *config.Control) error {
 		}
 	}
 
-	endpoints := getEndpoints(e.config.Runtime)
+	endpoints := getEndpoints(e.config)
 	status, err := e.client.Status(ctx, endpoints[0])
 	if err != nil {
 		return errors.Wrap(err, "failed to check etcd status for snapshot")
@@ -1210,7 +1319,7 @@ func (e *ETCD) Snapshot(ctx context.Context, config *config.Control) error {
 		return errors.Wrap(err, "failed to get the snapshot dir")
 	}
 
-	cfg, err := getClientConfig(ctx, e.config.Runtime)
+	cfg, err := getClientConfig(ctx, e.config)
 	if err != nil {
 		return errors.Wrap(err, "failed to get config for etcd snapshot")
 	}
@@ -1224,7 +1333,12 @@ func (e *ETCD) Snapshot(ctx context.Context, config *config.Control) error {
 
 	var sf *snapshotFile
 
-	if err := snapshot.NewV3(nil).Save(ctx, *cfg, snapshotPath); err != nil {
+	lg, err := logutil.CreateDefaultZapLogger(zap.InfoLevel)
+	if err != nil {
+		return err
+	}
+
+	if err := snapshot.NewV3(lg).Save(ctx, *cfg, snapshotPath); err != nil {
 		sf = &snapshotFile{
 			Name:     snapshotName,
 			Location: "",
@@ -1572,18 +1686,20 @@ func (e *ETCD) DeleteSnapshots(ctx context.Context, snapshots []string) error {
 	}
 
 	logrus.Info("Removing the given locally stored etcd snapshot(s)")
-	logrus.Debugf("Removing the given locally stored etcd snapshot(s): %v", snapshots)
+	logrus.Debugf("Attempting to remove the given locally stored etcd snapshot(s): %v", snapshots)
 
 	for _, s := range snapshots {
 		// check if the given snapshot exists. If it does,
 		// remove it, otherwise continue.
 		sf := filepath.Join(snapshotDir, s)
 		if _, err := os.Stat(sf); os.IsNotExist(err) {
+			logrus.Infof("Snapshot %s, does not exist", s)
 			continue
 		}
 		if err := os.Remove(sf); err != nil {
 			return err
 		}
+		logrus.Debug("Removed snapshot ", s)
 	}
 
 	return e.ReconcileSnapshotData(ctx)
@@ -1842,19 +1958,22 @@ func (e *ETCD) Restore(ctx context.Context) error {
 	if err := os.Rename(DBDir(e.config), oldDataDir); err != nil {
 		return err
 	}
+
 	logrus.Infof("Pre-restore etcd database moved to %s", oldDataDir)
-	sManager := snapshot.NewV3(nil)
-	if err := sManager.Restore(snapshot.RestoreConfig{
+
+	lg, err := logutil.CreateDefaultZapLogger(zap.InfoLevel)
+	if err != nil {
+		return err
+	}
+
+	return snapshot.NewV3(lg).Restore(snapshot.RestoreConfig{
 		SnapshotPath:   restorePath,
 		Name:           e.name,
 		OutputDataDir:  DBDir(e.config),
 		OutputWALDir:   walDir(e.config),
 		PeerURLs:       []string{e.peerURL()},
 		InitialCluster: e.name + "=" + e.peerURL(),
-	}); err != nil {
-		return err
-	}
-	return nil
+	})
 }
 
 // snapshotRetention iterates through the snapshots and removes the oldest
@@ -1933,7 +2052,7 @@ func backupDirWithRetention(dir string, maxBackupRetention int) (string, error) 
 // GetAPIServerURLsFromETCD will try to fetch the version.Program/apiaddresses key from etcd
 // and unmarshal it to a list of apiserver endpoints.
 func GetAPIServerURLsFromETCD(ctx context.Context, cfg *config.Control) ([]string, error) {
-	cl, err := GetClient(ctx, cfg.Runtime)
+	cl, err := GetClient(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -1947,6 +2066,7 @@ func GetAPIServerURLsFromETCD(ctx context.Context, cfg *config.Control) ([]strin
 	if etcdResp.Count == 0 || len(etcdResp.Kvs[0].Value) == 0 {
 		return nil, ErrAddressNotSet
 	}
+
 	var addresses []string
 	if err := json.Unmarshal(etcdResp.Kvs[0].Value, &addresses); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal apiserver addresses from etcd: %v", err)

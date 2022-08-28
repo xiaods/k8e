@@ -1,7 +1,6 @@
 package etcdsnapshot
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +18,7 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/server"
+	util2 "github.com/xiaods/k8e/pkg/util"
 	"gopkg.in/yaml.v2"
 )
 
@@ -90,12 +90,12 @@ func save(app *cli.Context, cfg *cmds.Server) error {
 	}
 
 	if len(app.Args()) > 0 {
-		return cmds.ErrCommandNoArgs
+		return util2.ErrCommandNoArgs
 	}
 
 	serverConfig.ControlConfig.EtcdSnapshotRetention = 0 // disable retention check
 
-	ctx := signals.SetupSignalHandler(context.Background())
+	ctx := signals.SetupSignalContext()
 	e := etcd.NewETCD()
 	if err := e.SetControlConfig(ctx, &serverConfig.ControlConfig); err != nil {
 		return err
@@ -143,7 +143,7 @@ func delete(app *cli.Context, cfg *cmds.Server) error {
 		return errors.New("no snapshots given for removal")
 	}
 
-	ctx := signals.SetupSignalHandler(context.Background())
+	ctx := signals.SetupSignalContext()
 	e := etcd.NewETCD()
 	if err := e.SetControlConfig(ctx, &serverConfig.ControlConfig); err != nil {
 		return err
@@ -183,7 +183,7 @@ func list(app *cli.Context, cfg *cmds.Server) error {
 		return err
 	}
 
-	ctx := signals.SetupSignalHandler(context.Background())
+	ctx := signals.SetupSignalContext()
 	e := etcd.NewETCD()
 	if err := e.SetControlConfig(ctx, &serverConfig.ControlConfig); err != nil {
 		return err
@@ -249,7 +249,7 @@ func prune(app *cli.Context, cfg *cmds.Server) error {
 
 	serverConfig.ControlConfig.EtcdSnapshotRetention = cfg.EtcdSnapshotRetention
 
-	ctx := signals.SetupSignalHandler(context.Background())
+	ctx := signals.SetupSignalContext()
 	e := etcd.NewETCD()
 	if err := e.SetControlConfig(ctx, &serverConfig.ControlConfig); err != nil {
 		return err

@@ -31,7 +31,7 @@ mkdir -p dist/artifacts
 )
 
 tar cvf ./build/out/data.tar ./bin
-zstd -v -T0 -16 -f --long --rm ./build/out/data.tar -o ./build/out/data.tar.zst
+zstd --no-progress -T0 -16 -f --long=25 --rm ./build/out/data.tar -o ./build/out/data.tar.zst
 HASH=$(sha256sum ./build/out/data.tar.zst | awk '{print $1}')
 
 cp ./build/out/data.tar.zst ./build/data/${HASH}.tar.zst
@@ -51,6 +51,7 @@ LDFLAGS="
     -X github.com/xiaods/k8e/pkg/version.GitCommit=${COMMIT:0:8}
     -w -s
 "
+TAGS="urfave_cli_no_docs"
 STATIC="-extldflags '-static'"
 CGO_ENABLED=0 GOOS=${GOOS} "${GO}" build -ldflags "$LDFLAGS $STATIC" -o ${CMD_NAME} ./cmd/k8e/main.go
 

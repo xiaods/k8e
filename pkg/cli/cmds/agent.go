@@ -81,21 +81,39 @@ var (
 		Usage:       "(agent/node) Append id to node name",
 		Destination: &AgentConfig.WithNodeID,
 	}
+	ProtectKernelDefaultsFlag = cli.BoolFlag{
+		Name:        "protect-kernel-defaults",
+		Usage:       "(agent/node) Kernel tuning behavior. If set, error if kernel tunables are different than kubelet defaults.",
+		Destination: &AgentConfig.ProtectKernelDefaults,
+	}
+	SELinuxFlag = cli.BoolFlag{
+		Name:        "selinux",
+		Usage:       "(agent/node) Enable SELinux in containerd",
+		Destination: &AgentConfig.EnableSELinux,
+		EnvVar:      version.ProgramUpper + "_SELINUX",
+	}
+	LBServerPortFlag = cli.IntFlag{
+		Name:        "lb-server-port",
+		Usage:       "(agent/node) Local port for supervisor client load-balancer. If the supervisor and apiserver are not colocated an additional port 1 less than this port will also be used for the apiserver client load-balancer.",
+		Destination: &AgentConfig.LBServerPort,
+		EnvVar:      version.ProgramUpper + "_LB_SERVER_PORT",
+		Value:       6444,
+	}
 	DockerFlag = cli.BoolFlag{
 		Name:        "docker",
-		Usage:       "(agent/runtime) Use docker instead of containerd",
+		Usage:       "(agent/runtime) (experimental) Use cri-dockerd instead of containerd",
 		Destination: &AgentConfig.Docker,
 	}
 	CRIEndpointFlag = cli.StringFlag{
 		Name:        "container-runtime-endpoint",
-		Usage:       "(agent/runtime) Disable embedded containerd and use alternative CRI implementation",
+		Usage:       "(agent/runtime) Disable embedded containerd and use the CRI socket at the given path; when used with --docker this sets the docker socket path",
 		Destination: &AgentConfig.ContainerRuntimeEndpoint,
 	}
 	PrivateRegistryFlag = cli.StringFlag{
 		Name:        "private-registry",
 		Usage:       "(agent/runtime) Private registry configuration file",
 		Destination: &AgentConfig.PrivateRegistry,
-		Value:       "/etc/" + version.Program + "/registries.yaml",
+		Value:       "/etc/rancher/" + version.Program + "/registries.yaml",
 	}
 	AirgapExtraRegistryFlag = cli.StringSliceFlag{
 		Name:   "airgap-extra-registry",
@@ -107,13 +125,13 @@ var (
 		Name:        "pause-image",
 		Usage:       "(agent/runtime) Customized pause image for containerd or docker sandbox",
 		Destination: &AgentConfig.PauseImage,
-		Value:       "rancher/mirrored-pause:3.6",
+		Value:       DefaultPauseImage,
 	}
 	SnapshotterFlag = cli.StringFlag{
 		Name:        "snapshotter",
 		Usage:       "(agent/runtime) Override default containerd snapshotter",
 		Destination: &AgentConfig.Snapshotter,
-		Value:       "overlayfs",
+		Value:       DefaultSnapshotter,
 	}
 	ResolvConfFlag = cli.StringFlag{
 		Name:        "resolv-conf",
@@ -145,38 +163,18 @@ var (
 		Name:        "image-credential-provider-bin-dir",
 		Usage:       "(agent/node) The path to the directory where credential provider plugin binaries are located",
 		Destination: &AgentConfig.ImageCredProvBinDir,
-		Value:       "/var/lib/k8e/credentialprovider/bin",
+		Value:       "/var/lib/rancher/credentialprovider/bin",
 	}
 	ImageCredProvConfigFlag = cli.StringFlag{
 		Name:        "image-credential-provider-config",
 		Usage:       "(agent/node) The path to the credential provider plugin config file",
 		Destination: &AgentConfig.ImageCredProvConfig,
-		Value:       "/var/lib/k8e/credentialprovider/config.yaml",
+		Value:       "/var/lib/rancher/credentialprovider/config.yaml",
 	}
 	DisableSELinuxFlag = cli.BoolTFlag{
 		Name:   "disable-selinux",
 		Usage:  "(deprecated) Use --selinux to explicitly enable SELinux",
 		Hidden: true,
-	}
-	ProtectKernelDefaultsFlag = cli.BoolFlag{
-		Name:        "protect-kernel-defaults",
-		Usage:       "(agent/node) Kernel tuning behavior. If set, error if kernel tunables are different than kubelet defaults.",
-		Destination: &AgentConfig.ProtectKernelDefaults,
-	}
-	SELinuxFlag = cli.BoolFlag{
-		Name:        "selinux",
-		Usage:       "(agent/node) Enable SELinux in containerd",
-		Hidden:      false,
-		Destination: &AgentConfig.EnableSELinux,
-		EnvVar:      version.ProgramUpper + "_SELINUX",
-	}
-	LBServerPortFlag = cli.IntFlag{
-		Name:        "lb-server-port",
-		Usage:       "(agent/node) Local port for supervisor client load-balancer. If the supervisor and apiserver are not colocated an additional port 1 less than this port will also be used for the apiserver client load-balancer.",
-		Hidden:      false,
-		Destination: &AgentConfig.LBServerPort,
-		EnvVar:      version.ProgramUpper + "_LB_SERVER_PORT",
-		Value:       6444,
 	}
 )
 
@@ -221,7 +219,7 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 				Name:        "data-dir,d",
 				Usage:       "(agent/data) Folder to hold state",
 				Destination: &AgentConfig.DataDir,
-				Value:       "/var/lib/" + version.Program + "",
+				Value:       "/var/lib/rancher/" + version.Program + "",
 			},
 			NodeNameFlag,
 			WithNodeIDFlag,
@@ -229,7 +227,9 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 			NodeTaints,
 			ImageCredProvBinDirFlag,
 			ImageCredProvConfigFlag,
-			DockerFlag,
+			&SELinuxFlag,
+			LBServerPortFlag,
+			ProtectKernelDefaultsFlag,
 			CRIEndpointFlag,
 			PauseImageFlag,
 			SnapshotterFlag,
@@ -240,23 +240,22 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 			ResolvConfFlag,
 			ExtraKubeletArgs,
 			ExtraKubeProxyArgs,
-			ProtectKernelDefaultsFlag,
 			cli.BoolFlag{
 				Name:        "rootless",
 				Usage:       "(experimental) Run rootless",
 				Destination: &AgentConfig.Rootless,
 			},
-			&SELinuxFlag,
-			LBServerPortFlag,
 
 			// Deprecated/hidden below
 
 			&DisableSELinuxFlag,
+			DockerFlag,
 			cli.StringFlag{
 				Name:        "cluster-secret",
 				Usage:       "(deprecated) use --token",
 				Destination: &AgentConfig.ClusterSecret,
 				EnvVar:      version.ProgramUpper + "_CLUSTER_SECRET",
+				Hidden:      true,
 			},
 		},
 	}

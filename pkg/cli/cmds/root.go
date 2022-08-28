@@ -43,7 +43,7 @@ func NewApp() *cli.App {
 		DebugFlag,
 		cli.StringFlag{
 			Name:  "data-dir,d",
-			Usage: "(data) Folder to hold state default /var/lib/" + version.Program + "/ or ${HOME}/." + version.Program + "/ if not root",
+			Usage: "(data) Folder to hold state default /var/lib/" + version.Program + " or ${HOME}/." + version.Program + " if not root",
 		},
 	}
 

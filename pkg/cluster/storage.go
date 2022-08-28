@@ -151,7 +151,7 @@ func getBootstrapKeyFromStorage(ctx context.Context, storageClient client.Client
 		return nil, false, err
 	}
 	if len(bootstrapList) == 0 {
-		return nil, false, err
+		return nil, true, nil
 	}
 	if len(bootstrapList) > 1 {
 		logrus.Warn("found multiple bootstrap keys in storage")
@@ -203,7 +203,7 @@ func readTokenFromFile(serverToken, certs, dataDir string) (string, error) {
 func normalizeToken(token string) (string, error) {
 	_, password, ok := clientaccess.ParseUsernamePassword(token)
 	if !ok {
-		return password, errors.New("failed to normalize token")
+		return password, errors.New("failed to normalize token; must be in format K10<CA-HASH>::<USERNAME>:<PASSWORD> or <PASSWORD>")
 	}
 
 	return password, nil

@@ -3,24 +3,29 @@ package cluster
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"path/filepath"
 
+	"github.com/gorilla/mux"
 	"github.com/rancher/dynamiclistener"
 	"github.com/rancher/dynamiclistener/factory"
 	"github.com/rancher/dynamiclistener/storage/file"
 	"github.com/rancher/dynamiclistener/storage/kubernetes"
 	"github.com/rancher/dynamiclistener/storage/memory"
-	"github.com/rancher/wrangler-api/pkg/generated/controllers/core"
+	"github.com/rancher/wrangler/pkg/generated/controllers/core"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/version"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilsnet "k8s.io/utils/net"
 )
 
 // newListener returns a new TCP listener and HTTP request handler using dynamiclistener.
@@ -34,7 +39,11 @@ func (c *Cluster) newListener(ctx context.Context) (net.Listener, http.Handler, 
 			os.Remove(filepath.Join(c.config.DataDir, "tls/dynamic-cert.json"))
 		}
 	}
-	tcp, err := dynamiclistener.NewTCPListener(c.config.BindAddress, c.config.SupervisorPort)
+	ip := c.config.BindAddress
+	if utilsnet.IsIPv6String(ip) {
+		ip = fmt.Sprintf("[%s]", ip)
+	}
+	tcp, err := dynamiclistener.NewTCPListener(ip, c.config.SupervisorPort)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -43,7 +52,7 @@ func (c *Cluster) newListener(ctx context.Context) (net.Listener, http.Handler, 
 		return nil, nil, err
 	}
 	storage := tlsStorage(ctx, c.config.DataDir, c.config.Runtime)
-	return dynamiclistener.NewListener(tcp, storage, cert, key, dynamiclistener.Config{
+	return wrapHandler(dynamiclistener.NewListener(tcp, storage, cert, key, dynamiclistener.Config{
 		ExpirationDaysCheck: config.CertificateRenewDays,
 		Organization:        []string{version.Program},
 		SANs:                append(c.config.SANs, "kubernetes", "kubernetes.default", "kubernetes.default.svc", "kubernetes.default.svc."+c.config.ClusterDomain),
@@ -52,6 +61,7 @@ func (c *Cluster) newListener(ctx context.Context) (net.Listener, http.Handler, 
 			ClientAuth:   tls.RequestClientCert,
 			MinVersion:   c.config.TLSMinVersion,
 			CipherSuites: c.config.TLSCipherSuites,
+			NextProtos:   []string{"h2", "http/1.1"},
 		},
 		RegenerateCerts: func() bool {
 			const regenerateDynamicListenerFile = "dynamic-cert-regenerate"
@@ -62,7 +72,7 @@ func (c *Cluster) newListener(ctx context.Context) (net.Listener, http.Handler, 
 			}
 			return false
 		},
-	})
+	}))
 }
 
 // initClusterAndHTTPS sets up the dynamic tls listener, request router,
@@ -86,10 +96,22 @@ func (c *Cluster) initClusterAndHTTPS(ctx context.Context) error {
 		return err
 	}
 
+	if c.config.EnablePProf {
+		mux := mux.NewRouter()
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+		mux.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+		mux.NotFoundHandler = handler
+		handler = mux
+	}
+
 	// Create a HTTP server with the registered request handlers, using logrus for logging
 	server := http.Server{
 		Handler: handler,
 	}
+
 	if logrus.IsLevelEnabled(logrus.DebugLevel) {
 		server.ErrorLog = log.New(logrus.StandardLogger().Writer(), "Cluster-Http-Server ", log.LstdFlags)
 	} else {
@@ -99,7 +121,9 @@ func (c *Cluster) initClusterAndHTTPS(ctx context.Context) error {
 	// Start the supervisor http server on the tls listener
 	go func() {
 		err := server.Serve(listener)
-		logrus.Fatalf("server stopped: %v", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logrus.Fatalf("server stopped: %v", err)
+		}
 	}()
 
 	// Shutdown the http server when the context is closed
@@ -119,4 +143,19 @@ func tlsStorage(ctx context.Context, dataDir string, runtime *config.ControlRunt
 	return kubernetes.New(ctx, func() *core.Factory {
 		return runtime.Core
 	}, metav1.NamespaceSystem, version.Program+"-serving", cache)
+}
+
+// wrapHandler wraps the dynamiclistener request handler, adding a User-Agent value to
+// CONNECT requests that will prevent DynamicListener from adding the request's Host
+// header to the SAN list.  CONNECT requests set the Host header to the target of the
+// proxy connection, so it is not correct to add this value to the certificate.  It would
+// be nice if we could do this with with the FilterCN callback, but unfortunately that
+// callback does not offer access to the request that triggered the change.
+func wrapHandler(listener net.Listener, handler http.Handler, err error) (net.Listener, http.Handler, error) {
+	return listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodConnect {
+			r.Header.Add("User-Agent", "mozilla")
+		}
+		handler.ServeHTTP(w, r)
+	}), err
 }
