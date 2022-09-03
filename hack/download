@@ -2,7 +2,6 @@
 set -ex
 
 cd $(dirname $0)/..
-
 . ./hack/version.sh
 
 RUNC_DIR=build/src/github.com/opencontainers/runc
