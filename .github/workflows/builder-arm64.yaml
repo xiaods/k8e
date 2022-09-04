@@ -28,7 +28,7 @@ jobs:
     - name: package airgap image
       run: make package-airgap
     - name: sha256sum artifacts
-      run: sha256sum dist/artifacts/k8e-${{ matrix.goarch }} dist/artifacts/k8e-airgap-images-${{ matrix.goarch }}.tar.gz >> k8e-hashes-${{ matrix.goarch }}.txt
+      run: cd dist/artifacts/ && sha256sum k8e-${{ matrix.goarch }} k8e-airgap-images-${{ matrix.goarch }}.tar.gz >> k8e-hashes-${{ matrix.goarch }}.txt
     - name: Uploading assets...
       uses: softprops/action-gh-release@v1
       with:
@@ -36,4 +36,4 @@ jobs:
           dist/artifacts/k8e-${{ matrix.goarch }}
           dist/artifacts/k8e-airgap-images-${{ matrix.goarch }}.tar.gz
           dist/artifacts/k8e-images-${{ matrix.goarch }}.txt
-          k8e-hashes-${{ matrix.goarch }}.txt
+          dist/artifacts/k8e-hashes-${{ matrix.goarch }}.txt
