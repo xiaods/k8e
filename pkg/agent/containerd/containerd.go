@@ -242,7 +242,7 @@ func preloadFile(ctx context.Context, cfg *config.Node, client *containerd.Clien
 
 // retagImages retags all listed images as having been pulled from the given remote registries.
 // If duplicate images exist, they are overwritten. This is most useful when using a private registry
-// for all images, as can be configured by the RKE2/Rancher system-default-registry setting.
+// for all images, as can be configured by the k8e system-default-registry setting.
 func retagImages(ctx context.Context, client *containerd.Client, images []images.Image, registries []string) error {
 	var errs []error
 	imageService := client.ImageService()

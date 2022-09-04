@@ -355,7 +355,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	if envInfo.Rootless {
 		nodePasswordRoot = filepath.Join(envInfo.DataDir, "agent")
 	}
-	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "rancher", "node")
+	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
 	if err := os.MkdirAll(nodeConfigPath, 0755); err != nil {
 		return nil, err
 	}
