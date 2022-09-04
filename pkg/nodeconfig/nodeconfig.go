@@ -50,26 +50,26 @@ func getNodeArgs() (string, error) {
 }
 
 func getNodeEnv() (string, error) {
-	k3sEnv := make(map[string]string)
+	k8eEnv := make(map[string]string)
 	for _, v := range os.Environ() {
 		keyValue := strings.SplitN(v, "=", 2)
 		if strings.HasPrefix(keyValue[0], version.ProgramUpper+"_") {
-			k3sEnv[keyValue[0]] = keyValue[1]
+			k8eEnv[keyValue[0]] = keyValue[1]
 		}
 	}
-	for key := range k3sEnv {
+	for key := range k8eEnv {
 		if isSecret(key) {
-			k3sEnv[key] = OmittedValue
+			k8eEnv[key] = OmittedValue
 		}
 	}
-	k3sEnvJSON, err := json.Marshal(k3sEnv)
+	k8eEnvJSON, err := json.Marshal(k8eEnv)
 	if err != nil {
 		return "", errors.Wrap(err, "Failed to retrieve environment map for node")
 	}
-	return string(k3sEnvJSON), nil
+	return string(k8eEnvJSON), nil
 }
 
-// SetNodeConfigAnnotations stores a redacted version of the k3s cli args and
+// SetNodeConfigAnnotations stores a redacted version of the k8e cli args and
 // environment variables as annotations on the node object. It also stores a
 // hash of the combined args + variables. These are used by other components
 // to determine if the node configuration has been changed.

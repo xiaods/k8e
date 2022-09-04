@@ -38,7 +38,7 @@ import (
 	sapp "k8s.io/kubernetes/cmd/kube-scheduler/app"
 	kubelet "k8s.io/kubernetes/cmd/kubelet/app"
 
-	// registering k3s cloud provider
+	// registering k8e cloud provider
 	_ "github.com/xiaods/k8e/pkg/cloudprovider"
 )
 
