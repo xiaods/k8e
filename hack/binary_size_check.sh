@@ -9,9 +9,9 @@ cd $(dirname $0)/..
 
 . ./hack/version.sh
 
-# Try to keep the K8e binary under 90 megabytes.
+# Try to keep the K8e binary under 128 megabytes.
 # "128M ought to be enough for anybody"
-MAX_BINARY_MB=90
+MAX_BINARY_MB=128
 MAX_BINARY_SIZE=$((MAX_BINARY_MB * 1024 * 1024))
 BIN_SUFFIX="-${ARCH}"
 if [ ${ARCH} = amd64 ]; then
