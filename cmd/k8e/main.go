@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,6 +40,7 @@ func main() {
 
 	// Handle subcommand invocation (k8e server, k8e crictl, etc)
 	app := cmds.NewApp()
+	app.EnableBashCompletion = true
 	app.Commands = []cli.Command{
 		cmds.NewServerCommand(internalCLIAction(version.Program+"-server", dataDir, os.Args)),
 		cmds.NewAgentCommand(internalCLIAction(version.Program+"-agent", dataDir, os.Args)),
@@ -66,9 +68,10 @@ func main() {
 			cmds.NewCertSubcommands(
 				certCommand),
 		),
+		cmds.NewCompletionCommand(internalCLIAction(version.Program+"-completion", dataDir, os.Args)),
 	}
 
-	if err := app.Run(os.Args); err != nil {
+	if err := app.Run(os.Args); err != nil && !errors.Is(err, context.Canceled) {
 		logrus.Fatal(err)
 	}
 }
@@ -105,7 +108,7 @@ func runCLIs(dataDir string) bool {
 	progName := filepath.Base(os.Args[0])
 	switch progName {
 	case "crictl", "ctr", "kubectl":
-		if err := externalCLI(progName, dataDir, os.Args[1:]); err != nil {
+		if err := externalCLI(progName, dataDir, os.Args[1:]); err != nil && !errors.Is(err, context.Canceled) {
 			logrus.Fatal(err)
 		}
 		return true
@@ -131,9 +134,13 @@ func externalCLI(cli, dataDir string, args []string) error {
 	return stageAndRun(dataDir, cli, append([]string{cli}, args...))
 }
 
-// internalCLIAction returns a function that will call a K8e internal command, be used as the Action of a cli.Command.
+// internalCLIAction returns a function that will call a k8e internal command, be used as the Action of a cli.Command.
 func internalCLIAction(cmd, dataDir string, args []string) func(ctx *cli.Context) error {
 	return func(ctx *cli.Context) error {
+		// We don't want the Info logs seen when printing the autocomplete script
+		if cmd == "k8e-completion" {
+			logrus.SetLevel(logrus.ErrorLevel)
+		}
 		return stageAndRunCLI(ctx, cmd, dataDir, args)
 	}
 }
@@ -181,13 +188,13 @@ func getAssetAndDir(dataDir string) (string, string) {
 func extract(dataDir string) (string, error) {
 	// first look for global asset folder so we don't create a HOME version if not needed
 	_, dir := getAssetAndDir(datadir.DefaultDataDir)
-	if _, err := os.Stat(filepath.Join(dir, "bin", "containerd")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "bin", "k8e")); err == nil {
 		return dir, nil
 	}
 
 	asset, dir := getAssetAndDir(dataDir)
 	// check if target content already exists
-	if _, err := os.Stat(filepath.Join(dir, "bin", "containerd")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "bin", "k8e")); err == nil {
 		return dir, nil
 	}
 

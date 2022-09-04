@@ -7,18 +7,17 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
-	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
-	"github.com/xiaods/k8e/pkg/configfilearg"
+	"github.com/xiaods/k8e/pkg/cli/completion"
 )
 
 func main() {
 	app := cmds.NewApp()
 	app.Commands = []cli.Command{
-		cmds.NewAgentCommand(agent.Run),
+		cmds.NewCompletionCommand(completion.Run),
 	}
 
-	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil && !errors.Is(err, context.Canceled) {
+	if err := app.Run(os.Args); err != nil && !errors.Is(err, context.Canceled) {
 		logrus.Fatal(err)
 	}
 }

@@ -7,6 +7,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 
 	"github.com/sirupsen/logrus"
@@ -14,6 +16,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cert"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
+	"github.com/xiaods/k8e/pkg/cli/completion"
 	"github.com/xiaods/k8e/pkg/cli/crictl"
 	"github.com/xiaods/k8e/pkg/cli/etcdsnapshot"
 	"github.com/xiaods/k8e/pkg/cli/kubectl"
@@ -49,9 +52,10 @@ func main() {
 			cmds.NewCertSubcommands(
 				cert.Run),
 		),
+		cmds.NewCompletionCommand(completion.Run),
 	}
 
-	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil {
+	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil && !errors.Is(err, context.Canceled) {
 		logrus.Fatal(err)
 	}
 }

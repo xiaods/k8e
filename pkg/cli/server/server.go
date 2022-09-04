@@ -506,7 +506,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 // validateNetworkConfig ensures that the network configuration values make sense.
 func validateNetworkConfiguration(serverConfig server.Config) error {
 	// Dual-stack operation requires fairly extensive manual configuration at the moment - do some
-	// preflight checks to make sure that the user isn't trying to use npc, or trying to
+	// preflight checks to make sure that the user isn't trying to
 	// enable dual-stack DNS (which we don't currently support since it's not easy to template)
 	dualDNS, err := utilsnet.IsDualStackIPs(serverConfig.ControlConfig.ClusterDNSs)
 	if err != nil {
