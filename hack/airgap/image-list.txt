@@ -3,5 +3,5 @@ docker.io/rancher/mirrored-coredns-coredns:1.9.1
 docker.io/rancher/mirrored-library-busybox:1.34.1
 docker.io/rancher/mirrored-metrics-server:v0.5.2
 docker.io/rancher/mirrored-pause:3.6
-quay.io/cilium/cilium:v1.12.0
-quay.io/cilium/operator-generic:v1.12.0
+quay.io/cilium/cilium:v1.12.1
+quay.io/cilium/operator-generic:v1.12.1

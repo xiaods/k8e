@@ -9,7 +9,7 @@ CONTAINERD_DIR=build/src/github.com/containerd/containerd
 DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
 NERDCTL_VERSION=0.22.2
-CILIUMCLI_VERSION=v0.12.0
+CILIUMCLI_VERSION=v0.12.3
 OSMEDGE_VERSION=v1.1.0
 
 umask 022
