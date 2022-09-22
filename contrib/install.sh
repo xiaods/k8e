@@ -184,8 +184,8 @@ setup_env() {
 }
 
 # --- check if skip download environment variable set ---
-can_skip_download() {
-    if [ "${INSTALL_K8E_SKIP_DOWNLOAD}" != true ]; then
+can_skip_download_binary() {
+    if [ "${INSTALL_K8E_SKIP_DOWNLOAD}" != true ] && [ "${INSTALL_K8E_SKIP_DOWNLOAD}" != binary ]; then
         return 1
     fi
 }
@@ -468,7 +468,7 @@ setup_cilium() {
 
 # --- download and verify k8e ---
 download_and_verify() {
-    if can_skip_download; then
+    if can_skip_download_binary; then
        info 'Skipping k8e download and verify'
        verify_k8e_is_executable
        return
