@@ -30,7 +30,7 @@ var FakeNodeWithAnnotation = &corev1.Node{
 		Annotations: map[string]string{
 			NodeArgsAnnotation:       `["server","--no-flannel"]`,
 			NodeEnvAnnotation:        `{"` + TestEnvName + `":"fakeNode-with-annotation"}`,
-			NodeConfigHashAnnotation: "LNQOAOIMOQIBRMEMACW7LYHXUNPZADF6RFGOSPIHJCOS47UVUJAA====",
+			NodeConfigHashAnnotation: "FIJ7GZ42FJLYYYPQVVRUGKP3RBJGL5YHUJPWGQMBBVF4OQ6MOSWA====",
 		},
 	},
 }
@@ -78,7 +78,7 @@ func Test_UnitSetNodeConfigAnnotations(t *testing.T) {
 			want:               true,
 			wantNodeArgs:       `["server","--no-flannel"]`,
 			wantNodeEnv:        `{"` + TestEnvName + `":"fakeNode-with-no-annotation"}`,
-			wantNodeConfigHash: "FBV4UQYLF2N7NH7EK42GKOTU5YA24TXB4WAYZHA5ZOFNGZHC4ZPA====",
+			wantNodeConfigHash: "47ZWLMKZE6NJ7M5KJVPQY4GSJINRZOQEGHOFQFLRQBY3HBQX5HLA====",
 		},
 		{
 			name: "Set args with equal",
