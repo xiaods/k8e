@@ -265,9 +265,6 @@ source_profile() {
     if ! grep -s '\/usr\/local\/bin' "$PROFILE"; then
         $SUDO echo 'export PATH=$PATH:/usr/local/bin' >> $PROFILE
     fi
-    if ! grep -s 'docker=nerdctl' "$PROFILE"; then
-        $SUDO echo 'alias docker=nerdctl' >> $PROFILE
-    fi
     if ! grep -s 'KUBECONFIG=' "$PROFILE"; then
         $SUDO echo "export KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml" >> $PROFILE
     fi
