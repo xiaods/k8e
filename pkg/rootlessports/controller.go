@@ -20,7 +20,7 @@ var (
 	all = "_all_"
 )
 
-func Register(ctx context.Context, serviceController coreClients.ServiceController, httpsPort int) error {
+func Register(ctx context.Context, serviceController coreClients.ServiceController, enabled bool, httpsPort int) error {
 	var (
 		err            error
 		rootlessClient client.Client
@@ -44,6 +44,7 @@ func Register(ctx context.Context, serviceController coreClients.ServiceControll
 	}
 
 	h := &handler{
+		enabled:        enabled,
 		rootlessClient: rootlessClient,
 		serviceClient:  serviceController,
 		serviceCache:   serviceController.Cache(),
@@ -57,6 +58,7 @@ func Register(ctx context.Context, serviceController coreClients.ServiceControll
 }
 
 type handler struct {
+	enabled        bool
 	rootlessClient client.Client
 	serviceClient  coreClients.ServiceController
 	serviceCache   coreClients.ServiceCache
@@ -124,6 +126,10 @@ func (h *handler) toBindPorts() (map[int]int, error) {
 
 	toBindPorts := map[int]int{
 		h.httpsPort: h.httpsPort,
+	}
+
+	if !h.enabled {
+		return toBindPorts, nil
 	}
 
 	for _, svc := range svcs {

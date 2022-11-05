@@ -5,21 +5,20 @@ package containerd
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
 	"time"
 
 	"github.com/containerd/containerd"
 	"github.com/docker/docker/pkg/parsers/kernel"
+	"github.com/opencontainers/runc/libcontainer/userns"
+	"github.com/pkg/errors"
+	"github.com/rancher/wharfie/pkg/registries"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	util2 "github.com/xiaods/k8e/pkg/agent/util"
 	"github.com/xiaods/k8e/pkg/cgroups"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/opencontainers/runc/libcontainer/userns"
-	"github.com/pkg/errors"
-	"github.com/rancher/wharfie/pkg/registries"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
@@ -83,7 +82,7 @@ func setupContainerdConfig(ctx context.Context, cfg *config.Node) error {
 		logrus.Warnf("SELinux is enabled for "+version.Program+" but process is not running in context '%s', "+version.Program+"-selinux policy may need to be applied", SELinuxContextType)
 	}
 
-	containerdTemplateBytes, err := ioutil.ReadFile(cfg.Containerd.Template)
+	containerdTemplateBytes, err := os.ReadFile(cfg.Containerd.Template)
 	if err == nil {
 		logrus.Infof("Using containerd template at %s", cfg.Containerd.Template)
 		containerdTemplate = string(containerdTemplateBytes)

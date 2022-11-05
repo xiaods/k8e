@@ -113,7 +113,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.DataDir = cfg.DataDir
 	serverConfig.ControlConfig.KubeConfigOutput = cfg.KubeConfigOutput
 	serverConfig.ControlConfig.KubeConfigMode = cfg.KubeConfigMode
-	serverConfig.Rootless = cfg.Rootless
+	serverConfig.ControlConfig.Rootless = cfg.Rootless
+	serverConfig.ControlConfig.ServiceLBNamespace = cfg.ServiceLBNamespace
 	serverConfig.ControlConfig.SANs = cfg.TLSSan
 	serverConfig.ControlConfig.BindAddress = cfg.BindAddress
 	serverConfig.ControlConfig.SupervisorPort = cfg.SupervisorPort
@@ -349,8 +350,11 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 			serverConfig.ControlConfig.Disables[v] = true
 		}
 	}
+	if serverConfig.ControlConfig.Skips["servicelb"] {
+		serverConfig.ControlConfig.DisableServiceLB = true
+	}
 
-	if serverConfig.ControlConfig.DisableCCM {
+	if serverConfig.ControlConfig.DisableCCM && serverConfig.ControlConfig.DisableServiceLB {
 		serverConfig.ControlConfig.Skips["ccm"] = true
 		serverConfig.ControlConfig.Disables["ccm"] = true
 	}

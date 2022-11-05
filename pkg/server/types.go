@@ -10,7 +10,6 @@ import (
 type Config struct {
 	DisableAgent      bool
 	ControlConfig     config.Control
-	Rootless          bool
 	SupervisorPort    int
 	StartupHooks      []cmds.StartupHook
 	LeaderControllers CustomControllers

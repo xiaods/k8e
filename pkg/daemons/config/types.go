@@ -26,15 +26,7 @@ const (
 	EgressSelectorModePod      = "pod"
 	CertificateRenewDays       = 90
 	StreamServerPort           = "10010"
-	KubeletPort                = "10250"
 )
-
-// These ports can always be accessed via the tunnel server, at the loopback address.
-// Other addresses and ports are only accessible via the tunnel on newer agents, when used by a pod.
-var KubeletReservedPorts = map[string]bool{
-	StreamServerPort: true,
-	KubeletPort:      true,
-}
 
 type Node struct {
 	Docker                   bool
@@ -113,6 +105,7 @@ type Agent struct {
 	DisableCCM              bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
+	DisableServiceLB        bool
 	EnableIPv4              bool
 	EnableIPv6              bool
 }
@@ -156,6 +149,9 @@ type Control struct {
 	DisableETCD              bool
 	DisableKubeProxy         bool
 	DisableScheduler         bool
+	DisableServiceLB         bool
+	Rootless                 bool
+	ServiceLBNamespace       string
 	EnablePProf              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
@@ -286,7 +282,8 @@ type ControlRuntime struct {
 	Tunnel             http.Handler
 	Authenticator      authenticator.Request
 
-	EgressSelectorConfig string
+	EgressSelectorConfig  string
+	CloudControllerConfig string
 
 	ClientAuthProxyCert string
 	ClientAuthProxyKey  string

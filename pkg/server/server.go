@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
@@ -213,9 +212,10 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		}
 	}
 
-	if config.Rootless {
+	if config.ControlConfig.Rootless {
 		return rootlessports.Register(ctx,
 			sc.Core.Core().V1().Service(),
+			!config.ControlConfig.DisableServiceLB,
 			config.ControlConfig.HTTPSPort)
 	}
 
@@ -253,7 +253,7 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		dataDir)
 }
 
-// registryTemplate behaves like the system_default_registry template in k8e helm charts,
+// registryTemplate behaves like the system_default_registry template in Rancher helm charts,
 // and returns the registry value with a trailing forward slash if the registry string is not empty.
 // If it is empty, it is passed through as a no-op.
 func registryTemplate(registry string) string {
@@ -360,7 +360,7 @@ func writeKubeConfig(certs string, config *Config) error {
 		port = config.ControlConfig.APIServerPort
 	}
 	url := fmt.Sprintf("https://%s:%d", ip, port)
-	kubeConfig, err := HomeKubeConfig(true, config.Rootless)
+	kubeConfig, err := HomeKubeConfig(true, config.ControlConfig.Rootless)
 	def := true
 	if err != nil {
 		kubeConfig = filepath.Join(config.ControlConfig.DataDir, "kubeconfig-"+version.Program+".yaml")
@@ -445,7 +445,7 @@ func writeToken(token, file, certs string) error {
 	if err != nil {
 		return err
 	}
-	return ioutil.WriteFile(file, []byte(token+"\n"), 0600)
+	return os.WriteFile(file, []byte(token+"\n"), 0600)
 }
 
 func setNoProxyEnv(config *config.Control) error {
