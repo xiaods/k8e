@@ -215,6 +215,7 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 	if config.ControlConfig.Rootless {
 		return rootlessports.Register(ctx,
 			sc.Core.Core().V1().Service(),
+			!config.ControlConfig.DisableServiceLB,
 			config.ControlConfig.HTTPSPort)
 	}
 

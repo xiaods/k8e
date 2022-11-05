@@ -113,6 +113,7 @@ type Agent struct {
 	DisableCCM              bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
+	DisableServiceLB        bool
 	EnableIPv4              bool
 	EnableIPv6              bool
 }
@@ -156,7 +157,9 @@ type Control struct {
 	DisableETCD              bool
 	DisableKubeProxy         bool
 	DisableScheduler         bool
+	DisableServiceLB         bool
 	Rootless                 bool
+	ServiceLBNamespace       string
 	EnablePProf              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
@@ -287,7 +290,8 @@ type ControlRuntime struct {
 	Tunnel             http.Handler
 	Authenticator      authenticator.Request
 
-	EgressSelectorConfig string
+	EgressSelectorConfig  string
+	CloudControllerConfig string
 
 	ClientAuthProxyCert string
 	ClientAuthProxyKey  string
