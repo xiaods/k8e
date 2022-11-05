@@ -779,6 +779,7 @@ func genCloudConfig(controlConfig *config.Control) error {
 		LBNamespace: controlConfig.ServiceLBNamespace,
 		LBImage:     cloudprovider.DefaultLBImage,
 		Rootless:    controlConfig.Rootless,
+		NodeEnabled: !controlConfig.DisableCCM,
 	}
 	if controlConfig.SystemDefaultRegistry != "" {
 		cloudConfig.LBImage = controlConfig.SystemDefaultRegistry + "/" + cloudConfig.LBImage
