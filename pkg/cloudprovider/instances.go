@@ -2,6 +2,7 @@ package cloudprovider
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -68,7 +69,7 @@ func (k *k8e) InstanceMetadata(ctx context.Context, node *v1.Node) (*cloudprovid
 	}
 
 	return &cloudprovider.InstanceMetadata{
-		ProviderID:    version.Program,
+		ProviderID:    fmt.Sprintf("%s://%s", version.Program, node.Name),
 		InstanceType:  version.Program,
 		NodeAddresses: addresses,
 		Zone:          "",
