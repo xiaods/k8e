@@ -156,6 +156,7 @@ type Control struct {
 	DisableETCD              bool
 	DisableKubeProxy         bool
 	DisableScheduler         bool
+	Rootless                 bool
 	EnablePProf              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
