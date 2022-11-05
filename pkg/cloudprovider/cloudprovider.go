@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 
 	"github.com/rancher/wrangler/pkg/apply"
 	"github.com/rancher/wrangler/pkg/generated/controllers/apps"
@@ -63,7 +62,7 @@ func init() {
 
 		if config != nil {
 			var bytes []byte
-			bytes, err = ioutil.ReadAll(config)
+			bytes, err = io.ReadAll(config)
 			if err == nil {
 				err = json.Unmarshal(bytes, &k.Config)
 			}
