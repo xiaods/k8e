@@ -13,3 +13,13 @@ func NewCheckConfigCommand(action func(*cli.Context) error) cli.Command {
 		Action:          action,
 	}
 }
+
+func NewInitOSConfigCommand(action func(*cli.Context) error) cli.Command {
+	return cli.Command{
+		Name:            "init-os-config",
+		Usage:           "Initialize OS configuration",
+		SkipFlagParsing: true,
+		SkipArgReorder:  true,
+		Action:          action,
+	}
+}
