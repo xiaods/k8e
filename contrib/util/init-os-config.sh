@@ -1,21 +1,12 @@
 #!/usr/bin/env bash
-# Copyright 2020 The KubeSphere Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+
+# bits of this were adapted from initOS.sh for kubekey
+# see also https://github.com/kubesphere/kubekey/blob/b5bb4acbebaa5ef04d9de743274171be1ebad3fd/cmd/kk/pkg/bootstrap/os/templates/init_script.go
+
 swapoff -a
 sed -i /^[^#]*swap*/s/^/\#/g /etc/fstab
 	# See https://github.com/kubernetes/website/issues/14457
-if [ -f /etc/selinux/config ]; then 
+if [ -f /etc/selinux/config ]; then
 	  sed -ri 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
 fi
 # for ubuntu: sudo apt install selinux-utils
@@ -81,15 +72,6 @@ if [ $? -eq 0 ]; then
 	         echo 'nf_conntrack' > /etc/modules-load.d/kube_proxy-ipvs.conf
 fi
 sysctl -p
-sed -i ':a;$!{N;ba};s@# kubekey hosts BEGIN.*# kubekey hosts END@@' /etc/hosts
-sed -i '/^$/N;/\n$/N;//D' /etc/hosts
-cat >>/etc/hosts<<EOF
-# kubekey hosts BEGIN
-{{- range .Hosts }}
-{{ . }}
-{{- end }}
-# kubekey hosts END
-EOF
 echo 3 > /proc/sys/vm/drop_caches
 # Make sure the iptables utility doesn't use the nftables backend.
 update-alternatives --set iptables /usr/sbin/iptables-legacy >/dev/null 2>&1 || true
