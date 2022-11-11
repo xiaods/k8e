@@ -515,7 +515,7 @@ download_and_verify() {
 # --- check-config  ---
 check_config() {
     info "init OS config && Checking k8e config"
-    $SUDO $BIN_DIR/k8e init-os
+    $SUDO $BIN_DIR/k8e init-os-config
     $SUDO $BIN_DIR/k8e check-config
 }
 
