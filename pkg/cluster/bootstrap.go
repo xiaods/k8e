@@ -329,35 +329,15 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 		}
 		logrus.Debugf("Reconciling %s at '%s'", pathKey, path)
 
-		f, err := os.Open(path)
+		updated, newer, err := isNewerFile(path, fileData)
 		if err != nil {
-			if os.IsNotExist(err) {
-				logrus.Warn(path + " doesn't exist. continuing...")
-				updateDisk = true
-				continue
-			}
-			return errors.Wrapf(err, "reconcile failed to open %s", pathKey)
+			return errors.Wrapf(err, "failed to get update status of %s", pathKey)
 		}
-		defer f.Close()
-
-		fData, err := ioutil.ReadAll(f)
-		if err != nil {
-			return errors.Wrapf(err, "reconcile failed to read %s", pathKey)
+		if newer {
+			newerOnDisk = append(newerOnDisk, path)
 		}
 
-		if !bytes.Equal(fileData.Content, fData) {
-			updateDisk = true
-			info, err := f.Stat()
-			if err != nil {
-				return errors.Wrapf(err, "reconcile failed to stat %s", pathKey)
-			}
-
-			if info.ModTime().Unix()-fileData.Timestamp.Unix() >= systemTimeSkew {
-				newerOnDisk = append(newerOnDisk, path)
-			} else {
-				logrus.Warn(path + " will be updated from the datastore.")
-			}
-		}
+		updateDisk = updateDisk || updated
 	}
 
 	if c.config.ClusterReset {
@@ -384,6 +364,8 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 
 	return nil
 }
+
+
 
 // httpBootstrap retrieves bootstrap data (certs and keys, etc) from the remote server via HTTP
 // and loads it into the ControlRuntimeBootstrap struct. Unlike the storage bootstrap path,
