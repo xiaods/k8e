@@ -20,6 +20,7 @@ import (
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	"github.com/yl2chen/cidranger"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -31,6 +32,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	toolswatch "k8s.io/client-go/tools/watch"
+	"k8s.io/kubernetes/pkg/cluster/ports"
 )
 
 type agentTunnel struct {
@@ -75,10 +77,11 @@ func Setup(ctx context.Context, config *daemonconfig.Node, proxy proxy.Proxy) er
 	}
 
 	tunnel := &agentTunnel{
-		client: client,
-		cidrs:  cidranger.NewPCTrieRanger(),
-		ports:  map[string]bool{},
-		mode:   config.EgressSelectorMode,
+		client:      client,
+		cidrs:       cidranger.NewPCTrieRanger(),
+		ports:       map[string]bool{},
+		mode:        config.EgressSelectorMode,
+		kubeletPort: fmt.Sprint(ports.KubeletPort),
 	}
 
 	apiServerReady := make(chan struct{})
@@ -86,6 +89,14 @@ func Setup(ctx context.Context, config *daemonconfig.Node, proxy proxy.Proxy) er
 		if err := util.WaitForAPIServerReady(ctx, config.AgentConfig.KubeConfigKubelet, util.DefaultAPIServerReadyTimeout); err != nil {
 			logrus.Fatalf("Tunnel watches failed to wait for apiserver ready: %v", err)
 		}
+		if err := util.WaitForRBACReady(ctx, config.AgentConfig.KubeConfigK3sController, util.DefaultAPIServerReadyTimeout, authorizationv1.ResourceAttributes{
+			Namespace: metav1.NamespaceDefault,
+			Verb:      "list",
+			Resource:  "endpoints",
+		}, ""); err != nil {
+			logrus.Fatalf("Tunnel watches failed to wait for RBAC: %v", err)
+		}
+
 		close(apiServerReady)
 	}()
 
@@ -114,7 +125,7 @@ func Setup(ctx context.Context, config *daemonconfig.Node, proxy proxy.Proxy) er
 			proxy.SetSupervisorDefault(addresses[0])
 			proxy.Update(addresses)
 		} else {
-			if endpoint, _ := client.CoreV1().Endpoints("default").Get(ctx, "kubernetes", metav1.GetOptions{}); endpoint != nil {
+			if endpoint, _ := client.CoreV1().Endpoints(metav1.NamespaceDefault).Get(ctx, "kubernetes", metav1.GetOptions{}); endpoint != nil {
 				if addresses := util.GetAddresses(endpoint); len(addresses) > 0 {
 					proxy.Update(addresses)
 				}

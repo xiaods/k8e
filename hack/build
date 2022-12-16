@@ -36,8 +36,11 @@ VERSIONFLAGS="
 
     -X ${PKG_CNI_PLUGINS}/pkg/utils/buildversion.BuildVersion=${VERSION_CNIPLUGINS}
 "
-LDFLAGS="
-    -w -s"
+if [ -n "${DEBUG}" ]; then
+  GCFLAGS="-N -l"
+else
+  LDFLAGS="-w -s"
+fi
 
 STATIC="
     -extldflags '-static -lm -ldl -lz -lpthread'
@@ -91,12 +94,12 @@ if [ ! -x ${INSTALLBIN}/cni ]; then
     WORKDIR=$TMPDIR/src/github.com/containernetworking/plugins
     git clone -b $VERSION_CNIPLUGINS https://github.com/rancher/plugins.git $WORKDIR
     cd $WORKDIR
-    GO111MODULE=off GOPATH=$TMPDIR CGO_ENABLED=0 GOOS=${GOOS} "${GO}" build -tags "$TAGS" -ldflags "$LDFLAGS $STATIC" -o $INSTALLBIN/cni
+    GO111MODULE=off GOPATH=$TMPDIR CGO_ENABLED=0 GOOS=${GOOS} "${GO}" build -tags "$TAGS" -gcflags="all=${GCFLAGS}" -ldflags "$LDFLAGS $STATIC" -o $INSTALLBIN/cni
 )
 fi
 
 echo Building k8e
-CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/k8e ./cmd/server/main.go
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -gcflags="all=${GCFLAGS}" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/k8e ./cmd/server/main.go
 ln -s k8e ./bin/k8e-agent
 ln -s k8e ./bin/k8e-server
 ln -s k8e ./bin/k8e-etcd-snapshot
@@ -112,14 +115,14 @@ export GOPATH=$(pwd)/build
 echo Building containerd
 pushd ./build/src/github.com/containerd/containerd
 TAGS="${TAGS/netcgo/netgo}"
-CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/containerd              ./cmd/containerd
-CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/containerd-shim-runc-v2 ./cmd/containerd-shim-runc-v2
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -gcflags="all=${GCFLAGS}" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/containerd              ./cmd/containerd
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -gcflags="all=${GCFLAGS}" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/containerd-shim-runc-v2 ./cmd/containerd-shim-runc-v2
 popd
 cp -vf ./build/src/github.com/containerd/containerd/bin/* ./bin/
 
 echo Building runc
 pushd ./build/src/github.com/opencontainers/runc
 rm -f runc
-make EXTRA_LDFLAGS="-w -s" BUILDTAGS="$RUNC_TAGS" $RUNC_STATIC
+make EXTRA_FLAGS="-gcflags=\"all=${GCFLAGS}\"" EXTRA_LDFLAGS="$LDFLAGS" BUILDTAGS="$RUNC_TAGS" $RUNC_STATIC
 popd
 cp -vf ./build/src/github.com/opencontainers/runc/runc ./bin/

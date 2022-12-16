@@ -1,4 +1,4 @@
-ARG GOLANG=golang:1.19.2-alpine3.15
+ARG GOLANG=golang:1.19.4-alpine3.16
 FROM ${GOLANG}
 
 ARG http_proxy=$http_proxy
@@ -38,7 +38,7 @@ ARG SELINUX=true
 ENV SELINUX $SELINUX
 
 ENV DAPPER_RUN_ARGS --privileged -v k8e-cache:/go/src/github.com/xiaods/k8e/.cache -v trivy-cache:/root/.cache/trivy
-ENV DAPPER_ENV REPO TAG RELEASE_TAG IMAGE_NAME SKIP_VALIDATE GCLOUD_AUTH GITHUB_TOKEN GOLANG GOOS GOARCH
+ENV DAPPER_ENV REPO TAG RELEASE_TAG IMAGE_NAME SKIP_VALIDATE GCLOUD_AUTH GITHUB_TOKEN GOLANG GOOS GOARCH DEBUG
 ENV DAPPER_SOURCE /go/src/github.com/xiaods/k8e/
 ENV DAPPER_OUTPUT ./bin ./dist ./build/out ./build/static ./pkg/static ./pkg/deploy
 

@@ -23,6 +23,11 @@ fi
 CMD_NAME="dist/artifacts/k8e${BIN_SUFFIX}"
 SIZE=$(stat -c '%s' ${CMD_NAME})
 
+if [ -n "${DEBUG}" ]; then
+    echo "DEBUG is set, ignoring binary size"
+    exit 0
+fi
+
 if [ ${SIZE} -gt ${MAX_BINARY_SIZE} ]; then
     echo "k8e binary ${CMD_NAME} size ${SIZE} exceeds max acceptable size of ${MAX_BINARY_SIZE} bytes"
     exit 1

@@ -68,7 +68,7 @@ func TestMigrateFileNodes(t *testing.T) {
 
 	secretClient := &mockSecretClient{}
 	nodeClient := &mockNodeClient{}
-	nodeClient.nodes = make([]v1.Node, createNumNodes, createNumNodes)
+	nodeClient.nodes = make([]v1.Node, createNumNodes)
 	for i := range nodeClient.nodes {
 		nodeClient.nodes[i].Name = fmt.Sprintf("node%d", i+1)
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 func Random(size int) (string, error) {
-	token := make([]byte, size, size)
+	token := make([]byte, size)
 	_, err := cryptorand.Read(token)
 	if err != nil {
 		return "", err

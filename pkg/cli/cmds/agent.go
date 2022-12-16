@@ -241,14 +241,15 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 			ResolvConfFlag,
 			ExtraKubeletArgs,
 			ExtraKubeProxyArgs,
+			// Experimental flags
 			cli.BoolFlag{
 				Name:        "rootless",
 				Usage:       "(experimental) Run rootless",
 				Destination: &AgentConfig.Rootless,
 			},
 
+			PreferBundledBin,
 			// Deprecated/hidden below
-
 			&DisableSELinuxFlag,
 			DockerFlag,
 			cli.StringFlag{

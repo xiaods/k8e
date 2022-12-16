@@ -2,7 +2,6 @@
 set -e
 
 cd $(dirname $0)/..
-. ./hack/version.sh
 
 echo Running: go mod tidy
 go mod tidy
@@ -19,6 +18,15 @@ if [ -n "$SKIP_VALIDATE" ]; then
 fi
 echo Running validation
 
+. ./hack/version.sh
+
+if [ -n "$DIRTY" ]; then
+    echo Source dir is dirty
+    git status --porcelain --untracked-files=no
+    git diff
+    exit 1
+fi
+
 echo Running: go version
 DEPENDENCIES_URL="https://raw.githubusercontent.com/kubernetes/kubernetes/${VERSION_K8S}/build/dependencies.yaml"
 GOLANG_VERSION=$(curl -sL "${DEPENDENCIES_URL}" | yq e '.dependencies[] | select(.name == "golang: upstream version").version' -)
@@ -32,13 +40,6 @@ go mod verify
 
 if [ ! -e build/data ];then
     mkdir -p build/data
-fi
-
-if [ -n "$DIRTY" ]; then
-    echo Source dir is dirty
-    git status --porcelain --untracked-files=no
-    git diff
-    exit 1
 fi
 
 if ! command -v golangci-lint; then

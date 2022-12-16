@@ -91,7 +91,7 @@ func SetNodeConfigAnnotations(node *corev1.Node) (bool, error) {
 		node.Annotations = make(map[string]string)
 	}
 	configHash := h.Sum(nil)
-	encoded := base32.StdEncoding.EncodeToString(configHash[:])
+	encoded := base32.StdEncoding.EncodeToString(configHash)
 	if node.Annotations[NodeConfigHashAnnotation] == encoded {
 		return false, nil
 	}
