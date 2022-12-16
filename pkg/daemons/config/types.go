@@ -98,7 +98,6 @@ type Agent struct {
 	ImageCredProvBinDir     string
 	ImageCredProvConfig     string
 	IPSECPSK                string
-	StrongSwanDir           string
 	PrivateRegistry         string
 	SystemDefaultRegistry   string
 	AirgapExtraRegistry     []string
