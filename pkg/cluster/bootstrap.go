@@ -365,7 +365,40 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 	return nil
 }
 
+// isNewerFile compares the file from disk and datastore, and returns
+// update status.
+func isNewerFile(path string, file bootstrap.File) (updated bool, newerOnDisk bool, _ error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			logrus.Warn(path + " doesn't exist. continuing...")
+			return true, false, nil
+		}
+		return false, false, errors.Wrapf(err, "reconcile failed to open")
+	}
+	defer f.Close()
 
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return false, false, errors.Wrapf(err, "reconcile failed to read")
+	}
+
+	if bytes.Equal(file.Content, data) {
+		return false, false, nil
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return false, false, errors.Wrapf(err, "reconcile failed to stat")
+	}
+
+	if info.ModTime().Unix()-file.Timestamp.Unix() >= systemTimeSkew {
+		return true, true, nil
+	}
+
+	logrus.Warn(path + " will be updated from the datastore.")
+	return true, false, nil
+}
 
 // httpBootstrap retrieves bootstrap data (certs and keys, etc) from the remote server via HTTP
 // and loads it into the ControlRuntimeBootstrap struct. Unlike the storage bootstrap path,
