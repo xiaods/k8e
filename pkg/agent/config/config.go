@@ -153,7 +153,7 @@ func ensureNodeID(nodeIDFile string) (string, error) {
 		id, err := os.ReadFile(nodeIDFile)
 		return strings.TrimSpace(string(id)), err
 	}
-	id := make([]byte, 4, 4)
+	id := make([]byte, 4)
 	_, err := cryptorand.Read(id)
 	if err != nil {
 		return "", err
@@ -167,7 +167,7 @@ func ensureNodePassword(nodePasswordFile string) (string, error) {
 		password, err := os.ReadFile(nodePasswordFile)
 		return strings.TrimSpace(string(password)), err
 	}
-	password := make([]byte, 16, 16)
+	password := make([]byte, 16)
 	_, err := cryptorand.Read(password)
 	if err != nil {
 		return "", err

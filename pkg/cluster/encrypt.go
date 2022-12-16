@@ -28,7 +28,7 @@ func storageKey(passphrase string) string {
 func keyHash(passphrase string) string {
 	d := sha256.New()
 	d.Write([]byte(passphrase))
-	return hex.EncodeToString(d.Sum(nil)[:])[:12]
+	return hex.EncodeToString(d.Sum(nil))[:12]
 }
 
 // encrypt encrypts a byte slice using aes+gcm with a pbkdf2 key derived from the passphrase and a random salt.
