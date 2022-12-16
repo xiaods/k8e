@@ -20,6 +20,7 @@ import (
 	"github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"github.com/go-test/deep"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -476,10 +477,18 @@ func (c *Cluster) compareConfig() error {
 		clusterControl.CriticalControlArgs.EgressSelectorMode = c.config.CriticalControlArgs.EgressSelectorMode
 	}
 
-	if !reflect.DeepEqual(clusterControl.CriticalControlArgs, c.config.CriticalControlArgs) {
-		logrus.Debugf("This is the server CriticalControlArgs: %#v", clusterControl.CriticalControlArgs)
-		logrus.Debugf("This is the local CriticalControlArgs: %#v", c.config.CriticalControlArgs)
-		return errors.New("critical configuration value mismatch")
+	if diff := deep.Equal(c.config.CriticalControlArgs, clusterControl.CriticalControlArgs); diff != nil {
+		rc := reflect.ValueOf(clusterControl.CriticalControlArgs).Type()
+		for _, d := range diff {
+			field := strings.Split(d, ":")[0]
+			v, _ := rc.FieldByName(field)
+			if cliTag, found := v.Tag.Lookup("cli"); found {
+				logrus.Warnf("critical configuration mismatched: %s", cliTag)
+			} else {
+				logrus.Warnf("critical configuration mismatched: %s", field)
+			}
+		}
+		return errors.New("critical configuration value mismatch between servers")
 	}
 	return nil
 }
