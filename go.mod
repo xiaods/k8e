@@ -94,11 +94,11 @@ require (
 	github.com/opencontainers/selinux v1.10.1
 	github.com/otiai10/copy v1.7.0
 	github.com/pkg/errors v0.9.1
-	github.com/rancher/dynamiclistener v0.3.4-0.20220721210816-8ebd77f8a45a
+	github.com/rancher/dynamiclistener v0.3.5
 	github.com/rancher/lasso v0.0.0-20210616224652-fc3ebd901c08
 	github.com/rancher/remotedialer v0.2.6-0.20220624190122-ea57207bf2b8
 	github.com/rancher/wharfie v0.5.1
-	github.com/rancher/wrangler v1.0.0
+	github.com/rancher/wrangler v1.0.1-0.20220901190859-45a179631861
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rootless-containers/rootlesskit v1.0.1
 	github.com/sirupsen/logrus v1.9.0
@@ -113,7 +113,7 @@ require (
 	go.uber.org/zap v1.19.0
 	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa
 	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
-	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f
+	golang.org/x/sys v0.0.0-20221010170243-090e33056c14
 	google.golang.org/grpc v1.47.0
 	gopkg.in/yaml.v2 v2.4.0
 	inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
@@ -128,7 +128,7 @@ require (
 	k8s.io/klog v1.0.0
 	k8s.io/kubectl v0.25.3
 	k8s.io/kubernetes v1.25.3
-	k8s.io/utils v0.0.0-20220728103510-ee6ede2d64ed
+	k8s.io/utils v0.0.0-20221011040102-427025108f67
 	sigs.k8s.io/yaml v1.3.0
 )
 
@@ -334,10 +334,10 @@ require (
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4 // indirect
-	golang.org/x/net v0.0.0-20220722155237-a158d28d115b // indirect
+	golang.org/x/net v0.0.0-20221004154528-8021a29435af // indirect
 	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8 // indirect
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211 // indirect
-	golang.org/x/text v0.3.7 // indirect
+	golang.org/x/text v0.3.8 // indirect
 	golang.org/x/time v0.0.0-20220210224613-90d013bbcef8 // indirect
 	golang.org/x/tools v0.1.12 // indirect
 	gonum.org/v1/gonum v0.6.2 // indirect
@@ -359,7 +359,7 @@ require (
 	k8s.io/controller-manager v0.25.2 // indirect
 	k8s.io/csi-translation-lib v0.0.0 // indirect
 	k8s.io/gengo v0.0.0-20211129171323-c02415ce4185 // indirect
-	k8s.io/klog/v2 v2.70.1 // indirect
+	k8s.io/klog/v2 v2.80.1 // indirect
 	k8s.io/kube-aggregator v0.24.0 // indirect
 	k8s.io/kube-controller-manager v0.0.0 // indirect
 	k8s.io/kube-openapi v0.0.0-20220803162953-67bda5d908f1 // indirect
