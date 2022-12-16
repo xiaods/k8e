@@ -227,16 +227,16 @@ func RunStandalone(ctx context.Context, cfg cmds.Agent) error {
 // of containerd and kubelet. It will only return in case of error or context
 // cancellation.
 func Run(ctx context.Context, cfg cmds.Agent) error {
-	dualNode, err := utilsnet.IsDualStackIPStrings(cfg.NodeIP)
-		if err != nil {
-			return err
-		}
-		if err := rootless.Rootless(cfg.DataDir, dualNode); err != nil {
+	if err := cgroups.Validate(); err != nil {
 		return err
 	}
 
 	if cfg.Rootless && !cfg.RootlessAlreadyUnshared {
-		if err := rootless.Rootless(cfg.DataDir); err != nil {
+		dualNode, err := utilsnet.IsDualStackIPStrings(cfg.NodeIP)
+		if err != nil {
+			return err
+		}
+		if err := rootless.Rootless(cfg.DataDir, dualNode); err != nil {
 			return err
 		}
 	}
