@@ -86,7 +86,7 @@ func (s *slirp4netnsDriver) APISocketPath() string {
 
 func getDriver(driverName string) portDriver {
 	logWriter := &logrusDebugWriter{}
-	
+
 	if driverName == "slirp4netns" {
 		return &slirp4netnsDriver{logWriter: logWriter}
 	}

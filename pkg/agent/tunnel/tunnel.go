@@ -20,6 +20,7 @@ import (
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	"github.com/yl2chen/cidranger"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -76,10 +77,10 @@ func Setup(ctx context.Context, config *daemonconfig.Node, proxy proxy.Proxy) er
 	}
 
 	tunnel := &agentTunnel{
-		client: client,
-		cidrs:  cidranger.NewPCTrieRanger(),
-		ports:  map[string]bool{},
-		mode:   config.EgressSelectorMode,
+		client:      client,
+		cidrs:       cidranger.NewPCTrieRanger(),
+		ports:       map[string]bool{},
+		mode:        config.EgressSelectorMode,
 		kubeletPort: fmt.Sprint(ports.KubeletPort),
 	}
 
