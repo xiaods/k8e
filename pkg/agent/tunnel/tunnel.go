@@ -89,7 +89,7 @@ func Setup(ctx context.Context, config *daemonconfig.Node, proxy proxy.Proxy) er
 		if err := util.WaitForAPIServerReady(ctx, config.AgentConfig.KubeConfigKubelet, util.DefaultAPIServerReadyTimeout); err != nil {
 			logrus.Fatalf("Tunnel watches failed to wait for apiserver ready: %v", err)
 		}
-		if err := util.WaitForRBACReady(ctx, config.AgentConfig.KubeConfigK3sController, util.DefaultAPIServerReadyTimeout, authorizationv1.ResourceAttributes{
+		if err := util.WaitForRBACReady(ctx, config.AgentConfig.KubeConfigK8eController, util.DefaultAPIServerReadyTimeout, authorizationv1.ResourceAttributes{
 			Namespace: metav1.NamespaceDefault,
 			Verb:      "list",
 			Resource:  "endpoints",
