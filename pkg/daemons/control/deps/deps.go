@@ -11,13 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
-	"io/fs"
 
 	certutil "github.com/rancher/dynamiclistener/cert"
 	"github.com/sirupsen/logrus"
@@ -40,7 +40,7 @@ const (
 	aescbcKeySize  = 32
 
 	RequestHeaderCN                    = "system:auth-proxy"
-	defaultNewSignedCertExpirationDays = time.Hour * 24 * 365 * 10
+	defaultNewSignedCertExpirationDays = time.Hour * 24 * 365 * 10 //10 year certificate expiration
 )
 
 var (
