@@ -20,6 +20,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/kubectl"
 	"github.com/xiaods/k8e/pkg/cli/secretsencrypt"
 	"github.com/xiaods/k8e/pkg/cli/server"
+	"github.com/xiaods/k8e/pkg/cli/token"
 	"github.com/xiaods/k8e/pkg/configfilearg"
 	"github.com/xiaods/k8e/pkg/containerd"
 	ctr2 "github.com/xiaods/k8e/pkg/ctr"
@@ -48,6 +49,12 @@ func main() {
 		cmds.NewKubectlCommand(kubectl.Run),
 		cmds.NewCRICTL(crictl.Run),
 		cmds.NewCtrCommand(ctr.Run),
+		cmds.NewTokenCommands(
+			token.Create,
+			token.Delete,
+			token.Generate,
+			token.List,
+		),
 		cmds.NewEtcdSnapshotCommand(etcdsnapshot.Save,
 			cmds.NewEtcdSnapshotSubcommands(
 				etcdsnapshot.Delete,
@@ -66,7 +73,9 @@ func main() {
 		),
 		cmds.NewCertCommand(
 			cmds.NewCertSubcommands(
-				cert.Run),
+				cert.Rotate,
+				cert.RotateCA,
+			),
 		),
 		cmds.NewCompletionCommand(completion.Run),
 	}

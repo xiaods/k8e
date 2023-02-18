@@ -7,7 +7,7 @@ cd $(dirname $0)/..
 
 GO=${GO-go}
 
-for i in crictl kubectl k8e-agent k8e-server k8e-etcd-snapshot k8e-secrets-encrypt k8e-certificate k8e-completion; do
+for i in crictl kubectl k8e-agent k8e-server k8e-token k8e-etcd-snapshot k8e-secrets-encrypt k8e-certificate k8e-completion; do
     rm -f bin/$i
     ln -s k8e bin/$i
 done

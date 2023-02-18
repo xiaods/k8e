@@ -37,6 +37,7 @@ func main() {
 		return
 	}
 
+	tokenCommand := internalCLIAction(version.Program+"-"+cmds.TokenCommand, dataDir, os.Args)
 	etcdsnapshotCommand := internalCLIAction(version.Program+"-"+cmds.EtcdSnapshotCommand, dataDir, os.Args)
 	secretsencryptCommand := internalCLIAction(version.Program+"-"+cmds.SecretsEncryptCommand, dataDir, os.Args)
 	certCommand := internalCLIAction(version.Program+"-"+cmds.CertCommand, dataDir, os.Args)
@@ -52,6 +53,12 @@ func main() {
 		cmds.NewCtrCommand(externalCLIAction("ctr", dataDir)),
 		cmds.NewCheckConfigCommand(externalCLIAction("check-config", dataDir)),
 		cmds.NewInitOSConfigCommand(externalCLIAction("init-os-config", dataDir)),
+		cmds.NewTokenCommands(
+			tokenCommand,
+			tokenCommand,
+			tokenCommand,
+			tokenCommand,
+		),
 		cmds.NewEtcdSnapshotCommand(etcdsnapshotCommand,
 			cmds.NewEtcdSnapshotSubcommands(
 				etcdsnapshotCommand,
@@ -70,7 +77,9 @@ func main() {
 		),
 		cmds.NewCertCommand(
 			cmds.NewCertSubcommands(
-				certCommand),
+				certCommand,
+				certCommand,
+			),
 		),
 		cmds.NewCompletionCommand(internalCLIAction(version.Program+"-completion", dataDir, os.Args)),
 	}

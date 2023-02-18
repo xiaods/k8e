@@ -550,30 +550,37 @@ func (e *ETCD) Register(ctx context.Context, config *config.Control, handler htt
 	e.config.Datastore.BackendTLSConfig.CertFile = e.config.Runtime.ClientETCDCert
 	e.config.Datastore.BackendTLSConfig.KeyFile = e.config.Runtime.ClientETCDKey
 
-	tombstoneFile := filepath.Join(DBDir(e.config), "tombstone")
-	if _, err := os.Stat(tombstoneFile); err == nil {
-		logrus.Infof("tombstone file has been detected, removing data dir to rejoin the cluster")
-		if _, err := backupDirWithRetention(DBDir(e.config), maxBackupRetention); err != nil {
+	e.config.Runtime.ClusterControllerStarts["etcd-node-metadata"] = func(ctx context.Context) {
+		registerMetadataHandlers(ctx, e)
+	}
+
+	// The apiserver endpoint controller needs to run on a node with a local apiserver,
+	// in order to successfully seed etcd with the endpoint list. The member removal controller
+	// also needs to run on a non-etcd node as to avoid disruption if running on the node that
+	// is being removed from the cluster.
+	if !e.config.DisableAPIServer {
+		e.config.Runtime.LeaderElectedClusterControllerStarts[version.Program+"-etcd"] = func(ctx context.Context) {
+			registerEndpointsHandlers(ctx, e)
+			registerMemberHandlers(ctx, e)
+		}
+	}
+
+	// Tombstone file checking is unnecessary if we're not running etcd.
+	if !e.config.DisableETCD {
+		tombstoneFile := filepath.Join(DBDir(e.config), "tombstone")
+		if _, err := os.Stat(tombstoneFile); err == nil {
+			logrus.Infof("tombstone file has been detected, removing data dir to rejoin the cluster")
+			if _, err := backupDirWithRetention(DBDir(e.config), maxBackupRetention); err != nil {
+				return nil, err
+			}
+		}
+
+		if err := e.setName(false); err != nil {
 			return nil, err
 		}
 	}
 
-	if err := e.setName(false); err != nil {
-		return nil, err
-	}
-
-	e.config.Runtime.ClusterControllerStart = func(ctx context.Context) error {
-		registerMetadataHandlers(ctx, e)
-		return nil
-	}
-
-	e.config.Runtime.LeaderElectedClusterControllerStart = func(ctx context.Context) error {
-		registerMemberHandlers(ctx, e)
-		registerEndpointsHandlers(ctx, e)
-		return nil
-	}
-
-	return e.handler(handler), err
+	return e.handler(handler), nil
 }
 
 // setName sets a unique name for this cluster member. The first time this is called,
@@ -658,6 +665,8 @@ func getClientConfig(ctx context.Context, control *config.Control, endpoints ...
 		DialTimeout:          defaultDialTimeout,
 		DialKeepAliveTime:    defaultKeepAliveTime,
 		DialKeepAliveTimeout: defaultKeepAliveTimeout,
+		AutoSyncInterval:     defaultKeepAliveTimeout,
+		PermitWithoutStream:  true,
 	}
 
 	var err error
@@ -2118,21 +2127,7 @@ func GetAPIServerURLsFromETCD(ctx context.Context, cfg *config.Control) ([]strin
 // GetMembersClientURLs will list through the member lists in etcd and return
 // back a combined list of client urls for each member in the cluster
 func (e *ETCD) GetMembersClientURLs(ctx context.Context) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, testTimeout)
-	defer cancel()
-
-	members, err := e.client.MemberList(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var memberUrls []string
-	for _, member := range members.Members {
-		for _, clientURL := range member.ClientURLs {
-			memberUrls = append(memberUrls, string(clientURL))
-		}
-	}
-	return memberUrls, nil
+	return e.client.Endpoints(), nil
 }
 
 // GetMembersNames will list through the member lists in etcd and return
