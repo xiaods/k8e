@@ -6,7 +6,6 @@ package containerd
 import (
 	"context"
 	"os"
-	"time"
 
 	"github.com/containerd/containerd"
 	"github.com/docker/docker/pkg/parsers/kernel"
@@ -20,8 +19,6 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
 	"golang.org/x/sys/unix"
-	"google.golang.org/grpc"
-	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 	"k8s.io/kubernetes/pkg/kubelet/util"
 )
 
@@ -99,30 +96,7 @@ func setupContainerdConfig(ctx context.Context, cfg *config.Node) error {
 	return util2.WriteFile(cfg.Containerd.Config, parsedTemplate)
 }
 
-// criConnection connects to a CRI socket at the given path.
-func CriConnection(ctx context.Context, address string) (*grpc.ClientConn, error) {
-	addr, dialer, err := util.GetAddressAndDialer(socketPrefix + address)
-	if err != nil {
-		return nil, err
-	}
-
-	conn, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithTimeout(3*time.Second), grpc.WithContextDialer(dialer), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)))
-	if err != nil {
-		return nil, err
-	}
-
-	c := runtimeapi.NewRuntimeServiceClient(conn)
-	_, err = c.Version(ctx, &runtimeapi.VersionRequest{
-		Version: "0.1.0",
-	})
-	if err != nil {
-		conn.Close()
-		return nil, err
-	}
-
-	return conn, nil
-}
-
+// Client returns a containerd client for the given address
 func Client(address string) (*containerd.Client, error) {
 	addr, _, err := util.GetAddressAndDialer(socketPrefix + address)
 	if err != nil {

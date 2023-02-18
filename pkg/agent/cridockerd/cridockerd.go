@@ -7,7 +7,9 @@ import (
 	"strings"
 
 	"github.com/Mirantis/cri-dockerd/cmd"
+	"github.com/Mirantis/cri-dockerd/cmd/version"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/agent/cri"
 	"github.com/xiaods/k8e/pkg/cgroups"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	utilsnet "k8s.io/utils/net"
@@ -22,6 +24,7 @@ func Run(ctx context.Context, cfg *config.Node) error {
 	command := cmd.NewDockerCRICommand(ctx.Done())
 	command.SetArgs(args)
 	logrus.Infof("Running cri-dockerd %s", config.ArgString(args))
+	logrus.Infof("cri-dockerd version %s", version.FullVersion())
 
 	go func() {
 		defer func() {
@@ -32,7 +35,7 @@ func Run(ctx context.Context, cfg *config.Node) error {
 		logrus.Fatalf("cri-dockerd exited: %v", command.ExecuteContext(ctx))
 	}()
 
-	return nil
+	return cri.WaitForService(ctx, cfg.CRIDockerd.Address, "cri-dockerd")
 }
 
 func getDockerCRIArgs(cfg *config.Node) []string {
