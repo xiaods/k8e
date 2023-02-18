@@ -41,6 +41,11 @@ if [ -z "$VERSION_RUNC" ]; then
     VERSION_RUNC="v0.0.0"
 fi
 
+VERSION_CRI_DOCKERD=$(grep github.com/Mirantis/cri-dockerd go.mod | head -n1 | awk '{print $4}')
+if [ -z "$VERSION_CRI_DOCKERD" ]; then
+  VERSION_CRI_DOCKERD="v0.0.0"
+fi
+
 VERSION_CNIPLUGINS="v1.1.1-k3s1"
 
 if [[ -n "$GIT_TAG" ]]; then

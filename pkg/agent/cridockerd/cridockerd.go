@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Mirantis/cri-dockerd/cmd"
+	"github.com/Mirantis/cri-dockerd/cmd/version"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/cgroups"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -22,6 +23,7 @@ func Run(ctx context.Context, cfg *config.Node) error {
 	command := cmd.NewDockerCRICommand(ctx.Done())
 	command.SetArgs(args)
 	logrus.Infof("Running cri-dockerd %s", config.ArgString(args))
+	logrus.Infof("cri-dockerd version %s", version.FullVersion())
 
 	go func() {
 		defer func() {
