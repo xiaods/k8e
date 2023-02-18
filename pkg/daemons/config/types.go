@@ -62,6 +62,8 @@ type Agent struct {
 	PodManifests            string
 	NodeName                string
 	NodeConfigPath          string
+	ClientKubeletCert       string
+	ClientKubeletKey        string
 	ServingKubeletCert      string
 	ServingKubeletKey       string
 	ServiceCIDR             *net.IPNet
