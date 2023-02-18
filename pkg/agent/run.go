@@ -277,7 +277,8 @@ func createProxyAndValidateToken(ctx context.Context, cfg *cmds.Agent) (proxy.Pr
 
 // configureNode waits for the node object to be created, and if/when it does,
 // ensures that the labels and annotations are up to date.
-func configureNode(ctx context.Context, agentConfig *daemonconfig.Agent, nodes typedcorev1.NodeInterface) error {
+func configureNode(ctx context.Context, nodeConfig *daemonconfig.Node, nodes typedcorev1.NodeInterface) error {
+	agentConfig := &nodeConfig.AgentConfig
 	fieldSelector := fields.Set{metav1.ObjectNameField: agentConfig.NodeName}.String()
 	lw := &cache.ListWatch{
 		ListFunc: func(options metav1.ListOptions) (object runtime.Object, e error) {
@@ -303,7 +304,7 @@ func configureNode(ctx context.Context, agentConfig *daemonconfig.Agent, nodes t
 		}
 
 		if !agentConfig.DisableCCM {
-			if annotations, changed := updateAddressAnnotations(agentConfig, node.Annotations); changed {
+			if annotations, changed := updateAddressAnnotations(nodeConfig, node.Annotations); changed {
 				node.Annotations = annotations
 				updateNode = true
 			}
@@ -314,13 +315,13 @@ func configureNode(ctx context.Context, agentConfig *daemonconfig.Agent, nodes t
 		}
 
 		// inject node config
-		if changed, err := nodeconfig.SetNodeConfigAnnotations(node); err != nil {
+		if changed, err := nodeconfig.SetNodeConfigAnnotations(nodeConfig, node); err != nil {
 			return false, err
 		} else if changed {
 			updateNode = true
 		}
 
-		if changed, err := nodeconfig.SetNodeConfigLabels(node); err != nil {
+		if changed, err := nodeconfig.SetNodeConfigLabels(nodeConfig, node); err != nil {
 			return false, err
 		} else if changed {
 			updateNode = true
@@ -380,7 +381,9 @@ func updateLegacyAddressLabels(agentConfig *daemonconfig.Agent, nodeLabels map[s
 	return nil, false
 }
 
-func updateAddressAnnotations(agentConfig *daemonconfig.Agent, nodeAnnotations map[string]string) (map[string]string, bool) {
+// updateAddressAnnotations updates the node annotations with important information about IP addresses of the node
+func updateAddressAnnotations(nodeConfig *daemonconfig.Node, nodeAnnotations map[string]string) (map[string]string, bool) {
+	agentConfig := &nodeConfig.AgentConfig
 	result := map[string]string{
 		cp.InternalIPKey: util.JoinIPs(agentConfig.NodeIPs),
 		cp.HostnameKey:   agentConfig.NodeName,
