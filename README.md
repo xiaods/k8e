@@ -1,7 +1,7 @@
 <img src="./docs/k8e-logo.png" alt="logo" style="zoom:30%;" /><br/>
-K8e 🚀 - Simple Kubernetes Distribution
+K8e 🚀 - Kubernetes Enterprise Edition that is ready to use immediately.
 ===============================================
-[Kubernetes Easy (k8e)🚀](https://getk8e.com) is a lightweight, Extensible, Enterprise Kubernetes distribution that allows users to uniformly manage, secure, and get out-of-the-box kubernetes cluster for enterprise environments.
+[Kubernetes Easy Engine(k8e)🚀](https://getk8e.com) is a lightweight, scalable enterprise-grade Kubernetes distribution that allows users to manage, protect and obtain out-of-the-box Kubernetes clusters in a unified manner. It is suitable for enterprise environments.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/xiaods/k8e)](https://goreportcard.com/report/github.com/xiaods/k8e) [![Hex.pm](https://img.shields.io/hexpm/l/apa)](https://github.com/xiaods/k8e/blob/master/LICENSE)
 
