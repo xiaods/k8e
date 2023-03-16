@@ -572,12 +572,6 @@ func getConfig(info *clientaccess.Info) (*config.Control, error) {
 	return controlControl, json.Unmarshal(data, controlControl)
 }
 
-// getReadyz returns nil if the server is ready, or an error if not.
-func getReadyz(info *clientaccess.Info) error {
-	_, err := info.Get("/v1-" + version.Program + "/readyz")
-	return err
-}
-
 // validateNetworkConfig ensures that the network configuration values provided by the server make sense.
 func validateNetworkConfig(nodeConfig *config.Node) error {
 	// Old versions of the server do not send enough information to correctly start the NPC. Users
