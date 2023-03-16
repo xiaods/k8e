@@ -77,7 +77,6 @@ type Agent struct {
 	ResolvConf              string
 	RootDir                 string
 	KubeConfigKubelet       string
-	KubeConfigKubeProxy     string
 	KubeConfigK8eController string
 	NodeIP                  string
 	NodeIPs                 []net.IP
@@ -90,7 +89,6 @@ type Agent struct {
 	CNIBinDir               string
 	CNIConfDir              string
 	ExtraKubeletArgs        []string
-	ExtraKubeProxyArgs      []string
 	PauseImage              string
 	Snapshotter             string
 	Systemd                 bool
@@ -150,7 +148,6 @@ type Control struct {
 	DisableAPIServer         bool
 	DisableControllerManager bool
 	DisableETCD              bool
-	DisableKubeProxy         bool
 	DisableScheduler         bool
 	DisableServiceLB         bool
 	Rootless                 bool
@@ -300,8 +297,6 @@ type ControlRuntime struct {
 	ClientControllerKey       string
 	ClientSchedulerCert       string
 	ClientSchedulerKey        string
-	ClientKubeProxyCert       string
-	ClientKubeProxyKey        string
 	ClientKubeletKey          string
 	ClientCloudControllerCert string
 	ClientCloudControllerKey  string

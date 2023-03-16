@@ -613,7 +613,6 @@ github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-aggregator v1.25.7-k3s1 h1:
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-aggregator v1.25.7-k3s1/go.mod h1:JM1cI36LdDUrM1UfKtKlGQ2SNCFWbMz/KnUJi6YL6eg=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-controller-manager v1.25.7-k3s1 h1:/+5jl4J+TxHKH/K1kLyjgd9s25eNOticMU9RPkUFq4c=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-controller-manager v1.25.7-k3s1/go.mod h1:CIW6RsyvelzZ7L/v4XTLoGDVrqjXyFBMNCUVhu01nuA=
-github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-proxy v1.25.7-k3s1 h1:3w7P296jf48GV2ZZSb2eBU8VjweruOnjM0qqrznTg0w=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-proxy v1.25.7-k3s1/go.mod h1:NYYxM/izl8fe0hbRmqeCmxAsDUZY4mvie03dYT5ntq8=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-scheduler v1.25.7-k3s1 h1:Q8A+e6L4gbCJPwFHDlskOmrkbrBb+ONTo0KMRH00ySI=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-scheduler v1.25.7-k3s1/go.mod h1:9QvnC36gDqaRvXMx8Pl1gLHN+KTKtSKhqGrAoOAfbIw=
@@ -715,7 +714,6 @@ github.com/mitchellh/mapstructure v0.0.0-20160808181253-ca63d7c062ee/go.mod h1:F
 github.com/mitchellh/mapstructure v1.1.2/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
 github.com/mitchellh/mapstructure v1.4.1 h1:CpVNEelQCZBooIPDn+AR3NpivK/TIKU8bDxdASFVQag=
 github.com/mitchellh/mapstructure v1.4.1/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RRV2QTWOzhPopBRo=
-github.com/moby/ipvs v1.0.1 h1:aoZ7fhLTXgDbzVrAnvV+XbKOU8kOET7B3+xULDF/1o0=
 github.com/moby/ipvs v1.0.1/go.mod h1:2pngiyseZbIKXNv7hsKj3O9UEz30c53MT9005gt2hxQ=
 github.com/moby/locker v1.0.1 h1:fOXqR41zeveg4fFODix+1Ch4mj/gT0NE1XJbp/epuBg=
 github.com/moby/locker v1.0.1/go.mod h1:S7SDdo5zpBK84bzzVlKr2V0hz+7x9hWbYC/kq7oQppc=

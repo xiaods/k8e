@@ -57,26 +57,6 @@ RETRY:
 	}
 }
 
-// KubeProxyDisabled returns a bool indicating whether or not kube-proxy has been disabled in the
-// server configuration. The server may not have a complete view of cluster configuration until
-// after all startup hooks have completed, so a call to this will block until after the server's
-// readyz endpoint returns OK.
-func KubeProxyDisabled(ctx context.Context, node *config.Node, proxy proxy.Proxy) bool {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-RETRY:
-	for {
-		disabled, err := getKubeProxyDisabled(ctx, node, proxy)
-		if err != nil {
-			logrus.Infof("Waiting to retrieve kube-proxy configuration; server is not ready: %v", err)
-			for range ticker.C {
-				continue RETRY
-			}
-		}
-		return disabled
-	}
-}
-
 // APIServers returns a list of apiserver endpoints, suitable for seeding client loadbalancer configurations.
 // This function will block until it can return a populated list of apiservers, or if the remote server returns
 // an error (indicating that it does not support this functionality).
@@ -404,17 +384,6 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 		return nil, err
 	}
 
-	clientKubeProxyCert := filepath.Join(envInfo.DataDir, "agent", "client-kube-proxy.crt")
-	clientKubeProxyKey := filepath.Join(envInfo.DataDir, "agent", "client-kube-proxy.key")
-	if err := getHostFile(clientKubeProxyCert, clientKubeProxyKey, info); err != nil {
-		return nil, err
-	}
-
-	kubeconfigKubeproxy := filepath.Join(envInfo.DataDir, "agent", "kubeproxy.kubeconfig")
-	if err := deps.KubeConfig(kubeconfigKubeproxy, proxy.APIServerURL(), serverCAFile, clientKubeProxyCert, clientKubeProxyKey); err != nil {
-		return nil, err
-	}
-
 	clientK8eControllerCert := filepath.Join(envInfo.DataDir, "agent", "client-"+version.Program+"-controller.crt")
 	clientK8eControllerKey := filepath.Join(envInfo.DataDir, "agent", "client-"+version.Program+"-controller.key")
 	if err := getHostFile(clientK8eControllerCert, clientK8eControllerKey, info); err != nil {
@@ -446,7 +415,6 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.AgentConfig.ResolvConf = locateOrGenerateResolvConf(envInfo)
 	nodeConfig.AgentConfig.ClientCA = clientCAFile
 	nodeConfig.AgentConfig.KubeConfigKubelet = kubeconfigKubelet
-	nodeConfig.AgentConfig.KubeConfigKubeProxy = kubeconfigKubeproxy
 	nodeConfig.AgentConfig.KubeConfigK8eController = kubeconfigK8eController
 	if envInfo.Rootless {
 		nodeConfig.AgentConfig.RootDir = filepath.Join(envInfo.DataDir, "agent", "kubelet")
@@ -556,7 +524,6 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	}
 
 	nodeConfig.AgentConfig.ExtraKubeletArgs = envInfo.ExtraKubeletArgs
-	nodeConfig.AgentConfig.ExtraKubeProxyArgs = envInfo.ExtraKubeProxyArgs
 	nodeConfig.AgentConfig.NodeTaints = envInfo.Taints
 	nodeConfig.AgentConfig.NodeLabels = envInfo.Labels
 	nodeConfig.AgentConfig.ImageCredProvBinDir = envInfo.ImageCredProvBinDir
@@ -590,30 +557,6 @@ func getAPIServers(ctx context.Context, node *config.Node, proxy proxy.Proxy) ([
 
 	endpoints := []string{}
 	return endpoints, json.Unmarshal(data, &endpoints)
-}
-
-// getKubeProxyDisabled attempts to return the DisableKubeProxy setting from the server configuration data.
-// It first checks the server readyz endpoint, to ensure that the configuration has stabilized before use.
-func getKubeProxyDisabled(ctx context.Context, node *config.Node, proxy proxy.Proxy) (bool, error) {
-	withCert := clientaccess.WithClientCertificate(node.AgentConfig.ClientKubeletCert, node.AgentConfig.ClientKubeletKey)
-	info, err := clientaccess.ParseAndValidateToken(proxy.SupervisorURL(), node.Token, withCert)
-	if err != nil {
-		return false, err
-	}
-
-	// 500 error indicates that the health check has failed; other errors (for example 401 Unauthorized)
-	// indicate that the server is down-level and doesn't support readyz, so we should just use whatever
-	// the server has for us.
-	if err := getReadyz(info); err != nil && strings.HasSuffix(err.Error(), "500 Internal Server Error") {
-		return false, err
-	}
-
-	controlConfig, err := getConfig(info)
-	if err != nil {
-		return false, errors.Wrap(err, "failed to retrieve configuration from server")
-	}
-
-	return controlConfig.DisableKubeProxy, nil
 }
 
 // getConfig returns server configuration data. Note that this may be mutated during system startup; anything that needs

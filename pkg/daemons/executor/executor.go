@@ -23,7 +23,6 @@ var (
 type Executor interface {
 	Bootstrap(ctx context.Context, nodeConfig *daemonconfig.Node, cfg cmds.Agent) error
 	Kubelet(ctx context.Context, args []string) error
-	KubeProxy(ctx context.Context, args []string) error
 	APIServerHandlers(ctx context.Context) (authenticator.Request, http.Handler, error)
 	APIServer(ctx context.Context, etcdReady <-chan struct{}, args []string) error
 	Scheduler(ctx context.Context, apiReady <-chan struct{}, args []string) error
@@ -135,10 +134,6 @@ func Bootstrap(ctx context.Context, nodeConfig *daemonconfig.Node, cfg cmds.Agen
 
 func Kubelet(ctx context.Context, args []string) error {
 	return executor.Kubelet(ctx, args)
-}
-
-func KubeProxy(ctx context.Context, args []string) error {
-	return executor.KubeProxy(ctx, args)
 }
 
 func APIServerHandlers(ctx context.Context) (authenticator.Request, http.Handler, error) {

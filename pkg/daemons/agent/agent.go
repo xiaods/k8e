@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/xiaods/k8e/pkg/agent/config"
 	"github.com/xiaods/k8e/pkg/agent/proxy"
 	daemonconfig "github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
@@ -25,22 +24,7 @@ func Agent(ctx context.Context, nodeConfig *daemonconfig.Node, proxy proxy.Proxy
 		return err
 	}
 
-	go func() {
-		if !config.KubeProxyDisabled(ctx, nodeConfig, proxy) {
-			if err := startKubeProxy(ctx, &nodeConfig.AgentConfig); err != nil {
-				logrus.Fatalf("Failed to start kube-proxy: %v", err)
-			}
-		}
-	}()
-
 	return nil
-}
-
-func startKubeProxy(ctx context.Context, cfg *daemonconfig.Agent) error {
-	argsMap := kubeProxyArgs(cfg)
-	args := daemonconfig.GetArgs(argsMap, cfg.ExtraKubeProxyArgs)
-	logrus.Infof("Running kube-proxy %s", daemonconfig.ArgString(args))
-	return executor.KubeProxy(ctx, args)
 }
 
 func startKubelet(ctx context.Context, cfg *daemonconfig.Agent) error {

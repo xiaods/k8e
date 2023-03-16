@@ -19,25 +19,6 @@ const (
 	socketPrefix = "npipe://"
 )
 
-func kubeProxyArgs(cfg *config.Agent) map[string]string {
-	bindAddress := "127.0.0.1"
-	_, IPv6only, _ := util.GetFirstString([]string{cfg.NodeIP})
-	if IPv6only {
-		bindAddress = "::1"
-	}
-	argsMap := map[string]string{
-		"proxy-mode":           "kernelspace",
-		"healthz-bind-address": bindAddress,
-		"kubeconfig":           cfg.KubeConfigKubeProxy,
-		"cluster-cidr":         util.JoinIPNets(cfg.ClusterCIDRs),
-	}
-	if cfg.NodeName != "" {
-		argsMap["hostname-override"] = cfg.NodeName
-	}
-
-	return argsMap
-}
-
 func kubeletArgs(cfg *config.Agent) map[string]string {
 	bindAddress := "127.0.0.1"
 	_, IPv6only, _ := util.GetFirstString([]string{cfg.NodeIP})

@@ -39,7 +39,6 @@ type Agent struct {
 	SystemDefaultRegistry    string
 	AirgapExtraRegistry      cli.StringSlice
 	ExtraKubeletArgs         cli.StringSlice
-	ExtraKubeProxyArgs       cli.StringSlice
 	Labels                   cli.StringSlice
 	Taints                   cli.StringSlice
 	ImageCredProvBinDir      string
@@ -145,11 +144,6 @@ var (
 		Usage: "(agent/flags) Customized flag for kubelet process",
 		Value: &AgentConfig.ExtraKubeletArgs,
 	}
-	ExtraKubeProxyArgs = &cli.StringSliceFlag{
-		Name:  "kube-proxy-arg",
-		Usage: "(agent/flags) Customized flag for kube-proxy process",
-		Value: &AgentConfig.ExtraKubeProxyArgs,
-	}
 	NodeTaints = &cli.StringSliceFlag{
 		Name:  "node-taint",
 		Usage: "(agent/node) Registering kubelet with set of taints",
@@ -240,7 +234,6 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 			NodeExternalIPFlag,
 			ResolvConfFlag,
 			ExtraKubeletArgs,
-			ExtraKubeProxyArgs,
 			// Experimental flags
 			&cli.BoolFlag{
 				Name:        "rootless",
