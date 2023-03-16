@@ -6,7 +6,7 @@ K8e 🚀 - Kubernetes Enterprise Edition that is ready to use immediately.
 [![Go Report Card](https://goreportcard.com/badge/github.com/xiaods/k8e)](https://goreportcard.com/report/github.com/xiaods/k8e) [![Hex.pm](https://img.shields.io/hexpm/l/apa)](https://github.com/xiaods/k8e/blob/master/LICENSE)
 
 # ✅ Features
-- [x] Support image airgap package, v1.21 airgap package support containerd integration
+- [x] k8s components airgap images package
 - [x] 10 year certificate, support cluster backup, upgrade
 - [x] No dependency on ansible haproxy keepalived, a binary tool, 0 dependency
 - [x] natively support cilium network
