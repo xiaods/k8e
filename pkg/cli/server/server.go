@@ -520,7 +520,7 @@ func validateNetworkConfiguration(serverConfig server.Config) error {
 		return errors.Wrap(err, "failed to validate cluster-dns")
 	}
 
-	if dualDNS == true {
+	if dualDNS {
 		return errors.New("dual-stack cluster-dns is not supported")
 	}
 
