@@ -33,7 +33,6 @@ import (
 	cliflag "k8s.io/component-base/cli/flag"
 	"k8s.io/kubernetes/cmd/kube-apiserver/app"
 	cmapp "k8s.io/kubernetes/cmd/kube-controller-manager/app"
-	proxy "k8s.io/kubernetes/cmd/kube-proxy/app"
 	sapp "k8s.io/kubernetes/cmd/kube-scheduler/app"
 	kubelet "k8s.io/kubernetes/cmd/kubelet/app"
 
@@ -67,22 +66,6 @@ func (e *Embedded) Kubelet(ctx context.Context, args []string) error {
 			logrus.Fatalf("Kubelet failed to wait for apiserver ready: %v", err)
 		}
 		logrus.Fatalf("kubelet exited: %v", command.ExecuteContext(ctx))
-	}()
-
-	return nil
-}
-
-func (*Embedded) KubeProxy(ctx context.Context, args []string) error {
-	command := proxy.NewProxyCommand()
-	command.SetArgs(args)
-
-	go func() {
-		defer func() {
-			if err := recover(); err != nil {
-				logrus.WithField("stack", debug.Stack()).Fatalf("kube-proxy panic: %v", err)
-			}
-		}()
-		logrus.Fatalf("kube-proxy exited: %v", command.ExecuteContext(ctx))
 	}()
 
 	return nil

@@ -66,7 +66,6 @@ type Server struct {
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
 	DisableHelmController    bool
-	DisableKubeProxy         bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
 	DisableETCD              bool
@@ -419,11 +418,6 @@ var ServerFlags = []cli.Flag{
 		Destination: &ServerConfig.DisableCCM,
 	},
 	&cli.BoolFlag{
-		Name:        "disable-kube-proxy",
-		Usage:       "(components) Disable running kube-proxy",
-		Destination: &ServerConfig.DisableKubeProxy,
-	},
-	&cli.BoolFlag{
 		Name:        "disable-helm-controller",
 		Usage:       "(components) Disable Helm controller",
 		Destination: &ServerConfig.DisableHelmController,
@@ -468,7 +462,6 @@ var ServerFlags = []cli.Flag{
 	NodeExternalIPFlag,
 	ResolvConfFlag,
 	ExtraKubeletArgs,
-	ExtraKubeProxyArgs,
 	ProtectKernelDefaultsFlag,
 	&cli.BoolFlag{
 		Name:        "secrets-encryption",

@@ -31,27 +31,6 @@ func createRootlessConfig(argsMap map[string]string, controllers map[string]bool
 	logrus.Fatal("delegated cgroup v2 controllers are required for rootless.")
 }
 
-func kubeProxyArgs(cfg *config.Agent) map[string]string {
-	bindAddress := "127.0.0.1"
-	_, IPv6only, _ := util.GetFirstString([]string{cfg.NodeIP})
-	if IPv6only {
-		bindAddress = "::1"
-	}
-	argsMap := map[string]string{
-		"proxy-mode":                        "iptables",
-		"healthz-bind-address":              bindAddress,
-		"kubeconfig":                        cfg.KubeConfigKubeProxy,
-		"cluster-cidr":                      util.JoinIPNets(cfg.ClusterCIDRs),
-		"conntrack-max-per-core":            "0",
-		"conntrack-tcp-timeout-established": "0s",
-		"conntrack-tcp-timeout-close-wait":  "0s",
-	}
-	if cfg.NodeName != "" {
-		argsMap["hostname-override"] = cfg.NodeName
-	}
-	return argsMap
-}
-
 func kubeletArgs(cfg *config.Agent) map[string]string {
 	bindAddress := "127.0.0.1"
 	_, IPv6only, _ := util.GetFirstString([]string{cfg.NodeIP})

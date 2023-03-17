@@ -33,7 +33,6 @@ const (
 	authProxyService         = "auth-proxy"
 	cloudControllerService   = "cloud-controller"
 	kubeletService           = "kubelet"
-	kubeProxyService         = "kube-proxy"
 	k8eServerService         = "-server"
 )
 
@@ -47,7 +46,6 @@ var services = []string{
 	authProxyService,
 	cloudControllerService,
 	kubeletService,
-	kubeProxyService,
 	version.Program + k8eServerService,
 }
 
@@ -112,7 +110,6 @@ func rotate(app *cli.Context, cfg *cmds.Server) error {
 			logrus.Infof("Agent detected, rotating agent certificates")
 			cmds.ServicesList = []string{
 				kubeletService,
-				kubeProxyService,
 				version.Program + programControllerService,
 			}
 		} else {
@@ -128,7 +125,6 @@ func rotate(app *cli.Context, cfg *cmds.Server) error {
 				version.Program + programControllerService,
 				authProxyService,
 				kubeletService,
-				kubeProxyService,
 			}
 		}
 	}
@@ -190,12 +186,6 @@ func rotate(app *cli.Context, cfg *cmds.Server) error {
 				filepath.Join(agentDataDir, "client-kubelet.key"),
 				filepath.Join(agentDataDir, "serving-kubelet.crt"),
 				filepath.Join(agentDataDir, "serving-kubelet.key"))
-		case kubeProxyService:
-			fileList = append(fileList,
-				serverConfig.ControlConfig.Runtime.ClientKubeProxyCert,
-				serverConfig.ControlConfig.Runtime.ClientKubeProxyKey,
-				filepath.Join(agentDataDir, "client-kube-proxy.crt"),
-				filepath.Join(agentDataDir, "client-kube-proxy.key"))
 		default:
 			logrus.Fatalf("%s is not a recognized service", service)
 		}
@@ -241,8 +231,6 @@ func backupCertificates(serverDataDir, agentDataDir string) (string, error) {
 		filepath.Join(agentDataDir, "client-kubelet.key"),
 		filepath.Join(agentDataDir, "serving-kubelet.crt"),
 		filepath.Join(agentDataDir, "serving-kubelet.key"),
-		filepath.Join(agentDataDir, "client-kube-proxy.crt"),
-		filepath.Join(agentDataDir, "client-kube-proxy.key"),
 	}
 	for _, cert := range agentCerts {
 		if err := copyFile(cert, tlsBackupDir); err != nil {

@@ -40,10 +40,7 @@ import (
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/cache"
 	toolswatch "k8s.io/client-go/tools/watch"
-	app2 "k8s.io/kubernetes/cmd/kube-proxy/app"
-	kubeproxyconfig "k8s.io/kubernetes/pkg/proxy/apis/config"
 	utilsnet "k8s.io/utils/net"
-	utilpointer "k8s.io/utils/pointer"
 )
 
 func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
@@ -76,11 +73,7 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 	enableIPv6 := dualCluster || clusterIPv6
 	enableIPv4 := dualCluster || clusterIPv4
 
-	conntrackConfig, err := getConntrackConfig(nodeConfig)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate kube-proxy conntrack configuration")
-	}
-	syssetup.Configure(enableIPv6, conntrackConfig)
+	syssetup.Configure(enableIPv6)
 	nodeConfig.AgentConfig.EnableIPv4 = enableIPv4
 	nodeConfig.AgentConfig.EnableIPv6 = enableIPv6
 
@@ -140,49 +133,6 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 
 	<-ctx.Done()
 	return ctx.Err()
-}
-
-// getConntrackConfig uses the kube-proxy code to parse the user-provided kube-proxy-arg values, and
-// extract the conntrack settings so that k8e can set them itself. This allows us to soft-fail when
-// running k8e in Docker, where kube-proxy is no longer allowed to set conntrack sysctls on newer kernels.
-// When running rootless, we do not attempt to set conntrack sysctls - this behavior is copied from kubeadm.
-func getConntrackConfig(nodeConfig *daemonconfig.Node) (*kubeproxyconfig.KubeProxyConntrackConfiguration, error) {
-	ctConfig := &kubeproxyconfig.KubeProxyConntrackConfiguration{
-		MaxPerCore:            utilpointer.Int32Ptr(0),
-		Min:                   utilpointer.Int32Ptr(0),
-		TCPEstablishedTimeout: &metav1.Duration{},
-		TCPCloseWaitTimeout:   &metav1.Duration{},
-	}
-
-	if nodeConfig.AgentConfig.Rootless {
-		return ctConfig, nil
-	}
-
-	cmd := app2.NewProxyCommand()
-	if err := cmd.ParseFlags(daemonconfig.GetArgs(map[string]string{}, nodeConfig.AgentConfig.ExtraKubeProxyArgs)); err != nil {
-		return nil, err
-	}
-	maxPerCore, err := cmd.Flags().GetInt32("conntrack-max-per-core")
-	if err != nil {
-		return nil, err
-	}
-	ctConfig.MaxPerCore = &maxPerCore
-	min, err := cmd.Flags().GetInt32("conntrack-min")
-	if err != nil {
-		return nil, err
-	}
-	ctConfig.Min = &min
-	establishedTimeout, err := cmd.Flags().GetDuration("conntrack-tcp-timeout-established")
-	if err != nil {
-		return nil, err
-	}
-	ctConfig.TCPEstablishedTimeout.Duration = establishedTimeout
-	closeWaitTimeout, err := cmd.Flags().GetDuration("conntrack-tcp-timeout-close-wait")
-	if err != nil {
-		return nil, err
-	}
-	ctConfig.TCPCloseWaitTimeout.Duration = closeWaitTimeout
-	return ctConfig, nil
 }
 
 // RunStandalone bootstraps the executor, but does not run the kubelet or containerd.
@@ -397,7 +347,7 @@ func updateAddressAnnotations(nodeConfig *daemonconfig.Node, nodeAnnotations map
 	return result, !equality.Semantic.DeepEqual(nodeAnnotations, result)
 }
 
-// setupTunnelAndRunAgent should start the setup tunnel before starting kubelet and kubeproxy
+// setupTunnelAndRunAgent should start the setup tunnel before starting kubelet
 // there are special case for etcd agents, it will wait until it can find the apiaddress from
 // the address channel and update the proxy with the servers addresses, if in rke2 we need to
 // start the agent before the tunnel is setup to allow kubelet to start first and start the pods

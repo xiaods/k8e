@@ -54,7 +54,6 @@ func router(ctx context.Context, config *Config, cfg *cmds.Server) http.Handler 
 	authed.Use(authMiddleware(serverConfig, version.Program+":agent", user.NodesGroup, bootstrapapi.BootstrapDefaultGroup))
 	authed.Path(prefix + "/serving-kubelet.crt").Handler(servingKubeletCert(serverConfig, serverConfig.Runtime.ServingKubeletKey, nodeAuth))
 	authed.Path(prefix + "/client-kubelet.crt").Handler(clientKubeletCert(serverConfig, serverConfig.Runtime.ClientKubeletKey, nodeAuth))
-	authed.Path(prefix + "/client-kube-proxy.crt").Handler(fileHandler(serverConfig.Runtime.ClientKubeProxyCert, serverConfig.Runtime.ClientKubeProxyKey))
 	authed.Path(prefix + "/client-" + version.Program + "-controller.crt").Handler(fileHandler(serverConfig.Runtime.ClientK8eControllerCert, serverConfig.Runtime.ClientK8eControllerKey))
 	authed.Path(prefix + "/client-ca.crt").Handler(fileHandler(serverConfig.Runtime.ClientCA))
 	authed.Path(prefix + "/server-ca.crt").Handler(fileHandler(serverConfig.Runtime.ServerCA))
@@ -360,7 +359,6 @@ func configHandler(server *config.Control, cfg *cmds.Server) http.Handler {
 		// config.Control before the startup hooks are called, any modifications need to be sync'd back
 		// into the struct before it is sent to agents.
 		// At this time we don't sync all the fields, just those known to be touched by startup hooks.
-		server.DisableKubeProxy = cfg.DisableKubeProxy
 		resp.Header().Set("content-type", "application/json")
 		if err := json.NewEncoder(resp).Encode(server); err != nil {
 			logrus.Errorf("Failed to encode agent config: %v", err)

@@ -134,8 +134,6 @@ func CreateRuntimeCertFiles(config *config.Control) {
 	runtime.ClientSchedulerKey = filepath.Join(config.DataDir, "tls", "client-scheduler.key")
 	runtime.ClientKubeAPICert = filepath.Join(config.DataDir, "tls", "client-kube-apiserver.crt")
 	runtime.ClientKubeAPIKey = filepath.Join(config.DataDir, "tls", "client-kube-apiserver.key")
-	runtime.ClientKubeProxyCert = filepath.Join(config.DataDir, "tls", "client-kube-proxy.crt")
-	runtime.ClientKubeProxyKey = filepath.Join(config.DataDir, "tls", "client-kube-proxy.key")
 	runtime.ClientK8eControllerCert = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-controller.crt")
 	runtime.ClientK8eControllerKey = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-controller.key")
 
@@ -381,9 +379,6 @@ func genClientCerts(config *config.Control) error {
 		}
 	}
 
-	if _, err = factory(user.KubeProxy, nil, runtime.ClientKubeProxyCert, runtime.ClientKubeProxyKey); err != nil {
-		return err
-	}
 	// This user (system:k8e-controller by default) must be bound to a role in rolebindings.yaml or the downstream equivalent
 	if _, err = factory("system:"+version.Program+"-controller", nil, runtime.ClientK8eControllerCert, runtime.ClientK8eControllerKey); err != nil {
 		return err
