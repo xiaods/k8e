@@ -13,7 +13,7 @@ import (
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -270,7 +270,7 @@ func readTokenFromFile(serverToken, certs, dataDir string) (string, error) {
 func normalizeToken(token string) (string, error) {
 	_, password, ok := clientaccess.ParseUsernamePassword(token)
 	if !ok {
-		return password, errors.New("failed to normalize token; must be in format K10<CA-HASH>::<USERNAME>:<PASSWORD> or <PASSWORD>")
+		return password, errors.New("failed to normalize server token; must be in format K10<CA-HASH>::<USERNAME>:<PASSWORD> or <PASSWORD>")
 	}
 
 	return password, nil
@@ -285,7 +285,7 @@ func migrateOldTokens(ctx context.Context, bootstrapList []client.Value, storage
 	for _, bootstrapKV := range bootstrapList {
 		// checking for empty string bootstrap key
 		if string(bootstrapKV.Key) == emptyStringKey {
-			logrus.Warn("bootstrap data encrypted with empty string, deleting and resaving with token")
+			logrus.Warn("Bootstrap data encrypted with empty string, deleting and resaving with token")
 			if err := doMigrateToken(ctx, storageClient, bootstrapKV, "", emptyStringKey, token, tokenKey); err != nil {
 				return err
 			}
