@@ -425,8 +425,8 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 				if err := wait.PollImmediateUntilWithContext(ctx, time.Second, func(ctx context.Context) (bool, error) {
 					if err := e.join(ctx, clientAccessInfo); err != nil {
 						// Retry the join if waiting for another member to be promoted, or waiting for peers to connect after promotion
-						if errors.Is(err, rpctypes.ErrTooManyLearners) || errors.Is(err, rpctypes.ErrGRPCUnhealthy) {
-							logrus.Infof("Waiting for other members to finish joining etcd cluster")
+						if errors.Is(err, rpctypes.ErrTooManyLearners) || errors.Is(err, rpctypes.ErrUnhealthy) {
+							logrus.Infof("Waiting for other members to finish joining etcd cluster: %v", err)
 							return false, nil
 						}
 						return false, err
@@ -466,19 +466,7 @@ func (e *ETCD) join(ctx context.Context, clientAccessInfo *clientaccess.Info) er
 	}
 	defer client.Close()
 
-	members, err := client.MemberList(clientCtx)
-	if err != nil {
-		logrus.Errorf("Failed to get member list from etcd cluster. Will assume this member is already added")
-		members = &clientv3.MemberListResponse{
-			Members: append(memberList.Members, &etcdserverpb.Member{
-				Name:     e.name,
-				PeerURLs: []string{e.peerURL()},
-			}),
-		}
-		add = false
-	}
-
-	for _, member := range members.Members {
+	for _, member := range memberList.Members {
 		for _, peer := range member.PeerURLs {
 			u, err := url.Parse(peer)
 			if err != nil {
@@ -621,6 +609,7 @@ func (e *ETCD) handler(next http.Handler) http.Handler {
 }
 
 // infoHandler returns etcd cluster information. This is used by new members when joining the cluster.
+// If we can't retrieve an actual MemberList from etcd, we return a canned response with only the local node listed.
 func (e *ETCD) infoHandler() http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
@@ -628,7 +617,8 @@ func (e *ETCD) infoHandler() http.Handler {
 
 		members, err := e.client.MemberList(ctx)
 		if err != nil {
-			json.NewEncoder(rw).Encode(&Members{
+			logrus.Warnf("Failed to get etcd MemberList for %s: %v", req.RemoteAddr, err)
+			members = &clientv3.MemberListResponse{
 				Members: []*etcdserverpb.Member{
 					{
 						Name:       e.name,
@@ -636,8 +626,7 @@ func (e *ETCD) infoHandler() http.Handler {
 						ClientURLs: []string{e.clientURL()},
 					},
 				},
-			})
-			return
+			}
 		}
 
 		rw.Header().Set("Content-Type", "application/json")
@@ -922,7 +911,7 @@ func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
 		Name:                            e.name,
 		LogOutputs:                      []string{"stderr"},
 		ExperimentalInitialCorruptCheck: true,
-	}, append(e.config.ExtraAPIArgs, "--max-snapshots=0", "--max-wals=0"))
+	}, append(e.config.ExtraEtcdArgs, "--max-snapshots=0", "--max-wals=0"))
 }
 
 func addPort(address string, offset int) (string, error) {
