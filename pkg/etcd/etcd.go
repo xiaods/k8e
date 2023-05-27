@@ -183,7 +183,7 @@ func (e *ETCD) SetControlConfig(ctx context.Context, config *config.Control) err
 		e.client.Close()
 	}()
 
-	address, err := GetAdvertiseAddress(config.PrivateIP)
+	address, err := getAdvertiseAddress(config.PrivateIP)
 	if err != nil {
 		return err
 	}
@@ -538,7 +538,7 @@ func (e *ETCD) Register(ctx context.Context, config *config.Control, handler htt
 		e.client.Close()
 	}()
 
-	address, err := GetAdvertiseAddress(config.PrivateIP)
+	address, err := getAdvertiseAddress(config.PrivateIP)
 	if err != nil {
 		return nil, err
 	}
@@ -709,7 +709,7 @@ func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
 }
 
 // getAdvertiseAddress returns the IP address best suited for advertising to clients
-func GetAdvertiseAddress(advertiseIP string) (string, error) {
+func getAdvertiseAddress(advertiseIP string) (string, error) {
 	ip := advertiseIP
 	if ip == "" {
 		ipAddr, err := utilnet.ChooseHostInterface()
@@ -794,9 +794,19 @@ func (e *ETCD) peerURL() string {
 	return fmt.Sprintf("https://%s", net.JoinHostPort(e.address, "2380"))
 }
 
+// advertiseClientURLs returns the advertised addresses for the local node.
+// During cluster reset/restore we only listen on loopback to avoid having apiservers
+// on other nodes connect mid-process.
+func (e *ETCD) advertiseClientURLs(reset bool) string {
+	if reset {
+		return fmt.Sprintf("https://%s", net.JoinHostPort(e.config.Loopback(true), "2379"))
+	}
+	return e.clientURL()
+}
+
 // listenClientURLs returns a list of URLs to bind to for peer connections.
-// During cluster reset/restore, we only listen on loopback to avoid having peers
-// connect mid-process.
+// During cluster reset/restore, we only listen on loopback to avoid having apiservers
+// on other nodes connect mid-process.
 func (e *ETCD) listenPeerURLs(reset bool) string {
 	peerURLs := fmt.Sprintf("https://%s:2380", e.config.Loopback(true))
 	if !reset {
@@ -840,7 +850,7 @@ func (e *ETCD) cluster(ctx context.Context, reset bool, options executor.Initial
 		ListenClientURLs:    e.listenClientURLs(reset),
 		ListenMetricsURLs:   e.listenMetricsURLs(reset),
 		ListenPeerURLs:      e.listenPeerURLs(reset),
-		AdvertiseClientURLs: e.clientURL(),
+		AdvertiseClientURLs: e.advertiseClientURLs(reset),
 		DataDir:             DBDir(e.config),
 		ServerTrust: executor.ServerTrust{
 			CertFile:       e.config.Runtime.ServerETCDCert,
@@ -1143,7 +1153,7 @@ func ClientURLs(ctx context.Context, clientAccessInfo *clientaccess.Info, selfIP
 	if err := json.Unmarshal(resp, &memberList); err != nil {
 		return nil, memberList, err
 	}
-	ip, err := GetAdvertiseAddress(selfIP)
+	ip, err := getAdvertiseAddress(selfIP)
 	if err != nil {
 		return nil, memberList, err
 	}
