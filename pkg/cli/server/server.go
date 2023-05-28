@@ -264,12 +264,12 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 		cmds.ServerConfig.ServiceCIDR.Set(serviceCIDR)
 	}
-	for _, cidr := range util.SplitStringSlice(cmds.ServerConfig.ClusterCIDR) {
+	for _, cidr := range util.SplitStringSlice(cmds.ServerConfig.ServiceCIDR) {
 		_, parsed, err := net.ParseCIDR(cidr)
 		if err != nil {
-			return errors.Wrapf(err, "invalid cluster-cidr %s", cidr)
+			return errors.Wrapf(err, "invalid service-cidr %s", cidr)
 		}
-		serverConfig.ControlConfig.ClusterIPRanges = append(serverConfig.ControlConfig.ClusterIPRanges, parsed)
+		serverConfig.ControlConfig.ServiceIPRanges = append(serverConfig.ControlConfig.ServiceIPRanges, parsed)
 	}
 
 	// set ServiceIPRange to the first IPv4 block, for legacy clients
