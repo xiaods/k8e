@@ -123,22 +123,28 @@ func (p *Parser) FindString(args []string, target string) (string, error) {
 			if err := yaml.Unmarshal(bytes, &data); err != nil {
 				return "", err
 			}
-			for _, i := range data {
-				k, v := convert.ToString(i.Key), convert.ToString(i.Value)
-				isAppend := strings.HasSuffix(k, "+")
-				k = strings.TrimSuffix(k, "+")
-				if k == target {
-					if isAppend {
-						lastVal = lastVal + "," + v
-					} else {
-						lastVal = v
-					}
-				}
-			}
+
+			lastVal = p.findTargetValue(data, target, lastVal)
 		}
 	}
 
 	return lastVal, nil
+}
+
+func (p *Parser) findTargetValue(data yaml.MapSlice, target string, lastVal string) string {
+	for _, i := range data {
+		k, v := convert.ToString(i.Key), convert.ToString(i.Value)
+		isAppend := strings.HasSuffix(k, "+")
+		k = strings.TrimSuffix(k, "+")
+		if k == target {
+			if isAppend {
+				lastVal = lastVal + "," + v
+			} else {
+				lastVal = v
+			}
+		}
+	}
+	return lastVal
 }
 
 func (p *Parser) findConfigFileFlag(args []string) (string, bool) {
