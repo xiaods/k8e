@@ -78,6 +78,8 @@ const (
 	MasterLabel       = "node-role.kubernetes.io/master"
 	ControlPlaneLabel = "node-role.kubernetes.io/control-plane"
 	EtcdRoleLabel     = "node-role.kubernetes.io/etcd"
+
+	baseURLFormat = "https://%s"
 )
 
 var (
@@ -183,7 +185,7 @@ func (e *ETCD) SetControlConfig(ctx context.Context, config *config.Control) err
 		e.client.Close()
 	}()
 
-	address, err := GetAdvertiseAddress(config.PrivateIP)
+	address, err := getAdvertiseAddress(config.PrivateIP)
 	if err != nil {
 		return err
 	}
@@ -420,10 +422,20 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 		for {
 			select {
 			case <-time.After(30 * time.Second):
-				logrus.Infof("Waiting for agent to become ready before joining ETCD cluster")
+				logrus.Infof("Waiting for agent to become ready before joining etcd cluster")
 			case <-e.config.Runtime.AgentReady:
-				if err := e.join(ctx, clientAccessInfo); err != nil {
-					logrus.Fatalf("ETCD join failed: %v", err)
+				if err := wait.PollImmediateUntilWithContext(ctx, time.Second, func(ctx context.Context) (bool, error) {
+					if err := e.join(ctx, clientAccessInfo); err != nil {
+						// Retry the join if waiting for another member to be promoted, or waiting for peers to connect after promotion
+						if errors.Is(err, rpctypes.ErrTooManyLearners) || errors.Is(err, rpctypes.ErrUnhealthy) {
+							logrus.Infof("Waiting for other members to finish joining etcd cluster: %v", err)
+							return false, nil
+						}
+						return false, err
+					}
+					return true, nil
+				}); err != nil {
+					logrus.Fatalf("etcd cluster join failed: %v", err)
 				}
 				return
 			case <-ctx.Done():
@@ -456,19 +468,7 @@ func (e *ETCD) join(ctx context.Context, clientAccessInfo *clientaccess.Info) er
 	}
 	defer client.Close()
 
-	members, err := client.MemberList(clientCtx)
-	if err != nil {
-		logrus.Errorf("Failed to get member list from etcd cluster. Will assume this member is already added")
-		members = &clientv3.MemberListResponse{
-			Members: append(memberList.Members, &etcdserverpb.Member{
-				Name:     e.name,
-				PeerURLs: []string{e.peerURL()},
-			}),
-		}
-		add = false
-	}
-
-	for _, member := range members.Members {
+	for _, member := range memberList.Members {
 		for _, peer := range member.PeerURLs {
 			u, err := url.Parse(peer)
 			if err != nil {
@@ -538,7 +538,7 @@ func (e *ETCD) Register(ctx context.Context, config *config.Control, handler htt
 		e.client.Close()
 	}()
 
-	address, err := GetAdvertiseAddress(config.PrivateIP)
+	address, err := getAdvertiseAddress(config.PrivateIP)
 	if err != nil {
 		return nil, err
 	}
@@ -611,6 +611,7 @@ func (e *ETCD) handler(next http.Handler) http.Handler {
 }
 
 // infoHandler returns etcd cluster information. This is used by new members when joining the cluster.
+// If we can't retrieve an actual MemberList from etcd, we return a canned response with only the local node listed.
 func (e *ETCD) infoHandler() http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
@@ -618,7 +619,8 @@ func (e *ETCD) infoHandler() http.Handler {
 
 		members, err := e.client.MemberList(ctx)
 		if err != nil {
-			json.NewEncoder(rw).Encode(&Members{
+			logrus.Warnf("Failed to get etcd MemberList for %s: %v", req.RemoteAddr, err)
+			members = &clientv3.MemberListResponse{
 				Members: []*etcdserverpb.Member{
 					{
 						Name:       e.name,
@@ -626,8 +628,7 @@ func (e *ETCD) infoHandler() http.Handler {
 						ClientURLs: []string{e.clientURL()},
 					},
 				},
-			})
-			return
+			}
 		}
 
 		rw.Header().Set("Content-Type", "application/json")
@@ -709,7 +710,7 @@ func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
 }
 
 // getAdvertiseAddress returns the IP address best suited for advertising to clients
-func GetAdvertiseAddress(advertiseIP string) (string, error) {
+func getAdvertiseAddress(advertiseIP string) (string, error) {
 	ip := advertiseIP
 	if ip == "" {
 		ipAddr, err := utilnet.ChooseHostInterface()
@@ -791,12 +792,22 @@ func (e *ETCD) migrateFromSQLite(ctx context.Context) error {
 
 // peerURL returns the external peer access address for the local node.
 func (e *ETCD) peerURL() string {
-	return fmt.Sprintf("https://%s", net.JoinHostPort(e.address, "2380"))
+	return fmt.Sprintf(baseURLFormat, net.JoinHostPort(e.address, "2380"))
+}
+
+// advertiseClientURLs returns the advertised addresses for the local node.
+// During cluster reset/restore we only listen on loopback to avoid having apiservers
+// on other nodes connect mid-process.
+func (e *ETCD) advertiseClientURLs(reset bool) string {
+	if reset {
+		return fmt.Sprintf(baseURLFormat, net.JoinHostPort(e.config.Loopback(true), "2379"))
+	}
+	return e.clientURL()
 }
 
 // listenClientURLs returns a list of URLs to bind to for peer connections.
-// During cluster reset/restore, we only listen on loopback to avoid having peers
-// connect mid-process.
+// During cluster reset/restore, we only listen on loopback to avoid having apiservers
+// on other nodes connect mid-process.
 func (e *ETCD) listenPeerURLs(reset bool) string {
 	peerURLs := fmt.Sprintf("https://%s:2380", e.config.Loopback(true))
 	if !reset {
@@ -807,7 +818,7 @@ func (e *ETCD) listenPeerURLs(reset bool) string {
 
 // clientURL returns the external client access address for the local node.
 func (e *ETCD) clientURL() string {
-	return fmt.Sprintf("https://%s", net.JoinHostPort(e.address, "2379"))
+	return fmt.Sprintf(baseURLFormat, net.JoinHostPort(e.address, "2379"))
 }
 
 // listenClientURLs returns a list of URLs to bind to for client connections.
@@ -840,7 +851,7 @@ func (e *ETCD) cluster(ctx context.Context, reset bool, options executor.Initial
 		ListenClientURLs:    e.listenClientURLs(reset),
 		ListenMetricsURLs:   e.listenMetricsURLs(reset),
 		ListenPeerURLs:      e.listenPeerURLs(reset),
-		AdvertiseClientURLs: e.clientURL(),
+		AdvertiseClientURLs: e.advertiseClientURLs(reset),
 		DataDir:             DBDir(e.config),
 		ServerTrust: executor.ServerTrust{
 			CertFile:       e.config.Runtime.ServerETCDCert,
@@ -902,7 +913,7 @@ func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
 		Name:                            e.name,
 		LogOutputs:                      []string{"stderr"},
 		ExperimentalInitialCorruptCheck: true,
-	}, append(e.config.ExtraAPIArgs, "--max-snapshots=0", "--max-wals=0"))
+	}, append(e.config.ExtraEtcdArgs, "--max-snapshots=0", "--max-wals=0"))
 }
 
 func addPort(address string, offset int) (string, error) {
@@ -942,7 +953,7 @@ func (e *ETCD) RemovePeer(ctx context.Context, name, address string, allowSelfRe
 				}
 				logrus.Infof("Removing name=%s id=%d address=%s from etcd", member.Name, member.ID, address)
 				_, err := e.client.MemberRemove(ctx, member.ID)
-				if err == rpctypes.ErrGRPCMemberNotFound {
+				if errors.Is(err, rpctypes.ErrGRPCMemberNotFound) {
 					return nil
 				}
 				return err
@@ -1143,7 +1154,7 @@ func ClientURLs(ctx context.Context, clientAccessInfo *clientaccess.Info, selfIP
 	if err := json.Unmarshal(resp, &memberList); err != nil {
 		return nil, memberList, err
 	}
-	ip, err := GetAdvertiseAddress(selfIP)
+	ip, err := getAdvertiseAddress(selfIP)
 	if err != nil {
 		return nil, memberList, err
 	}

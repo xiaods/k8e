@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 
+	helmcrd "github.com/k3s-io/helm-controller/pkg/crd"
 	"github.com/k3s-io/helm-controller/pkg/generated/controllers/helm.cattle.io"
 	"github.com/pkg/errors"
 	"github.com/rancher/wrangler/pkg/apply"
@@ -16,6 +17,7 @@ import (
 	"github.com/rancher/wrangler/pkg/generated/controllers/rbac"
 	"github.com/rancher/wrangler/pkg/start"
 	"github.com/sirupsen/logrus"
+	addoncrd "github.com/xiaods/k8e/pkg/crd"
 	"github.com/xiaods/k8e/pkg/deploy"
 	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	"github.com/xiaods/k8e/pkg/version"
@@ -82,10 +84,8 @@ func crds(ctx context.Context, config *rest.Config) error {
 		return err
 	}
 
-	factory.BatchCreateCRDs(ctx, crd.NamespacedTypes(
-		"Addon.k8e.cattle.io/v1",
-		"HelmChart.helm.cattle.io/v1",
-		"HelmChartConfig.helm.cattle.io/v1")...)
+	types := append(helmcrd.List(), addoncrd.List()...)
+	factory.BatchCreateCRDs(ctx, types...)
 
 	return factory.BatchWait()
 }

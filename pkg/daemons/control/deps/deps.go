@@ -26,6 +26,7 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/passwd"
 	"github.com/xiaods/k8e/pkg/token"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -588,7 +589,7 @@ func createClientCertKey(regen bool, commonName string, organization []string, a
 		return false, err
 	}
 
-	caCert, err := certutil.CertsFromFile(caCertFile)
+	caCerts, err := certutil.CertsFromFile(caCertFile)
 	if err != nil {
 		return false, err
 	}
@@ -612,12 +613,12 @@ func createClientCertKey(regen bool, commonName string, organization []string, a
 	if altNames != nil {
 		cfg.AltNames = *altNames
 	}
-	cert, err := certutil.NewSignedCert(cfg, key.(crypto.Signer), caCert[0], caKey.(crypto.Signer))
+	cert, err := certutil.NewSignedCert(cfg, key.(crypto.Signer), caCerts[0], caKey.(crypto.Signer))
 	if err != nil {
 		return false, err
 	}
 
-	return true, certutil.WriteCert(certFile, append(certutil.EncodeCertPEM(cert), certutil.EncodeCertPEM(caCert[0])...))
+	return true, certutil.WriteCert(certFile, util.EncodeCertsPEM(cert, caCerts))
 }
 
 func exists(files ...string) bool {
