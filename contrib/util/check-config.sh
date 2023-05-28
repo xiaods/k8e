@@ -3,7 +3,7 @@ set -e
 
 EXITCODE=0
 
-# rancher/k8e modified from
+# rancher/k3s modified from
 # https://github.com/moby/moby/blob/c831882/contrib/check-config.sh
 
 # bits of this were adapted from lxc-checkconfig for moby
@@ -222,27 +222,6 @@ echo
 
   echo "System:"
 
-  iptablesCmd=$(which_iptables)
-  iptablesVersion=
-  if [ "$iptablesCmd" ]; then
-    iptablesInfo=$($iptablesCmd --version 2>/dev/null) || true
-    iptablesVersion=$(echo $iptablesInfo | awk '{ print $2 }')
-    label="$(dirname $iptablesCmd) $iptablesInfo"
-  fi
-  if echo "$iptablesVersion" | grep -v -q -E '^v[0-9]'; then
-    [ "$iptablesCmd" ] || iptablesCmd="unknown iptables"
-    wrap_warn "- $iptablesCmd" "unknown version: $iptablesInfo"
-  elif version_ge $iptablesVersion v1.8.0; then
-    iptablesMode=$(echo $iptablesInfo | awk '{ print $3 }')
-    if [ "$iptablesMode" != "(legacy)" ] && version_less $iptablesVersion v1.8.4; then 
-      wrap_bad "- $label" 'should be older than v1.8.0, newer than v1.8.3, or in legacy mode'
-    else
-      wrap_good "- $label" 'ok'
-    fi
-  else
-    wrap_good "- $label" 'older than v1.8'
-  fi
-
   totalSwap=$(free | grep -i '^swap:' | awk '{ print $2 }')
   if [ "$totalSwap" != "0" ]; then
     wrap_warn '- swap' 'should be disabled'
@@ -371,6 +350,8 @@ if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" = 'Y' ]; then
       wrap_color '(use "apt-get install apparmor" to fix this)'
     elif command -v yum &> /dev/null; then
       wrap_color '(your best bet is "yum install apparmor-parser")'
+    elif command -v zypper &> /dev/null; then
+      wrap_color '(your best bet is "zypper install apparmor-parser")'
     else
       wrap_color '(look for an "apparmor" package for your distribution)'
     fi
