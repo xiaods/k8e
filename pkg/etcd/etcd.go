@@ -78,6 +78,8 @@ const (
 	MasterLabel       = "node-role.kubernetes.io/master"
 	ControlPlaneLabel = "node-role.kubernetes.io/control-plane"
 	EtcdRoleLabel     = "node-role.kubernetes.io/etcd"
+
+	baseURLFormat = "https://%s"
 )
 
 var (
@@ -790,7 +792,7 @@ func (e *ETCD) migrateFromSQLite(ctx context.Context) error {
 
 // peerURL returns the external peer access address for the local node.
 func (e *ETCD) peerURL() string {
-	return fmt.Sprintf("https://%s", net.JoinHostPort(e.address, "2380"))
+	return fmt.Sprintf(baseURLFormat, net.JoinHostPort(e.address, "2380"))
 }
 
 // advertiseClientURLs returns the advertised addresses for the local node.
@@ -798,7 +800,7 @@ func (e *ETCD) peerURL() string {
 // on other nodes connect mid-process.
 func (e *ETCD) advertiseClientURLs(reset bool) string {
 	if reset {
-		return fmt.Sprintf("https://%s", net.JoinHostPort(e.config.Loopback(true), "2379"))
+		return fmt.Sprintf(baseURLFormat, net.JoinHostPort(e.config.Loopback(true), "2379"))
 	}
 	return e.clientURL()
 }
@@ -816,7 +818,7 @@ func (e *ETCD) listenPeerURLs(reset bool) string {
 
 // clientURL returns the external client access address for the local node.
 func (e *ETCD) clientURL() string {
-	return fmt.Sprintf("https://%s", net.JoinHostPort(e.address, "2379"))
+	return fmt.Sprintf(baseURLFormat, net.JoinHostPort(e.address, "2379"))
 }
 
 // listenClientURLs returns a list of URLs to bind to for client connections.
