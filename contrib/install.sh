@@ -292,7 +292,7 @@ create_systemd_service_file() {
     info "systemd: Creating service file ${FILE_K8E_SERVICE}"
     $SUDO tee ${FILE_K8E_SERVICE} >/dev/null << EOF
 [Unit]
-Description=Simple Kubernetes Distribution
+Description=K8E - Kubernetes Easy Engine
 Documentation=https://getk8e.com
 After=network-online.target
 Wants=network-online.target
@@ -316,7 +316,6 @@ TasksMax=infinity
 TimeoutStartSec=0
 Restart=always
 RestartSec=5s
-ExecStartPre=/bin/sh -xc '! /usr/bin/systemctl is-enabled --quiet nm-cloud-setup.service'
 ExecStartPre=-/sbin/modprobe br_netfilter
 ExecStartPre=-/sbin/modprobe overlay
 ExecStart=${BIN_DIR}/k8e \\
@@ -537,5 +536,5 @@ eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
     service_enable_and_start
     check_config
     setup_cilium
-    info "Done! Happy deployment."
+    info "Done! K8E - Kubernetes Easy Engine, Happy deployment."
 }
