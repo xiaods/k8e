@@ -270,6 +270,7 @@ type ControlRuntime struct {
 	ServiceCurrentKey string
 
 	KubeConfigAdmin           string
+	KubeConfigSupervisor      string
 	KubeConfigController      string
 	KubeConfigScheduler       string
 	KubeConfigAPIServer       string
@@ -293,6 +294,8 @@ type ControlRuntime struct {
 
 	ClientAdminCert           string
 	ClientAdminKey            string
+	ClientSupervisorCert      string
+	ClientSupervisorKey       string
 	ClientControllerCert      string
 	ClientControllerKey       string
 	ClientSchedulerCert       string
