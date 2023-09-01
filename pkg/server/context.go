@@ -16,9 +16,11 @@ import (
 	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/record"
 )
 
 type Context struct {
@@ -29,6 +31,7 @@ type Context struct {
 	Auth  *rbac.Factory
 	Core  *core.Factory
 	K8s   kubernetes.Interface
+	Event record.EventRecorder
 }
 
 func (c *Context) Start(ctx context.Context) error {
@@ -58,6 +61,7 @@ func NewContext(ctx context.Context, cfg string) (*Context, error) {
 		Apps:  apps.NewFactoryFromConfigOrDie(restConfig),
 		Batch: batch.NewFactoryFromConfigOrDie(restConfig),
 		Core:  core.NewFactoryFromConfigOrDie(restConfig),
+		Event: util.BuildControllerEventRecorder(k8s, version.Program+"-supervisor", metav1.NamespaceAll),
 	}, nil
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/xiaods/k8e/pkg/util"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
+	"k8s.io/client-go/tools/record"
 	utilsnet "k8s.io/utils/net"
 )
 
@@ -314,6 +315,7 @@ type ControlRuntime struct {
 	ClientETCDKey            string
 
 	Core       *core.Factory
+	Event      record.EventRecorder
 	EtcdConfig endpoint.ETCDConfig
 }
 
