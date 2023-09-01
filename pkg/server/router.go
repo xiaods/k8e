@@ -142,7 +142,7 @@ func cacerts(serverCA string) http.Handler {
 			var err error
 			ca, err = os.ReadFile(serverCA)
 			if err != nil {
-				sendError(err, resp)
+				sendError(err, resp, req)
 				return
 			}
 		}
@@ -217,13 +217,13 @@ func servingKubeletCert(server *config.Control, keyFile string, auth nodePassBoo
 
 		nodeName, errCode, err := auth(req)
 		if err != nil {
-			sendError(err, resp, errCode)
+			sendError(err, resp, req, errCode)
 			return
 		}
 
 		caCerts, caKey, key, err := getCACertAndKeys(server.Runtime.ServerCA, server.Runtime.ServerCAKey, server.Runtime.ServingKubeletKey)
 		if err != nil {
-			sendError(err, resp)
+			sendError(err, resp, req)
 			return
 		}
 
@@ -233,7 +233,7 @@ func servingKubeletCert(server *config.Control, keyFile string, auth nodePassBoo
 			for _, v := range strings.Split(nodeIP, ",") {
 				ip := net.ParseIP(v)
 				if ip == nil {
-					sendError(fmt.Errorf("invalid IP address %s", ip), resp)
+					sendError(fmt.Errorf("invalid node IP address %s", ip), resp, req)
 					return
 				}
 				ips = append(ips, ip)
@@ -249,7 +249,7 @@ func servingKubeletCert(server *config.Control, keyFile string, auth nodePassBoo
 			},
 		}, key, caCerts[0], caKey)
 		if err != nil {
-			sendError(err, resp)
+			sendError(err, resp, req)
 			return
 		}
 
@@ -273,13 +273,13 @@ func clientKubeletCert(server *config.Control, keyFile string, auth nodePassBoot
 
 		nodeName, errCode, err := auth(req)
 		if err != nil {
-			sendError(err, resp, errCode)
+			sendError(err, resp, req, errCode)
 			return
 		}
 
 		caCerts, caKey, key, err := getCACertAndKeys(server.Runtime.ClientCA, server.Runtime.ClientCAKey, server.Runtime.ClientKubeletKey)
 		if err != nil {
-			sendError(err, resp)
+			sendError(err, resp, req)
 			return
 		}
 
@@ -289,7 +289,7 @@ func clientKubeletCert(server *config.Control, keyFile string, auth nodePassBoot
 			Usages:       []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		}, key, caCerts[0], caKey)
 		if err != nil {
-			sendError(err, resp)
+			sendError(err, resp, req)
 			return
 		}
 
@@ -398,7 +398,7 @@ func serveStatic(urlPrefix, staticDir string) http.Handler {
 	return http.StripPrefix(urlPrefix, http.FileServer(http.Dir(staticDir)))
 }
 
-func sendError(err error, resp http.ResponseWriter, status ...int) {
+func sendError(err error, resp http.ResponseWriter, req *http.Request, status ...int) {
 	var code int
 	if len(status) == 1 {
 		code = status[0]
@@ -406,9 +406,11 @@ func sendError(err error, resp http.ResponseWriter, status ...int) {
 	if code == 0 || code == http.StatusOK {
 		code = http.StatusInternalServerError
 	}
-	logrus.Error(err)
-	resp.WriteHeader(code)
-	resp.Write([]byte(err.Error()))
+	logrus.Errorf("Sending HTTP %d response to %s: %v", code, req.RemoteAddr, err)
+	responsewriters.ErrorNegotiated(
+		apierrors.NewGenericServerResponse(code, req.Method, schema.GroupResource{}, req.URL.Path, err.Error(), 0, true),
+		scheme.Codecs.WithoutConversion(), schema.GroupVersion{}, resp, req,
+	)
 }
 
 // nodePassBootstrapper returns a node name, or http error code and error
