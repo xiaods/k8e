@@ -29,8 +29,9 @@ RUN TRIVY_VERSION="0.43.1" && \
             wget --no-verbose "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" && \
             tar -zxvf "trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" && \
             mv trivy /usr/local/bin; \
-        fi \                                                                              \
+        fi \
     fi
+
 # this works for both go 1.17 and 1.18
 RUN GOPROXY=direct go install golang.org/x/tools/cmd/goimports@gopls/v0.8.2
 RUN rm -rf /go/src /go/pkg
