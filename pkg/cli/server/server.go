@@ -119,7 +119,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.KubeConfigMode = cfg.KubeConfigMode
 	serverConfig.ControlConfig.HelmJobImage = cfg.HelmJobImage
 	serverConfig.ControlConfig.Rootless = cfg.Rootless
-	serverConfig.ControlConfig.ServiceLBNamespace = cfg.ServiceLBNamespace
 	serverConfig.ControlConfig.SANs = util.SplitStringSlice(cfg.TLSSan)
 	serverConfig.ControlConfig.SANSecurity = cfg.TLSSanSecurity
 	serverConfig.ControlConfig.BindAddress = cfg.BindAddress
@@ -346,11 +345,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		serverConfig.ControlConfig.Skips[disable] = true
 		serverConfig.ControlConfig.Disables[disable] = true
 	}
-	if serverConfig.ControlConfig.Skips["servicelb"] {
-		serverConfig.ControlConfig.DisableServiceLB = true
-	}
 
-	if serverConfig.ControlConfig.DisableCCM && serverConfig.ControlConfig.DisableServiceLB {
+	if serverConfig.ControlConfig.DisableCCM {
 		serverConfig.ControlConfig.Skips["ccm"] = true
 		serverConfig.ControlConfig.Disables["ccm"] = true
 	}

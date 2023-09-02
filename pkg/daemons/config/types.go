@@ -105,7 +105,6 @@ type Agent struct {
 	DisableCCM              bool
 	Rootless                bool
 	ProtectKernelDefaults   bool
-	DisableServiceLB        bool
 	EnableIPv4              bool
 	EnableIPv6              bool
 }
@@ -120,7 +119,6 @@ type CriticalControlArgs struct {
 	DisableCCM            bool         `cli:"disable-cloud-controller"`
 	DisableHelmController bool         `cli:"disable-helm-controller"`
 	DisableNPC            bool         `cli:"disable-network-policy"`
-	DisableServiceLB      bool         `cli:"disable-service-lb"`
 	EncryptSecrets        bool         `cli:"secrets-encryption"`
 	EgressSelectorMode    string       `cli:"egress-selector-mode"`
 	ServiceIPRange        *net.IPNet   `cli:"service-cidr"`
@@ -151,9 +149,7 @@ type Control struct {
 	DisableControllerManager bool
 	DisableETCD              bool
 	DisableScheduler         bool
-	DisableServiceLB         bool
 	Rootless                 bool
-	ServiceLBNamespace       string
 	EnablePProf              bool
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
