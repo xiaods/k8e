@@ -196,6 +196,7 @@ type Control struct {
 
 	BindAddress string
 	SANs        []string
+	SANSecurity bool
 	PrivateIP   string
 	Runtime     *ControlRuntime `json:"-"`
 }
