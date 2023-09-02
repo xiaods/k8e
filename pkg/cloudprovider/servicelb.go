@@ -14,6 +14,7 @@ import (
 	"github.com/rancher/wrangler/pkg/merr"
 	"github.com/rancher/wrangler/pkg/objectset"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	apps "k8s.io/api/apps/v1"
 	core "k8s.io/api/core/v1"
@@ -486,12 +487,12 @@ func (k *k8e) newDaemonSet(svc *core.Service) (*apps.DaemonSet, error) {
 					},
 					Tolerations: []core.Toleration{
 						{
-							Key:      "node-role.kubernetes.io/master",
+							Key:      util.MasterRoleLabelKey,
 							Operator: "Exists",
 							Effect:   "NoSchedule",
 						},
 						{
-							Key:      "node-role.kubernetes.io/control-plane",
+							Key:      util.ControlPlaneRoleLabelKey,
 							Operator: "Exists",
 							Effect:   "NoSchedule",
 						},
