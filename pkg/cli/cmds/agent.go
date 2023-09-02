@@ -16,7 +16,6 @@ type Agent struct {
 	ServerURL                string
 	APIAddressCh             chan []string
 	DisableLoadBalancer      bool
-	DisableServiceLB         bool
 	ETCDAgent                bool
 	LBServerPort             int
 	ResolvConf               string

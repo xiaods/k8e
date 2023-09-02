@@ -78,7 +78,7 @@ func Server(ctx context.Context, cfg *config.Control) error {
 		}
 	}
 
-	if !cfg.DisableCCM || !cfg.DisableServiceLB {
+	if !cfg.DisableCCM {
 		if err := cloudControllerManager(ctx, cfg); err != nil {
 			return err
 		}
@@ -321,9 +321,8 @@ func cloudControllerManager(ctx context.Context, cfg *config.Control) error {
 		argsMap["controllers"] = argsMap["controllers"] + ",-cloud-node,-cloud-node-lifecycle"
 		argsMap["secure-port"] = "0"
 	}
-	if cfg.DisableServiceLB {
-		argsMap["controllers"] = argsMap["controllers"] + ",-service"
-	}
+
+	argsMap["controllers"] = argsMap["controllers"] + ",-service"
 	args := config.GetArgs(argsMap, cfg.ExtraCloudControllerArgs)
 
 	logrus.Infof("Running cloud-controller-manager %s", config.ArgString(args))
