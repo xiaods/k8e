@@ -8,9 +8,8 @@ RUNC_DIR=build/src/github.com/opencontainers/runc
 CONTAINERD_DIR=build/src/github.com/containerd/containerd
 DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
-NERDCTL_VERSION=1.2.1
-CILIUMCLI_VERSION=v0.13.1
-OSMEDGE_VERSION=v1.3.3
+NERDCTL_VERSION=1.5.0
+CILIUMCLI_VERSION=v0.15.7
 
 umask 022
 rm -rf ${CHARTS_DIR}
@@ -42,15 +41,5 @@ download_and_package_cilium() {
   fi
 }
 
-download_and_package_osm() {
-  echo "Downloading OSM Edge..."
-  if [ ${ARCH} = amd64 ]; then
-    curl --compressed -sfL https://github.com/flomesh-io/osm-edge/releases/download/${OSMEDGE_VERSION}/osm-edge-${OSMEDGE_VERSION}-linux-amd64.tar.gz | tar -zxf - -C bin --strip-components 1 --exclude=LICENSE --exclude=README.md
-  elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-    curl --compressed -sfL https://github.com/flomesh-io/osm-edge/releases/download/${OSMEDGE_VERSION}/osm-edge-${OSMEDGE_VERSION}-linux-arm64.tar.gz | tar -zxf - -C bin --strip-components 1 --exclude=LICENSE --exclude=README.md
-  fi
-}
-
 download_and_package_nerdctl
 download_and_package_cilium
-download_and_package_osm
