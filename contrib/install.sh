@@ -459,7 +459,7 @@ setup_cilium() {
         *"cluster-init"*) info "Installing cilium network cni/operator"
         $SUDO chmod 644 /etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml
         # cilium helm values https://github.com/cilium/cilium/tree/master/install/kubernetes/cilium
-        $SUDO KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml $BIN_DIR/cilium install --version=1.12.3 --helm-set ipam.operator.clusterPoolIPv4PodCIDRList=["10.42.0.0/16"];;
+        $SUDO KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml $BIN_DIR/cilium install --version=1.14.1 --helm-set ipam.operator.clusterPoolIPv4PodCIDRList=["10.42.0.0/16"];;
     esac
 }
 
