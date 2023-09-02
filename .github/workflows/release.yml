@@ -18,14 +18,10 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
     steps:
     - uses: actions/checkout@master
-    - uses: actions/setup-go@v3
+    - uses: actions/setup-go@v4
       with:
         go-version: '1.19.1'
-        check-latest: true
-        cache: true
-        cache-dependency-path: |
-          **/go.sum
-          **/go.mod
+        cache-dependency-path: subdir/go.sum
     - name: check depends
       run: sudo apt-get install -y libseccomp-dev
     - name: generate resources
