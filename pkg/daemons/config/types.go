@@ -16,6 +16,7 @@ import (
 	"github.com/xiaods/k8e/pkg/util"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
+	"k8s.io/client-go/tools/record"
 	utilsnet "k8s.io/utils/net"
 )
 
@@ -142,6 +143,7 @@ type Control struct {
 	ServiceNodePortRange     *utilnet.PortRange
 	KubeConfigOutput         string
 	KubeConfigMode           string
+	HelmJobImage             string
 	DataDir                  string
 	Datastore                endpoint.Config `json:"-"`
 	Disables                 map[string]bool
@@ -194,6 +196,7 @@ type Control struct {
 
 	BindAddress string
 	SANs        []string
+	SANSecurity bool
 	PrivateIP   string
 	Runtime     *ControlRuntime `json:"-"`
 }
@@ -270,6 +273,7 @@ type ControlRuntime struct {
 	ServiceCurrentKey string
 
 	KubeConfigAdmin           string
+	KubeConfigSupervisor      string
 	KubeConfigController      string
 	KubeConfigScheduler       string
 	KubeConfigAPIServer       string
@@ -293,6 +297,8 @@ type ControlRuntime struct {
 
 	ClientAdminCert           string
 	ClientAdminKey            string
+	ClientSupervisorCert      string
+	ClientSupervisorKey       string
 	ClientControllerCert      string
 	ClientControllerKey       string
 	ClientSchedulerCert       string
@@ -311,6 +317,7 @@ type ControlRuntime struct {
 	ClientETCDKey            string
 
 	Core       *core.Factory
+	Event      record.EventRecorder
 	EtcdConfig endpoint.ETCDConfig
 }
 

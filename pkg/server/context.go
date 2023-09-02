@@ -2,29 +2,25 @@ package server
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"runtime"
 
 	helmcrd "github.com/k3s-io/helm-controller/pkg/crd"
 	"github.com/k3s-io/helm-controller/pkg/generated/controllers/helm.cattle.io"
 	"github.com/pkg/errors"
-	"github.com/rancher/wrangler/pkg/apply"
 	"github.com/rancher/wrangler/pkg/crd"
 	"github.com/rancher/wrangler/pkg/generated/controllers/apps"
 	"github.com/rancher/wrangler/pkg/generated/controllers/batch"
 	"github.com/rancher/wrangler/pkg/generated/controllers/core"
 	"github.com/rancher/wrangler/pkg/generated/controllers/rbac"
 	"github.com/rancher/wrangler/pkg/start"
-	"github.com/sirupsen/logrus"
 	addoncrd "github.com/xiaods/k8e/pkg/crd"
-	"github.com/xiaods/k8e/pkg/deploy"
 	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/record"
 )
 
 type Context struct {
@@ -35,7 +31,7 @@ type Context struct {
 	Auth  *rbac.Factory
 	Core  *core.Factory
 	K8s   kubernetes.Interface
-	Apply apply.Apply
+	Event record.EventRecorder
 }
 
 func (c *Context) Start(ctx context.Context) error {
@@ -48,16 +44,7 @@ func NewContext(ctx context.Context, cfg string) (*Context, error) {
 		return nil, err
 	}
 
-	// Construct a custom user-agent string for the apply client used by the deploy controller
-	// so that we can track which node's deploy controller most recently modified a resource.
-	nodeName := os.Getenv("NODE_NAME")
-	managerName := deploy.ControllerName + "@" + nodeName
-	if nodeName == "" || len(managerName) > validation.FieldManagerMaxLength {
-		logrus.Warn("Deploy controller node name is empty or too long, and will not be tracked via server side apply field management")
-		managerName = deploy.ControllerName
-	}
-	restConfig.UserAgent = fmt.Sprintf("%s/%s (%s/%s) %s/%s", managerName, version.Version, runtime.GOOS, runtime.GOARCH, version.Program, version.GitCommit)
-
+	restConfig.UserAgent = util.GetUserAgent(version.Program + "-supervisor")
 	if err := crds(ctx, restConfig); err != nil {
 		return nil, errors.Wrap(err, "failed to register CRDs")
 	}
@@ -74,7 +61,7 @@ func NewContext(ctx context.Context, cfg string) (*Context, error) {
 		Apps:  apps.NewFactoryFromConfigOrDie(restConfig),
 		Batch: batch.NewFactoryFromConfigOrDie(restConfig),
 		Core:  core.NewFactoryFromConfigOrDie(restConfig),
-		Apply: apply.New(k8s, apply.NewClientFactory(restConfig)).WithDynamicLookup(),
+		Event: util.BuildControllerEventRecorder(k8s, version.Program+"-supervisor", metav1.NamespaceAll),
 	}, nil
 }
 

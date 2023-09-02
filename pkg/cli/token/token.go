@@ -202,7 +202,7 @@ func list(app *cli.Context, cfg *cmds.Token) error {
 			ttl := "<forever>"
 			expires := "<never>"
 			if token.Expires != nil {
-				ttl = duration.ShortHumanDuration(token.Expires.Sub(time.Now()))
+				ttl = duration.ShortHumanDuration(time.Until(token.Expires.Time))
 				expires = token.Expires.Format(time.RFC3339)
 			}
 

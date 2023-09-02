@@ -212,8 +212,7 @@ func (s *S3) Download(ctx context.Context) error {
 // snapshotPrefix returns the prefix used in the
 // naming of the snapshots.
 func (s *S3) snapshotPrefix() string {
-	nodeName := os.Getenv("NODE_NAME")
-	fullSnapshotPrefix := s.config.EtcdSnapshotName + "-" + nodeName
+	fullSnapshotPrefix := s.config.EtcdSnapshotName
 	var prefix string
 	if s.config.EtcdS3Folder != "" {
 		prefix = filepath.Join(s.config.EtcdS3Folder, fullSnapshotPrefix)
@@ -250,8 +249,11 @@ func (s *S3) snapshotRetention(ctx context.Context) error {
 		return nil
 	}
 
-	sort.Slice(snapshotFiles, func(i, j int) bool {
-		return snapshotFiles[i].Key < snapshotFiles[j].Key
+	sort.Slice(snapshotFiles, func(firstSnapshot, secondSnapshot int) bool {
+		// it takes the key from the snapshot file ex: etcd-snapshot-example-{date}, makes the split using "-" to find the date, takes the date and sort by date
+		firstSnapshotName, secondSnapshotName := strings.Split(snapshotFiles[firstSnapshot].Key, "-"), strings.Split(snapshotFiles[secondSnapshot].Key, "-")
+		firstSnapshotDate, secondSnapshotDate := firstSnapshotName[len(firstSnapshotName)-1], secondSnapshotName[len(secondSnapshotName)-1]
+		return firstSnapshotDate < secondSnapshotDate
 	})
 
 	delCount := len(snapshotFiles) - s.config.EtcdSnapshotRetention

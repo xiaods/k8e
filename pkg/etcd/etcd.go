@@ -75,10 +75,6 @@ const (
 	maxConcurrentSnapshots = 1
 	compressedExtension    = ".zip"
 
-	MasterLabel       = "node-role.kubernetes.io/master"
-	ControlPlaneLabel = "node-role.kubernetes.io/control-plane"
-	EtcdRoleLabel     = "node-role.kubernetes.io/etcd"
-
 	baseURLFormat = "https://%s"
 )
 
@@ -1711,21 +1707,26 @@ func (e *ETCD) DeleteSnapshots(ctx context.Context, snapshots []string) error {
 			}
 		}()
 
-		for {
-			select {
-			case <-ctx.Done():
-				logrus.Errorf("Unable to delete snapshot: %v", ctx.Err())
-				return e.ReconcileSnapshotData(ctx)
-			case <-time.After(time.Millisecond * 100):
-				continue
-			case err, ok := <-e.s3.client.RemoveObjects(ctx, e.config.EtcdS3BucketName, objectsCh, minio.RemoveObjectsOptions{}):
-				if err.Err != nil {
-					logrus.Errorf("Unable to delete snapshot: %v", err.Err)
-				}
-				if !ok {
+		err = func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					logrus.Errorf("Unable to delete snapshot: %v", ctx.Err())
 					return e.ReconcileSnapshotData(ctx)
+				case <-time.After(time.Millisecond * 100):
+					continue
+				case err, ok := <-e.s3.client.RemoveObjects(ctx, e.config.EtcdS3BucketName, objectsCh, minio.RemoveObjectsOptions{}):
+					if err.Err != nil {
+						logrus.Errorf("Unable to delete snapshot: %v", err.Err)
+					}
+					if !ok {
+						return e.ReconcileSnapshotData(ctx)
+					}
 				}
 			}
+		}()
+		if err != nil {
+			return err
 		}
 	}
 
@@ -2032,15 +2033,14 @@ func snapshotRetention(retention int, snapshotPrefix string, snapshotDir string)
 		return nil
 	}
 
-	nodeName := os.Getenv("NODE_NAME")
-	logrus.Infof("Applying local snapshot retention policy: retention: %d, snapshotPrefix: %s, directory: %s", retention, snapshotPrefix+"-"+nodeName, snapshotDir)
+	logrus.Infof("Applying local snapshot retention policy: retention: %d, snapshotPrefix: %s, directory: %s", retention, snapshotPrefix, snapshotDir)
 
 	var snapshotFiles []os.FileInfo
 	if err := filepath.Walk(snapshotDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if strings.HasPrefix(info.Name(), snapshotPrefix+"-"+nodeName) {
+		if strings.HasPrefix(info.Name(), snapshotPrefix) {
 			snapshotFiles = append(snapshotFiles, info)
 		}
 		return nil
@@ -2050,10 +2050,12 @@ func snapshotRetention(retention int, snapshotPrefix string, snapshotDir string)
 	if len(snapshotFiles) <= retention {
 		return nil
 	}
-	sort.Slice(snapshotFiles, func(i, j int) bool {
-		return snapshotFiles[i].Name() < snapshotFiles[j].Name()
+	sort.Slice(snapshotFiles, func(firstSnapshot, secondSnapshot int) bool {
+		// it takes the name from the snapshot file ex: etcd-snapshot-example-{date}, makes the split using "-" to find the date, takes the date and sort by date
+		firstSnapshotName, secondSnapshotName := strings.Split(snapshotFiles[firstSnapshot].Name(), "-"), strings.Split(snapshotFiles[secondSnapshot].Name(), "-")
+		firstSnapshotDate, secondSnapshotDate := firstSnapshotName[len(firstSnapshotName)-1], secondSnapshotName[len(secondSnapshotName)-1]
+		return firstSnapshotDate < secondSnapshotDate
 	})
-
 	delCount := len(snapshotFiles) - retention
 	for _, df := range snapshotFiles[:delCount] {
 		snapshotPath := filepath.Join(snapshotDir, df.Name())

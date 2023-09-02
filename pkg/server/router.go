@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,10 +27,13 @@ import (
 	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
 	"k8s.io/apiserver/pkg/endpoints/request"
@@ -139,7 +143,7 @@ func cacerts(serverCA string) http.Handler {
 			var err error
 			ca, err = os.ReadFile(serverCA)
 			if err != nil {
-				sendError(err, resp)
+				sendError(err, resp, req)
 				return
 			}
 		}
@@ -214,13 +218,13 @@ func servingKubeletCert(server *config.Control, keyFile string, auth nodePassBoo
 
 		nodeName, errCode, err := auth(req)
 		if err != nil {
-			sendError(err, resp, errCode)
+			sendError(err, resp, req, errCode)
 			return
 		}
 
 		caCerts, caKey, key, err := getCACertAndKeys(server.Runtime.ServerCA, server.Runtime.ServerCAKey, server.Runtime.ServingKubeletKey)
 		if err != nil {
-			sendError(err, resp)
+			sendError(err, resp, req)
 			return
 		}
 
@@ -230,7 +234,7 @@ func servingKubeletCert(server *config.Control, keyFile string, auth nodePassBoo
 			for _, v := range strings.Split(nodeIP, ",") {
 				ip := net.ParseIP(v)
 				if ip == nil {
-					sendError(fmt.Errorf("invalid IP address %s", ip), resp)
+					sendError(fmt.Errorf("invalid node IP address %s", ip), resp, req)
 					return
 				}
 				ips = append(ips, ip)
@@ -246,7 +250,7 @@ func servingKubeletCert(server *config.Control, keyFile string, auth nodePassBoo
 			},
 		}, key, caCerts[0], caKey)
 		if err != nil {
-			sendError(err, resp)
+			sendError(err, resp, req)
 			return
 		}
 
@@ -270,13 +274,13 @@ func clientKubeletCert(server *config.Control, keyFile string, auth nodePassBoot
 
 		nodeName, errCode, err := auth(req)
 		if err != nil {
-			sendError(err, resp, errCode)
+			sendError(err, resp, req, errCode)
 			return
 		}
 
 		caCerts, caKey, key, err := getCACertAndKeys(server.Runtime.ClientCA, server.Runtime.ClientCAKey, server.Runtime.ClientKubeletKey)
 		if err != nil {
-			sendError(err, resp)
+			sendError(err, resp, req)
 			return
 		}
 
@@ -286,7 +290,7 @@ func clientKubeletCert(server *config.Control, keyFile string, auth nodePassBoot
 			Usages:       []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		}, key, caCerts[0], caKey)
 		if err != nil {
-			sendError(err, resp)
+			sendError(err, resp, req)
 			return
 		}
 
@@ -395,7 +399,7 @@ func serveStatic(urlPrefix, staticDir string) http.Handler {
 	return http.StripPrefix(urlPrefix, http.FileServer(http.Dir(staticDir)))
 }
 
-func sendError(err error, resp http.ResponseWriter, status ...int) {
+func sendError(err error, resp http.ResponseWriter, req *http.Request, status ...int) {
 	var code int
 	if len(status) == 1 {
 		code = status[0]
@@ -403,9 +407,11 @@ func sendError(err error, resp http.ResponseWriter, status ...int) {
 	if code == 0 || code == http.StatusOK {
 		code = http.StatusInternalServerError
 	}
-	logrus.Error(err)
-	resp.WriteHeader(code)
-	resp.Write([]byte(err.Error()))
+	logrus.Errorf("Sending HTTP %d response to %s: %v", code, req.RemoteAddr, err)
+	responsewriters.ErrorNegotiated(
+		apierrors.NewGenericServerResponse(code, req.Method, schema.GroupResource{}, req.URL.Path, err.Error(), 0, true),
+		scheme.Codecs.WithoutConversion(), schema.GroupVersion{}, resp, req,
+	)
 }
 
 // nodePassBootstrapper returns a node name, or http error code and error
@@ -455,12 +461,23 @@ func passwordBootstrap(ctx context.Context, config *Config) nodePassBootstrapper
 			}
 		}
 
+		// verify that the node exists, if using Node Identity auth
 		if err := verifyNode(ctx, nodeClient, node); err != nil {
 			return "", http.StatusUnauthorized, err
 		}
 
+		// verify that the node password secret matches, or create it if it does not
 		if err := nodepassword.Ensure(secretClient, node.Name, node.Password); err != nil {
-			return "", http.StatusForbidden, err
+			// if the verification failed, reject the request
+			if errors.Is(err, nodepassword.ErrVerifyFailed) {
+				return "", http.StatusForbidden, err
+			}
+			// If verification failed due to an error creating the node password secret, allow
+			// the request, but retry verification until the outage is resolved.  This behavior
+			// allows nodes to join the cluster during outages caused by validating webhooks
+			// blocking secret creation - if the outage requires new nodes to join in order to
+			// run the webhook pods, we must fail open here to resolve the outage.
+			return verifyRemotePassword(ctx, config, &mu, deferredNodes, node)
 		}
 
 		return node.Name, http.StatusOK, nil
@@ -471,7 +488,7 @@ func verifyLocalPassword(ctx context.Context, config *Config, mu *sync.Mutex, de
 	// use same password file location that the agent creates
 	nodePasswordRoot := "/"
 	if config.ControlConfig.Rootless {
-		nodePasswordRoot = filepath.Join(config.ControlConfig.DataDir, "agent")
+		nodePasswordRoot = filepath.Join(path.Dir(config.ControlConfig.DataDir), "agent")
 	}
 	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
 	nodePasswordFile := filepath.Join(nodeConfigPath, "password")
@@ -487,7 +504,7 @@ func verifyLocalPassword(ctx context.Context, config *Config, mu *sync.Mutex, de
 	}
 
 	if err := nodepassword.Hasher.VerifyHash(passHash, node.Password); err != nil {
-		return "", http.StatusForbidden, errors.Wrapf(err, "unable to verify local password for node '%s'", node.Name)
+		return "", http.StatusForbidden, errors.Wrap(err, "unable to verify local node password")
 	}
 
 	mu.Lock()
@@ -496,7 +513,7 @@ func verifyLocalPassword(ctx context.Context, config *Config, mu *sync.Mutex, de
 	if _, ok := deferredNodes[node.Name]; !ok {
 		deferredNodes[node.Name] = true
 		go ensureSecret(ctx, config, node)
-		logrus.Debugf("Password verified locally for node '%s'", node.Name)
+		logrus.Infof("Password verified locally for node %s", node.Name)
 	}
 
 	return node.Name, http.StatusOK, nil
@@ -509,7 +526,7 @@ func verifyRemotePassword(ctx context.Context, config *Config, mu *sync.Mutex, d
 	if _, ok := deferredNodes[node.Name]; !ok {
 		deferredNodes[node.Name] = true
 		go ensureSecret(ctx, config, node)
-		logrus.Debugf("Password verification deferred for node '%s'", node.Name)
+		logrus.Infof("Password verification deferred for node %s", node.Name)
 	}
 
 	return node.Name, http.StatusOK, nil
@@ -526,19 +543,25 @@ func verifyNode(ctx context.Context, nodeClient coreclient.NodeClient, node *nod
 
 func ensureSecret(ctx context.Context, config *Config, node *nodeInfo) {
 	runtime := config.ControlConfig.Runtime
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(1 * time.Second):
-			if runtime.Core != nil {
-				logrus.Debugf("Runtime core has become available, ensuring password secret for node '%s'", node.Name)
-				secretClient := runtime.Core.Core().V1().Secret()
-				if err := nodepassword.Ensure(secretClient, node.Name, node.Password); err != nil {
-					logrus.Warnf("Error ensuring node password secret for pre-validated node '%s': %v", node.Name, err)
-				}
-				return
+	wait.PollImmediateUntilWithContext(ctx, time.Second*5, func(ctx context.Context) (bool, error) {
+		if runtime.Core != nil {
+			secretClient := runtime.Core.Core().V1().Secret()
+			// This is consistent with events attached to the node generated by the kubelet
+			// https://github.com/kubernetes/kubernetes/blob/612130dd2f4188db839ea5c2dea07a96b0ad8d1c/pkg/kubelet/kubelet.go#L479-L485
+			nodeRef := &corev1.ObjectReference{
+				Kind:      "Node",
+				Name:      node.Name,
+				UID:       types.UID(node.Name),
+				Namespace: "",
 			}
+			if err := nodepassword.Ensure(secretClient, node.Name, node.Password); err != nil {
+				runtime.Event.Eventf(nodeRef, corev1.EventTypeWarning, "NodePasswordValidationFailed", "Deferred node password secret validation failed: %v", err)
+				// Return true to stop polling if the password verification failed; only retry on secret creation errors.
+				return errors.Is(err, nodepassword.ErrVerifyFailed), nil
+			}
+			runtime.Event.Event(nodeRef, corev1.EventTypeNormal, "NodePasswordValidationComplete", "Deferred node password secret validation complete")
+			return true, nil
 		}
-	}
+		return false, nil
+	})
 }

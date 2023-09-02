@@ -90,7 +90,8 @@ func KubeConfig(dest, url, caCert, clientCert, clientKey string) error {
 		ClientKey:  clientKey,
 	}
 
-	output, err := os.Create(dest)
+	// cis-1.24 and newer require kubeconfigs to be 0600
+	output, err := os.OpenFile(dest, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
@@ -120,6 +121,7 @@ func CreateRuntimeCertFiles(config *config.Control) {
 	runtime.ServiceCurrentKey = filepath.Join(config.DataDir, "tls", "service.current.key")
 
 	runtime.KubeConfigAdmin = filepath.Join(config.DataDir, "cred", "admin.kubeconfig")
+	runtime.KubeConfigSupervisor = filepath.Join(config.DataDir, "cred", "supervisor.kubeconfig")
 	runtime.KubeConfigController = filepath.Join(config.DataDir, "cred", "controller.kubeconfig")
 	runtime.KubeConfigScheduler = filepath.Join(config.DataDir, "cred", "scheduler.kubeconfig")
 	runtime.KubeConfigAPIServer = filepath.Join(config.DataDir, "cred", "api-server.kubeconfig")
@@ -127,6 +129,8 @@ func CreateRuntimeCertFiles(config *config.Control) {
 
 	runtime.ClientAdminCert = filepath.Join(config.DataDir, "tls", "client-admin.crt")
 	runtime.ClientAdminKey = filepath.Join(config.DataDir, "tls", "client-admin.key")
+	runtime.ClientSupervisorCert = filepath.Join(config.DataDir, "tls", "client-supervisor.crt")
+	runtime.ClientSupervisorKey = filepath.Join(config.DataDir, "tls", "client-supervisor.key")
 	runtime.ClientControllerCert = filepath.Join(config.DataDir, "tls", "client-controller.crt")
 	runtime.ClientControllerKey = filepath.Join(config.DataDir, "tls", "client-controller.key")
 	runtime.ClientCloudControllerCert = filepath.Join(config.DataDir, "tls", "client-"+version.Program+"-cloud-controller.crt")
@@ -350,6 +354,16 @@ func genClientCerts(config *config.Control) error {
 		}
 	}
 
+	certGen, err = factory("system:"+version.Program+"-supervisor", []string{user.SystemPrivilegedGroup}, runtime.ClientSupervisorCert, runtime.ClientSupervisorKey)
+	if err != nil {
+		return err
+	}
+	if certGen {
+		if err := KubeConfig(runtime.KubeConfigSupervisor, apiEndpoint, runtime.ServerCA, runtime.ClientSupervisorCert, runtime.ClientSupervisorKey); err != nil {
+			return err
+		}
+	}
+
 	certGen, err = factory(user.KubeControllerManager, nil, runtime.ClientControllerCert, runtime.ClientControllerKey)
 	if err != nil {
 		return err
@@ -430,6 +444,7 @@ func genServerCerts(config *config.Control) error {
 }
 
 func genETCDCerts(config *config.Control) error {
+
 	runtime := config.Runtime
 	regen, err := createSigningCertKey("etcd-server", runtime.ETCDServerCA, runtime.ETCDServerCAKey)
 	if err != nil {
@@ -438,13 +453,6 @@ func genETCDCerts(config *config.Control) error {
 
 	altNames := &certutil.AltNames{}
 	addSANs(altNames, config.SANs)
-
-	if _, err := createClientCertKey(regen, "etcd-server", nil,
-		altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
-		runtime.ETCDServerCA, runtime.ETCDServerCAKey,
-		runtime.ServerETCDCert, runtime.ServerETCDKey); err != nil {
-		return err
-	}
 
 	if _, err := createClientCertKey(regen, "etcd-client", nil,
 		nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
@@ -462,6 +470,17 @@ func genETCDCerts(config *config.Control) error {
 		altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 		runtime.ETCDPeerCA, runtime.ETCDPeerCAKey,
 		runtime.PeerServerClientETCDCert, runtime.PeerServerClientETCDKey); err != nil {
+		return err
+	}
+
+	if config.DisableETCD {
+		return nil
+	}
+
+	if _, err := createClientCertKey(regen, "etcd-server", nil,
+		altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		runtime.ETCDServerCA, runtime.ETCDServerCAKey,
+		runtime.ServerETCDCert, runtime.ServerETCDKey); err != nil {
 		return err
 	}
 

@@ -15,10 +15,10 @@ const (
 )
 
 type StartupHookArgs struct {
-	APIServerReady  <-chan struct{}
-	KubeConfigAdmin string
-	Skips           map[string]bool
-	Disables        map[string]bool
+	APIServerReady       <-chan struct{}
+	KubeConfigSupervisor string
+	Skips                map[string]bool
+	Disables             map[string]bool
 }
 
 type StartupHook func(context.Context, *sync.WaitGroup, StartupHookArgs) error
@@ -45,7 +45,9 @@ type Server struct {
 	DisableAgent             bool
 	KubeConfigOutput         string
 	KubeConfigMode           string
+	HelmJobImage             string
 	TLSSan                   cli.StringSlice
+	TLSSanSecurity           bool
 	BindAddress              string
 	EnablePProf              bool
 	ExtraAPIArgs             cli.StringSlice
@@ -195,6 +197,11 @@ var ServerFlags = []cli.Flag{
 		Usage: "(listener) Add additional hostnames or IPv4/IPv6 addresses as Subject Alternative Names on the server TLS cert",
 		Value: &ServerConfig.TLSSan,
 	},
+	&cli.BoolFlag{
+		Name:        "tls-san-security",
+		Usage:       "(listener) Protect the server TLS cert by refusing to add Subject Alternative Names not associated with the kubernetes apiserver service, server nodes, or values of the tls-san option (default: false)",
+		Destination: &ServerConfig.TLSSanSecurity,
+	},
 	DataDirFlag,
 	ClusterCIDR,
 	ServiceCIDR,
@@ -224,6 +231,11 @@ var ServerFlags = []cli.Flag{
 		Usage:       "(client) Write kubeconfig with this mode",
 		Destination: &ServerConfig.KubeConfigMode,
 		EnvVar:      version.ProgramUpper + "_KUBECONFIG_MODE",
+	},
+	&cli.StringFlag{
+		Name:        "helm-job-image",
+		Usage:       "(helm) Default image to use for helm jobs",
+		Destination: &ServerConfig.HelmJobImage,
 	},
 	ServerToken,
 	&cli.StringFlag{

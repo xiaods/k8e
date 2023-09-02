@@ -18,6 +18,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/secretsencrypt"
+	"github.com/xiaods/k8e/pkg/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
@@ -304,7 +305,7 @@ func getEncryptionHashAnnotation(core core.Interface) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if _, ok := node.Labels[ControlPlaneRoleLabelKey]; !ok {
+	if _, ok := node.Labels[util.ControlPlaneRoleLabelKey]; !ok {
 		return "", "", fmt.Errorf("cannot manage secrets encryption on non control-plane node %s", nodeName)
 	}
 	if ann, ok := node.Annotations[secretsencrypt.EncryptionHashAnnotation]; ok {
@@ -324,7 +325,7 @@ func verifyEncryptionHashAnnotation(runtime *config.ControlRuntime, core core.In
 	var firstHash string
 	var firstNodeName string
 	first := true
-	labelSelector := labels.Set{ControlPlaneRoleLabelKey: "true"}.String()
+	labelSelector := labels.Set{util.ControlPlaneRoleLabelKey: "true"}.String()
 	nodes, err := core.V1().Node().List(metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		return err

@@ -174,8 +174,10 @@ func apiServer(ctx context.Context, cfg *config.Control) error {
 	} else {
 		argsMap["bind-address"] = cfg.APIServerBindAddress
 	}
-	argsMap["enable-aggregator-routing"] = "true"
-	argsMap["egress-selector-config-file"] = runtime.EgressSelectorConfig
+	if cfg.EgressSelectorMode != config.EgressSelectorModeDisabled {
+		argsMap["enable-aggregator-routing"] = "true"
+		argsMap["egress-selector-config-file"] = runtime.EgressSelectorConfig
+	}
 	argsMap["tls-cert-file"] = runtime.ServingKubeAPICert
 	argsMap["tls-private-key-file"] = runtime.ServingKubeAPIKey
 	argsMap["service-account-key-file"] = runtime.ServiceKey
@@ -367,7 +369,7 @@ func cloudControllerManager(ctx context.Context, cfg *config.Control) error {
 // If the CCM RBAC changes, the ResourceAttributes checked for by this function should
 // be modified to check for the most recently added privilege.
 func checkForCloudControllerPrivileges(ctx context.Context, runtime *config.ControlRuntime, timeout time.Duration) error {
-	return util.WaitForRBACReady(ctx, runtime.KubeConfigAdmin, timeout, authorizationv1.ResourceAttributes{
+	return util.WaitForRBACReady(ctx, runtime.KubeConfigSupervisor, timeout, authorizationv1.ResourceAttributes{
 		Namespace: metav1.NamespaceSystem,
 		Verb:      "watch",
 		Resource:  "endpointslices",
@@ -408,7 +410,7 @@ func waitForAPIServerInBackground(ctx context.Context, runtime *config.ControlRu
 			select {
 			case <-ctx.Done():
 				return
-			case err := <-promise(func() error { return util.WaitForAPIServerReady(ctx, runtime.KubeConfigAdmin, 30*time.Second) }):
+			case err := <-promise(func() error { return util.WaitForAPIServerReady(ctx, runtime.KubeConfigSupervisor, 30*time.Second) }):
 				if err != nil {
 					logrus.Infof("Waiting for API server to become available")
 					continue
