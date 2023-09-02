@@ -100,7 +100,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/mux v1.8.0
 	github.com/gorilla/websocket v1.5.0
-	github.com/k3s-io/helm-controller v0.15.2
+	github.com/k3s-io/helm-controller v0.15.4
 	github.com/k3s-io/kine v0.10.2
 	github.com/klauspost/compress v1.16.6
 	github.com/kubernetes-sigs/cri-tools v0.0.0-00010101000000-000000000000
