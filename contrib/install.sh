@@ -262,7 +262,7 @@ source_profile() {
     if ! grep -s 'containerd\.sock' "$PROFILE"; then
         $SUDO echo 'export CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock' >> $PROFILE
     fi
-    if ! grep -s '\/usr\/local\/bin' "$PROFILE"; then
+    if ! grep -s '/usr/local/bin' "$PROFILE"; then
         $SUDO echo 'export PATH=$PATH:/usr/local/bin' >> $PROFILE
     fi
     if ! grep -s 'KUBECONFIG=' "$PROFILE"; then
