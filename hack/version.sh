@@ -28,7 +28,7 @@ get-module-version(){
 
 # We're building k8e against containerd 1.5 in go.mod because 1.6 has dependency
 # conflicts with Kubernetes, but we still need to bundle containerd 1.6.
-VERSION_CONTAINERD="v1.7.3-k3s1"
+VERSION_CONTAINERD="6081f8968d44426e3b76488eb2768a65fbb6cce1"
 
 VERSION_CRICTL=$(get-module-version github.com/kubernetes-sigs/cri-tools)
 if [ -z "$VERSION_CRICTL" ]; then
