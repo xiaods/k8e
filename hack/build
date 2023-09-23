@@ -34,6 +34,7 @@ VERSIONFLAGS="
     -X ${PKG_CRICTL}/version.Version=${VERSION_CRICTL}
 
     -X ${PKG_CONTAINERD}/version.Version=${VERSION_CONTAINERD}
+    -X ${PKG_CONTAINERD}/version.Package=${PKG_CONTAINERD_K8E}
 
     -X ${PKG_CNI_PLUGINS}/pkg/utils/buildversion.BuildVersion=${VERSION_CNIPLUGINS}
 
