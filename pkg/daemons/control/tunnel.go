@@ -3,7 +3,6 @@ package control
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -241,7 +240,7 @@ func (t *TunnelServer) dialBackend(ctx context.Context, addr string) (net.Conn, 
 
 	// Always dial kubelet via the loopback address.
 	if toKubelet {
-		addr = fmt.Sprintf("%s:%s", loopback, port)
+		addr = net.JoinHostPort(loopback, port)
 	}
 
 	// If connecting to something hosted by the local node, don't tunnel
