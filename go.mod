@@ -92,7 +92,7 @@ require (
 	github.com/containerd/stargz-snapshotter v0.14.3
 	github.com/containerd/zfs v1.1.0
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf
-	github.com/docker/docker v23.0.3+incompatible
+	github.com/docker/docker v24.0.5+incompatible
 	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-sql-driver/mysql v1.7.1
@@ -122,7 +122,7 @@ require (
 	github.com/rootless-containers/rootlesskit v1.0.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/pflag v1.0.5
-	github.com/stretchr/testify v1.8.2
+	github.com/stretchr/testify v1.8.4
 	github.com/urfave/cli v1.22.12
 	github.com/yl2chen/cidranger v1.0.2
 	go.etcd.io/etcd/api/v3 v3.5.9
@@ -132,22 +132,22 @@ require (
 	go.etcd.io/etcd/server/v3 v3.5.9
 	go.uber.org/zap v1.24.0
 	golang.org/x/crypto v0.10.0
-	golang.org/x/sync v0.1.0
-	golang.org/x/sys v0.9.0
-	google.golang.org/grpc v1.53.0
+	golang.org/x/sync v0.2.0
+	golang.org/x/sys v0.11.0
+	google.golang.org/grpc v1.57.0
 	gopkg.in/yaml.v2 v2.4.0
 	inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
-	k8s.io/api v0.27.0
-	k8s.io/apimachinery v0.27.0
+	k8s.io/api v0.27.5
+	k8s.io/apimachinery v0.27.5
 	k8s.io/apiserver v0.27.0
 	k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
 	k8s.io/cloud-provider v0.25.14
 	k8s.io/cluster-bootstrap v0.0.0
 	k8s.io/component-base v0.27.0
 	k8s.io/component-helpers v0.27.0
-	k8s.io/cri-api v0.27.0
+	k8s.io/cri-api v0.27.5
 	k8s.io/klog v1.0.0
-	k8s.io/klog/v2 v2.90.1
+	k8s.io/klog/v2 v2.100.1
 	k8s.io/kubectl v0.25.14
 	k8s.io/kubernetes v1.25.14
 	k8s.io/utils v0.0.0-20230220204549-a5ecb0141aa5
@@ -362,7 +362,7 @@ require (
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	golang.org/x/mod v0.10.0 // indirect
-	golang.org/x/net v0.10.0 // indirect
+	golang.org/x/net v0.14.0 // indirect
 	golang.org/x/oauth2 v0.4.0 // indirect
 	golang.org/x/term v0.7.0 // indirect
 	golang.org/x/text v0.10.0 // indirect
