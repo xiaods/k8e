@@ -58,6 +58,7 @@ func main() {
 			tokenCommand,
 			tokenCommand,
 			tokenCommand,
+			tokenCommand,
 		),
 		cmds.NewEtcdSnapshotCommand(etcdsnapshotCommand,
 			cmds.NewEtcdSnapshotSubcommands(
@@ -75,11 +76,9 @@ func main() {
 				secretsencryptCommand,
 				secretsencryptCommand),
 		),
-		cmds.NewCertCommand(
-			cmds.NewCertSubcommands(
-				certCommand,
-				certCommand,
-			),
+		cmds.NewCertCommands(
+			certCommand,
+			certCommand,
 		),
 		cmds.NewCompletionCommand(internalCLIAction(version.Program+"-completion", dataDir, os.Args)),
 	}
