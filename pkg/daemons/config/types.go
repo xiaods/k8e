@@ -13,6 +13,7 @@ import (
 	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wrangler/pkg/generated/controllers/core"
 	"github.com/rancher/wrangler/pkg/leader"
+	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/client-go/tools/record"
@@ -311,6 +312,7 @@ type ControlRuntime struct {
 	ClientETCDCert           string
 	ClientETCDKey            string
 
+	K8e        *k8e.Factory
 	Core       *core.Factory
 	Event      record.EventRecorder
 	EtcdConfig endpoint.ETCDConfig
