@@ -2,6 +2,7 @@
 
 GO=${GO-go}
 ARCH=${ARCH:-$(${GO} env GOARCH)}
+OS=${OS:-$("${GO}" env GOOS)}
 SUFFIX="-${ARCH}"
 GIT_TAG=$RELEASE_TAG
 TREE_STATE=clean
@@ -51,6 +52,11 @@ if [ -z "$VERSION_RUNC" ]; then
     VERSION_RUNC="v0.0.0"
 fi
 
+VERSION_HCSSHIM=$(get-module-version github.com/Microsoft/hcsshim)
+if [ -z "$VERSION_HCSSHIM" ]; then
+    VERSION_HCSSHIM="v0.0.0"
+fi
+
 VERSION_CRI_DOCKERD=$(get-module-version github.com/Mirantis/cri-dockerd)
 if [ -z "$VERSION_CRI_DOCKERD" ]; then
   VERSION_CRI_DOCKERD="v0.0.0"
@@ -68,3 +74,8 @@ else
     VERSION="$VERSION_K8S+k8e-${COMMIT:0:8}$DIRTY"
 fi
 VERSION_TAG="$(sed -e 's/+/-/g' <<< "$VERSION")"
+
+BINARY_POSTFIX=
+if [ ${OS} = windows ]; then
+    BINARY_POSTFIX=.exe
+fi
