@@ -106,7 +106,7 @@ if [ ! -x ${INSTALLBIN}/cni ]; then
 fi
 
 echo Building k8e
-CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -gcflags="all=${GCFLAGS}" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/k8e ./cmd/server/main.go
+CGO_ENABLED=1 "${GO}" build -tags "$TAGS" -buildvcs=false -gcflags="all=${GCFLAGS}" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/k8e ./cmd/server
 ln -s k8e ./bin/k8e-agent
 ln -s k8e ./bin/k8e-server
 ln -s k8e ./bin/k8e-token
