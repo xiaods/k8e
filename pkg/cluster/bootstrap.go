@@ -24,6 +24,7 @@ import (
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -248,7 +249,7 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 	if c.managedDB != nil && !isHTTP {
 		token := c.config.Token
 		if token == "" {
-			tokenFromFile, err := readTokenFromFile(c.config.Runtime.ServerToken, c.config.Runtime.ServerCA, c.config.DataDir)
+			tokenFromFile, err := util.ReadTokenFromFile(c.config.Runtime.ServerToken, c.config.Runtime.ServerCA, c.config.DataDir)
 			if err != nil {
 				return err
 			}
@@ -260,7 +261,7 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 			token = tokenFromFile
 		}
 
-		normalizedToken, err := normalizeToken(token)
+		normalizedToken, err := util.NormalizeToken(token)
 		if err != nil {
 			return err
 		}
