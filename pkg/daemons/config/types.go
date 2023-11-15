@@ -32,6 +32,7 @@ const (
 type Node struct {
 	Docker                   bool
 	ContainerRuntimeEndpoint string
+	ImageServiceEndpoint     string
 	SELinux                  bool
 	EgressSelectorMode       string
 	Containerd               Containerd
