@@ -31,6 +31,10 @@ func (c *FakeK8eV1) Addons(namespace string) v1.AddonInterface {
 	return &FakeAddons{c, namespace}
 }
 
+func (c *FakeK8eV1) ETCDSnapshotFiles() v1.ETCDSnapshotFileInterface {
+	return &FakeETCDSnapshotFiles{c}
+}
+
 // RESTClient returns a RESTClient that is used to communicate
 // with API server by this client implementation.
 func (c *FakeK8eV1) RESTClient() rest.Interface {

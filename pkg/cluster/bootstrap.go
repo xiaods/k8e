@@ -24,6 +24,7 @@ import (
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -82,7 +83,7 @@ func (c *Cluster) shouldBootstrapLoad(ctx context.Context) (bool, bool, error) {
 	if c.managedDB != nil {
 		c.config.Runtime.HTTPBootstrap = true
 
-		isInitialized, err := c.managedDB.IsInitialized(ctx, c.config)
+		isInitialized, err := c.managedDB.IsInitialized()
 		if err != nil {
 			return false, false, err
 		}
@@ -248,7 +249,7 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 	if c.managedDB != nil && !isHTTP {
 		token := c.config.Token
 		if token == "" {
-			tokenFromFile, err := readTokenFromFile(c.config.Runtime.ServerToken, c.config.Runtime.ServerCA, c.config.DataDir)
+			tokenFromFile, err := util.ReadTokenFromFile(c.config.Runtime.ServerToken, c.config.Runtime.ServerCA, c.config.DataDir)
 			if err != nil {
 				return err
 			}
@@ -260,7 +261,7 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 			token = tokenFromFile
 		}
 
-		normalizedToken, err := normalizeToken(token)
+		normalizedToken, err := util.NormalizeToken(token)
 		if err != nil {
 			return err
 		}
@@ -424,15 +425,6 @@ func (c *Cluster) bootstrap(ctx context.Context) error {
 	return c.storageBootstrap(ctx)
 }
 
-// Snapshot is a proxy method to call the snapshot method on the managedb
-// interface for etcd clusters.
-func (c *Cluster) Snapshot(ctx context.Context, config *config.Control) error {
-	if c.managedDB == nil {
-		return errors.New("unable to perform etcd snapshot on non-etcd system")
-	}
-	return c.managedDB.Snapshot(ctx, config)
-}
-
 // compareConfig verifies that the config of the joining control plane node coincides with the cluster's config
 func (c *Cluster) compareConfig() error {
 	token := c.config.AgentToken
@@ -503,7 +495,7 @@ func (c *Cluster) reconcileEtcd(ctx context.Context) error {
 	}()
 
 	e := etcd.NewETCD()
-	if err := e.SetControlConfig(reconcileCtx, c.config); err != nil {
+	if err := e.SetControlConfig(c.config); err != nil {
 		return err
 	}
 	if err := e.StartEmbeddedTemporary(reconcileCtx); err != nil {

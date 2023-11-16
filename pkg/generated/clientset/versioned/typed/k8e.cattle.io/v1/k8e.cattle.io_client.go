@@ -28,6 +28,7 @@ import (
 type K8eV1Interface interface {
 	RESTClient() rest.Interface
 	AddonsGetter
+	ETCDSnapshotFilesGetter
 }
 
 // K8eV1Client is used to interact with features provided by the k8e.cattle.io group.
@@ -37,6 +38,10 @@ type K8eV1Client struct {
 
 func (c *K8eV1Client) Addons(namespace string) AddonInterface {
 	return newAddons(c, namespace)
+}
+
+func (c *K8eV1Client) ETCDSnapshotFiles() ETCDSnapshotFileInterface {
+	return newETCDSnapshotFiles(c)
 }
 
 // NewForConfig creates a new K8eV1Client for the given config.

@@ -13,7 +13,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
-	"github.com/xiaods/k8e/pkg/util"
+	utilsnet "k8s.io/utils/net"
 )
 
 type Cluster struct {
@@ -54,8 +54,7 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 			clientURL.Host = clientURL.Hostname() + ":2379"
 			clientURLs = append(clientURLs, clientURL.String())
 		}
-		IPv6OnlyService, _ := util.IsIPv6OnlyCIDRs(c.config.ServiceIPRanges)
-		etcdProxy, err := etcd.NewETCDProxy(ctx, true, c.config.DataDir, clientURLs[0], IPv6OnlyService)
+		etcdProxy, err := etcd.NewETCDProxy(ctx, true, c.config.DataDir, clientURLs[0], utilsnet.IsIPv6CIDR(c.config.ServiceIPRanges[0]))
 		if err != nil {
 			return nil, err
 		}

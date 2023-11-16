@@ -6,6 +6,7 @@ cd $(dirname $0)/..
 
 RUNC_DIR=build/src/github.com/opencontainers/runc
 CONTAINERD_DIR=build/src/github.com/containerd/containerd
+HCSSHIM_DIR=build/src/github.com/microsoft/hcsshim
 DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
 NERDCTL_VERSION=1.5.0
@@ -15,11 +16,23 @@ umask 022
 rm -rf ${CHARTS_DIR}
 rm -rf ${RUNC_DIR}
 rm -rf ${CONTAINERD_DIR}
+rm -rf ${HCSSHIM_DIR}
 mkdir -p ${DATA_DIR}
 mkdir -p ${CHARTS_DIR}
 mkdir -p bin
 
-git clone --single-branch --branch=${VERSION_RUNC} --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR}
+case ${OS} in
+  linux)
+    git clone --single-branch --branch=${VERSION_RUNC} --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR}
+    ;;
+  windows)
+    git clone --single-branch --branch=${VERSION_HCSSHIM} --depth=1 https://github.com/microsoft/hcsshim ${HCSSHIM_DIR}
+    ;;
+  *)
+    echo "[ERROR] unrecognized opertaing system: ${OS}"
+    exit 1
+    ;;
+esac
 
 git clone --single-branch --branch=${VERSION_CONTAINERD} --depth=1 ${PKG_CONTAINERD_K8E} ${CONTAINERD_DIR}
 

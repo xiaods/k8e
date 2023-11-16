@@ -43,43 +43,44 @@ replace (
 	go.opentelemetry.io/otel/trace => go.opentelemetry.io/otel/trace v0.20.0
 	go.opentelemetry.io/proto/otlp => go.opentelemetry.io/proto/otlp v0.7.0
 	golang.org/x/crypto => golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd
-	golang.org/x/net => golang.org/x/net v0.7.0
+	golang.org/x/net => golang.org/x/net v0.17.0
 	golang.org/x/sys => golang.org/x/sys v0.2.0
+	google.golang.org/api => google.golang.org/api v0.60.0
 	google.golang.org/genproto => google.golang.org/genproto v0.0.0-20220107163113-42d7afdf6368
-	google.golang.org/grpc => google.golang.org/grpc v1.40.0
+	google.golang.org/grpc => google.golang.org/grpc v1.58.3
 	gopkg.in/square/go-jose.v2 => gopkg.in/square/go-jose.v2 v2.2.2
-	k8s.io/api => github.com/k3s-io/kubernetes/staging/src/k8s.io/api v1.25.14-k3s1
-	k8s.io/apiextensions-apiserver => github.com/k3s-io/kubernetes/staging/src/k8s.io/apiextensions-apiserver v1.25.14-k3s1
-	k8s.io/apimachinery => github.com/k3s-io/kubernetes/staging/src/k8s.io/apimachinery v1.25.14-k3s1
-	k8s.io/apiserver => github.com/k3s-io/kubernetes/staging/src/k8s.io/apiserver v1.25.14-k3s1
-	k8s.io/cli-runtime => github.com/k3s-io/kubernetes/staging/src/k8s.io/cli-runtime v1.25.14-k3s1
-	k8s.io/client-go => github.com/k3s-io/kubernetes/staging/src/k8s.io/client-go v1.25.14-k3s1
-	k8s.io/cloud-provider => github.com/k3s-io/kubernetes/staging/src/k8s.io/cloud-provider v1.25.14-k3s1
-	k8s.io/cluster-bootstrap => github.com/k3s-io/kubernetes/staging/src/k8s.io/cluster-bootstrap v1.25.14-k3s1
-	k8s.io/code-generator => github.com/k3s-io/kubernetes/staging/src/k8s.io/code-generator v1.25.14-k3s1
-	k8s.io/component-base => github.com/k3s-io/kubernetes/staging/src/k8s.io/component-base v1.25.14-k3s1
-	k8s.io/component-helpers => github.com/k3s-io/kubernetes/staging/src/k8s.io/component-helpers v1.25.14-k3s1
-	k8s.io/controller-manager => github.com/k3s-io/kubernetes/staging/src/k8s.io/controller-manager v1.25.14-k3s1
-	k8s.io/cri-api => github.com/k3s-io/kubernetes/staging/src/k8s.io/cri-api v1.25.14-k3s1
-	k8s.io/csi-translation-lib => github.com/k3s-io/kubernetes/staging/src/k8s.io/csi-translation-lib v1.25.14-k3s1
+	k8s.io/api => github.com/k3s-io/kubernetes/staging/src/k8s.io/api v1.25.15-k3s1
+	k8s.io/apiextensions-apiserver => github.com/k3s-io/kubernetes/staging/src/k8s.io/apiextensions-apiserver v1.25.15-k3s1
+	k8s.io/apimachinery => github.com/k3s-io/kubernetes/staging/src/k8s.io/apimachinery v1.25.15-k3s1
+	k8s.io/apiserver => github.com/k3s-io/kubernetes/staging/src/k8s.io/apiserver v1.25.15-k3s1
+	k8s.io/cli-runtime => github.com/k3s-io/kubernetes/staging/src/k8s.io/cli-runtime v1.25.15-k3s1
+	k8s.io/client-go => github.com/k3s-io/kubernetes/staging/src/k8s.io/client-go v1.25.15-k3s1
+	k8s.io/cloud-provider => github.com/k3s-io/kubernetes/staging/src/k8s.io/cloud-provider v1.25.15-k3s1
+	k8s.io/cluster-bootstrap => github.com/k3s-io/kubernetes/staging/src/k8s.io/cluster-bootstrap v1.25.15-k3s1
+	k8s.io/code-generator => github.com/k3s-io/kubernetes/staging/src/k8s.io/code-generator v1.25.15-k3s1
+	k8s.io/component-base => github.com/k3s-io/kubernetes/staging/src/k8s.io/component-base v1.25.15-k3s1
+	k8s.io/component-helpers => github.com/k3s-io/kubernetes/staging/src/k8s.io/component-helpers v1.25.15-k3s1
+	k8s.io/controller-manager => github.com/k3s-io/kubernetes/staging/src/k8s.io/controller-manager v1.25.15-k3s1
+	k8s.io/cri-api => github.com/k3s-io/kubernetes/staging/src/k8s.io/cri-api v1.25.15-k3s1
+	k8s.io/csi-translation-lib => github.com/k3s-io/kubernetes/staging/src/k8s.io/csi-translation-lib v1.25.15-k3s1
 	k8s.io/klog => github.com/k3s-io/klog v1.0.0-k3s2 // k3s-release-1.x
 	k8s.io/klog/v2 => github.com/k3s-io/klog/v2 v2.60.1-k3s1 // k3s-main
-	k8s.io/kube-aggregator => github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-aggregator v1.25.14-k3s1
-	k8s.io/kube-controller-manager => github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-controller-manager v1.25.14-k3s1
+	k8s.io/kube-aggregator => github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-aggregator v1.25.15-k3s1
+	k8s.io/kube-controller-manager => github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-controller-manager v1.25.15-k3s1
 	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20220803162953-67bda5d908f1
-	k8s.io/kube-proxy => github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-proxy v1.25.14-k3s1
-	k8s.io/kube-scheduler => github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-scheduler v1.25.14-k3s1
-	k8s.io/kubectl => github.com/k3s-io/kubernetes/staging/src/k8s.io/kubectl v1.25.14-k3s1
-	k8s.io/kubelet => github.com/k3s-io/kubernetes/staging/src/k8s.io/kubelet v1.25.14-k3s1
-	k8s.io/kubernetes => github.com/k3s-io/kubernetes v1.25.14-k3s1
-	k8s.io/legacy-cloud-providers => github.com/k3s-io/kubernetes/staging/src/k8s.io/legacy-cloud-providers v1.25.14-k3s1
-	k8s.io/metrics => github.com/k3s-io/kubernetes/staging/src/k8s.io/metrics v1.25.14-k3s1
-	k8s.io/mount-utils => github.com/k3s-io/kubernetes/staging/src/k8s.io/mount-utils v1.25.14-k3s1
-	k8s.io/node-api => github.com/k3s-io/kubernetes/staging/src/k8s.io/node-api v1.25.14-k3s1
-	k8s.io/pod-security-admission => github.com/k3s-io/kubernetes/staging/src/k8s.io/pod-security-admission v1.25.14-k3s1
-	k8s.io/sample-apiserver => github.com/k3s-io/kubernetes/staging/src/k8s.io/sample-apiserver v1.25.14-k3s1
-	k8s.io/sample-cli-plugin => github.com/k3s-io/kubernetes/staging/src/k8s.io/sample-cli-plugin v1.25.14-k3s1
-	k8s.io/sample-controller => github.com/k3s-io/kubernetes/staging/src/k8s.io/sample-controller v1.25.14-k3s1
+	k8s.io/kube-proxy => github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-proxy v1.25.15-k3s1
+	k8s.io/kube-scheduler => github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-scheduler v1.25.15-k3s1
+	k8s.io/kubectl => github.com/k3s-io/kubernetes/staging/src/k8s.io/kubectl v1.25.15-k3s1
+	k8s.io/kubelet => github.com/k3s-io/kubernetes/staging/src/k8s.io/kubelet v1.25.15-k3s1
+	k8s.io/kubernetes => github.com/k3s-io/kubernetes v1.25.15-k3s1
+	k8s.io/legacy-cloud-providers => github.com/k3s-io/kubernetes/staging/src/k8s.io/legacy-cloud-providers v1.25.15-k3s1
+	k8s.io/metrics => github.com/k3s-io/kubernetes/staging/src/k8s.io/metrics v1.25.15-k3s1
+	k8s.io/mount-utils => github.com/k3s-io/kubernetes/staging/src/k8s.io/mount-utils v1.25.15-k3s1
+	k8s.io/node-api => github.com/k3s-io/kubernetes/staging/src/k8s.io/node-api v1.25.15-k3s1
+	k8s.io/pod-security-admission => github.com/k3s-io/kubernetes/staging/src/k8s.io/pod-security-admission v1.25.15-k3s1
+	k8s.io/sample-apiserver => github.com/k3s-io/kubernetes/staging/src/k8s.io/sample-apiserver v1.25.15-k3s1
+	k8s.io/sample-cli-plugin => github.com/k3s-io/kubernetes/staging/src/k8s.io/sample-cli-plugin v1.25.15-k3s1
+	k8s.io/sample-controller => github.com/k3s-io/kubernetes/staging/src/k8s.io/sample-controller v1.25.15-k3s1
 	mvdan.cc/unparam => mvdan.cc/unparam v0.0.0-20210104141923-aac4ce9116a7
 )
 
@@ -92,7 +93,7 @@ require (
 	github.com/containerd/stargz-snapshotter v0.14.3
 	github.com/containerd/zfs v1.1.0
 	github.com/coreos/go-systemd v0.0.0-20191104093116-d3cd4ed1dbcf
-	github.com/docker/docker v23.0.3+incompatible
+	github.com/docker/docker v24.0.5+incompatible
 	github.com/erikdubbelboer/gspt v0.0.0-20190125194910-e68493906b83
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-sql-driver/mysql v1.7.1
@@ -122,7 +123,7 @@ require (
 	github.com/rootless-containers/rootlesskit v1.0.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/pflag v1.0.5
-	github.com/stretchr/testify v1.8.2
+	github.com/stretchr/testify v1.8.4
 	github.com/urfave/cli v1.22.12
 	github.com/yl2chen/cidranger v1.0.2
 	go.etcd.io/etcd/api/v3 v3.5.9
@@ -131,31 +132,32 @@ require (
 	go.etcd.io/etcd/etcdutl/v3 v3.5.4
 	go.etcd.io/etcd/server/v3 v3.5.9
 	go.uber.org/zap v1.24.0
-	golang.org/x/crypto v0.10.0
-	golang.org/x/sync v0.1.0
-	golang.org/x/sys v0.9.0
-	google.golang.org/grpc v1.53.0
+	golang.org/x/crypto v0.14.0
+	golang.org/x/sync v0.3.0
+	golang.org/x/sys v0.13.0
+	google.golang.org/grpc v1.57.0
 	gopkg.in/yaml.v2 v2.4.0
 	inet.af/tcpproxy v0.0.0-20200125044825-b6bb9b5b8252
-	k8s.io/api v0.27.0
-	k8s.io/apimachinery v0.27.0
+	k8s.io/api v0.27.5
+	k8s.io/apimachinery v0.27.5
 	k8s.io/apiserver v0.27.0
 	k8s.io/client-go v11.0.1-0.20190409021438-1a26190bd76a+incompatible
-	k8s.io/cloud-provider v0.25.14
+	k8s.io/cloud-provider v0.25.15
 	k8s.io/cluster-bootstrap v0.0.0
 	k8s.io/component-base v0.27.0
 	k8s.io/component-helpers v0.27.0
-	k8s.io/cri-api v0.27.0
+	k8s.io/cri-api v0.27.5
 	k8s.io/klog v1.0.0
-	k8s.io/klog/v2 v2.90.1
-	k8s.io/kubectl v0.25.14
-	k8s.io/kubernetes v1.25.14
+	k8s.io/klog/v2 v2.100.1
+	k8s.io/kubectl v0.25.15
+	k8s.io/kubernetes v1.25.15
 	k8s.io/utils v0.0.0-20230220204549-a5ecb0141aa5
 	sigs.k8s.io/yaml v1.3.0
 )
 
 require (
-	cloud.google.com/go v0.97.0 // indirect
+	cloud.google.com/go/compute v1.21.0 // indirect
+	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	github.com/Azure/azure-sdk-for-go v55.0.0+incompatible // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/Azure/go-autorest v14.2.0+incompatible // indirect
@@ -171,7 +173,7 @@ require (
 	github.com/JeffAshton/win_pdh v0.0.0-20161109143554-76bb4ee9f0ab // indirect
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
 	github.com/Microsoft/go-winio v0.6.0 // indirect
-	github.com/Microsoft/hcsshim v0.10.0-rc.7 // indirect
+	github.com/Microsoft/hcsshim v0.11.1 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/Rican7/retry v0.1.0 // indirect
 	github.com/antlr/antlr4/runtime/Go/antlr v0.0.0-20220418222510-f25a4f6275ed // indirect
@@ -250,7 +252,7 @@ require (
 	github.com/google/go-containerregistry v0.7.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
-	github.com/googleapis/gax-go/v2 v2.1.1 // indirect
+	github.com/googleapis/gax-go/v2 v2.11.0 // indirect
 	github.com/gophercloud/gophercloud v0.1.0 // indirect
 	github.com/gregjones/httpcache v0.0.0-20180305231024-9cad4c3443a7 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
@@ -315,7 +317,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/pquerna/cachecontrol v0.1.0 // indirect
 	github.com/prometheus/client_golang v1.14.0 // indirect
-	github.com/prometheus/client_model v0.3.0 // indirect
+	github.com/prometheus/client_model v0.4.0 // indirect
 	github.com/prometheus/common v0.39.0 // indirect
 	github.com/prometheus/procfs v0.9.0 // indirect
 	github.com/rs/xid v1.4.0 // indirect
@@ -336,7 +338,7 @@ require (
 	github.com/vbatts/tar-split v0.11.2 // indirect
 	github.com/vishvananda/netlink v1.2.1-beta.2 // indirect
 	github.com/vishvananda/netns v0.0.2 // indirect
-	github.com/vmware/govmomi v0.30.0 // indirect
+	github.com/vmware/govmomi v0.30.6 // indirect
 	github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 // indirect
 	github.com/xlab/treeprint v1.1.0 // indirect
 	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
@@ -357,22 +359,22 @@ require (
 	go.opentelemetry.io/otel/sdk/export/metric v0.20.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v0.20.0 // indirect
 	go.opentelemetry.io/otel/trace v1.12.0 // indirect
-	go.opentelemetry.io/proto/otlp v0.9.0 // indirect
+	go.opentelemetry.io/proto/otlp v0.19.0 // indirect
 	go.starlark.net v0.0.0-20200306205701-8dd3e2ee1dd5 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
-	golang.org/x/mod v0.10.0 // indirect
-	golang.org/x/net v0.10.0 // indirect
-	golang.org/x/oauth2 v0.4.0 // indirect
-	golang.org/x/term v0.7.0 // indirect
-	golang.org/x/text v0.10.0 // indirect
+	golang.org/x/mod v0.11.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
+	golang.org/x/oauth2 v0.10.0 // indirect
+	golang.org/x/term v0.13.0 // indirect
+	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
-	golang.org/x/tools v0.8.0 // indirect
+	golang.org/x/tools v0.10.0 // indirect
 	gonum.org/v1/gonum v0.6.2 // indirect
-	google.golang.org/api v0.60.0 // indirect
+	google.golang.org/api v0.126.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20230306155012-7f2fa6fef1f4 // indirect
-	google.golang.org/protobuf v1.28.1 // indirect
+	google.golang.org/genproto v0.0.0-20230711160842-782d3b101e98 // indirect
+	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/gcfg.v1 v1.2.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect

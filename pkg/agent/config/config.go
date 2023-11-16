@@ -31,6 +31,7 @@ import (
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/apimachinery/pkg/util/json"
+	utilsnet "k8s.io/utils/net"
 )
 
 const (
@@ -331,7 +332,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 
 	// If the supervisor and externally-facing apiserver are not on the same port, tell the proxy where to find the apiserver.
 	if controlConfig.SupervisorPort != controlConfig.HTTPSPort {
-		_, isIPv6, _ := util.GetFirstString([]string{envInfo.NodeIP.String()})
+		isIPv6 := utilsnet.IsIPv6(net.ParseIP([]string{envInfo.NodeIP.String()}[0]))
 		if err := proxy.SetAPIServerPort(ctx, controlConfig.HTTPSPort, isIPv6); err != nil {
 			return nil, errors.Wrapf(err, "failed to setup access to API Server port %d on at %s", controlConfig.HTTPSPort, proxy.SupervisorURL())
 		}
@@ -413,6 +414,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 		Docker:                   envInfo.Docker,
 		SELinux:                  envInfo.EnableSELinux,
 		ContainerRuntimeEndpoint: envInfo.ContainerRuntimeEndpoint,
+		ImageServiceEndpoint:     envInfo.ImageServiceEndpoint,
 		EgressSelectorMode:       controlConfig.EgressSelectorMode,
 		ServerHTTPSPort:          controlConfig.HTTPSPort,
 		Token:                    info.String(),
@@ -438,24 +440,30 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.Containerd.Config = filepath.Join(envInfo.DataDir, "agent", "etc", "containerd", "config.toml")
 	nodeConfig.Containerd.Root = filepath.Join(envInfo.DataDir, "agent", "containerd")
 	nodeConfig.CRIDockerd.Root = filepath.Join(envInfo.DataDir, "agent", "cri-dockerd")
-	if !nodeConfig.Docker && nodeConfig.ContainerRuntimeEndpoint == "" {
-		switch nodeConfig.AgentConfig.Snapshotter {
-		case "overlayfs":
-			if err := containerd.OverlaySupported(nodeConfig.Containerd.Root); err != nil {
-				return nil, errors.Wrapf(err, "\"overlayfs\" snapshotter cannot be enabled for %q, try using \"fuse-overlayfs\" or \"native\"",
-					nodeConfig.Containerd.Root)
+	if !nodeConfig.Docker {
+		if nodeConfig.ImageServiceEndpoint != "" {
+			nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ImageServiceEndpoint
+		} else if nodeConfig.ContainerRuntimeEndpoint == "" {
+			switch nodeConfig.AgentConfig.Snapshotter {
+			case "overlayfs":
+				if err := containerd.OverlaySupported(nodeConfig.Containerd.Root); err != nil {
+					return nil, errors.Wrapf(err, "\"overlayfs\" snapshotter cannot be enabled for %q, try using \"fuse-overlayfs\" or \"native\"",
+						nodeConfig.Containerd.Root)
+				}
+			case "fuse-overlayfs":
+				if err := containerd.FuseoverlayfsSupported(nodeConfig.Containerd.Root); err != nil {
+					return nil, errors.Wrapf(err, "\"fuse-overlayfs\" snapshotter cannot be enabled for %q, try using \"native\"",
+						nodeConfig.Containerd.Root)
+				}
+			case "stargz":
+				if err := containerd.StargzSupported(nodeConfig.Containerd.Root); err != nil {
+					return nil, errors.Wrapf(err, "\"stargz\" snapshotter cannot be enabled for %q, try using \"overlayfs\" or \"native\"",
+						nodeConfig.Containerd.Root)
+				}
+				nodeConfig.AgentConfig.ImageServiceSocket = "/run/containerd-stargz-grpc/containerd-stargz-grpc.sock"
 			}
-		case "fuse-overlayfs":
-			if err := containerd.FuseoverlayfsSupported(nodeConfig.Containerd.Root); err != nil {
-				return nil, errors.Wrapf(err, "\"fuse-overlayfs\" snapshotter cannot be enabled for %q, try using \"native\"",
-					nodeConfig.Containerd.Root)
-			}
-		case "stargz":
-			if err := containerd.StargzSupported(nodeConfig.Containerd.Root); err != nil {
-				return nil, errors.Wrapf(err, "\"stargz\" snapshotter cannot be enabled for %q, try using \"overlayfs\" or \"native\"",
-					nodeConfig.Containerd.Root)
-			}
-			nodeConfig.AgentConfig.ImageServiceSocket = "/run/containerd-stargz-grpc/containerd-stargz-grpc.sock"
+		} else {
+			nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ContainerRuntimeEndpoint
 		}
 	}
 	nodeConfig.Containerd.Opt = filepath.Join(envInfo.DataDir, "agent", "containerd")
@@ -468,22 +476,18 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.Certificate = servingCert
 
 	nodeConfig.AgentConfig.NodeIPs = nodeIPs
-	nodeIP, listenAddress, _, err := util.GetFirstIP(nodeIPs)
+	listenAddress, _, _, err := util.GetDefaultAddresses(nodeIPs[0])
 	if err != nil {
 		return nil, errors.Wrap(err, "cannot configure IPv4/IPv6 node-ip")
 	}
-	nodeConfig.AgentConfig.NodeIP = nodeIP.String()
+	nodeConfig.AgentConfig.NodeIP = nodeIPs[0].String()
 	nodeConfig.AgentConfig.ListenAddress = listenAddress
 	nodeConfig.AgentConfig.NodeExternalIPs = nodeExternalIPs
 
 	// if configured, set NodeExternalIP to the first IPv4 address, for legacy clients
 	// unless only IPv6 address given
 	if len(nodeConfig.AgentConfig.NodeExternalIPs) > 0 {
-		nodeExternalIP, _, _, err := util.GetFirstIP(nodeConfig.AgentConfig.NodeExternalIPs)
-		if err != nil {
-			return nil, errors.Wrap(err, "cannot configure IPv4/IPv6 node-external-ip")
-		}
-		nodeConfig.AgentConfig.NodeExternalIP = nodeExternalIP.String()
+		nodeConfig.AgentConfig.NodeExternalIP = nodeConfig.AgentConfig.NodeExternalIPs[0].String()
 	}
 
 	if nodeConfig.Docker {

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -64,14 +65,24 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 	serviceIPv6 := utilsnet.IsIPv6CIDR(nodeConfig.AgentConfig.ServiceCIDR)
 	clusterIPv6 := utilsnet.IsIPv6CIDR(nodeConfig.AgentConfig.ClusterCIDR)
 	nodeIPv6 := utilsnet.IsIPv6String(nodeConfig.AgentConfig.NodeIP)
+
+	// check that cluster-cidr and service-cidr have the same IP versions
 	if (serviceIPv6 != clusterIPv6) || (dualCluster != dualService) || (serviceIPv4 != clusterIPv4) {
 		return fmt.Errorf("cluster-cidr: %v and service-cidr: %v, must share the same IP version (IPv4, IPv6 or dual-stack)", nodeConfig.AgentConfig.ClusterCIDRs, nodeConfig.AgentConfig.ServiceCIDRs)
 	}
-	if (clusterIPv6 && !nodeIPv6) || (dualCluster && !dualNode) || (clusterIPv4 && !nodeIPv4) {
+
+	// check that node-ip has the IP versions set in cluster-cidr
+	if (clusterIPv6 && !(nodeIPv6 || dualNode)) || (dualCluster && !dualNode) || (clusterIPv4 && !(nodeIPv4 || dualNode)) {
 		return fmt.Errorf("cluster-cidr: %v and node-ip: %v, must share the same IP version (IPv4, IPv6 or dual-stack)", nodeConfig.AgentConfig.ClusterCIDRs, nodeConfig.AgentConfig.NodeIPs)
 	}
+
 	enableIPv6 := dualCluster || clusterIPv6
 	enableIPv4 := dualCluster || clusterIPv4
+
+	// dualStack or IPv6 are not supported on Windows node
+	if (goruntime.GOOS == "windows") && enableIPv6 {
+		return fmt.Errorf("dual-stack or IPv6 are not supported on Windows node")
+	}
 
 	syssetup.Configure(enableIPv6)
 	nodeConfig.AgentConfig.EnableIPv4 = enableIPv4
@@ -196,7 +207,7 @@ func createProxyAndValidateToken(ctx context.Context, cfg *cmds.Agent) (proxy.Pr
 	if err := os.MkdirAll(agentDir, 0700); err != nil {
 		return nil, err
 	}
-	_, isIPv6, _ := util.GetFirstString([]string{cfg.NodeIP.String()})
+	isIPv6 := utilsnet.IsIPv6(net.ParseIP([]string{cfg.NodeIP.String()}[0]))
 
 	proxy, err := proxy.NewSupervisorProxy(ctx, !cfg.DisableLoadBalancer, agentDir, cfg.ServerURL, cfg.LBServerPort, isIPv6)
 	if err != nil {
