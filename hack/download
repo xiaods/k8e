@@ -34,7 +34,7 @@ case ${OS} in
     ;;
 esac
 
-git clone --single-branch --branch=${VERSION_CONTAINERD} --depth=1 ${PKG_CONTAINERD_K8E} ${CONTAINERD_DIR}
+git clone --single-branch --branch=${VERSION_CONTAINERD} --depth=1 https://${PKG_CONTAINERD_K8E} ${CONTAINERD_DIR}
 
 download_and_package_nerdctl() {
 echo "download nerdctl..."
