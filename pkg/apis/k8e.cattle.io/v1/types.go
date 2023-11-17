@@ -53,7 +53,7 @@ type ETCDSnapshotSpec struct {
 	// Location is the absolute file:// or s3:// URI address of the snapshot.
 	Location string `json:"location" column:""`
 	// Metadata contains point-in-time snapshot of the contents of the
-	// k3s-etcd-snapshot-extra-metadata ConfigMap's data field, at the time the
+	// k8e-etcd-snapshot-extra-metadata ConfigMap's data field, at the time the
 	// snapshot was taken. This is intended to contain data about cluster state
 	// that may be important for an external system to have available when restoring
 	// the snapshot.

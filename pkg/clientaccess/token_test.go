@@ -344,7 +344,7 @@ func Test_UnitParseAndGet(t *testing.T) {
 	}
 }
 
-// newTLSServer returns a HTTPS server that mocks the basic functionality required to validate K3s join tokens.
+// newTLSServer returns a HTTPS server that mocks the basic functionality required to validate K8e join tokens.
 // Each call to this function will generate new CA and server certificates unique to the returned server.
 func newTLSServer(t *testing.T, username, password string, sendWrongCA bool) *httptest.Server {
 	var server *httptest.Server

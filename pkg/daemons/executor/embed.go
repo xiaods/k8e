@@ -53,7 +53,7 @@ func (e *Embedded) Bootstrap(ctx context.Context, nodeConfig *daemonconfig.Node,
 
 	go func() {
 		// Ensure that the log verbosity remains set to the configured level by resetting it at 1-second intervals
-		// for the first 2 minutes that K3s is starting up. This is necessary because each of the Kubernetes
+		// for the first 2 minutes that K8e is starting up. This is necessary because each of the Kubernetes
 		// components will initialize klog and reset the verbosity flag when they are starting.
 		logCtx, cancel := context.WithTimeout(ctx, time.Second*120)
 		defer cancel()
