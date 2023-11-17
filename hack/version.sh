@@ -41,8 +41,8 @@ if [ -z "$VERSION_CRICTL" ]; then
     VERSION_CRICTL="v0.0.0"
 fi
 
-VERSION_K8S_K3S=$(get-module-version k8s.io/kubernetes)
-VERSION_K8S=${VERSION_K8S_K3S%"-k3s1"}
+VERSION_K8S_K8E=$(get-module-version k8s.io/kubernetes)
+VERSION_K8S=${VERSION_K8S_K8E%"-k3s1"}
 if [ -z "$VERSION_K8S" ]; then
     VERSION_K8S="v0.0.0"
 fi

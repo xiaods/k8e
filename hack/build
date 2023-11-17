@@ -133,7 +133,7 @@ fi
 echo Building k8e
 CGO_ENABLED=1 "${GO}" build $BLDFLAGS -tags "$TAGS" -buildvcs=false -gcflags="all=${GCFLAGS}" -ldflags "$VERSIONFLAGS $LDFLAGS $STATIC" -o bin/k8e${BINARY_POSTFIX} ./cmd/server
 
-for i in "${k3s_binaries[@]}"; do
+for i in "${k8e_binaries[@]}"; do
     ln -s "k8e${BINARY_POSTFIX}" "$i${BINARY_POSTFIX}"
 done
 
