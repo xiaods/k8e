@@ -472,6 +472,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	}
 	applyContainerdStateAndAddress(nodeConfig)
 	applyCRIDockerdAddress(nodeConfig)
+	applyContainerdQoSClassConfigFileIfPresent(envInfo, nodeConfig)
 	nodeConfig.Containerd.Template = filepath.Join(envInfo.DataDir, "agent", "etc", "containerd", "config.toml.tmpl")
 	nodeConfig.Certificate = servingCert
 
