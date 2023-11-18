@@ -176,6 +176,11 @@ var (
 		Usage:  "(deprecated) Use --selinux to explicitly enable SELinux",
 		Hidden: true,
 	}
+	DisableAgentLBFlag = &cli.BoolFlag{
+		Name:        "disable-apiserver-lb",
+		Usage:       "(agent/networking) (experimental) Disable the agent's client-side load-balancer and connect directly to the configured server address",
+		Destination: &AgentConfig.DisableLoadBalancer,
+	}
 )
 
 func CheckSELinuxFlags(ctx *cli.Context) error {
@@ -258,6 +263,7 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 				EnvVar:      version.ProgramUpper + "_CLUSTER_SECRET",
 				Hidden:      true,
 			},
+			DisableAgentLBFlag,
 		},
 	}
 }
