@@ -458,8 +458,9 @@ setup_cilium() {
     case "${INSTALL_K8E_EXEC}" in
         *"cluster-init"*) info "Installing cilium network cni/operator"
         $SUDO chmod 644 /etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml
+        [ -z ${API_SERVER_IP} ] && API_SERVER_IP="127.0.0.1"
         # cilium helm values https://github.com/cilium/cilium/tree/master/install/kubernetes/cilium
-        $SUDO KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml $BIN_DIR/cilium install --version=1.14.1 --helm-set ipam.operator.clusterPoolIPv4PodCIDRList=["10.42.0.0/16"];;
+        $SUDO KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml $BIN_DIR/cilium install --version=1.14.4 --set image.useDigest=false --set operator.image.useDigest=false --set ipam.operator.clusterPoolIPv4PodCIDRList="10.42.0.0/16" --set k8sServiceHost=${API_SERVER_IP};;
     esac
 }
 
