@@ -5,9 +5,7 @@ package containerd
 
 import (
 	"context"
-	"io/ioutil"
 	"os"
-	"time"
 
 	"github.com/containerd/containerd"
 	"github.com/rancher/wharfie/pkg/registries"
@@ -15,8 +13,6 @@ import (
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	util2 "github.com/xiaods/k8e/pkg/agent/util"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"google.golang.org/grpc"
-	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 	"k8s.io/kubernetes/pkg/kubelet/util"
 )
 
@@ -50,7 +46,7 @@ func setupContainerdConfig(ctx context.Context, cfg *config.Node) error {
 		PrivateRegistryConfig: privRegistries.Registry,
 	}
 
-	containerdTemplateBytes, err := ioutil.ReadFile(cfg.Containerd.Template)
+	containerdTemplateBytes, err := os.ReadFile(cfg.Containerd.Template)
 	if err == nil {
 		logrus.Infof("Using containerd template at %s", cfg.Containerd.Template)
 		containerdTemplate = string(containerdTemplateBytes)
