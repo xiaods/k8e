@@ -12,6 +12,7 @@
 // manifests/metrics-server/metrics-server-service.yaml
 // manifests/metrics-server/resource-reader.yaml
 // manifests/rolebindings.yaml
+// manifests/runtimes.yaml
 //go:build !no_stage
 // +build !no_stage
 
@@ -331,6 +332,26 @@ func rolebindingsYaml() (*asset, error) {
 	return a, nil
 }
 
+var _runtimesYaml = []byte("\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff\xac\xd0\x31\x8e\x84\x30\x0c\x05\xd0\x3e\xa7\xc8\x05\xc2\x6a\xbb\x55\xda\xbd\xc1\x14\xd3\x5b\xc4\x02\x8b\xc4\xa0\x38\xc0\x1c\x7f\x04\x1a\x26\x40\xed\xf2\x7f\x4b\xef\x4b\x86\x89\x9e\x98\x85\x46\xf6\x96\xc7\x80\xcd\xf0\x27\x0d\x8d\x3f\xcb\xaf\x19\x88\x83\xb7\x8f\x99\x0b\x25\xfc\x8f\x20\x62\x12\x16\x08\x50\xc0\x1b\x6b\x19\x12\x7a\xcb\x0b\x05\x02\xd3\x03\x87\x88\xf9\x9b\x9d\x73\x46\x87\x76\xf8\x9a\x30\x53\x42\x2e\x10\xef\x3b\xd7\xa3\xc6\x68\x9b\x67\xae\x2b\x7b\xd2\x60\xe3\xcc\x50\xa8\xad\xf2\x51\x68\xe0\x12\xa9\xeb\x4b\xb5\x3f\x59\x85\x9e\xe8\xf4\x8e\x3d\x69\xb0\xeb\x2a\x55\xdd\x82\x0a\x0a\x92\x30\x74\x78\x92\x8f\x46\x8d\xcf\x37\x3c\xab\xd1\xdb\xfd\x8a\x6f\xcd\x3b\x00\x00\xff\xff\xc7\xad\x48\x21\x9f\x03\x00\x00")
+
+func runtimesYamlBytes() ([]byte, error) {
+	return bindataRead(
+		_runtimesYaml,
+		"runtimes.yaml",
+	)
+}
+
+func runtimesYaml() (*asset, error) {
+	bytes, err := runtimesYamlBytes()
+	if err != nil {
+		return nil, err
+	}
+
+	info := bindataFileInfo{name: "runtimes.yaml", size: 0, mode: os.FileMode(0), modTime: time.Unix(0, 0)}
+	a := &asset{bytes: bytes, info: info}
+	return a, nil
+}
+
 // Asset loads and returns the asset for the given name.
 // It returns an error if the asset could not be found or
 // could not be loaded.
@@ -395,6 +416,7 @@ var _bindata = map[string]func() (*asset, error){
 	"metrics-server/metrics-server-service.yaml":    metricsServerMetricsServerServiceYaml,
 	"metrics-server/resource-reader.yaml":           metricsServerResourceReaderYaml,
 	"rolebindings.yaml":                             rolebindingsYaml,
+	"runtimes.yaml":                                 runtimesYaml,
 }
 
 // AssetDir returns the file names below a certain
@@ -454,6 +476,7 @@ var _bintree = &bintree{nil, map[string]*bintree{
 		"resource-reader.yaml":           &bintree{metricsServerResourceReaderYaml, map[string]*bintree{}},
 	}},
 	"rolebindings.yaml": &bintree{rolebindingsYaml, map[string]*bintree{}},
+	"runtimes.yaml":     &bintree{runtimesYaml, map[string]*bintree{}},
 }}
 
 // RestoreAsset restores an asset under the given directory
