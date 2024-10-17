@@ -4,16 +4,13 @@
 package containerd
 
 import (
-	"context"
-	"os"
-
 	"github.com/containerd/containerd"
-	"github.com/rancher/wharfie/pkg/registries"
-	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/templates"
-	util2 "github.com/xiaods/k8e/pkg/agent/util"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"k8s.io/kubernetes/pkg/kubelet/util"
+	util3 "github.com/xiaods/k8e/pkg/util"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"k8s.io/cri-client/pkg/util"
 )
 
 func getContainerdArgs(cfg *config.Node) []string {
@@ -24,43 +21,27 @@ func getContainerdArgs(cfg *config.Node) []string {
 	return args
 }
 
-// setupContainerdConfig generates the containerd.toml, using a template combined with various
+// SetupContainerdConfig generates the containerd.toml, using a template combined with various
 // runtime configurations and registry mirror settings provided by the administrator.
-func setupContainerdConfig(ctx context.Context, cfg *config.Node) error {
-	privRegistries, err := registries.GetPrivateRegistries(cfg.AgentConfig.PrivateRegistry)
-	if err != nil {
-		return err
-	}
-
+func SetupContainerdConfig(cfg *config.Node) error {
 	if cfg.SELinux {
 		logrus.Warn("SELinux isn't supported on windows")
 	}
-
-	var containerdTemplate string
 
 	containerdConfig := templates.ContainerdConfig{
 		NodeConfig:            cfg,
 		DisableCgroup:         true,
 		SystemdCgroup:         false,
 		IsRunningInUserNS:     false,
-		PrivateRegistryConfig: privRegistries.Registry,
+		PrivateRegistryConfig: cfg.AgentConfig.Registry,
+		NoDefaultEndpoint:     cfg.Containerd.NoDefault,
 	}
 
-	containerdTemplateBytes, err := os.ReadFile(cfg.Containerd.Template)
-	if err == nil {
-		logrus.Infof("Using containerd template at %s", cfg.Containerd.Template)
-		containerdTemplate = string(containerdTemplateBytes)
-	} else if os.IsNotExist(err) {
-		containerdTemplate = templates.ContainerdConfigTemplate
-	} else {
-		return err
-	}
-	parsedTemplate, err := templates.ParseTemplateFromConfig(containerdTemplate, containerdConfig)
-	if err != nil {
+	if err := writeContainerdConfig(cfg, containerdConfig); err != nil {
 		return err
 	}
 
-	return util2.WriteFile(cfg.Containerd.Config, parsedTemplate)
+	return writeContainerdHosts(cfg, containerdConfig)
 }
 
 func Client(address string) (*containerd.Client, error) {
@@ -70,4 +51,16 @@ func Client(address string) (*containerd.Client, error) {
 	}
 
 	return containerd.New(addr)
+}
+
+func OverlaySupported(root string) error {
+	return errors.Wrapf(util3.ErrUnsupportedPlatform, "overlayfs is not supported")
+}
+
+func FuseoverlayfsSupported(root string) error {
+	return errors.Wrapf(util3.ErrUnsupportedPlatform, "fuse-overlayfs is not supported")
+}
+
+func StargzSupported(root string) error {
+	return errors.Wrapf(util3.ErrUnsupportedPlatform, "stargz is not supported")
 }

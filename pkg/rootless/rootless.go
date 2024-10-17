@@ -22,16 +22,17 @@ import (
 )
 
 var (
-	pipeFD             = "_K8E_ROOTLESS_FD"
-	childEnv           = "_K8E_ROOTLESS_SOCK"
-	evacuateCgroup2Env = "_K8E_ROOTLESS_EVACUATE_CGROUP2" // boolean
+	pipeFD             = "_K3S_ROOTLESS_FD"
+	childEnv           = "_K3S_ROOTLESS_SOCK"
+	evacuateCgroup2Env = "_K3S_ROOTLESS_EVACUATE_CGROUP2" // boolean
 	Sock               = ""
 
-	mtuEnv             = "K8E_ROOTLESS_MTU"
-	cidrEnv            = "K8E_ROOTLESS_CIDR"
-	enableIPv6Env      = "K8E_ROOTLESS_ENABLE_IPV6"
-	portDriverEnv      = "K8E_ROOTLESS_PORT_DRIVER"
-	disableLoopbackEnv = "K8E_ROOTLESS_DISABLE_HOST_LOOPBACK"
+	mtuEnv             = "K3S_ROOTLESS_MTU"
+	cidrEnv            = "K3S_ROOTLESS_CIDR"
+	enableIPv6Env      = "K3S_ROOTLESS_ENABLE_IPV6"
+	portDriverEnv      = "K3S_ROOTLESS_PORT_DRIVER"
+	disableLoopbackEnv = "K3S_ROOTLESS_DISABLE_HOST_LOOPBACK"
+	copyUpDirsEnv      = "K3S_ROOTLESS_COPYUPDIRS"
 )
 
 func Rootless(stateDir string, enableIPv6 bool) error {
@@ -89,7 +90,7 @@ func validateSysctl() error {
 		"kernel.unprivileged_userns_clone": "1",
 
 		// net.ipv4.ip_forward should not need to be 1 in the parent namespace.
-		// However, the current k8e implementation has a bug that requires net.ipv4.ip_forward=1
+		// However, the current k3s implementation has a bug that requires net.ipv4.ip_forward=1
 		// https://github.com/k3s-io/k3s/issues/2420#issuecomment-715051120
 		"net.ipv4.ip_forward": "1",
 	}
@@ -132,11 +133,6 @@ func createParentOpt(driver portDriver, stateDir string, enableIPv6 bool) (*pare
 		return nil, errors.Wrapf(err, "failed to mkdir %s", stateDir)
 	}
 
-	stateDir, err := os.MkdirTemp("", "rootless")
-	if err != nil {
-		return nil, err
-	}
-
 	driver.SetStateDir(stateDir)
 
 	opt := &parent.Opt{
@@ -156,9 +152,9 @@ func createParentOpt(driver portDriver, stateDir string, enableIPv6 bool) (*pare
 	} else {
 		selfCgroup2Dir := filepath.Join("/sys/fs/cgroup", selfCgroup2)
 		if unix.Access(selfCgroup2Dir, unix.W_OK) == nil {
-			opt.EvacuateCgroup2 = "k8e_evac"
+			opt.EvacuateCgroup2 = "k3s_evac"
 		} else {
-			logrus.Warn("Cannot set cgroup2 evacuation, make sure to run k8e as a systemd unit")
+			logrus.Warn("Cannot set cgroup2 evacuation, make sure to run k3s as a systemd unit")
 		}
 	}
 
@@ -206,10 +202,6 @@ func createParentOpt(driver portDriver, stateDir string, enableIPv6 bool) (*pare
 		return nil, err
 	}
 
-	if err != nil {
-		return nil, err
-	}
-
 	opt.PortDriver, err = driver.NewParentDriver()
 	if err != nil {
 		return nil, err
@@ -227,6 +219,9 @@ func createChildOpt(driver portDriver) (*child.Opt, error) {
 	opt.NetworkDriver = slirp4netns.NewChildDriver()
 	opt.PortDriver = driver.NewChildDriver()
 	opt.CopyUpDirs = []string{"/etc", "/var/run", "/run", "/var/lib"}
+	if copyUpDirs := os.Getenv(copyUpDirsEnv); copyUpDirs != "" {
+		opt.CopyUpDirs = append(opt.CopyUpDirs, strings.Split(copyUpDirs, ",")...)
+	}
 	opt.CopyUpDriver = tmpfssymlink.NewChildDriver()
 	opt.MountProcfs = true
 	opt.Reaper = true

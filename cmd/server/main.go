@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/docker/docker/pkg/reexec"
-	crictl2 "github.com/kubernetes-sigs/cri-tools/cmd/crictl"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/cli/agent"
@@ -25,6 +24,7 @@ import (
 	"github.com/xiaods/k8e/pkg/containerd"
 	ctr2 "github.com/xiaods/k8e/pkg/ctr"
 	kubectl2 "github.com/xiaods/k8e/pkg/kubectl"
+	crictl2 "sigs.k8s.io/cri-tools/cmd/crictl"
 )
 
 func init() {
@@ -56,23 +56,23 @@ func main() {
 			token.List,
 			token.Rotate,
 		),
-		cmds.NewEtcdSnapshotCommand(etcdsnapshot.Save,
-			cmds.NewEtcdSnapshotSubcommands(
-				etcdsnapshot.Delete,
-				etcdsnapshot.List,
-				etcdsnapshot.Prune,
-				etcdsnapshot.Save),
+		cmds.NewEtcdSnapshotCommands(
+			etcdsnapshot.Delete,
+			etcdsnapshot.List,
+			etcdsnapshot.Prune,
+			etcdsnapshot.Save,
 		),
-		cmds.NewSecretsEncryptCommand(cli.ShowAppHelp,
-			cmds.NewSecretsEncryptSubcommands(
-				secretsencrypt.Status,
-				secretsencrypt.Enable,
-				secretsencrypt.Disable,
-				secretsencrypt.Prepare,
-				secretsencrypt.Rotate,
-				secretsencrypt.Reencrypt),
+		cmds.NewSecretsEncryptCommands(
+			secretsencrypt.Status,
+			secretsencrypt.Enable,
+			secretsencrypt.Disable,
+			secretsencrypt.Prepare,
+			secretsencrypt.Rotate,
+			secretsencrypt.Reencrypt,
+			secretsencrypt.RotateKeys,
 		),
 		cmds.NewCertCommands(
+			cert.Check,
 			cert.Rotate,
 			cert.RotateCA,
 		),

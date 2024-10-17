@@ -25,13 +25,12 @@ import (
 	"github.com/xiaods/k8e/pkg/cloudprovider"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/passwd"
-	"github.com/xiaods/k8e/pkg/token"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/apis/apiserver"
-	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
+	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/client-go/util/keyutil"
 )
@@ -40,12 +39,10 @@ const (
 	ipsecTokenSize = 48
 	aescbcKeySize  = 32
 
-	RequestHeaderCN                    = "system:auth-proxy"
-	defaultNewSignedCertExpirationDays = time.Hour * 24 * 365 * 10 //10 year certificate expiration
+	RequestHeaderCN = "system:auth-proxy"
 )
 
-var (
-	kubeconfigTemplate = template.Must(template.New("kubeconfig").Parse(`apiVersion: v1
+var kubeconfigTemplate = template.Must(template.New("kubeconfig").Parse(`apiVersion: v1
 clusters:
 - cluster:
     server: {{.URL}}
@@ -66,7 +63,6 @@ users:
     client-certificate: {{.ClientCert}}
     client-key: {{.ClientKey}}
 `))
-)
 
 func migratePassword(p *passwd.Passwd) error {
 	server, _ := p.Pass("server")
@@ -273,7 +269,7 @@ func genEncryptedNetworkInfo(controlConfig *config.Control) error {
 		return nil
 	}
 
-	psk, err := token.Random(ipsecTokenSize)
+	psk, err := util.Random(ipsecTokenSize)
 	if err != nil {
 		return err
 	}
@@ -283,16 +279,14 @@ func genEncryptedNetworkInfo(controlConfig *config.Control) error {
 }
 
 func getServerPass(passwd *passwd.Passwd, config *config.Control) (string, error) {
-	var (
-		err error
-	)
+	var err error
 
 	serverPass := config.Token
 	if serverPass == "" {
 		serverPass, _ = passwd.Pass("server")
 	}
 	if serverPass == "" {
-		serverPass, err = token.Random(16)
+		serverPass, err = util.Random(16)
 		if err != nil {
 			return "", err
 		}
@@ -445,14 +439,16 @@ func genServerCerts(config *config.Control) error {
 }
 
 func genETCDCerts(config *config.Control) error {
-
 	runtime := config.Runtime
 	regen, err := createSigningCertKey("etcd-server", runtime.ETCDServerCA, runtime.ETCDServerCAKey)
 	if err != nil {
 		return err
 	}
 
-	altNames := &certutil.AltNames{}
+	altNames := &certutil.AltNames{
+		DNSNames: []string{"kine.sock"},
+	}
+
 	addSANs(altNames, config.SANs)
 
 	if _, err := createClientCertKey(regen, "etcd-client", nil,
@@ -628,7 +624,6 @@ func createClientCertKey(regen bool, commonName string, organization []string, a
 		CommonName:   commonName,
 		Organization: organization,
 		Usages:       extKeyUsage,
-		ExpiresAt:    defaultNewSignedCertExpirationDays,
 	}
 	if altNames != nil {
 		cfg.AltNames = *altNames
@@ -776,7 +771,7 @@ func genEncryptionConfigAndState(controlConfig *config.Control) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(runtime.EncryptionConfig, b, 0600); err != nil {
+	if err := util.AtomicWrite(runtime.EncryptionConfig, b, 0600); err != nil {
 		return err
 	}
 	encryptionConfigHash := sha256.Sum256(b)
@@ -837,5 +832,4 @@ func genCloudConfig(controlConfig *config.Control) error {
 		return err
 	}
 	return os.WriteFile(controlConfig.Runtime.CloudControllerConfig, b, 0600)
-
 }

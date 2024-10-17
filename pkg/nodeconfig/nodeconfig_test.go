@@ -30,7 +30,7 @@ var FakeNodeWithAnnotation = &corev1.Node{
 	ObjectMeta: metav1.ObjectMeta{
 		Name: "fakeNode-with-annotation",
 		Annotations: map[string]string{
-			NodeArgsAnnotation:       `["server","--no-flannel"]`,
+			NodeArgsAnnotation:       `["server"]`,
 			NodeEnvAnnotation:        `{"` + TestEnvName + `":"fakeNode-with-annotation"}`,
 			NodeConfigHashAnnotation: "FIJ7GZ42FJLYYYPQVVRUGKP3RBJGL5YHUJPWGQMBBVF4OQ6MOSWA====",
 		},
@@ -39,7 +39,7 @@ var FakeNodeWithAnnotation = &corev1.Node{
 
 func Test_UnitSetExistingNodeConfigAnnotations(t *testing.T) {
 	// adding same config
-	os.Args = []string{version.Program, "server", "--no-flannel"}
+	os.Args = []string{version.Program, "server"}
 	os.Setenv(version.ProgramUpper+"_NODE_NAME", "fakeNode-with-annotation")
 	nodeUpdated, err := SetNodeConfigAnnotations(FakeNodeConfig, FakeNodeWithAnnotation)
 	if err != nil {
@@ -77,10 +77,10 @@ func Test_UnitSetNodeConfigAnnotations(t *testing.T) {
 			args: args{
 				config: FakeNodeConfig,
 				node:   FakeNodeWithAnnotation,
-				osArgs: []string{version.Program, "server", "--no-flannel"},
+				osArgs: []string{version.Program, "server"},
 			},
 			want:               true,
-			wantNodeArgs:       `["server","--no-flannel"]`,
+			wantNodeArgs:       `["server"]`,
 			wantNodeEnv:        `{"` + TestEnvName + `":"fakeNode-with-no-annotation"}`,
 			wantNodeConfigHash: "47ZWLMKZE6NJ7M5KJVPQY4GSJINRZOQEGHOFQFLRQBY3HBQX5HLA====",
 		},
@@ -89,10 +89,10 @@ func Test_UnitSetNodeConfigAnnotations(t *testing.T) {
 			args: args{
 				config: FakeNodeConfig,
 				node:   FakeNodeWithNoAnnotation,
-				osArgs: []string{version.Program, "server", "--no-flannel", "--write-kubeconfig-mode=777"},
+				osArgs: []string{version.Program, "server", "--write-kubeconfig-mode=777"},
 			},
 			want:         true,
-			wantNodeArgs: `["server","--no-flannel","--write-kubeconfig-mode","777"]`,
+			wantNodeArgs: `["server","--write-kubeconfig-mode","777"]`,
 			wantNodeEnv:  `{"` + TestEnvName + `":"fakeNode-with-no-annotation"}`,
 		},
 	}

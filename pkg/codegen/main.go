@@ -4,8 +4,8 @@ import (
 	"os"
 
 	bindata "github.com/go-bindata/go-bindata"
-	controllergen "github.com/rancher/wrangler/pkg/controller-gen"
-	"github.com/rancher/wrangler/pkg/controller-gen/args"
+	controllergen "github.com/rancher/wrangler/v3/pkg/controller-gen"
+	"github.com/rancher/wrangler/v3/pkg/controller-gen/args"
 	"github.com/sirupsen/logrus"
 	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
 )
@@ -69,7 +69,7 @@ func main() {
 
 	controllergen.Run(args.Options{
 		OutputPackage: "github.com/xiaods/k8e/pkg/generated",
-		Boilerplate:   "hack/boilerplate.go.txt",
+		Boilerplate:   "scripts/boilerplate.go.txt",
 		Groups: map[string]args.Group{
 			"k8e.cattle.io": {
 				Types: []interface{}{

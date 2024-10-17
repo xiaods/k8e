@@ -14,10 +14,10 @@ import (
 	helmchart "github.com/k3s-io/helm-controller/pkg/controllers/chart"
 	helmcommon "github.com/k3s-io/helm-controller/pkg/controllers/common"
 	"github.com/pkg/errors"
-	"github.com/rancher/wrangler/pkg/apply"
-	v1 "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
-	"github.com/rancher/wrangler/pkg/leader"
-	"github.com/rancher/wrangler/pkg/resolvehome"
+	"github.com/rancher/wrangler/v3/pkg/apply"
+	v1 "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
+	"github.com/rancher/wrangler/v3/pkg/leader"
+	"github.com/rancher/wrangler/v3/pkg/resolvehome"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
@@ -73,7 +73,6 @@ func StartServer(ctx context.Context, config *Config, cfg *cmds.Server) error {
 			return errors.Wrap(err, "startup hook")
 		}
 	}
-
 	go startOnAPIServerReady(ctx, config)
 
 	if err := printTokens(&config.ControlConfig); err != nil {
@@ -167,8 +166,8 @@ func apiserverControllers(ctx context.Context, sc *Context, config *Config) {
 		}
 	}
 
-	// Re-run context startup after core and leader-elected controllers have started. Additional
-	// informer caches may need to start for the newly added OnChange callbacks.
+	// Re-run informer factory startup after core and leader-elected controllers have started.
+	// Additional caches may need to start for the newly added OnChange/OnRemove callbacks.
 	if err := sc.Start(ctx); err != nil {
 		panic(errors.Wrap(err, "failed to start wranger controllers"))
 	}
@@ -220,7 +219,7 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 			return err
 		}
 
-		apply := apply.New(k8s, apply.NewClientFactory(restConfig)).WithDynamicLookup()
+		apply := apply.New(k8s, apply.NewClientFactory(restConfig)).WithDynamicLookup().WithSetOwnerReference(false, false)
 		helm := sc.Helm.WithAgent(restConfig.UserAgent)
 		batch := sc.Batch.WithAgent(restConfig.UserAgent)
 		auth := sc.Auth.WithAgent(restConfig.UserAgent)
@@ -228,6 +227,7 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		helmchart.Register(ctx,
 			metav1.NamespaceAll,
 			helmcommon.Name,
+			"cluster-admin",
 			strconv.Itoa(config.ControlConfig.APIServerPort),
 			k8s,
 			apply,
@@ -244,20 +244,9 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 			core.V1().Secret())
 	}
 
-	if config.ControlConfig.EncryptSecrets {
-		if err := secretsencrypt.Register(ctx,
-			sc.K8s,
-			&config.ControlConfig,
-			sc.Core.Core().V1().Node(),
-			sc.Core.Core().V1().Secret()); err != nil {
-			return err
-		}
-	}
-
 	if config.ControlConfig.Rootless {
 		return rootlessports.Register(ctx,
 			sc.Core.Core().V1().Service(),
-			false,
 			config.ControlConfig.HTTPSPort)
 	}
 
@@ -274,9 +263,9 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 	}
 	dataDir = filepath.Join(controlConfig.DataDir, "manifests")
 
-	dnsIPFamilyPolicy := "PreferDualStack"
-	if len(controlConfig.ClusterDNSs) == 1 {
-		dnsIPFamilyPolicy = "SingleStack"
+	dnsIPFamilyPolicy := "SingleStack"
+	if len(controlConfig.ClusterDNSs) > 1 {
+		dnsIPFamilyPolicy = "RequireDualStack"
 	}
 
 	templateVars := map[string]string{
@@ -440,6 +429,13 @@ func writeKubeConfig(certs string, config *Config) error {
 		}
 	} else {
 		util.SetFileModeForPath(kubeConfig, os.FileMode(0600))
+	}
+
+	if config.ControlConfig.KubeConfigGroup != "" {
+		err := util.SetFileGroupForPath(kubeConfig, config.ControlConfig.KubeConfigGroup)
+		if err != nil {
+			logrus.Errorf("Failed to set %s to group %s: %v", kubeConfig, config.ControlConfig.KubeConfigGroup, err)
+		}
 	}
 
 	if kubeConfigSymlink != kubeConfig {
