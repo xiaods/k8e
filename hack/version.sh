@@ -31,12 +31,10 @@ get-module-path(){
   go list -m -f '{{if .Replace}}{{.Replace.Path}}{{else}}{{.Path}}{{end}}' $1
 }
 
-# We're building k8e against containerd 1.5 in go.mod because newer releases have
-# dependency conflicts with Kubernetes, but we still need to bundle containerd 1.7
-VERSION_CONTAINERD="v1.7.7-k3s1"
 PKG_CONTAINERD_K8E=$(get-module-path github.com/containerd/containerd)
+VERSION_CONTAINERD=$(get-module-version github.com/containerd/containerd)
 
-VERSION_CRICTL=$(get-module-version github.com/kubernetes-sigs/cri-tools)
+VERSION_CRICTL=$(get-module-version sigs.k8s.io/cri-tools)
 if [ -z "$VERSION_CRICTL" ]; then
     VERSION_CRICTL="v0.0.0"
 fi
@@ -62,7 +60,7 @@ if [ -z "$VERSION_CRI_DOCKERD" ]; then
   VERSION_CRI_DOCKERD="v0.0.0"
 fi
 
-VERSION_CNIPLUGINS="v1.3.0-k3s1"
+VERSION_CNIPLUGINS="v1.5.1-k3s1"
 
 if [[ -n "$GIT_TAG" ]]; then
     if [[ ! "$GIT_TAG" =~ ^"$VERSION_K8S"[+-] ]]; then
