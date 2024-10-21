@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
+	"github.com/sirupsen/logrus"
 )
 
 func init() {
@@ -127,6 +127,7 @@ func Test_UnitFailOver(t *testing.T) {
 	conn2, err := net.Dial("tcp", localAddress)
 	if err != nil {
 		t.Fatalf("net.Dial failed: %v", err)
+
 	}
 	result2, err := ping(conn2)
 	if err != nil {
