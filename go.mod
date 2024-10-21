@@ -74,6 +74,7 @@ replace (
 )
 
 require (
+	github.com/Microsoft/hcsshim v0.12.6
 	github.com/Mirantis/cri-dockerd v0.0.0-00010101000000-000000000000
 	github.com/blang/semver/v4 v4.0.0
 	github.com/containerd/aufs v1.0.0
@@ -182,7 +183,6 @@ require (
 	github.com/JeffAshton/win_pdh v0.0.0-20161109143554-76bb4ee9f0ab // indirect
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/Microsoft/hcsshim v0.12.6 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/Rican7/retry v0.1.0 // indirect
 	github.com/armon/circbuf v0.0.0-20150827004946-bbbad097214e // indirect

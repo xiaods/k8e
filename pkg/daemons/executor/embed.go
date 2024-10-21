@@ -40,7 +40,6 @@ import (
 	"k8s.io/klog/v2"
 	apiapp "k8s.io/kubernetes/cmd/kube-apiserver/app"
 	cmapp "k8s.io/kubernetes/cmd/kube-controller-manager/app"
-	proxy "k8s.io/kubernetes/cmd/kube-proxy/app"
 	sapp "k8s.io/kubernetes/cmd/kube-scheduler/app"
 	kubelet "k8s.io/kubernetes/cmd/kubelet/app"
 
@@ -96,27 +95,6 @@ func (e *Embedded) Kubelet(ctx context.Context, args []string) error {
 		err := command.ExecuteContext(ctx)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			logrus.Errorf("kubelet exited: %v", err)
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}()
-
-	return nil
-}
-
-func (e *Embedded) KubeProxy(ctx context.Context, args []string) error {
-	command := proxy.NewProxyCommand()
-	command.SetArgs(daemonconfig.GetArgs(platformKubeProxyArgs(e.nodeConfig), args))
-
-	go func() {
-		defer func() {
-			if err := recover(); err != nil {
-				logrus.WithField("stack", string(debug.Stack())).Fatalf("kube-proxy panic: %v", err)
-			}
-		}()
-		err := command.ExecuteContext(ctx)
-		if err != nil && !errors.Is(err, context.Canceled) {
-			logrus.Errorf("kube-proxy exited: %v", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
