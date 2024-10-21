@@ -32,8 +32,7 @@ type Interface interface {
 	K8eV1() k8ev1.K8eV1Interface
 }
 
-// Clientset contains the clients for groups. Each group has exactly one
-// version included in a Clientset.
+// Clientset contains the clients for groups.
 type Clientset struct {
 	*discovery.DiscoveryClient
 	k8eV1 *k8ev1.K8eV1Client

@@ -69,7 +69,7 @@ func main() {
 
 	controllergen.Run(args.Options{
 		OutputPackage: "github.com/xiaods/k8e/pkg/generated",
-		Boilerplate:   "scripts/boilerplate.go.txt",
+		Boilerplate:   "hack/boilerplate.go.txt",
 		Groups: map[string]args.Group{
 			"k8e.cattle.io": {
 				Types: []interface{}{
