@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/xiaods/k8e/pkg/version"
 	http_dialer "github.com/mwitkow/go-http-dialer"
 	"github.com/pkg/errors"
-	"github.com/xiaods/k8e/pkg/version"
 	"golang.org/x/net/http/httpproxy"
 	"golang.org/x/net/proxy"
 
