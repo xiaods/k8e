@@ -48,8 +48,8 @@ ARG SELINUX=true
 ENV SELINUX=${SELINUX}
 
 # Set Dapper configuration variables
-ENV DAPPER_RUN_ARGS --privileged -v k8e-cache:/go/src/github.com/xiaods/k8e/.cache -v trivy-cache:/root/.cache/trivy
-    DAPPER_ENV REPO TAG RELEASE_TAG IMAGE_NAME SKIP_VALIDATE GCLOUD_AUTH GITHUB_TOKEN GOLANG GOOS GOARCH DEBUG
+ENV DAPPER_RUN_ARGS --privileged -v k8e-cache:/go/src/github.com/xiaods/k8e/.cache -v trivy-cache:/root/.cache/trivy \
+    DAPPER_ENV REPO TAG RELEASE_TAG IMAGE_NAME SKIP_VALIDATE GCLOUD_AUTH GITHUB_TOKEN GOLANG GOOS GOARCH DEBUG \
     DAPPER_SOURCE="/go/src/github.com/xiaods/k8e/" \
     DAPPER_OUTPUT ./bin ./dist ./build/out ./build/static ./pkg/static ./pkg/deploy \
     DAPPER_DOCKER_SOCKET=true \
