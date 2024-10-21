@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/sirupsen/logrus"
 	daemonconfig "github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
+	"github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/server/v3/etcdserver/api/rafthttp"
 )
@@ -44,6 +44,7 @@ func (e *Embedded) ETCD(ctx context.Context, args ETCDConfig, extraArgs []string
 				logrus.Infof("This node has been removed from the cluster - please restart %s to rejoin the cluster", version.Program)
 				return
 			}
+			logrus.Errorf("etcd error: %v", err)
 		case <-ctx.Done():
 			logrus.Infof("stopping etcd")
 			etcd.Close()

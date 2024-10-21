@@ -70,12 +70,6 @@ func Test_UnitFilesForServices(t *testing.T) {
 					"/var/lib/rancher/k8e/agent/client-k8e-controller.crt",
 					"/var/lib/rancher/k8e/agent/client-k8e-controller.key",
 				},
-				"kube-proxy": []string{
-					"/var/lib/rancher/k8e/server/tls/client-kube-proxy.crt",
-					"/var/lib/rancher/k8e/server/tls/client-kube-proxy.key",
-					"/var/lib/rancher/k8e/agent/client-kube-proxy.crt",
-					"/var/lib/rancher/k8e/agent/client-kube-proxy.key",
-				},
 				"kubelet": []string{
 					"/var/lib/rancher/k8e/server/tls/client-kubelet.key",
 					"/var/lib/rancher/k8e/server/tls/serving-kubelet.key",
@@ -167,12 +161,6 @@ func Test_UnitFilesForServices(t *testing.T) {
 					"/var/lib/rancher/k8e/server/tls/client-k8e-controller.key",
 					"/var/lib/rancher/k8e/agent/client-k8e-controller.crt",
 					"/var/lib/rancher/k8e/agent/client-k8e-controller.key",
-				},
-				"kube-proxy": []string{
-					"/var/lib/rancher/k8e/server/tls/client-kube-proxy.crt",
-					"/var/lib/rancher/k8e/server/tls/client-kube-proxy.key",
-					"/var/lib/rancher/k8e/agent/client-kube-proxy.crt",
-					"/var/lib/rancher/k8e/agent/client-kube-proxy.key",
 				},
 				"kubelet": []string{
 					"/var/lib/rancher/k8e/server/tls/client-kubelet.key",

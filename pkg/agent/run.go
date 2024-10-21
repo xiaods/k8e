@@ -90,11 +90,6 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 		return fmt.Errorf("dual-stack or IPv6 are not supported on Windows node")
 	}
 
-	conntrackConfig, err := getConntrackConfig(nodeConfig)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate kube-proxy conntrack configuration")
-	}
-	syssetup.Configure(enableIPv6, conntrackConfig)
 	nodeConfig.AgentConfig.EnableIPv4 = enableIPv4
 	nodeConfig.AgentConfig.EnableIPv6 = enableIPv6
 

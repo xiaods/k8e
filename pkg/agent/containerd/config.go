@@ -71,7 +71,7 @@ func writeContainerdHosts(cfg *config.Node, containerdConfig templates.Container
 }
 
 // cleanContainerdHosts removes any registry host config dirs containing a hosts.toml file
-// with a header that indicates it was created by k8e, or directories where a hosts.toml
+// with a header that indicates it was created by k3s, or directories where a hosts.toml
 // is about to be written.  Unmanaged directories not containing this file, or containing
 // a file without the header, are left alone.
 func cleanContainerdHosts(dir string, hosts HostConfigs) error {
@@ -81,7 +81,7 @@ func cleanContainerdHosts(dir string, hosts HostConfigs) error {
 		os.RemoveAll(hostsDir)
 	}
 
-	// clean directories that contain a hosts.toml with a header indicating it was  created by k8e
+	// clean directories that contain a hosts.toml with a header indicating it was  created by k3s
 	ents, err := os.ReadDir(dir)
 	if err != nil && !os.IsNotExist(err) {
 		return err
