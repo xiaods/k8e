@@ -23,7 +23,7 @@ mkdir -p bin
 
 case ${OS} in
   linux)
-    git clone --single-branch --branch=${VERSION_RUNC} --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR}
+     git clone --single-branch --branch=${VERSION_RUNC} --depth=1 https://github.com/k3s-io/runc ${RUNC_DIR}
     ;;
   windows)
     git clone --single-branch --branch=${VERSION_HCSSHIM} --depth=1 https://github.com/microsoft/hcsshim ${HCSSHIM_DIR}
