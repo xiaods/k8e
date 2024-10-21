@@ -6,12 +6,12 @@ import (
 	helmcrd "github.com/k3s-io/helm-controller/pkg/crd"
 	"github.com/k3s-io/helm-controller/pkg/generated/controllers/helm.cattle.io"
 	"github.com/pkg/errors"
-	"github.com/rancher/wrangler/pkg/crd"
-	"github.com/rancher/wrangler/pkg/generated/controllers/apps"
-	"github.com/rancher/wrangler/pkg/generated/controllers/batch"
-	"github.com/rancher/wrangler/pkg/generated/controllers/core"
-	"github.com/rancher/wrangler/pkg/generated/controllers/rbac"
-	"github.com/rancher/wrangler/pkg/start"
+	"github.com/rancher/wrangler/v3/pkg/crd"
+	"github.com/rancher/wrangler/v3/pkg/generated/controllers/apps"
+	"github.com/rancher/wrangler/v3/pkg/generated/controllers/batch"
+	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
+	"github.com/rancher/wrangler/v3/pkg/generated/controllers/rbac"
+	"github.com/rancher/wrangler/v3/pkg/start"
 	addoncrd "github.com/xiaods/k8e/pkg/crd"
 	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	"github.com/xiaods/k8e/pkg/util"
@@ -47,7 +47,6 @@ func NewContext(ctx context.Context, config *Config, forServer bool) (*Context, 
 	if err != nil {
 		return nil, err
 	}
-
 	restConfig.UserAgent = util.GetUserAgent(version.Program + "-supervisor")
 
 	k8s, err := kubernetes.NewForConfig(restConfig)

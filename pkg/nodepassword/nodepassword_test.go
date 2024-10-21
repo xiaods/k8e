@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/golang/mock/gomock"
-	"github.com/rancher/wrangler/pkg/generic/fake"
+	"github.com/rancher/wrangler/v3/pkg/generic/fake"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,12 +20,12 @@ import (
 const migrateNumNodes = 10
 const createNumNodes = 3
 
-func TestAsserts(t *testing.T) {
+func Test_UnitAsserts(t *testing.T) {
 	assertEqual(t, 1, 1)
 	assertNotEqual(t, 1, 0)
 }
 
-func TestEnsureDelete(t *testing.T) {
+func Test_UnitEnsureDelete(t *testing.T) {
 	logMemUsage(t)
 
 	ctrl := gomock.NewController(t)
@@ -55,7 +55,7 @@ func TestEnsureDelete(t *testing.T) {
 	logMemUsage(t)
 }
 
-func TestMigrateFile(t *testing.T) {
+func Test_UnitMigrateFile(t *testing.T) {
 	nodePasswordFile := generateNodePasswordFile(migrateNumNodes)
 	defer os.Remove(nodePasswordFile)
 

@@ -1,28 +1,45 @@
 package secretsencrypt
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/prometheus/common/expfmt"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/generated/clientset/versioned/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/config/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
+	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
+
+	"k8s.io/client-go/rest"
 )
 
 const (
-	EncryptionStart             string = "start"
-	EncryptionPrepare           string = "prepare"
-	EncryptionRotate            string = "rotate"
-	EncryptionReencryptRequest  string = "reencrypt_request"
-	EncryptionReencryptActive   string = "reencrypt_active"
-	EncryptionReencryptFinished string = "reencrypt_finished"
+	EncryptionStart             string  = "start"
+	EncryptionPrepare           string  = "prepare"
+	EncryptionRotate            string  = "rotate"
+	EncryptionRotateKeys        string  = "rotate_keys"
+	EncryptionReencryptRequest  string  = "reencrypt_request"
+	EncryptionReencryptActive   string  = "reencrypt_active"
+	EncryptionReencryptFinished string  = "reencrypt_finished"
+	SecretListPageSize          int64   = 20
+	SecretQPS                   float32 = 200
+	SecretBurst                 int     = 200
+	SecretsUpdateErrorEvent     string  = "SecretsUpdateError"
+	SecretsProgressEvent        string  = "SecretsProgress"
+	SecretsUpdateCompleteEvent  string  = "SecretsUpdateComplete"
 )
 
 var EncryptionHashAnnotation = version.Program + ".io/encryption-config-hash"
@@ -40,7 +57,10 @@ func GetEncryptionProviders(runtime *config.ControlRuntime) ([]apiserverconfigv1
 	return curEncryption.Resources[0].Providers, nil
 }
 
-func GetEncryptionKeys(runtime *config.ControlRuntime) ([]apiserverconfigv1.Key, error) {
+// GetEncryptionKeys returns a list of encryption keys from the current encryption configuration.
+// If includeIdentity is true, it will also include a fake key representing the identity provider, which
+// is used to determine if encryption is enabled/disabled.
+func GetEncryptionKeys(runtime *config.ControlRuntime, includeIdentity bool) ([]apiserverconfigv1.Key, error) {
 
 	providers, err := GetEncryptionProviders(runtime)
 	if err != nil {
@@ -52,6 +72,14 @@ func GetEncryptionKeys(runtime *config.ControlRuntime) ([]apiserverconfigv1.Key,
 
 	var curKeys []apiserverconfigv1.Key
 	for _, p := range providers {
+		// Since identity doesn't have keys, we make up a fake key to represent it, so we can
+		// know that encryption is enabled/disabled in the request.
+		if p.Identity != nil && includeIdentity {
+			curKeys = append(curKeys, apiserverconfigv1.Key{
+				Name:   "identity",
+				Secret: "identity",
+			})
+		}
 		if p.AESCBC != nil {
 			curKeys = append(curKeys, p.AESCBC.Keys...)
 		}
@@ -106,7 +134,7 @@ func WriteEncryptionConfig(runtime *config.ControlRuntime, keys []apiserverconfi
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(runtime.EncryptionConfig, jsonfile, 0600)
+	return util.AtomicWrite(runtime.EncryptionConfig, jsonfile, 0600)
 }
 
 func GenEncryptionConfigHash(runtime *config.ControlRuntime) (string, error) {
@@ -118,11 +146,11 @@ func GenEncryptionConfigHash(runtime *config.ControlRuntime) (string, error) {
 	return hex.EncodeToString(encryptionConfigHash[:]), nil
 }
 
-// GenReencryptHash generates a sha256 hash fom the existing secrets keys and
-// a new key based on the input arguments.
+// GenReencryptHash generates a sha256 hash from the existing secrets keys and
+// any identity providers plus a new key based on the input arguments.
 func GenReencryptHash(runtime *config.ControlRuntime, keyName string) (string, error) {
 
-	keys, err := GetEncryptionKeys(runtime)
+	keys, err := GetEncryptionKeys(runtime, true)
 	if err != nil {
 		return "", err
 	}
@@ -156,7 +184,9 @@ func BootstrapEncryptionHashAnnotation(node *corev1.Node, runtime *config.Contro
 	return nil
 }
 
-func WriteEncryptionHashAnnotation(runtime *config.ControlRuntime, node *corev1.Node, stage string) error {
+// WriteEncryptionHashAnnotation writes the encryption hash to the node annotation and optionally to a file.
+// The file is used to track the last stage of the reencryption process.
+func WriteEncryptionHashAnnotation(runtime *config.ControlRuntime, node *corev1.Node, skipFile bool, stage string) error {
 	encryptionConfigHash, err := GenEncryptionConfigHash(runtime)
 	if err != nil {
 		return err
@@ -170,5 +200,107 @@ func WriteEncryptionHashAnnotation(runtime *config.ControlRuntime, node *corev1.
 		return err
 	}
 	logrus.Debugf("encryption hash annotation set successfully on node: %s\n", node.ObjectMeta.Name)
+	if skipFile {
+		return nil
+	}
 	return os.WriteFile(runtime.EncryptionHash, []byte(ann), 0600)
+}
+
+// WaitForEncryptionConfigReload watches the metrics API, polling the latest time the encryption config was reloaded.
+func WaitForEncryptionConfigReload(runtime *config.ControlRuntime, reloadSuccesses, reloadTime int64) error {
+	var lastFailure string
+
+	ctx := context.Background()
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 60*time.Second, true, func(ctx context.Context) (bool, error) {
+		newReloadTime, newReloadSuccess, err := GetEncryptionConfigMetrics(runtime, false)
+		if err != nil {
+			return true, err
+		}
+
+		if newReloadSuccess <= reloadSuccesses || newReloadTime <= reloadTime {
+			lastFailure = fmt.Sprintf("apiserver has not reloaded encryption configuration (reload success: %d/%d, reload timestamp %d/%d)", newReloadSuccess, reloadSuccesses, newReloadTime, reloadTime)
+			return false, nil
+		}
+		logrus.Infof("encryption config reloaded successfully %d times", newReloadSuccess)
+		logrus.Debugf("encryption config reloaded at %s", time.Unix(newReloadTime, 0))
+		return true, nil
+	})
+	if err != nil {
+		err = fmt.Errorf("%w: %s", err, lastFailure)
+	}
+	return err
+}
+
+// GetEncryptionConfigMetrics fetches the metrics API and returns the last time the encryption config was reloaded
+// and the number of times it has been reloaded.
+func GetEncryptionConfigMetrics(runtime *config.ControlRuntime, initialMetrics bool) (int64, int64, error) {
+	var unixUpdateTime int64
+	var reloadSuccessCounter int64
+	var lastFailure string
+	restConfig, err := clientcmd.BuildConfigFromFlags("", runtime.KubeConfigSupervisor)
+	if err != nil {
+		return 0, 0, err
+	}
+	restConfig.GroupVersion = &apiserverconfigv1.SchemeGroupVersion
+	restConfig.NegotiatedSerializer = scheme.Codecs.WithoutConversion()
+	restClient, err := rest.RESTClientFor(restConfig)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// This is wrapped in a poller because on startup no metrics exist. Its only after the encryption config
+	// is modified and the first reload occurs that the metrics are available.
+	ctx := context.Background()
+	err = wait.PollUntilContextTimeout(ctx, 5*time.Second, 60*time.Second, true, func(ctx context.Context) (bool, error) {
+		data, err := restClient.Get().AbsPath("/metrics").DoRaw(ctx)
+		if err != nil {
+			return true, err
+		}
+
+		reader := bytes.NewReader(data)
+		var parser expfmt.TextParser
+		mf, err := parser.TextToMetricFamilies(reader)
+		if err != nil {
+			return true, err
+		}
+		tsMetric := mf["apiserver_encryption_config_controller_automatic_reload_last_timestamp_seconds"]
+		// Potentially multiple metrics with different success/failure labels
+		totalMetrics := mf["apiserver_encryption_config_controller_automatic_reloads_total"]
+
+		// First time, no metrics exist, so return zeros
+		if tsMetric == nil && totalMetrics == nil && initialMetrics {
+			return true, nil
+		}
+
+		if tsMetric == nil {
+			lastFailure = "encryption config time metric not found"
+			return false, nil
+		}
+
+		if totalMetrics == nil {
+			lastFailure = "encryption config total metric not found"
+			return false, nil
+		}
+
+		unixUpdateTime = int64(tsMetric.GetMetric()[0].GetGauge().GetValue())
+		if time.Now().Unix() < unixUpdateTime {
+			return true, fmt.Errorf("encryption reload time is incorrectly ahead of current time")
+		}
+
+		for _, totalMetric := range totalMetrics.GetMetric() {
+			logrus.Debugf("totalMetric: %+v", totalMetric)
+			for _, label := range totalMetric.GetLabel() {
+				if label.GetName() == "status" && label.GetValue() == "success" {
+					reloadSuccessCounter = int64(totalMetric.GetCounter().GetValue())
+				}
+			}
+		}
+		return true, nil
+	})
+
+	if err != nil {
+		err = fmt.Errorf("%w: %s", err, lastFailure)
+	}
+
+	return unixUpdateTime, reloadSuccessCounter, err
 }

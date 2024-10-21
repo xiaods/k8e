@@ -1,16 +1,14 @@
-package server
+package auth
 
 import (
+	"net"
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/generated/clientset/versioned/scheme"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apiserver/pkg/endpoints/handlers/responsewriters"
+	"github.com/xiaods/k8e/pkg/util"
 	"k8s.io/apiserver/pkg/endpoints/request"
 )
 
@@ -25,27 +23,28 @@ func hasRole(mustRoles []string, roles []string) bool {
 	return false
 }
 
+// doAuth calls the cluster's authenticator to validate that the client has at least one of the listed roles
 func doAuth(roles []string, serverConfig *config.Control, next http.Handler, rw http.ResponseWriter, req *http.Request) {
 	switch {
 	case serverConfig == nil:
 		logrus.Errorf("Authenticate not initialized: serverConfig is nil")
-		unauthorized(rw, req)
+		util.SendError(errors.New("not authorized"), rw, req, http.StatusUnauthorized)
 		return
 	case serverConfig.Runtime.Authenticator == nil:
 		logrus.Errorf("Authenticate not initialized: serverConfig.Runtime.Authenticator is nil")
-		unauthorized(rw, req)
+		util.SendError(errors.New("not authorized"), rw, req, http.StatusUnauthorized)
 		return
 	}
 
 	resp, ok, err := serverConfig.Runtime.Authenticator.AuthenticateRequest(req)
 	if err != nil {
 		logrus.Errorf("Failed to authenticate request from %s: %v", req.RemoteAddr, err)
-		unauthorized(rw, req)
+		util.SendError(errors.New("not authorized"), rw, req, http.StatusUnauthorized)
 		return
 	}
 
 	if !ok || !hasRole(roles, resp.User.GetGroups()) {
-		forbidden(rw, req)
+		util.SendError(errors.New("forbidden"), rw, req, http.StatusForbidden)
 		return
 	}
 
@@ -54,7 +53,9 @@ func doAuth(roles []string, serverConfig *config.Control, next http.Handler, rw 
 	next.ServeHTTP(rw, req)
 }
 
-func authMiddleware(serverConfig *config.Control, roles ...string) mux.MiddlewareFunc {
+// HasRole returns a middleware function that validates that the request
+// is being made with at least one of the listed roles.
+func HasRole(serverConfig *config.Control, roles ...string) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 			doAuth(roles, serverConfig, next, rw, req)
@@ -62,26 +63,17 @@ func authMiddleware(serverConfig *config.Control, roles ...string) mux.Middlewar
 	}
 }
 
-func unauthorized(resp http.ResponseWriter, req *http.Request) {
-	responsewriters.ErrorNegotiated(
-		&apierrors.StatusError{ErrStatus: metav1.Status{
-			Status:  metav1.StatusFailure,
-			Code:    http.StatusUnauthorized,
-			Reason:  metav1.StatusReasonUnauthorized,
-			Message: "not authorized",
-		}},
-		scheme.Codecs.WithoutConversion(), schema.GroupVersion{}, resp, req,
-	)
-}
-
-func forbidden(resp http.ResponseWriter, req *http.Request) {
-	responsewriters.ErrorNegotiated(
-		&apierrors.StatusError{ErrStatus: metav1.Status{
-			Status:  metav1.StatusFailure,
-			Code:    http.StatusForbidden,
-			Reason:  metav1.StatusReasonForbidden,
-			Message: "forbidden",
-		}},
-		scheme.Codecs.WithoutConversion(), schema.GroupVersion{}, resp, req,
-	)
+// IsLocalOrHasRole returns a middleware function that validates that the request
+// is from a local client or has at least one of the listed roles.
+func IsLocalOrHasRole(serverConfig *config.Control, roles ...string) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+			client, _, _ := net.SplitHostPort(req.RemoteAddr)
+			if client == "127.0.0.1" || client == "::1" {
+				next.ServeHTTP(rw, req)
+			} else {
+				doAuth(roles, serverConfig, next, rw, req)
+			}
+		})
+	}
 }

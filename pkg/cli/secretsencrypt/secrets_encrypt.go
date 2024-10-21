@@ -20,10 +20,10 @@ import (
 	"k8s.io/utils/pointer"
 )
 
-func commandPrep(app *cli.Context, cfg *cmds.Server) (*clientaccess.Info, error) {
+func commandPrep(cfg *cmds.Server) (*clientaccess.Info, error) {
 	// hide process arguments from ps output, since they may contain
 	// database credentials or other secrets.
-	gspt.SetProcTitle(os.Args[0] + " secrets-encrypt")
+	proctitle.SetProcTitle(os.Args[0] + " secrets-encrypt")
 
 	dataDir, err := server.ResolveDataDir(cfg.DataDir)
 	if err != nil {
@@ -46,15 +46,14 @@ func wrapServerError(err error) error {
 }
 
 func Enable(app *cli.Context) error {
-	var err error
-	if err = cmds.InitLogging(); err != nil {
+	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(&cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
-	b, err := json.Marshal(server.EncryptionRequest{Enable: pointer.Bool(true)})
+	b, err := json.Marshal(server.EncryptionRequest{Enable: ptr.To(true)})
 	if err != nil {
 		return err
 	}
@@ -66,15 +65,14 @@ func Enable(app *cli.Context) error {
 }
 
 func Disable(app *cli.Context) error {
-
 	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(&cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
-	b, err := json.Marshal(server.EncryptionRequest{Enable: pointer.Bool(false)})
+	b, err := json.Marshal(server.EncryptionRequest{Enable: ptr.To(false)})
 	if err != nil {
 		return err
 	}
@@ -89,7 +87,7 @@ func Status(app *cli.Context) error {
 	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(&cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
@@ -147,16 +145,15 @@ func Status(app *cli.Context) error {
 }
 
 func Prepare(app *cli.Context) error {
-	var err error
-	if err = cmds.InitLogging(); err != nil {
+	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(&cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
 	b, err := json.Marshal(server.EncryptionRequest{
-		Stage: pointer.StringPtr(secretsencrypt.EncryptionPrepare),
+		Stage: ptr.To(secretsencrypt.EncryptionPrepare),
 		Force: cmds.ServerConfig.EncryptForce,
 	})
 	if err != nil {
@@ -173,12 +170,12 @@ func Rotate(app *cli.Context) error {
 	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(&cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
 	b, err := json.Marshal(server.EncryptionRequest{
-		Stage: pointer.StringPtr(secretsencrypt.EncryptionRotate),
+		Stage: ptr.To(secretsencrypt.EncryptionRotate),
 		Force: cmds.ServerConfig.EncryptForce,
 	})
 	if err != nil {
@@ -192,16 +189,15 @@ func Rotate(app *cli.Context) error {
 }
 
 func Reencrypt(app *cli.Context) error {
-	var err error
-	if err = cmds.InitLogging(); err != nil {
+	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	info, err := commandPrep(app, &cmds.ServerConfig)
+	info, err := commandPrep(&cmds.ServerConfig)
 	if err != nil {
 		return err
 	}
 	b, err := json.Marshal(server.EncryptionRequest{
-		Stage: pointer.StringPtr(secretsencrypt.EncryptionReencryptActive),
+		Stage: ptr.To(secretsencrypt.EncryptionReencryptActive),
 		Force: cmds.ServerConfig.EncryptForce,
 		Skip:  cmds.ServerConfig.EncryptSkip,
 	})
@@ -212,5 +208,27 @@ func Reencrypt(app *cli.Context) error {
 		return wrapServerError(err)
 	}
 	fmt.Println("reencryption started")
+	return nil
+}
+
+func RotateKeys(app *cli.Context) error {
+	if err := cmds.InitLogging(); err != nil {
+		return err
+	}
+	info, err := commandPrep(&cmds.ServerConfig)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(server.EncryptionRequest{
+		Stage: ptr.To(secretsencrypt.EncryptionRotateKeys),
+	})
+	if err != nil {
+		return err
+	}
+	timeout := 70 * time.Second
+	if err = info.Put("/v1-"+version.Program+"/encrypt/config", b, clientaccess.WithTimeout(timeout)); err != nil {
+		return wrapServerError(err)
+	}
+	fmt.Println("keys rotated, reencryption started")
 	return nil
 }
