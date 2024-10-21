@@ -92,7 +92,6 @@ require (
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/go-test/deep v1.0.7
 	github.com/golang/mock v1.6.0
-	github.com/google/cadvisor v0.49.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.1
@@ -261,6 +260,7 @@ require (
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.1.2 // indirect
+	github.com/google/cadvisor v0.49.0 // indirect
 	github.com/google/cel-go v0.20.1 // indirect
 	github.com/google/gnostic-models v0.6.9-0.20230804172637-c7be7c783f49 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
