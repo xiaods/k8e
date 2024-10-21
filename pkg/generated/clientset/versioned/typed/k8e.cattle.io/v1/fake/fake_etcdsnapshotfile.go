@@ -20,10 +20,9 @@ package fake
 import (
 	"context"
 
-	k8ecattleiov1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	labels "k8s.io/apimachinery/pkg/labels"
-	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	types "k8s.io/apimachinery/pkg/types"
 	watch "k8s.io/apimachinery/pkg/watch"
 	testing "k8s.io/client-go/testing"
@@ -34,34 +33,36 @@ type FakeETCDSnapshotFiles struct {
 	Fake *FakeK8eV1
 }
 
-var etcdsnapshotfilesResource = schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1", Resource: "etcdsnapshotfiles"}
+var etcdsnapshotfilesResource = v1.SchemeGroupVersion.WithResource("etcdsnapshotfiles")
 
-var etcdsnapshotfilesKind = schema.GroupVersionKind{Group: "k8e.cattle.io", Version: "v1", Kind: "ETCDSnapshotFile"}
+var etcdsnapshotfilesKind = v1.SchemeGroupVersion.WithKind("ETCDSnapshotFile")
 
 // Get takes name of the eTCDSnapshotFile, and returns the corresponding eTCDSnapshotFile object, and an error if there is any.
-func (c *FakeETCDSnapshotFiles) Get(ctx context.Context, name string, options v1.GetOptions) (result *k8ecattleiov1.ETCDSnapshotFile, err error) {
+func (c *FakeETCDSnapshotFiles) Get(ctx context.Context, name string, options metav1.GetOptions) (result *v1.ETCDSnapshotFile, err error) {
+	emptyResult := &v1.ETCDSnapshotFile{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootGetAction(etcdsnapshotfilesResource, name), &k8ecattleiov1.ETCDSnapshotFile{})
+		Invokes(testing.NewRootGetActionWithOptions(etcdsnapshotfilesResource, name, options), emptyResult)
 	if obj == nil {
-		return nil, err
+		return emptyResult, err
 	}
-	return obj.(*k8ecattleiov1.ETCDSnapshotFile), err
+	return obj.(*v1.ETCDSnapshotFile), err
 }
 
 // List takes label and field selectors, and returns the list of ETCDSnapshotFiles that match those selectors.
-func (c *FakeETCDSnapshotFiles) List(ctx context.Context, opts v1.ListOptions) (result *k8ecattleiov1.ETCDSnapshotFileList, err error) {
+func (c *FakeETCDSnapshotFiles) List(ctx context.Context, opts metav1.ListOptions) (result *v1.ETCDSnapshotFileList, err error) {
+	emptyResult := &v1.ETCDSnapshotFileList{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootListAction(etcdsnapshotfilesResource, etcdsnapshotfilesKind, opts), &k8ecattleiov1.ETCDSnapshotFileList{})
+		Invokes(testing.NewRootListActionWithOptions(etcdsnapshotfilesResource, etcdsnapshotfilesKind, opts), emptyResult)
 	if obj == nil {
-		return nil, err
+		return emptyResult, err
 	}
 
 	label, _, _ := testing.ExtractFromListOptions(opts)
 	if label == nil {
 		label = labels.Everything()
 	}
-	list := &k8ecattleiov1.ETCDSnapshotFileList{ListMeta: obj.(*k8ecattleiov1.ETCDSnapshotFileList).ListMeta}
-	for _, item := range obj.(*k8ecattleiov1.ETCDSnapshotFileList).Items {
+	list := &v1.ETCDSnapshotFileList{ListMeta: obj.(*v1.ETCDSnapshotFileList).ListMeta}
+	for _, item := range obj.(*v1.ETCDSnapshotFileList).Items {
 		if label.Matches(labels.Set(item.Labels)) {
 			list.Items = append(list.Items, item)
 		}
@@ -70,63 +71,67 @@ func (c *FakeETCDSnapshotFiles) List(ctx context.Context, opts v1.ListOptions) (
 }
 
 // Watch returns a watch.Interface that watches the requested eTCDSnapshotFiles.
-func (c *FakeETCDSnapshotFiles) Watch(ctx context.Context, opts v1.ListOptions) (watch.Interface, error) {
+func (c *FakeETCDSnapshotFiles) Watch(ctx context.Context, opts metav1.ListOptions) (watch.Interface, error) {
 	return c.Fake.
-		InvokesWatch(testing.NewRootWatchAction(etcdsnapshotfilesResource, opts))
+		InvokesWatch(testing.NewRootWatchActionWithOptions(etcdsnapshotfilesResource, opts))
 }
 
 // Create takes the representation of a eTCDSnapshotFile and creates it.  Returns the server's representation of the eTCDSnapshotFile, and an error, if there is any.
-func (c *FakeETCDSnapshotFiles) Create(ctx context.Context, eTCDSnapshotFile *k8ecattleiov1.ETCDSnapshotFile, opts v1.CreateOptions) (result *k8ecattleiov1.ETCDSnapshotFile, err error) {
+func (c *FakeETCDSnapshotFiles) Create(ctx context.Context, eTCDSnapshotFile *v1.ETCDSnapshotFile, opts metav1.CreateOptions) (result *v1.ETCDSnapshotFile, err error) {
+	emptyResult := &v1.ETCDSnapshotFile{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootCreateAction(etcdsnapshotfilesResource, eTCDSnapshotFile), &k8ecattleiov1.ETCDSnapshotFile{})
+		Invokes(testing.NewRootCreateActionWithOptions(etcdsnapshotfilesResource, eTCDSnapshotFile, opts), emptyResult)
 	if obj == nil {
-		return nil, err
+		return emptyResult, err
 	}
-	return obj.(*k8ecattleiov1.ETCDSnapshotFile), err
+	return obj.(*v1.ETCDSnapshotFile), err
 }
 
 // Update takes the representation of a eTCDSnapshotFile and updates it. Returns the server's representation of the eTCDSnapshotFile, and an error, if there is any.
-func (c *FakeETCDSnapshotFiles) Update(ctx context.Context, eTCDSnapshotFile *k8ecattleiov1.ETCDSnapshotFile, opts v1.UpdateOptions) (result *k8ecattleiov1.ETCDSnapshotFile, err error) {
+func (c *FakeETCDSnapshotFiles) Update(ctx context.Context, eTCDSnapshotFile *v1.ETCDSnapshotFile, opts metav1.UpdateOptions) (result *v1.ETCDSnapshotFile, err error) {
+	emptyResult := &v1.ETCDSnapshotFile{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateAction(etcdsnapshotfilesResource, eTCDSnapshotFile), &k8ecattleiov1.ETCDSnapshotFile{})
+		Invokes(testing.NewRootUpdateActionWithOptions(etcdsnapshotfilesResource, eTCDSnapshotFile, opts), emptyResult)
 	if obj == nil {
-		return nil, err
+		return emptyResult, err
 	}
-	return obj.(*k8ecattleiov1.ETCDSnapshotFile), err
+	return obj.(*v1.ETCDSnapshotFile), err
 }
 
 // UpdateStatus was generated because the type contains a Status member.
 // Add a +genclient:noStatus comment above the type to avoid generating UpdateStatus().
-func (c *FakeETCDSnapshotFiles) UpdateStatus(ctx context.Context, eTCDSnapshotFile *k8ecattleiov1.ETCDSnapshotFile, opts v1.UpdateOptions) (*k8ecattleiov1.ETCDSnapshotFile, error) {
+func (c *FakeETCDSnapshotFiles) UpdateStatus(ctx context.Context, eTCDSnapshotFile *v1.ETCDSnapshotFile, opts metav1.UpdateOptions) (result *v1.ETCDSnapshotFile, err error) {
+	emptyResult := &v1.ETCDSnapshotFile{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootUpdateSubresourceAction(etcdsnapshotfilesResource, "status", eTCDSnapshotFile), &k8ecattleiov1.ETCDSnapshotFile{})
+		Invokes(testing.NewRootUpdateSubresourceActionWithOptions(etcdsnapshotfilesResource, "status", eTCDSnapshotFile, opts), emptyResult)
 	if obj == nil {
-		return nil, err
+		return emptyResult, err
 	}
-	return obj.(*k8ecattleiov1.ETCDSnapshotFile), err
+	return obj.(*v1.ETCDSnapshotFile), err
 }
 
 // Delete takes name of the eTCDSnapshotFile and deletes it. Returns an error if one occurs.
-func (c *FakeETCDSnapshotFiles) Delete(ctx context.Context, name string, opts v1.DeleteOptions) error {
+func (c *FakeETCDSnapshotFiles) Delete(ctx context.Context, name string, opts metav1.DeleteOptions) error {
 	_, err := c.Fake.
-		Invokes(testing.NewRootDeleteActionWithOptions(etcdsnapshotfilesResource, name, opts), &k8ecattleiov1.ETCDSnapshotFile{})
+		Invokes(testing.NewRootDeleteActionWithOptions(etcdsnapshotfilesResource, name, opts), &v1.ETCDSnapshotFile{})
 	return err
 }
 
 // DeleteCollection deletes a collection of objects.
-func (c *FakeETCDSnapshotFiles) DeleteCollection(ctx context.Context, opts v1.DeleteOptions, listOpts v1.ListOptions) error {
-	action := testing.NewRootDeleteCollectionAction(etcdsnapshotfilesResource, listOpts)
+func (c *FakeETCDSnapshotFiles) DeleteCollection(ctx context.Context, opts metav1.DeleteOptions, listOpts metav1.ListOptions) error {
+	action := testing.NewRootDeleteCollectionActionWithOptions(etcdsnapshotfilesResource, opts, listOpts)
 
-	_, err := c.Fake.Invokes(action, &k8ecattleiov1.ETCDSnapshotFileList{})
+	_, err := c.Fake.Invokes(action, &v1.ETCDSnapshotFileList{})
 	return err
 }
 
 // Patch applies the patch and returns the patched eTCDSnapshotFile.
-func (c *FakeETCDSnapshotFiles) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts v1.PatchOptions, subresources ...string) (result *k8ecattleiov1.ETCDSnapshotFile, err error) {
+func (c *FakeETCDSnapshotFiles) Patch(ctx context.Context, name string, pt types.PatchType, data []byte, opts metav1.PatchOptions, subresources ...string) (result *v1.ETCDSnapshotFile, err error) {
+	emptyResult := &v1.ETCDSnapshotFile{}
 	obj, err := c.Fake.
-		Invokes(testing.NewRootPatchSubresourceAction(etcdsnapshotfilesResource, name, pt, data, subresources...), &k8ecattleiov1.ETCDSnapshotFile{})
+		Invokes(testing.NewRootPatchSubresourceActionWithOptions(etcdsnapshotfilesResource, name, pt, data, opts, subresources...), emptyResult)
 	if obj == nil {
-		return nil, err
+		return emptyResult, err
 	}
-	return obj.(*k8ecattleiov1.ETCDSnapshotFile), err
+	return obj.(*v1.ETCDSnapshotFile), err
 }
