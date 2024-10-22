@@ -188,7 +188,6 @@ type Control struct {
 	DisableETCD              bool
 	DisableScheduler         bool
 	Rootless                 bool
-	ServiceLBNamespace       string
 	ExtraAPIArgs             []string
 	ExtraControllerArgs      []string
 	ExtraCloudControllerArgs []string
