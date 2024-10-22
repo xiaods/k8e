@@ -90,6 +90,7 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 		return fmt.Errorf("dual-stack or IPv6 are not supported on Windows node")
 	}
 
+	syssetup.Configure(enableIPv6)
 	nodeConfig.AgentConfig.EnableIPv4 = enableIPv4
 	nodeConfig.AgentConfig.EnableIPv6 = enableIPv6
 
@@ -402,11 +403,22 @@ func updateAddressAnnotations(nodeConfig *daemonconfig.Node, nodeAnnotations map
 		result[cp.ExternalIPKey] = util.JoinIPs(agentConfig.NodeExternalIPs)
 	}
 
+	if len(agentConfig.NodeInternalDNSs) > 0 {
+		result[cp.InternalDNSKey] = strings.Join(agentConfig.NodeInternalDNSs, ",")
+	} else {
+		delete(result, cp.InternalDNSKey)
+	}
+	if len(agentConfig.NodeExternalDNSs) > 0 {
+		result[cp.ExternalDNSKey] = strings.Join(agentConfig.NodeExternalDNSs, ",")
+	} else {
+		delete(result, cp.ExternalDNSKey)
+	}
+
 	result = labels.Merge(nodeAnnotations, result)
 	return result, !equality.Semantic.DeepEqual(nodeAnnotations, result)
 }
 
-// setupTunnelAndRunAgent should start the setup tunnel before starting kubelet
+// setupTunnelAndRunAgent should start the setup tunnel before starting kubelet and kubeproxy
 // there are special case for etcd agents, it will wait until it can find the apiaddress from
 // the address channel and update the proxy with the servers addresses, if in rke2 we need to
 // start the agent before the tunnel is setup to allow kubelet to start first and start the pods

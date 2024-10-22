@@ -9,14 +9,15 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/version"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	cloudprovider "k8s.io/cloud-provider"
 )
 
 var (
-	InternalIPKey = version.Program + ".io/internal-ip"
-	ExternalIPKey = version.Program + ".io/external-ip"
-	HostnameKey   = version.Program + ".io/hostname"
+	InternalIPKey  = version.Program + ".io/internal-ip"
+	ExternalIPKey  = version.Program + ".io/external-ip"
+	InternalDNSKey = version.Program + ".io/internal-dns"
+	ExternalDNSKey = version.Program + ".io/external-dns"
+	HostnameKey    = version.Program + ".io/hostname"
 )
 
 var _ cloudprovider.InstancesV2 = &k8e{}
@@ -29,23 +30,44 @@ func (k *k8e) InstanceExists(ctx context.Context, node *corev1.Node) (bool, erro
 
 // InstanceShutdown returns true if the instance is shutdown according to the cloud provider.
 // K8e nodes are never shutdown.
-func (k *k8e) InstanceShutdown(ctx context.Context, node *v1.Node) (bool, error) {
+func (k *k8e) InstanceShutdown(ctx context.Context, node *corev1.Node) (bool, error) {
 	return false, nil
 }
 
 // InstanceMetadata returns the instance's metadata.
-func (k *k8e) InstanceMetadata(ctx context.Context, node *v1.Node) (*cloudprovider.InstanceMetadata, error) {
+func (k *k8e) InstanceMetadata(ctx context.Context, node *corev1.Node) (*cloudprovider.InstanceMetadata, error) {
 	if (node.Annotations[InternalIPKey] == "") && (node.Labels[InternalIPKey] == "") {
 		return nil, errors.New("address annotations not yet set")
 	}
-	addresses := []corev1.NodeAddress{}
+
+	metadata := &cloudprovider.InstanceMetadata{
+		ProviderID:   fmt.Sprintf("%s://%s", version.Program, node.Name),
+		InstanceType: version.Program,
+	}
+
+	if node.Spec.ProviderID != "" {
+		metadata.ProviderID = node.Spec.ProviderID
+	}
+
+	if instanceType := node.Labels[corev1.LabelInstanceTypeStable]; instanceType != "" {
+		metadata.InstanceType = instanceType
+	}
+
+	if region := node.Labels[corev1.LabelTopologyRegion]; region != "" {
+		metadata.Region = region
+	}
+
+	if zone := node.Labels[corev1.LabelTopologyZone]; zone != "" {
+		metadata.Zone = zone
+	}
+
 	// check internal address
 	if address := node.Annotations[InternalIPKey]; address != "" {
 		for _, v := range strings.Split(address, ",") {
-			addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: v})
+			metadata.NodeAddresses = append(metadata.NodeAddresses, corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: v})
 		}
 	} else if address = node.Labels[InternalIPKey]; address != "" {
-		addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: address})
+		metadata.NodeAddresses = append(metadata.NodeAddresses, corev1.NodeAddress{Type: corev1.NodeInternalIP, Address: address})
 	} else {
 		logrus.Infof("Couldn't find node internal ip annotation or label on node %s", node.Name)
 	}
@@ -53,26 +75,34 @@ func (k *k8e) InstanceMetadata(ctx context.Context, node *v1.Node) (*cloudprovid
 	// check external address
 	if address := node.Annotations[ExternalIPKey]; address != "" {
 		for _, v := range strings.Split(address, ",") {
-			addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeExternalIP, Address: v})
+			metadata.NodeAddresses = append(metadata.NodeAddresses, corev1.NodeAddress{Type: corev1.NodeExternalIP, Address: v})
 		}
 	} else if address = node.Labels[ExternalIPKey]; address != "" {
-		addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeExternalIP, Address: address})
+		metadata.NodeAddresses = append(metadata.NodeAddresses, corev1.NodeAddress{Type: corev1.NodeExternalIP, Address: address})
+	}
+
+	// check internal dns
+	if address := node.Annotations[InternalDNSKey]; address != "" {
+		for _, v := range strings.Split(address, ",") {
+			metadata.NodeAddresses = append(metadata.NodeAddresses, corev1.NodeAddress{Type: corev1.NodeInternalDNS, Address: v})
+		}
+	}
+
+	// check external dns
+	if address := node.Annotations[ExternalDNSKey]; address != "" {
+		for _, v := range strings.Split(address, ",") {
+			metadata.NodeAddresses = append(metadata.NodeAddresses, corev1.NodeAddress{Type: corev1.NodeExternalDNS, Address: v})
+		}
 	}
 
 	// check hostname
 	if address := node.Annotations[HostnameKey]; address != "" {
-		addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeHostName, Address: address})
+		metadata.NodeAddresses = append(metadata.NodeAddresses, corev1.NodeAddress{Type: corev1.NodeHostName, Address: address})
 	} else if address = node.Labels[HostnameKey]; address != "" {
-		addresses = append(addresses, corev1.NodeAddress{Type: corev1.NodeHostName, Address: address})
+		metadata.NodeAddresses = append(metadata.NodeAddresses, corev1.NodeAddress{Type: corev1.NodeHostName, Address: address})
 	} else {
 		logrus.Infof("Couldn't find node hostname annotation or label on node %s", node.Name)
 	}
 
-	return &cloudprovider.InstanceMetadata{
-		ProviderID:    fmt.Sprintf("%s://%s", version.Program, node.Name),
-		InstanceType:  version.Program,
-		NodeAddresses: addresses,
-		Zone:          "",
-		Region:        "",
-	}, nil
+	return metadata, nil
 }
