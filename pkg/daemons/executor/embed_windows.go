@@ -28,15 +28,6 @@ type SourceVipResponse struct {
 	} `json:"ip4"`
 }
 
-func platformKubeProxyArgs(nodeConfig *daemonconfig.Node) map[string]string {
-	argsMap := map[string]string{}
-	argsMap["network-name"] = networkName
-	if sourceVip := waitForSourceVip(networkName, nodeConfig); sourceVip != "" {
-		argsMap["source-vip"] = sourceVip
-	}
-	return argsMap
-}
-
 func waitForSourceVip(networkName string, nodeConfig *daemonconfig.Node) string {
 	for range time.Tick(time.Second * 5) {
 		network, err := hcsshim.GetHNSNetworkByName(networkName)

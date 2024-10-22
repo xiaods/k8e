@@ -4,9 +4,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/pkg/errors"
-	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/version"
+	"github.com/urfave/cli"
 )
 
 type Agent struct {
@@ -16,20 +15,28 @@ type Agent struct {
 	ServerURL                string
 	APIAddressCh             chan []string
 	DisableLoadBalancer      bool
+	DisableServiceLB         bool
 	ETCDAgent                bool
 	LBServerPort             int
 	ResolvConf               string
 	DataDir                  string
+	BindAddress              string
 	NodeIP                   cli.StringSlice
 	NodeExternalIP           cli.StringSlice
+	NodeInternalDNS          cli.StringSlice
+	NodeExternalDNS          cli.StringSlice
 	NodeName                 string
 	PauseImage               string
 	Snapshotter              string
 	Docker                   bool
+	ContainerdNoDefault      bool
 	ContainerRuntimeEndpoint string
 	DefaultRuntime           string
 	ImageServiceEndpoint     string
+	VPNAuth                  string
+	VPNAuthFile              string
 	Debug                    bool
+	EnablePProf              bool
 	Rootless                 bool
 	RootlessAlreadyUnshared  bool
 	WithNodeID               bool
@@ -44,7 +51,7 @@ type Agent struct {
 	Taints                   cli.StringSlice
 	ImageCredProvBinDir      string
 	ImageCredProvConfig      string
-	AgentReady               chan<- struct{}
+	ContainerRuntimeReady    chan<- struct{}
 	AgentShared
 }
 
@@ -70,6 +77,16 @@ var (
 		Name:  "node-external-ip",
 		Usage: "(agent/networking) IPv4/IPv6 external IP addresses to advertise for node",
 		Value: &AgentConfig.NodeExternalIP,
+	}
+	NodeInternalDNSFlag = &cli.StringSliceFlag{
+		Name:  "node-internal-dns",
+		Usage: "(agent/networking) internal DNS addresses to advertise for node",
+		Value: &AgentConfig.NodeInternalDNS,
+	}
+	NodeExternalDNSFlag = &cli.StringSliceFlag{
+		Name:  "node-external-dns",
+		Usage: "(agent/networking) external DNS addresses to advertise for node",
+		Value: &AgentConfig.NodeExternalDNS,
 	}
 	NodeNameFlag = &cli.StringFlag{
 		Name:        "node-name",
@@ -124,7 +141,7 @@ var (
 		Name:        "private-registry",
 		Usage:       "(agent/runtime) Private registry configuration file",
 		Destination: &AgentConfig.PrivateRegistry,
-		Value:       "/etc/" + version.Program + "/registries.yaml",
+		Value:       "/etc/rancher/" + version.Program + "/registries.yaml",
 	}
 	AirgapExtraRegistryFlag = &cli.StringSliceFlag{
 		Name:   "airgap-extra-registry",
@@ -143,6 +160,18 @@ var (
 		Usage:       "(agent/runtime) Override default containerd snapshotter",
 		Destination: &AgentConfig.Snapshotter,
 		Value:       DefaultSnapshotter,
+	}
+	VPNAuth = &cli.StringFlag{
+		Name:        "vpn-auth",
+		Usage:       "(agent/networking) (experimental) Credentials for the VPN provider. It must include the provider name and join key in the format name=<vpn-provider>,joinKey=<key>[,controlServerURL=<url>][,extraArgs=<args>]",
+		EnvVar:      version.ProgramUpper + "_VPN_AUTH",
+		Destination: &AgentConfig.VPNAuth,
+	}
+	VPNAuthFile = &cli.StringFlag{
+		Name:        "vpn-auth-file",
+		Usage:       "(agent/networking) (experimental) File containing credentials for the VPN provider. It must include the provider name and join key in the format name=<vpn-provider>,joinKey=<key>[,controlServerURL=<url>][,extraArgs=<args>]",
+		EnvVar:      version.ProgramUpper + "_VPN_AUTH_FILE",
+		Destination: &AgentConfig.VPNAuthFile,
 	}
 	ResolvConfFlag = &cli.StringFlag{
 		Name:        "resolv-conf",
@@ -169,42 +198,41 @@ var (
 		Name:        "image-credential-provider-bin-dir",
 		Usage:       "(agent/node) The path to the directory where credential provider plugin binaries are located",
 		Destination: &AgentConfig.ImageCredProvBinDir,
-		Value:       "/var/lib/" + version.Program + "/credentialprovider/bin",
+		Value:       "/var/lib/rancher/credentialprovider/bin",
 	}
 	ImageCredProvConfigFlag = &cli.StringFlag{
 		Name:        "image-credential-provider-config",
 		Usage:       "(agent/node) The path to the credential provider plugin config file",
 		Destination: &AgentConfig.ImageCredProvConfig,
-		Value:       "/var/lib/" + version.Program + "/credentialprovider/config.yaml",
-	}
-	DisableSELinuxFlag = &cli.BoolTFlag{
-		Name:   "disable-selinux",
-		Usage:  "(deprecated) Use --selinux to explicitly enable SELinux",
-		Hidden: true,
+		Value:       "/var/lib/rancher/credentialprovider/config.yaml",
 	}
 	DisableAgentLBFlag = &cli.BoolFlag{
 		Name:        "disable-apiserver-lb",
 		Usage:       "(agent/networking) (experimental) Disable the agent's client-side load-balancer and connect directly to the configured server address",
 		Destination: &AgentConfig.DisableLoadBalancer,
 	}
+	DisableDefaultRegistryEndpointFlag = &cli.BoolFlag{
+		Name:        "disable-default-registry-endpoint",
+		Usage:       "(agent/containerd) Disables containerd's fallback default registry endpoint when a mirror is configured for that registry",
+		Destination: &AgentConfig.ContainerdNoDefault,
+	}
+	EnablePProfFlag = &cli.BoolFlag{
+		Name:        "enable-pprof",
+		Usage:       "(experimental) Enable pprof endpoint on supervisor port",
+		Destination: &AgentConfig.EnablePProf,
+	}
+	BindAddressFlag = &cli.StringFlag{
+		Name:        "bind-address",
+		Usage:       "(listener) " + version.Program + " bind address (default: 0.0.0.0)",
+		Destination: &AgentConfig.BindAddress,
+	}
 )
 
-func CheckSELinuxFlags(ctx *cli.Context) error {
-	disable, enable := DisableSELinuxFlag.Name, SELinuxFlag.Name
-	switch {
-	case ctx.IsSet(disable) && ctx.IsSet(enable):
-		return errors.Errorf("--%s is deprecated in favor of --%s to affirmatively enable it in containerd", disable, enable)
-	case ctx.IsSet(disable):
-		AgentConfig.EnableSELinux = !ctx.Bool(disable)
-	}
-	return nil
-}
 func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 	return cli.Command{
 		Name:      "agent",
 		Usage:     "Run node agent",
 		UsageText: appName + " agent [OPTIONS]",
-		Before:    CheckSELinuxFlags,
 		Action:    action,
 		Flags: []cli.Flag{
 			ConfigFlag,
@@ -226,11 +254,14 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 				EnvVar:      version.ProgramUpper + "_URL",
 				Destination: &AgentConfig.ServerURL,
 			},
+			// Note that this is different from DataDirFlag used elswhere in the CLI,
+			// as this is bound to AgentConfig instead of ServerConfig.
 			&cli.StringFlag{
 				Name:        "data-dir,d",
 				Usage:       "(agent/data) Folder to hold state",
 				Destination: &AgentConfig.DataDir,
-				Value:       "/var/lib/" + version.Program + "",
+				Value:       "/var/lib/rancher/" + version.Program + "",
+				EnvVar:      version.ProgramUpper + "_DATA_DIR",
 			},
 			NodeNameFlag,
 			WithNodeIDFlag,
@@ -247,29 +278,27 @@ func NewAgentCommand(action func(ctx *cli.Context) error) cli.Command {
 			PauseImageFlag,
 			SnapshotterFlag,
 			PrivateRegistryFlag,
+			DisableDefaultRegistryEndpointFlag,
 			AirgapExtraRegistryFlag,
 			NodeIPFlag,
+			BindAddressFlag,
 			NodeExternalIPFlag,
+			NodeInternalDNSFlag,
+			NodeExternalDNSFlag,
 			ResolvConfFlag,
 			ExtraKubeletArgs,
 			// Experimental flags
+			EnablePProfFlag,
 			&cli.BoolFlag{
 				Name:        "rootless",
 				Usage:       "(experimental) Run rootless",
 				Destination: &AgentConfig.Rootless,
 			},
-
 			PreferBundledBin,
 			// Deprecated/hidden below
-			DisableSELinuxFlag,
 			DockerFlag,
-			&cli.StringFlag{
-				Name:        "cluster-secret",
-				Usage:       "(deprecated) use --token",
-				Destination: &AgentConfig.ClusterSecret,
-				EnvVar:      version.ProgramUpper + "_CLUSTER_SECRET",
-				Hidden:      true,
-			},
+			VPNAuth,
+			VPNAuthFile,
 			DisableAgentLBFlag,
 		},
 	}

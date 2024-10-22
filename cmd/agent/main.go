@@ -5,11 +5,11 @@ import (
 	"errors"
 	"os"
 
-	"github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/configfilearg"
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
 )
 
 func main() {
