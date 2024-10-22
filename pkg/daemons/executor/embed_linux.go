@@ -10,7 +10,3 @@ import (
 	_ "github.com/xiaods/k8e/pkg/cloudprovider"
 )
 
-func platformKubeProxyArgs(nodeConfig *daemonconfig.Node) map[string]string {
-	argsMap := map[string]string{}
-	return argsMap
-}
