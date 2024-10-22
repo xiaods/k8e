@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/authenticator"
 	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -16,8 +18,6 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	logsapi "k8s.io/component-base/logs/api/v1"
@@ -79,7 +79,7 @@ func Server(ctx context.Context, cfg *config.Control) error {
 		}
 	}
 
-	if !cfg.DisableCCM || !cfg.DisableServiceLB {
+	if !cfg.DisableCCM {
 		if err := cloudControllerManager(ctx, cfg); err != nil {
 			return err
 		}
@@ -199,11 +199,8 @@ func apiServer(ctx context.Context, cfg *config.Control) error {
 	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
 	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
 	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
-	if cfg.FlannelExternalIP {
-		argsMap["kubelet-preferred-address-types"] = "ExternalIP,InternalIP,Hostname"
-	} else {
-		argsMap["kubelet-preferred-address-types"] = "InternalIP,ExternalIP,Hostname"
-	}
+	argsMap["kubelet-preferred-address-types"] = "InternalIP,ExternalIP,Hostname"
+
 	argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
 	argsMap["requestheader-allowed-names"] = deps.RequestHeaderCN
 	argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
@@ -331,9 +328,6 @@ func cloudControllerManager(ctx context.Context, cfg *config.Control) error {
 	if cfg.DisableCCM {
 		argsMap["controllers"] = argsMap["controllers"] + ",-cloud-node,-cloud-node-lifecycle"
 		argsMap["secure-port"] = "0"
-	}
-	if cfg.DisableServiceLB {
-		argsMap["controllers"] = argsMap["controllers"] + ",-service"
 	}
 	if cfg.VLevel != 0 {
 		argsMap["v"] = strconv.Itoa(cfg.VLevel)
