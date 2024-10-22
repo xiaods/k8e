@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/version"
+	"github.com/urfave/cli"
 )
 
 const (
@@ -36,7 +36,7 @@ type Server struct {
 	ClusterDomain        string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
-	// The port which custom k8e API runs on
+	// The port which custom k3s API runs on
 	SupervisorPort int
 	// The port which kube-apiserver runs on
 	APIServerPort            int
@@ -45,11 +45,10 @@ type Server struct {
 	DisableAgent             bool
 	KubeConfigOutput         string
 	KubeConfigMode           string
+	KubeConfigGroup          string
 	HelmJobImage             string
 	TLSSan                   cli.StringSlice
 	TLSSanSecurity           bool
-	BindAddress              string
-	EnablePProf              bool
 	ExtraAPIArgs             cli.StringSlice
 	ExtraEtcdArgs            cli.StringSlice
 	ExtraSchedulerArgs       cli.StringSlice
@@ -60,6 +59,7 @@ type Server struct {
 	DatastoreCAFile          string
 	DatastoreCertFile        string
 	DatastoreKeyFile         string
+	KineTLS                  bool
 	AdvertiseIP              string
 	AdvertisePort            int
 	DisableScheduler         bool
@@ -68,9 +68,11 @@ type Server struct {
 	DefaultLocalStoragePath  string
 	DisableCCM               bool
 	DisableHelmController    bool
+	DisableKubeProxy         bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
 	DisableETCD              bool
+	EmbeddedRegistry         bool
 	ClusterInit              bool
 	ClusterReset             bool
 	ClusterResetRestorePath  string
@@ -80,6 +82,7 @@ type Server struct {
 	EncryptSkip              bool
 	SystemDefaultRegistry    string
 	StartupHooks             []StartupHook
+	SupervisorMetrics        bool
 	EtcdSnapshotName         string
 	EtcdDisableSnapshots     bool
 	EtcdExposeMetrics        bool
@@ -97,16 +100,20 @@ type Server struct {
 	EtcdS3BucketName         string
 	EtcdS3Region             string
 	EtcdS3Folder             string
+	EtcdS3Proxy              string
+	EtcdS3ConfigSecret       string
 	EtcdS3Timeout            time.Duration
 	EtcdS3Insecure           bool
+	ServiceLBNamespace       string
 }
 
 var (
 	ServerConfig Server
 	DataDirFlag  = &cli.StringFlag{
 		Name:        "data-dir,d",
-		Usage:       "(data) Folder to hold state default /var/lib/" + version.Program + " or ${HOME}/." + version.Program + " if not root",
+		Usage:       "(data) Folder to hold state default /var/lib/rancher/" + version.Program + " or ${HOME}/.rancher/" + version.Program + " if not root",
 		Destination: &ServerConfig.DataDir,
+		EnvVar:      version.ProgramUpper + "_DATA_DIR",
 	}
 	ServerToken = &cli.StringFlag{
 		Name:        "token,t",
@@ -170,11 +177,7 @@ var ServerFlags = []cli.Flag{
 	VModule,
 	LogFile,
 	AlsoLogToStderr,
-	&cli.StringFlag{
-		Name:        "bind-address",
-		Usage:       "(listener) " + version.Program + " bind address (default: 0.0.0.0)",
-		Destination: &ServerConfig.BindAddress,
-	},
+	BindAddressFlag,
 	&cli.IntFlag{
 		Name:        "https-listen-port",
 		Usage:       "(listener) HTTPS listen port",
@@ -183,7 +186,7 @@ var ServerFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:        "advertise-address",
-		Usage:       "(listener) IPv4 address that apiserver uses to advertise to members of the cluster (default: node-external-ip/node-ip)",
+		Usage:       "(listener) IPv4/IPv6 address that apiserver uses to advertise to members of the cluster (default: node-external-ip/node-ip)",
 		Destination: &ServerConfig.AdvertiseIP,
 	},
 	&cli.IntFlag{
@@ -196,9 +199,9 @@ var ServerFlags = []cli.Flag{
 		Usage: "(listener) Add additional hostnames or IPv4/IPv6 addresses as Subject Alternative Names on the server TLS cert",
 		Value: &ServerConfig.TLSSan,
 	},
-	&cli.BoolFlag{
+	&cli.BoolTFlag{
 		Name:        "tls-san-security",
-		Usage:       "(listener) Protect the server TLS cert by refusing to add Subject Alternative Names not associated with the kubernetes apiserver service, server nodes, or values of the tls-san option (default: false)",
+		Usage:       "(listener) Protect the server TLS cert by refusing to add Subject Alternative Names not associated with the kubernetes apiserver service, server nodes, or values of the tls-san option (default: true)",
 		Destination: &ServerConfig.TLSSanSecurity,
 	},
 	DataDirFlag,
@@ -214,6 +217,12 @@ var ServerFlags = []cli.Flag{
 		Value:       "agent",
 	},
 	&cli.StringFlag{
+		Name:        "servicelb-namespace",
+		Usage:       "(networking) Namespace of the pods for the servicelb component",
+		Destination: &ServerConfig.ServiceLBNamespace,
+		Value:       "kube-system",
+	},
+	&cli.StringFlag{
 		Name:        "write-kubeconfig,o",
 		Usage:       "(client) Write kubeconfig for admin client to this file",
 		Destination: &ServerConfig.KubeConfigOutput,
@@ -226,6 +235,12 @@ var ServerFlags = []cli.Flag{
 		EnvVar:      version.ProgramUpper + "_KUBECONFIG_MODE",
 	},
 	&cli.StringFlag{
+		Name:        "write-kubeconfig-group",
+		Usage:       "(client) Write kubeconfig with this group",
+		Destination: &ServerConfig.KubeConfigGroup,
+		EnvVar:      version.ProgramUpper + "_KUBECONFIG_GROUP",
+	},
+	&cli.StringFlag{
 		Name:        "helm-job-image",
 		Usage:       "(helm) Default image to use for helm jobs",
 		Destination: &ServerConfig.HelmJobImage,
@@ -233,7 +248,7 @@ var ServerFlags = []cli.Flag{
 	ServerToken,
 	&cli.StringFlag{
 		Name:        "token-file",
-		Usage:       "(cluster) File containing the cluster-secret/token",
+		Usage:       "(cluster) File containing the token",
 		Destination: &ServerConfig.TokenFile,
 		EnvVar:      version.ProgramUpper + "_TOKEN_FILE",
 	},
@@ -281,9 +296,15 @@ var ServerFlags = []cli.Flag{
 		Usage: "(flags) Customized flag for kube-cloud-controller-manager process",
 		Value: &ServerConfig.ExtraCloudControllerArgs,
 	},
+	&cli.BoolFlag{
+		Name:        "kine-tls",
+		Usage:       "(experimental/db) Enable TLS on the kine etcd server socket",
+		Destination: &ServerConfig.KineTLS,
+		Hidden:      true,
+	},
 	&cli.StringFlag{
 		Name:        "datastore-endpoint",
-		Usage:       "(db) Specify etcd, Mysql, Postgres, or Sqlite (default) data source name",
+		Usage:       "(db) Specify etcd, NATS, MySQL, Postgres, or SQLite (default) data source name",
 		Destination: &ServerConfig.DatastoreEndpoint,
 		EnvVar:      version.ProgramUpper + "_DATASTORE_ENDPOINT",
 	},
@@ -392,6 +413,16 @@ var ServerFlags = []cli.Flag{
 		Usage:       "(db) S3 folder",
 		Destination: &ServerConfig.EtcdS3Folder,
 	},
+	&cli.StringFlag{
+		Name:        "etcd-s3-proxy",
+		Usage:       "(db) Proxy server to use when connecting to S3, overriding any proxy-releated environment variables",
+		Destination: &ServerConfig.EtcdS3Proxy,
+	},
+	&cli.StringFlag{
+		Name:        "etcd-s3-config-secret",
+		Usage:       "(db) Name of secret in the kube-system namespace used to configure S3, if etcd-s3 is enabled and no other etcd-s3 options are set",
+		Destination: &ServerConfig.EtcdS3ConfigSecret,
+	},
 	&cli.BoolFlag{
 		Name:        "etcd-s3-insecure",
 		Usage:       "(db) Disables S3 over HTTPS",
@@ -445,6 +476,16 @@ var ServerFlags = []cli.Flag{
 		Usage:       "(experimental/components) Disable running etcd",
 		Destination: &ServerConfig.DisableETCD,
 	},
+	&cli.BoolFlag{
+		Name:        "embedded-registry",
+		Usage:       "(experimental/components) Enable embedded distributed container registry; requires use of embedded containerd; when enabled agents will also listen on the supervisor port",
+		Destination: &ServerConfig.EmbeddedRegistry,
+	},
+	&cli.BoolFlag{
+		Name:        "supervisor-metrics",
+		Usage:       "(experimental/components) Enable serving " + version.Program + " internal metrics on the supervisor port; when enabled agents will also listen on the supervisor port",
+		Destination: &ServerConfig.SupervisorMetrics,
+	},
 	NodeNameFlag,
 	WithNodeIDFlag,
 	NodeLabels,
@@ -453,7 +494,9 @@ var ServerFlags = []cli.Flag{
 	ImageCredProvConfigFlag,
 	DockerFlag,
 	CRIEndpointFlag,
+	DefaultRuntimeFlag,
 	ImageServiceEndpointFlag,
+	DisableDefaultRegistryEndpointFlag,
 	PauseImageFlag,
 	SnapshotterFlag,
 	PrivateRegistryFlag,
@@ -467,7 +510,13 @@ var ServerFlags = []cli.Flag{
 	NodeIPFlag,
 	NodeExternalIPFlag,
 	ResolvConfFlag,
+	FlannelIfaceFlag,
+	FlannelConfFlag,
+	FlannelCniConfFileFlag,
+	VPNAuth,
+	VPNAuthFile,
 	ExtraKubeletArgs,
+	ExtraKubeProxyArgs,
 	ProtectKernelDefaultsFlag,
 	&cli.BoolFlag{
 		Name:        "secrets-encryption",
@@ -475,11 +524,7 @@ var ServerFlags = []cli.Flag{
 		Destination: &ServerConfig.EncryptSecrets,
 	},
 	// Experimental flags
-	&cli.BoolFlag{
-		Name:        "enable-pprof",
-		Usage:       "(experimental) Enable pprof endpoint on supervisor port",
-		Destination: &ServerConfig.EnablePProf,
-	},
+	EnablePProfFlag,
 	&cli.BoolFlag{
 		Name:        "rootless",
 		Usage:       "(experimental) Run rootless",
@@ -491,19 +536,6 @@ var ServerFlags = []cli.Flag{
 
 	// Hidden/Deprecated flags below
 
-	DisableSELinuxFlag,
-	&cli.StringSliceFlag{
-		Name:   "no-deploy",
-		Usage:  "(deprecated) Do not deploy packaged components (valid items: " + DisableItems + ")",
-		Hidden: true,
-	},
-	&cli.StringFlag{
-		Name:        "cluster-secret",
-		Usage:       "(deprecated) use --token",
-		Destination: &ServerConfig.ClusterSecret,
-		EnvVar:      version.ProgramUpper + "_CLUSTER_SECRET",
-		Hidden:      true,
-	},
 	&cli.BoolFlag{
 		Name:        "disable-agent",
 		Usage:       "Do not run a local agent and register a local kubelet",
@@ -529,7 +561,6 @@ func NewServerCommand(action func(*cli.Context) error) cli.Command {
 		Name:      "server",
 		Usage:     "Run management server",
 		UsageText: appName + " server [OPTIONS]",
-		Before:    CheckSELinuxFlags,
 		Action:    action,
 		Flags:     ServerFlags,
 	}

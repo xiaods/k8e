@@ -23,22 +23,18 @@ var (
 		DataDirFlag,
 		&cli.StringSliceFlag{
 			Name:  "service,s",
-			Usage: "List of services to rotate certificates for. Options include (admin, api-server, controller-manager, scheduler, " + version.Program + "-controller, " + version.Program + "-server, cloud-controller, etcd, auth-proxy, kubelet)",
+			Usage: "List of services to manage certificates for. Options include (admin, api-server, controller-manager, scheduler, supervisor, " + version.Program + "-controller, " + version.Program + "-server, cloud-controller, etcd, auth-proxy, kubelet, kube-proxy)",
 			Value: &ServicesList,
 		},
 	}
 	CertRotateCACommandFlags = []cli.Flag{
+		DataDirFlag,
 		cli.StringFlag{
 			Name:        "server,s",
 			Usage:       "(cluster) Server to connect to",
 			EnvVar:      version.ProgramUpper + "_URL",
 			Value:       "https://127.0.0.1:6443",
 			Destination: &ServerConfig.ServerURL,
-		},
-		cli.StringFlag{
-			Name:        "data-dir,d",
-			Usage:       "(data) Folder to hold state default /var/lib/" + version.Program + " or ${HOME}/." + version.Program + " if not root",
-			Destination: &ServerConfig.DataDir,
 		},
 		cli.StringFlag{
 			Name:        "path",
@@ -54,13 +50,21 @@ var (
 	}
 )
 
-func NewCertCommands(rotate, rotateCA func(ctx *cli.Context) error) cli.Command {
+func NewCertCommands(check, rotate, rotateCA func(ctx *cli.Context) error) cli.Command {
 	return cli.Command{
 		Name:            CertCommand,
 		Usage:           "Manage K8e certificates",
 		SkipFlagParsing: false,
 		SkipArgReorder:  true,
 		Subcommands: []cli.Command{
+			{
+				Name:            "check",
+				Usage:           "Check " + version.Program + " component certificates on disk",
+				SkipFlagParsing: false,
+				SkipArgReorder:  true,
+				Action:          check,
+				Flags:           CertRotateCommandFlags,
+			},
 			{
 				Name:            "rotate",
 				Usage:           "Rotate " + version.Program + " component certificates on disk",
