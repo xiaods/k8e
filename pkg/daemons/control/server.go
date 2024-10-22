@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/authenticator"
 	"github.com/xiaods/k8e/pkg/cluster"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -18,10 +16,13 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/executor"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	logsapi "k8s.io/component-base/logs/api/v1"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
-	proxyutil "k8s.io/kubernetes/pkg/proxy/util"
+	"k8s.io/kubernetes/pkg/registry/core/node"
 
 	// for client metric registration
 	_ "k8s.io/component-base/metrics/prometheus/restclient"
@@ -30,6 +31,7 @@ import (
 func Server(ctx context.Context, cfg *config.Control) error {
 	rand.Seed(time.Now().UTC().UnixNano())
 
+	logsapi.ReapplyHandling = logsapi.ReapplyHandlingIgnoreUnchanged
 	if err := prepare(ctx, cfg); err != nil {
 		return errors.Wrap(err, "preparing server")
 	}
@@ -40,7 +42,7 @@ func Server(ctx context.Context, cfg *config.Control) error {
 	}
 	cfg.Runtime.Tunnel = tunnel
 
-	proxyutil.DisableProxyHostnameCheck = true
+	node.DisableProxyHostnameCheck = true
 
 	authArgs := []string{
 		"--basic-auth-file=" + cfg.Runtime.PasswdFile,
@@ -77,7 +79,7 @@ func Server(ctx context.Context, cfg *config.Control) error {
 		}
 	}
 
-	if !cfg.DisableCCM {
+	if !cfg.DisableCCM || !cfg.DisableServiceLB {
 		if err := cloudControllerManager(ctx, cfg); err != nil {
 			return err
 		}
@@ -90,7 +92,6 @@ func controllerManager(ctx context.Context, cfg *config.Control) error {
 	runtime := cfg.Runtime
 	argsMap := map[string]string{
 		"controllers":                      "*,tokencleaner",
-		"feature-gates":                    "JobTrackingWithFinalizers=true",
 		"kubeconfig":                       runtime.KubeConfigController,
 		"authorization-kubeconfig":         runtime.KubeConfigController,
 		"authentication-kubeconfig":        runtime.KubeConfigController,
@@ -120,6 +121,13 @@ func controllerManager(ctx context.Context, cfg *config.Control) error {
 		argsMap["controllers"] = argsMap["controllers"] + ",-service,-route,-cloud-node-lifecycle"
 	}
 
+	if cfg.VLevel != 0 {
+		argsMap["v"] = strconv.Itoa(cfg.VLevel)
+	}
+	if cfg.VModule != "" {
+		argsMap["vmodule"] = cfg.VModule
+	}
+
 	args := config.GetArgs(argsMap, cfg.ExtraControllerArgs)
 	logrus.Infof("Running kube-controller-manager %s", config.ArgString(args))
 
@@ -139,6 +147,14 @@ func scheduler(ctx context.Context, cfg *config.Control) error {
 	if cfg.NoLeaderElect {
 		argsMap["leader-elect"] = "false"
 	}
+
+	if cfg.VLevel != 0 {
+		argsMap["v"] = strconv.Itoa(cfg.VLevel)
+	}
+	if cfg.VModule != "" {
+		argsMap["vmodule"] = cfg.VModule
+	}
+
 	args := config.GetArgs(argsMap, cfg.ExtraSchedulerAPIArgs)
 
 	logrus.Infof("Running kube-scheduler %s", config.ArgString(args))
@@ -147,9 +163,7 @@ func scheduler(ctx context.Context, cfg *config.Control) error {
 
 func apiServer(ctx context.Context, cfg *config.Control) error {
 	runtime := cfg.Runtime
-	argsMap := map[string]string{
-		"feature-gates": "JobTrackingWithFinalizers=true",
-	}
+	argsMap := map[string]string{}
 
 	setupStorageBackend(argsMap, cfg)
 
@@ -185,7 +199,11 @@ func apiServer(ctx context.Context, cfg *config.Control) error {
 	argsMap["kubelet-certificate-authority"] = runtime.ServerCA
 	argsMap["kubelet-client-certificate"] = runtime.ClientKubeAPICert
 	argsMap["kubelet-client-key"] = runtime.ClientKubeAPIKey
-	argsMap["kubelet-preferred-address-types"] = "InternalIP,ExternalIP,Hostname"
+	if cfg.FlannelExternalIP {
+		argsMap["kubelet-preferred-address-types"] = "ExternalIP,InternalIP,Hostname"
+	} else {
+		argsMap["kubelet-preferred-address-types"] = "InternalIP,ExternalIP,Hostname"
+	}
 	argsMap["requestheader-client-ca-file"] = runtime.RequestHeaderCA
 	argsMap["requestheader-allowed-names"] = deps.RequestHeaderCN
 	argsMap["proxy-client-cert-file"] = runtime.ClientAuthProxyCert
@@ -199,7 +217,15 @@ func apiServer(ctx context.Context, cfg *config.Control) error {
 	argsMap["profiling"] = "false"
 	if cfg.EncryptSecrets {
 		argsMap["encryption-provider-config"] = runtime.EncryptionConfig
+		argsMap["encryption-provider-config-automatic-reload"] = "true"
 	}
+	if cfg.VLevel != 0 {
+		argsMap["v"] = strconv.Itoa(cfg.VLevel)
+	}
+	if cfg.VModule != "" {
+		argsMap["vmodule"] = cfg.VModule
+	}
+
 	args := config.GetArgs(argsMap, cfg.ExtraAPIArgs)
 
 	logrus.Infof("Running kube-apiserver %s", config.ArgString(args))
@@ -246,7 +272,6 @@ func prepare(ctx context.Context, config *config.Control) error {
 	deps.CreateRuntimeCertFiles(config)
 
 	cluster := cluster.New(config)
-
 	if err := cluster.Bootstrap(ctx, config.ClusterReset); err != nil {
 		return err
 	}
@@ -298,6 +323,7 @@ func cloudControllerManager(ctx context.Context, cfg *config.Control) error {
 		"authentication-kubeconfig":    runtime.KubeConfigCloudController,
 		"node-status-update-frequency": "1m0s",
 		"bind-address":                 cfg.Loopback(false),
+		"feature-gates":                "CloudDualStackNodeIPs=true",
 	}
 	if cfg.NoLeaderElect {
 		argsMap["leader-elect"] = "false"
@@ -306,8 +332,16 @@ func cloudControllerManager(ctx context.Context, cfg *config.Control) error {
 		argsMap["controllers"] = argsMap["controllers"] + ",-cloud-node,-cloud-node-lifecycle"
 		argsMap["secure-port"] = "0"
 	}
+	if cfg.DisableServiceLB {
+		argsMap["controllers"] = argsMap["controllers"] + ",-service"
+	}
+	if cfg.VLevel != 0 {
+		argsMap["v"] = strconv.Itoa(cfg.VLevel)
+	}
+	if cfg.VModule != "" {
+		argsMap["vmodule"] = cfg.VModule
+	}
 
-	argsMap["controllers"] = argsMap["controllers"] + ",-service"
 	args := config.GetArgs(argsMap, cfg.ExtraCloudControllerArgs)
 
 	logrus.Infof("Running cloud-controller-manager %s", config.ArgString(args))

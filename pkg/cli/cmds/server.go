@@ -510,13 +510,9 @@ var ServerFlags = []cli.Flag{
 	NodeIPFlag,
 	NodeExternalIPFlag,
 	ResolvConfFlag,
-	FlannelIfaceFlag,
-	FlannelConfFlag,
-	FlannelCniConfFileFlag,
 	VPNAuth,
 	VPNAuthFile,
 	ExtraKubeletArgs,
-	ExtraKubeProxyArgs,
 	ProtectKernelDefaultsFlag,
 	&cli.BoolFlag{
 		Name:        "secrets-encryption",
