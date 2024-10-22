@@ -5,17 +5,18 @@ import (
 	"errors"
 	"os"
 
-	"github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/cli/cert"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/configfilearg"
+	"github.com/sirupsen/logrus"
+	"github.com/urfave/cli"
 )
 
 func main() {
 	app := cmds.NewApp()
 	app.Commands = []cli.Command{
 		cmds.NewCertCommands(
+			cert.Check,
 			cert.Rotate,
 			cert.RotateCA,
 		),

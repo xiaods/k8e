@@ -4,8 +4,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 type Agent struct {
