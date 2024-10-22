@@ -9,11 +9,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wharfie/pkg/registries"
 	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
 	"github.com/rancher/wrangler/v3/pkg/leader"
-	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
@@ -22,12 +22,12 @@ import (
 )
 
 const (
-	EgressSelectorModeAgent    = "agent"
-	EgressSelectorModeCluster  = "cluster"
-	EgressSelectorModeDisabled = "disabled"
-	EgressSelectorModePod      = "pod"
-	CertificateRenewDays       = 90
-	StreamServerPort           = "10010"
+	EgressSelectorModeAgent       = "agent"
+	EgressSelectorModeCluster     = "cluster"
+	EgressSelectorModeDisabled    = "disabled"
+	EgressSelectorModePod         = "pod"
+	CertificateRenewDays          = 90
+	StreamServerPort              = "10010"
 )
 
 type Node struct {
@@ -105,11 +105,14 @@ type Agent struct {
 	ResolvConf              string
 	RootDir                 string
 	KubeConfigKubelet       string
+	KubeConfigKubeProxy     string
 	KubeConfigK8eController string
 	NodeIP                  string
 	NodeIPs                 []net.IP
 	NodeExternalIP          string
 	NodeExternalIPs         []net.IP
+	NodeInternalDNSs        []string
+	NodeExternalDNSs        []string
 	RuntimeSocket           string
 	ImageServiceSocket      string
 	ListenAddress           string
@@ -117,6 +120,7 @@ type Agent struct {
 	CNIBinDir               string
 	CNIConfDir              string
 	ExtraKubeletArgs        []string
+	ExtraKubeProxyArgs      []string
 	PauseImage              string
 	Snapshotter             string
 	Systemd                 bool
@@ -130,10 +134,12 @@ type Agent struct {
 	SystemDefaultRegistry   string
 	AirgapExtraRegistry     []string
 	DisableCCM              bool
+	DisableNPC              bool
 	MinTLSVersion           string
 	CipherSuites            []string
 	Rootless                bool
 	ProtectKernelDefaults   bool
+	DisableServiceLB        bool
 	EnableIPv4              bool
 	EnableIPv6              bool
 	VLevel                  int
@@ -328,6 +334,8 @@ type ControlRuntime struct {
 	ClientControllerKey       string
 	ClientSchedulerCert       string
 	ClientSchedulerKey        string
+	ClientKubeProxyCert       string
+	ClientKubeProxyKey        string
 	ClientKubeletKey          string
 	ClientCloudControllerCert string
 	ClientCloudControllerKey  string
