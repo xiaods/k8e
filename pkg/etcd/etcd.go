@@ -12,10 +12,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,7 +25,8 @@ import (
 	cp "github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
-	controllerv1 "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
+	controllerv1 "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
+	"github.com/rancher/wrangler/v3/pkg/start"
 	"github.com/robfig/cron/v3"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/clientaccess"
@@ -33,22 +34,22 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control/deps"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
+	"github.com/xiaods/k8e/pkg/etcd/s3"
+	"github.com/xiaods/k8e/pkg/etcd/snapshot"
+	"github.com/xiaods/k8e/pkg/server/auth"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
-	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/etcdutl/v3/snapshot"
-	"go.uber.org/zap"
-	"golang.org/x/sync/semaphore"
+	snapshotv3 "go.etcd.io/etcd/etcdutl/v3/snapshot"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apimachinery/pkg/util/wait"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/kubernetes"
 	nodeHelper "k8s.io/component-helpers/node/util"
 	nodeUtil "k8s.io/kubernetes/pkg/controller/util/node"
 )
@@ -68,8 +69,16 @@ const (
 	// other defaults from k8s.io/apiserver/pkg/storage/storagebackend/factory/etcd3.go
 	defaultKeepAliveTime    = 30 * time.Second
 	defaultKeepAliveTimeout = 10 * time.Second
+	heartbeatInterval       = 5 * time.Minute
 
 	maxBackupRetention = 5
+
+	etcdStatusType = v1.NodeConditionType("EtcdIsVoter")
+
+	StatusUnjoined  MemberStatus = "unjoined"
+	StatusUnhealthy MemberStatus = "unhealthy"
+	StatusLearner   MemberStatus = "learner"
+	StatusVoter     MemberStatus = "voter"
 )
 
 var (
@@ -80,10 +89,9 @@ var (
 	NodeNameAnnotation    = "etcd." + version.Program + ".cattle.io/node-name"
 	NodeAddressAnnotation = "etcd." + version.Program + ".cattle.io/node-address"
 
-	ErrAddressNotSet = errors.New("apiserver addresses not yet set")
-	ErrNotMember     = errNotMember()
-
-	invalidKeyChars = regexp.MustCompile(`[^-._a-zA-Z0-9]`)
+	ErrAddressNotSet    = errors.New("apiserver addresses not yet set")
+	ErrNotMember        = errNotMember()
+	ErrMemberListFailed = errMemberListFailed()
 )
 
 type NodeControllerGetter func() controllerv1.NodeController
@@ -91,15 +99,17 @@ type NodeControllerGetter func() controllerv1.NodeController
 // explicit interface check
 var _ managed.Driver = &ETCD{}
 
+type MemberStatus string
+
 type ETCD struct {
-	client      *clientv3.Client
-	config      *config.Control
-	name        string
-	address     string
-	cron        *cron.Cron
-	s3          *S3
-	cancel      context.CancelFunc
-	snapshotSem *semaphore.Weighted
+	client     *clientv3.Client
+	config     *config.Control
+	name       string
+	address    string
+	cron       *cron.Cron
+	cancel     context.CancelFunc
+	s3         *s3.Controller
+	snapshotMu *sync.Mutex
 }
 
 type learnerProgress struct {
@@ -115,16 +125,16 @@ type Members struct {
 	Members []*etcdserverpb.Member `json:"members"`
 }
 
-type MembershipError struct {
-	Self    string
-	Members []string
+type membershipError struct {
+	self    string
+	members []string
 }
 
-func (e *MembershipError) Error() string {
-	return fmt.Sprintf("this server is a not a member of the etcd cluster. Found %v, expect: %s", e.Members, e.Self)
+func (e *membershipError) Error() string {
+	return fmt.Sprintf("this server is a not a member of the etcd cluster. Found %v, expect: %s", e.members, e.self)
 }
 
-func (e *MembershipError) Is(target error) bool {
+func (e *membershipError) Is(target error) bool {
 	switch target {
 	case ErrNotMember:
 		return true
@@ -132,13 +142,32 @@ func (e *MembershipError) Is(target error) bool {
 	return false
 }
 
-func errNotMember() error { return &MembershipError{} }
+func errNotMember() error { return &membershipError{} }
+
+type memberListError struct {
+	err error
+}
+
+func (e *memberListError) Error() string {
+	return fmt.Sprintf("failed to get MemberList from server: %v", e.err)
+}
+
+func (e *memberListError) Is(target error) bool {
+	switch target {
+	case ErrMemberListFailed:
+		return true
+	}
+	return false
+}
+
+func errMemberListFailed() error { return &memberListError{} }
 
 // NewETCD creates a new value of type
-// ETCD with an initialized cron value.
+// ETCD with initialized cron and snapshot mutex values.
 func NewETCD() *ETCD {
 	return &ETCD{
-		cron: cron.New(cron.WithLogger(cronLogger)),
+		cron:       cron.New(cron.WithLogger(cronLogger)),
+		snapshotMu: &sync.Mutex{},
 	}
 }
 
@@ -224,7 +253,7 @@ func (e *ETCD) Test(ctx context.Context) error {
 			memberNameUrls = append(memberNameUrls, member.Name+"="+member.PeerURLs[0])
 		}
 	}
-	return &MembershipError{Members: memberNameUrls, Self: e.name + "=" + e.peerURL()}
+	return &membershipError{members: memberNameUrls, self: e.name + "=" + e.peerURL()}
 }
 
 // dbDir returns the path to dataDir/db/etcd
@@ -298,7 +327,7 @@ func (e *ETCD) IsInitialized() (bool, error) {
 func (e *ETCD) Reset(ctx context.Context, rebootstrap func() error) error {
 	// Wait for etcd to come up as a new single-node cluster, then exit
 	go func() {
-		<-e.config.Runtime.AgentReady
+		<-e.config.Runtime.ContainerRuntimeReady
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
 		for range t.C {
@@ -350,7 +379,6 @@ func (e *ETCD) Reset(ctx context.Context, rebootstrap func() error) error {
 					continue
 				}
 			}
-
 		}
 	}()
 
@@ -360,14 +388,25 @@ func (e *ETCD) Reset(ctx context.Context, rebootstrap func() error) error {
 
 	// If asked to restore from a snapshot, do so
 	if e.config.ClusterResetRestorePath != "" {
-		if e.config.EtcdS3 {
+		if e.config.EtcdS3 != nil {
 			logrus.Infof("Retrieving etcd snapshot %s from S3", e.config.ClusterResetRestorePath)
-			if err := e.initS3IfNil(ctx); err != nil {
-				return err
+			s3client, err := e.getS3Client(ctx)
+			if err != nil {
+				if errors.Is(err, s3.ErrNoConfigSecret) {
+					return errors.New("cannot use S3 config secret when restoring snapshot; configuration must be set in CLI or config file")
+				} else {
+					return errors.Wrap(err, "failed to initialize S3 client")
+				}
 			}
-			if err := e.s3.Download(ctx); err != nil {
-				return err
+			dir, err := snapshotDir(e.config, true)
+			if err != nil {
+				return errors.Wrap(err, "failed to get the snapshot dir")
 			}
+			path, err := s3client.Download(ctx, e.config.ClusterResetRestorePath, dir)
+			if err != nil {
+				return errors.Wrap(err, "failed to download snapshot from S3")
+			}
+			e.config.ClusterResetRestorePath = path
 			logrus.Infof("S3 download complete for %s", e.config.ClusterResetRestorePath)
 		}
 
@@ -390,6 +429,7 @@ func (e *ETCD) Reset(ctx context.Context, rebootstrap func() error) error {
 	if err := os.WriteFile(e.ResetFile(), []byte{}, 0600); err != nil {
 		return err
 	}
+
 	return e.newCluster(ctx, true)
 }
 
@@ -410,9 +450,10 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 	}
 
 	go e.manageLearners(ctx)
+	go e.getS3Client(ctx)
 
 	if isInitialized {
-		//check etcd dir permission
+		// check etcd dir permission
 		etcdDir := dbDir(e.config)
 		info, err := os.Stat(etcdDir)
 		if err != nil {
@@ -439,13 +480,18 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 		for {
 			select {
 			case <-time.After(30 * time.Second):
-				logrus.Infof("Waiting for agent to become ready before joining etcd cluster")
-			case <-e.config.Runtime.AgentReady:
-				if err := wait.PollImmediateUntilWithContext(ctx, time.Second, func(ctx context.Context) (bool, error) {
+				logrus.Infof("Waiting for container runtime to become ready before joining etcd cluster")
+			case <-e.config.Runtime.ContainerRuntimeReady:
+				if err := wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
 					if err := e.join(ctx, clientAccessInfo); err != nil {
 						// Retry the join if waiting for another member to be promoted, or waiting for peers to connect after promotion
 						if errors.Is(err, rpctypes.ErrTooManyLearners) || errors.Is(err, rpctypes.ErrUnhealthy) {
 							logrus.Infof("Waiting for other members to finish joining etcd cluster: %v", err)
+							return false, nil
+						}
+						// Retry the join if waiting to retrieve the member list from the server
+						if errors.Is(err, ErrMemberListFailed) {
+							logrus.Infof("Waiting to retrieve etcd cluster member list: %v", err)
 							return false, nil
 						}
 						return false, err
@@ -584,6 +630,12 @@ func (e *ETCD) Register(handler http.Handler) (http.Handler, error) {
 			registerEndpointsHandlers(ctx, e)
 			registerMemberHandlers(ctx, e)
 			registerSnapshotHandlers(ctx, e)
+
+			// Re-run informer factory startup after core and leader-elected controllers have started.
+			// Additional caches may need to start for the newly added OnChange/OnRemove callbacks.
+			if err := start.All(ctx, 5, e.config.Runtime.K8e, e.config.Runtime.Core); err != nil {
+				panic(errors.Wrap(err, "failed to start wrangler controllers"))
+			}
 		}
 	}
 
@@ -612,6 +664,9 @@ func (e *ETCD) setName(force bool) error {
 	fileName := nameFile(e.config)
 	data, err := os.ReadFile(fileName)
 	if os.IsNotExist(err) || force {
+		if e.config.ServerNodeName == "" {
+			return errors.New("server node name not set")
+		}
 		e.name = e.config.ServerNodeName + "-" + uuid.New().String()[:8]
 		if err := os.MkdirAll(filepath.Dir(fileName), 0700); err != nil {
 			return err
@@ -626,31 +681,36 @@ func (e *ETCD) setName(force bool) error {
 
 // handler wraps the handler with routes for database info
 func (e *ETCD) handler(next http.Handler) http.Handler {
-	mux := mux.NewRouter().SkipClean(true)
-	mux.Handle("/db/info", e.infoHandler())
-	mux.NotFoundHandler = next
-	return mux
+	r := mux.NewRouter().SkipClean(true)
+	r.NotFoundHandler = next
+
+	ir := r.Path("/db/info").Subrouter()
+	ir.Use(auth.IsLocalOrHasRole(e.config, version.Program+":server"))
+	ir.Handle("", e.infoHandler())
+
+	sr := r.Path("/db/snapshot").Subrouter()
+	sr.Use(auth.HasRole(e.config, version.Program+":server"))
+	sr.Handle("", e.snapshotHandler())
+
+	return r
 }
 
 // infoHandler returns etcd cluster information. This is used by new members when joining the cluster.
 // If we can't retrieve an actual MemberList from etcd, we return a canned response with only the local node listed.
 func (e *ETCD) infoHandler() http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodGet {
+			util.SendError(fmt.Errorf("method not allowed"), rw, req, http.StatusMethodNotAllowed)
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
 		defer cancel()
 
 		members, err := e.client.MemberList(ctx)
 		if err != nil {
-			logrus.Warnf("Failed to get etcd MemberList for %s: %v", req.RemoteAddr, err)
-			members = &clientv3.MemberListResponse{
-				Members: []*etcdserverpb.Member{
-					{
-						Name:       e.name,
-						PeerURLs:   []string{e.peerURL()},
-						ClientURLs: []string{e.clientURL()},
-					},
-				},
-			}
+			util.SendError(errors.Wrap(err, "failed to get etcd MemberList"), rw, req, http.StatusInternalServerError)
+			return
 		}
 
 		rw.Header().Set("Content-Type", "application/json")
@@ -688,7 +748,6 @@ func getClientConfig(ctx context.Context, control *config.Control, endpoints ...
 		DialTimeout:          defaultDialTimeout,
 		DialKeepAliveTime:    defaultKeepAliveTime,
 		DialKeepAliveTimeout: defaultKeepAliveTimeout,
-		AutoSyncInterval:     defaultKeepAliveTimeout,
 		PermitWithoutStream:  true,
 	}
 
@@ -712,7 +771,7 @@ func getEndpoints(control *config.Control) []string {
 // for use by etcd.
 func toTLSConfig(runtime *config.ControlRuntime) (*tls.Config, error) {
 	if runtime.ClientETCDCert == "" || runtime.ClientETCDKey == "" || runtime.ETCDServerCA == "" {
-		return nil, errors.New("runtime is not ready yet")
+		return nil, util.ErrCoreNotReady
 	}
 
 	clientCert, err := tls.LoadX509KeyPair(runtime.ClientETCDCert, runtime.ClientETCDKey)
@@ -747,7 +806,7 @@ func getAdvertiseAddress(advertiseIP string) (string, error) {
 
 // newCluster returns options to set up etcd for a new cluster
 func (e *ETCD) newCluster(ctx context.Context, reset bool) error {
-	logrus.Infof("Starting etcd for new cluster")
+	logrus.Infof("Starting etcd for new cluster, cluster-reset=%v", reset)
 	err := e.cluster(ctx, reset, executor.InitialOptions{
 		AdvertisePeerURL: e.peerURL(),
 		Cluster:          fmt.Sprintf("%s=%s", e.name, e.peerURL()),
@@ -756,8 +815,10 @@ func (e *ETCD) newCluster(ctx context.Context, reset bool) error {
 	if err != nil {
 		return err
 	}
-	if err := e.migrateFromSQLite(ctx); err != nil {
-		return fmt.Errorf("failed to migrate content from sqlite to etcd: %w", err)
+	if !reset {
+		if err := e.migrateFromSQLite(ctx); err != nil {
+			return fmt.Errorf("failed to migrate content from sqlite to etcd: %w", err)
+		}
 	}
 	return nil
 }
@@ -776,7 +837,7 @@ func (e *ETCD) migrateFromSQLite(ctx context.Context) error {
 	defer cancel()
 
 	_, err = endpoint2.Listen(ctx, endpoint2.Config{
-		Endpoint: endpoint2.SQLiteBackend,
+		Endpoint: "sqlite://",
 	})
 	if err != nil {
 		return err
@@ -838,7 +899,7 @@ func (e *ETCD) clientURL() string {
 // on other nodes connect mid-process.
 func (e *ETCD) advertiseClientURLs(reset bool) string {
 	if reset {
-		return fmt.Sprintf("https://%s", net.JoinHostPort(e.config.Loopback(true), "2379"))
+		return fmt.Sprintf("https://%s:2379", e.config.Loopback(true))
 	}
 	return e.clientURL()
 }
@@ -895,13 +956,15 @@ func (e *ETCD) cluster(ctx context.Context, reset bool, options executor.Initial
 			ClientCertAuth: true,
 			TrustedCAFile:  e.config.Runtime.ETCDPeerCA,
 		},
-		SnapshotCount:                   10000,
-		ElectionTimeout:                 5000,
-		HeartbeatInterval:               500,
-		Logger:                          "zap",
-		LogOutputs:                      []string{"stderr"},
-		ExperimentalInitialCorruptCheck: true,
-		ListenClientHTTPURLs:            e.listenClientHTTPURLs(),
+		SnapshotCount:        10000,
+		ElectionTimeout:      5000,
+		HeartbeatInterval:    500,
+		Logger:               "zap",
+		LogOutputs:           []string{"stderr"},
+		ListenClientHTTPURLs: e.listenClientHTTPURLs(),
+
+		ExperimentalInitialCorruptCheck:         true,
+		ExperimentalWatchProgressNotifyInterval: e.config.Datastore.NotifyInterval,
 	}, e.config.ExtraEtcdArgs)
 }
 
@@ -954,20 +1017,22 @@ func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
 	embedded := executor.Embedded{}
 	ctx, e.cancel = context.WithCancel(ctx)
 	return embedded.ETCD(ctx, executor.ETCDConfig{
-		InitialOptions:                  executor.InitialOptions{AdvertisePeerURL: peerURL},
-		DataDir:                         tmpDataDir,
-		ForceNewCluster:                 true,
-		AdvertiseClientURLs:             clientURL,
-		ListenClientURLs:                clientURL,
-		ListenClientHTTPURLs:            clientHTTPURL,
-		ListenPeerURLs:                  peerURL,
-		Logger:                          "zap",
-		HeartbeatInterval:               500,
-		ElectionTimeout:                 5000,
-		SnapshotCount:                   10000,
-		Name:                            e.name,
-		LogOutputs:                      []string{"stderr"},
-		ExperimentalInitialCorruptCheck: true,
+		InitialOptions:       executor.InitialOptions{AdvertisePeerURL: peerURL},
+		DataDir:              tmpDataDir,
+		ForceNewCluster:      true,
+		AdvertiseClientURLs:  clientURL,
+		ListenClientURLs:     clientURL,
+		ListenClientHTTPURLs: clientHTTPURL,
+		ListenPeerURLs:       peerURL,
+		Logger:               "zap",
+		HeartbeatInterval:    500,
+		ElectionTimeout:      5000,
+		SnapshotCount:        10000,
+		Name:                 e.name,
+		LogOutputs:           []string{"stderr"},
+
+		ExperimentalInitialCorruptCheck:         true,
+		ExperimentalWatchProgressNotifyInterval: e.config.Datastore.NotifyInterval,
 	}, append(e.config.ExtraEtcdArgs, "--max-snapshots=0", "--max-wals=0"))
 }
 
@@ -1023,7 +1088,7 @@ func (e *ETCD) RemovePeer(ctx context.Context, name, address string, allowSelfRe
 // being promoted to full voting member. The checks only run on the cluster member that is
 // the etcd leader.
 func (e *ETCD) manageLearners(ctx context.Context) {
-	<-e.config.Runtime.AgentReady
+	<-e.config.Runtime.ContainerRuntimeReady
 	t := time.NewTicker(manageTickerTime)
 	defer t.Stop()
 
@@ -1036,6 +1101,7 @@ func (e *ETCD) manageLearners(ctx context.Context) {
 			logrus.Debug("Etcd client was nil")
 			continue
 		}
+
 		endpoints := getEndpoints(e.config)
 		if status, err := e.client.Status(ctx, endpoints[0]); err != nil {
 			logrus.Errorf("Failed to check local etcd status for learner management: %v", err)
@@ -1058,7 +1124,7 @@ func (e *ETCD) manageLearners(ctx context.Context) {
 
 		client, err := util.GetClientSet(e.config.Runtime.KubeConfigSupervisor)
 		if err != nil {
-			logrus.Errorf("Error while listing nodes with etcd status: %v", err)
+			logrus.Errorf("Failed to get k8s client for patch node status condition: %v", err)
 			continue
 		}
 
@@ -1067,29 +1133,52 @@ func (e *ETCD) manageLearners(ctx context.Context) {
 			logrus.Warnf("Failed to list nodes with etcd role: %v", err)
 		}
 
+		// a map to track if a node is a member of the etcd cluster or not
+		nodeIsMember := make(map[string]bool)
+		nodesMap := make(map[string]*v1.Node)
+		for _, node := range nodes {
+			nodeIsMember[node.Name] = false
+			nodesMap[node.Name] = node
+		}
+
 		for _, member := range members.Members {
+			status := StatusVoter
+			message := ""
+
 			if member.IsLearner {
+				status = StatusLearner
 				if err := e.trackLearnerProgress(ctx, progress, member); err != nil {
 					logrus.Errorf("Failed to track learner progress towards promotion: %v", err)
 				}
-
-				for _, node := range nodes {
-					if strings.HasPrefix(member.Name, node.Name+"-") {
-						_, _, err := e.setEtcdStatusCondition(node, client.CoreV1(), member.Name, false)
-						if err != nil {
-							logrus.Errorf("Unable to set etcd status condition %s: %v", member.Name, err)
-						}
-					}
-				}
-				break
 			}
 
-			for _, node := range nodes {
-				if strings.HasPrefix(member.Name, node.Name+"-") {
-					_, _, err := e.setEtcdStatusCondition(node, client.CoreV1(), member.Name, true)
-					if err != nil {
-						logrus.Errorf("Unable to set etcd status condition %s: %v", member.Name, err)
-					}
+			var node *v1.Node
+			for _, n := range nodes {
+				if member.Name == n.Annotations[NodeNameAnnotation] {
+					node = n
+					nodeIsMember[n.Name] = true
+					break
+				}
+			}
+			if node == nil {
+				continue
+			}
+
+			// verify if the member is healthy and set the status
+			if _, err := e.getETCDStatus(ctx, member.ClientURLs[0]); err != nil {
+				message = err.Error()
+				status = StatusUnhealthy
+			}
+
+			if err := e.setEtcdStatusCondition(node, client, member.Name, status, message); err != nil {
+				logrus.Errorf("Unable to set etcd status condition %s: %v", member.Name, err)
+			}
+		}
+
+		for nodeName, node := range nodesMap {
+			if !nodeIsMember[nodeName] {
+				if err := e.setEtcdStatusCondition(node, client, nodeName, StatusUnjoined, ""); err != nil {
+					logrus.Errorf("Unable to set etcd status condition for a node that is not a cluster member %s: %v", nodeName, err)
 				}
 			}
 		}
@@ -1098,7 +1187,7 @@ func (e *ETCD) manageLearners(ctx context.Context) {
 
 func (e *ETCD) getETCDNodes() ([]*v1.Node, error) {
 	if e.config.Runtime.Core == nil {
-		return nil, errors.New("runtime core not ready")
+		return nil, util.ErrCoreNotReady
 	}
 
 	nodes := e.config.Runtime.Core.Core().V1().Node()
@@ -1130,9 +1219,7 @@ func (e *ETCD) trackLearnerProgress(ctx context.Context, progress *learnerProgre
 
 	// Update progress by retrieving status from the member's first reachable client URL
 	for _, ep := range member.ClientURLs {
-		ctx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
-		defer cancel()
-		status, err := e.client.Status(ctx, ep)
+		status, err := e.getETCDStatus(ctx, ep)
 		if err != nil {
 			logrus.Debugf("Failed to get etcd status from learner %s at %s: %v", member.Name, ep, err)
 			continue
@@ -1163,46 +1250,86 @@ func (e *ETCD) trackLearnerProgress(ctx context.Context, progress *learnerProgre
 	return e.setLearnerProgress(ctx, progress)
 }
 
-func (e *ETCD) setEtcdStatusCondition(node *v1.Node, client corev1.CoreV1Interface, memberName string, promoted bool) (*v1.Node, []byte, error) {
-	etcdStatusType := v1.NodeConditionType("EtcdIsVoter")
+func (e *ETCD) getETCDStatus(ctx context.Context, url string) (*clientv3.StatusResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
+	defer cancel()
+	resp, err := e.client.Status(ctx, url)
+	if err != nil {
+		return resp, errors.Wrap(err, "failed to check etcd member status")
+	}
+	if len(resp.Errors) != 0 {
+		return resp, errors.New("etcd member has status errors: " + strings.Join(resp.Errors, ","))
+	}
+	return resp, nil
+}
 
+func (e *ETCD) setEtcdStatusCondition(node *v1.Node, client kubernetes.Interface, memberName string, memberStatus MemberStatus, message string) error {
 	var newCondition v1.NodeCondition
-	if promoted {
-		newCondition = v1.NodeCondition{
-			Type:    etcdStatusType,
-			Status:  "True",
-			Reason:  "MemberNotLearner",
-			Message: "Node is a voting member of the etcd cluster",
-		}
-	} else {
+	switch memberStatus {
+	case StatusLearner:
 		newCondition = v1.NodeCondition{
 			Type:    etcdStatusType,
 			Status:  "False",
 			Reason:  "MemberIsLearner",
 			Message: "Node has not been promoted to voting member of the etcd cluster",
 		}
+	case StatusVoter:
+		newCondition = v1.NodeCondition{
+			Type:    etcdStatusType,
+			Status:  "True",
+			Reason:  "MemberNotLearner",
+			Message: "Node is a voting member of the etcd cluster",
+		}
+	case StatusUnhealthy:
+		newCondition = v1.NodeCondition{
+			Type:    etcdStatusType,
+			Status:  "False",
+			Reason:  "Unhealthy",
+			Message: "Node is unhealthy",
+		}
+	case StatusUnjoined:
+		newCondition = v1.NodeCondition{
+			Type:    etcdStatusType,
+			Status:  "False",
+			Reason:  "NotAMember",
+			Message: "Node is not a member of the etcd cluster",
+		}
+	default:
+		logrus.Warnf("Unknown etcd member status %s", memberStatus)
+		return nil
 	}
 
-	updatedNode := *node
-	if find, condition := nodeUtil.GetNodeCondition(&updatedNode.Status, etcdStatusType); find >= 0 {
-		if condition.Status == newCondition.Status {
-			logrus.Debugf("Member %s is not changing etcd status condition", memberName)
+	if message != "" {
+		newCondition.Message = message
+	}
+
+	if find, condition := nodeUtil.GetNodeCondition(&node.Status, etcdStatusType); find >= 0 {
+
+		// if the condition is not changing, we only want to update the last heartbeat time
+		if condition.Status == newCondition.Status && condition.Reason == newCondition.Reason && condition.Message == newCondition.Message {
+			logrus.Debugf("Node %s is not changing etcd status condition", memberName)
+
+			// If the condition status is not changing, we only want to update the last heartbeat time if the
+			// LastHeartbeatTime is older than the heartbeatTimeout.
+			if metav1.Now().Sub(condition.LastHeartbeatTime.Time) < heartbeatInterval {
+				return nil
+			}
+
 			condition.LastHeartbeatTime = metav1.Now()
-			return nodeHelper.PatchNodeStatus(client, types.NodeName(node.Name), node, &updatedNode)
+			return nodeHelper.SetNodeCondition(client, types.NodeName(node.Name), *condition)
 		}
 
-		logrus.Debugf("Member %s is changing etcd condition", memberName)
+		logrus.Debugf("Node %s is changing etcd status condition", memberName)
 		condition = &newCondition
 		condition.LastHeartbeatTime = metav1.Now()
 		condition.LastTransitionTime = metav1.Now()
-		return nodeHelper.PatchNodeStatus(client, types.NodeName(node.Name), node, &updatedNode)
+		return nodeHelper.SetNodeCondition(client, types.NodeName(node.Name), *condition)
 	}
 
-	logrus.Infof("Adding etcd member %s status condition", memberName)
+	logrus.Infof("Adding node %s etcd status condition", memberName)
 	newCondition.LastHeartbeatTime = metav1.Now()
 	newCondition.LastTransitionTime = metav1.Now()
-	updatedNode.Status.Conditions = append(updatedNode.Status.Conditions, newCondition)
-	return nodeHelper.PatchNodeStatus(client, types.NodeName(node.Name), node, &updatedNode)
+	return nodeHelper.SetNodeCondition(client, types.NodeName(node.Name), newCondition)
 }
 
 // getLearnerProgress returns the stored learnerProgress struct as retrieved from etcd
@@ -1282,35 +1409,50 @@ func (e *ETCD) defragment(ctx context.Context) error {
 // The list is retrieved from the remote server that is being joined.
 func ClientURLs(ctx context.Context, clientAccessInfo *clientaccess.Info, selfIP string) ([]string, Members, error) {
 	var memberList Members
-	resp, err := clientAccessInfo.Get("/db/info")
-	if err != nil {
-		return nil, memberList, err
-	}
 
-	if err := json.Unmarshal(resp, &memberList); err != nil {
-		return nil, memberList, err
-	}
+	// find the address advertised for our own client URL, so that we don't connect to ourselves
 	ip, err := getAdvertiseAddress(selfIP)
 	if err != nil {
 		return nil, memberList, err
 	}
+
+	// find the client URL of the server we're joining, so we can prioritize it
+	joinURL, err := url.Parse(clientAccessInfo.BaseURL)
+	if err != nil {
+		return nil, memberList, err
+	}
+
+	// get the full list from the server we're joining
+	resp, err := clientAccessInfo.Get("/db/info")
+	if err != nil {
+		return nil, memberList, &memberListError{err: err}
+	}
+	if err := json.Unmarshal(resp, &memberList); err != nil {
+		return nil, memberList, err
+	}
+
+	// Build a list of client URLs. Learners and the current node are excluded;
+	// the server we're joining is listed first if found.
 	var clientURLs []string
-members:
 	for _, member := range memberList.Members {
-		// excluding learner member from the client list
-		if member.IsLearner {
-			continue
-		}
+		var isSelf, isPreferred bool
 		for _, clientURL := range member.ClientURLs {
-			u, err := url.Parse(clientURL)
-			if err != nil {
-				continue
-			}
-			if u.Hostname() == ip {
-				continue members
+			if u, err := url.Parse(clientURL); err == nil {
+				switch u.Hostname() {
+				case ip:
+					isSelf = true
+				case joinURL.Hostname():
+					isPreferred = true
+				}
 			}
 		}
-		clientURLs = append(clientURLs, member.ClientURLs...)
+		if !member.IsLearner && !isSelf {
+			if isPreferred {
+				clientURLs = append(member.ClientURLs, clientURLs...)
+			} else {
+				clientURLs = append(clientURLs, member.ClientURLs...)
+			}
+		}
 	}
 	return clientURLs, memberList, nil
 }
@@ -1330,13 +1472,13 @@ func (e *ETCD) Restore(ctx context.Context) error {
 	}
 
 	var restorePath string
-	if strings.HasSuffix(e.config.ClusterResetRestorePath, compressedExtension) {
-		snapshotDir, err := snapshotDir(e.config, true)
+	if strings.HasSuffix(e.config.ClusterResetRestorePath, snapshot.CompressedExtension) {
+		dir, err := snapshotDir(e.config, true)
 		if err != nil {
 			return errors.Wrap(err, "failed to get the snapshot dir")
 		}
 
-		decompressSnapshot, err := e.decompressSnapshot(snapshotDir, e.config.ClusterResetRestorePath)
+		decompressSnapshot, err := e.decompressSnapshot(dir, e.config.ClusterResetRestorePath)
 		if err != nil {
 			return err
 		}
@@ -1352,13 +1494,7 @@ func (e *ETCD) Restore(ctx context.Context) error {
 	}
 
 	logrus.Infof("Pre-restore etcd database moved to %s", oldDataDir)
-
-	lg, err := logutil.CreateDefaultZapLogger(zap.InfoLevel)
-	if err != nil {
-		return err
-	}
-
-	return snapshot.NewV3(lg).Restore(snapshot.RestoreConfig{
+	return snapshotv3.NewV3(e.client.GetLogger()).Restore(snapshotv3.RestoreConfig{
 		SnapshotPath:   restorePath,
 		Name:           e.name,
 		OutputDataDir:  dbDir(e.config),
@@ -1440,7 +1576,21 @@ func GetAPIServerURLsFromETCD(ctx context.Context, cfg *config.Control) ([]strin
 // GetMembersClientURLs will list through the member lists in etcd and return
 // back a combined list of client urls for each member in the cluster
 func (e *ETCD) GetMembersClientURLs(ctx context.Context) ([]string, error) {
-	return e.client.Endpoints(), nil
+	ctx, cancel := context.WithTimeout(ctx, testTimeout)
+	defer cancel()
+
+	members, err := e.client.MemberList(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var clientURLs []string
+	for _, member := range members.Members {
+		if !member.IsLearner {
+			clientURLs = append(clientURLs, member.ClientURLs...)
+		}
+	}
+	return clientURLs, nil
 }
 
 // GetMembersNames will list through the member lists in etcd and return

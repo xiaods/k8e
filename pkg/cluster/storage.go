@@ -20,7 +20,6 @@ import (
 const maxBootstrapWaitAttempts = 5
 
 func RotateBootstrapToken(ctx context.Context, config *config.Control, oldToken string) error {
-
 	token, err := util.ReadTokenFromFile(config.Runtime.ServerToken, config.Runtime.ServerCA, config.DataDir)
 	if err != nil {
 		return err
@@ -40,7 +39,7 @@ func RotateBootstrapToken(ctx context.Context, config *config.Control, oldToken 
 	tokenKey := storageKey(normalizedToken)
 
 	var bootstrapList []client.Value
-	if err := wait.PollImmediateUntilWithContext(ctx, 5*time.Second, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		bootstrapList, err = storageClient.List(ctx, "/bootstrap", 0)
 		if err != nil {
 			return false, err
@@ -151,8 +150,21 @@ func bootstrapKeyData(ctx context.Context, storageClient client.Client) (*client
 // bootstrap key as a lock. This function will not return successfully until either the
 // bootstrap key has been locked, or data is read into the struct.
 func (c *Cluster) storageBootstrap(ctx context.Context) error {
-	if err := c.startStorage(ctx); err != nil {
-		return err
+	if c.config.KineTLS {
+		bootstrapCtx, cancel := context.WithCancel(ctx)
+		defer func() {
+			time.Sleep(time.Second)
+			cancel()
+		}()
+
+		logrus.Info("Starting temporary kine to reconcile with datastore")
+		if err := c.startStorage(bootstrapCtx, true); err != nil {
+			return err
+		}
+	} else {
+		if err := c.startStorage(ctx, true); err != nil {
+			return err
+		}
 	}
 
 	storageClient, err := client.New(c.config.Runtime.EtcdConfig)
@@ -186,7 +198,7 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 
 	attempts := 0
 	tokenKey := storageKey(normalizedToken)
-	return wait.PollImmediateUntilWithContext(ctx, time.Second, func(ctx context.Context) (bool, error) {
+	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
 		attempts++
 		value, saveBootstrap, err := getBootstrapKeyFromStorage(ctx, storageClient, normalizedToken, token)
 		c.saveBootstrap = saveBootstrap
@@ -242,10 +254,11 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 func getBootstrapKeyFromStorage(ctx context.Context, storageClient client.Client, normalizedToken, oldToken string) (*client.Value, bool, error) {
 	emptyStringKey := storageKey("")
 	tokenKey := storageKey(normalizedToken)
+
 	var bootstrapList []client.Value
 	var err error
 
-	if err := wait.PollImmediateUntilWithContext(ctx, 5*time.Second, func(ctx context.Context) (bool, error) {
+	if err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		bootstrapList, err = storageClient.List(ctx, "/bootstrap", 0)
 		if err != nil {
 			if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {

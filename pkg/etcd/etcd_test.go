@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/etcd/s3"
 	testutil "github.com/xiaods/k8e/tests"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/etcdserver"
@@ -27,8 +29,9 @@ func mustGetAddress() string {
 }
 
 func generateTestConfig() *config.Control {
-	agentReady := make(chan struct{})
-	close(agentReady)
+	hostname, _ := os.Hostname()
+	containerRuntimeReady := make(chan struct{})
+	close(containerRuntimeReady)
 	criticalControlArgs := config.CriticalControlArgs{
 		ClusterDomain:  "cluster.local",
 		ClusterDNS:     net.ParseIP("10.43.0.10"),
@@ -36,7 +39,8 @@ func generateTestConfig() *config.Control {
 		ServiceIPRange: testutil.ServiceIPNet(),
 	}
 	return &config.Control{
-		Runtime:               config.NewRuntime(agentReady),
+		ServerNodeName:        hostname,
+		Runtime:               config.NewRuntime(containerRuntimeReady),
 		HTTPSPort:             6443,
 		SupervisorPort:        6443,
 		AdvertisePort:         6443,
@@ -44,10 +48,12 @@ func generateTestConfig() *config.Control {
 		EtcdSnapshotName:      "etcd-snapshot",
 		EtcdSnapshotCron:      "0 */12 * * *",
 		EtcdSnapshotRetention: 5,
-		EtcdS3Endpoint:        "s3.amazonaws.com",
-		EtcdS3Region:          "us-east-1",
-		SANs:                  []string{"127.0.0.1"},
-		CriticalControlArgs:   criticalControlArgs,
+		EtcdS3: &config.EtcdS3{
+			Endpoint: "s3.amazonaws.com",
+			Region:   "us-east-1",
+		},
+		SANs:                []string{"127.0.0.1", mustGetAddress()},
+		CriticalControlArgs: criticalControlArgs,
 	}
 }
 
@@ -109,6 +115,10 @@ func Test_UnitETCD_IsInitialized(t *testing.T) {
 			want:    false,
 		},
 	}
+
+	// enable logging
+	logrus.SetLevel(logrus.DebugLevel)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := NewETCD()
@@ -224,7 +234,7 @@ func Test_UnitETCD_Start(t *testing.T) {
 		name    string
 		address string
 		cron    *cron.Cron
-		s3      *S3
+		s3      *s3.Controller
 	}
 	type args struct {
 		clientAccessInfo *clientaccess.Info
