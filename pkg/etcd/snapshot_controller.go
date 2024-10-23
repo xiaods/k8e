@@ -2,14 +2,17 @@ package etcd
 
 import (
 	"context"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pkg/errors"
-	controllerv1 "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
+	controllerv1 "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
 	apisv1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	k8e "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	"github.com/xiaods/k8e/pkg/etcd/snapshot"
 	controllersv1 "github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io/v1"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
@@ -18,7 +21,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/pager"
 	"k8s.io/client-go/util/retry"
 
 	"github.com/sirupsen/logrus"
@@ -33,6 +38,13 @@ const (
 var (
 	snapshotConfigMapName = version.Program + "-etcd-snapshots"
 	errNotReconciled      = errors.New("no nodes have reconciled ETCDSnapshotFile resources")
+	reconcileBackoff      = wait.Backoff{
+		Steps:    9,
+		Duration: 10 * time.Millisecond,
+		Factor:   3.0,
+		Jitter:   0.1,
+		Cap:      30 * time.Second,
+	}
 )
 
 type etcdSnapshotHandler struct {
@@ -62,7 +74,7 @@ func (e *etcdSnapshotHandler) sync(key string, esf *apisv1.ETCDSnapshotFile) (*a
 		err := e.reconcile()
 		if err == errNotReconciled {
 			logrus.Debugf("Failed to reconcile snapshot ConfigMap: %v, requeuing", err)
-			e.snapshots.Enqueue(key)
+			e.snapshots.EnqueueAfter(key, reconcileBackoff.Step())
 			return nil, nil
 		}
 		return nil, err
@@ -73,10 +85,10 @@ func (e *etcdSnapshotHandler) sync(key string, esf *apisv1.ETCDSnapshotFile) (*a
 		return nil, nil
 	}
 
-	sf := snapshotFile{}
-	sf.fromETCDSnapshotFile(esf)
-	sfKey := generateSnapshotConfigMapKey(sf)
-	m, err := marshalSnapshotFile(sf)
+	sf := &snapshot.File{}
+	sf.FromETCDSnapshotFile(esf)
+	sfKey := sf.GenerateConfigMapKey()
+	m, err := sf.Marshal()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to marshal snapshot ConfigMap data")
 	}
@@ -169,6 +181,23 @@ func (e *etcdSnapshotHandler) reconcile() error {
 		return err
 	}
 
+	// If running without an agent there will not be a node for this server;
+	// create a dummy node and assume it has reconciled.
+	if e.etcd.config.DisableAgent {
+		node := v1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: os.Getenv("NODE_NAME"),
+				Annotations: map[string]string{
+					annotationLocalReconciled: "true",
+				},
+			},
+		}
+		if e.etcd.s3 != nil {
+			node.Annotations[annotationS3Reconciled] = "true"
+		}
+		nodeList.Items = append(nodeList.Items, node)
+	}
+
 	// Once a node has set the reconcile annotation, it is considered to have
 	// migrated to using ETCDSnapshotFile resources, and any old configmap
 	// entries for it can be pruned. Until the annotation is set, we will leave
@@ -190,20 +219,25 @@ func (e *etcdSnapshotHandler) reconcile() error {
 	logrus.Infof("Reconciling snapshot ConfigMap data")
 
 	// Get a list of existing snapshots
-	snapshotList, err := e.snapshots.List(metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-
 	snapshots := map[string]*apisv1.ETCDSnapshotFile{}
-	for i := range snapshotList.Items {
-		esf := &snapshotList.Items[i]
+	snapshotPager := pager.New(pager.SimplePageFunc(func(opts metav1.ListOptions) (k8sruntime.Object, error) { return e.snapshots.List(opts) }))
+	snapshotPager.PageSize = snapshotListPageSize
+
+	if err := snapshotPager.EachListItem(e.ctx, metav1.ListOptions{}, func(obj k8sruntime.Object) error {
+		esf, ok := obj.(*k8e.ETCDSnapshotFile)
+		if !ok {
+			return errors.New("failed to convert object to ETCDSnapshotFile")
+		}
+
 		// Do not create entries for snapshots that have been deleted or do not have extra metadata
 		if !esf.DeletionTimestamp.IsZero() || len(esf.Spec.Metadata) == 0 {
-			continue
+			return nil
 		}
 		sfKey := generateETCDSnapshotFileConfigMapKey(*esf)
 		snapshots[sfKey] = esf
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	snapshotConfigMap, err := e.configmaps.Get(metav1.NamespaceSystem, snapshotConfigMapName, metav1.GetOptions{})
@@ -252,11 +286,15 @@ func (e *etcdSnapshotHandler) reconcile() error {
 		}
 	}
 
+	if len(snapshots) > 0 && snapshotConfigMap.Data == nil {
+		snapshotConfigMap.Data = map[string]string{}
+	}
+
 	// Ensure keys for existing snapshots
 	for sfKey, esf := range snapshots {
-		sf := snapshotFile{}
-		sf.fromETCDSnapshotFile(esf)
-		m, err := marshalSnapshotFile(sf)
+		sf := &snapshot.File{}
+		sf.FromETCDSnapshotFile(esf)
+		m, err := sf.Marshal()
 		if err != nil {
 			logrus.Warnf("Failed to marshal snapshot ConfigMap data for %s", sfKey)
 			continue
@@ -298,12 +336,12 @@ func pruneConfigMap(snapshotConfigMap *v1.ConfigMap, pruneCount int) error {
 		return errors.New("unable to reduce snapshot ConfigMap size by eliding old snapshots")
 	}
 
-	var snapshotFiles []snapshotFile
+	var snapshotFiles []snapshot.File
 	retention := len(snapshotConfigMap.Data) - pruneCount
 	for name := range snapshotConfigMap.Data {
-		basename, compressed := strings.CutSuffix(name, compressedExtension)
+		basename, compressed := strings.CutSuffix(name, snapshot.CompressedExtension)
 		ts, _ := strconv.ParseInt(basename[strings.LastIndexByte(basename, '-')+1:], 10, 64)
-		snapshotFiles = append(snapshotFiles, snapshotFile{Name: name, CreatedAt: &metav1.Time{Time: time.Unix(ts, 0)}, Compressed: compressed})
+		snapshotFiles = append(snapshotFiles, snapshot.File{Name: name, CreatedAt: &metav1.Time{Time: time.Unix(ts, 0)}, Compressed: compressed})
 	}
 
 	// sort newest-first so we can prune entries past the retention count
