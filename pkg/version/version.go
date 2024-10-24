@@ -12,6 +12,8 @@ var (
 	ProgramUpper = strings.ToUpper(Program)
 	Version      = "dev"
 	GitCommit    = "HEAD"
+
+	UpstreamGolang = ""
 )
 
 func PrintK8eASCIIArt() {
