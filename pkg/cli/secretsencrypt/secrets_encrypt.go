@@ -8,16 +8,17 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
-	"github.com/erikdubbelboer/gspt"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/clientaccess"
+	"github.com/xiaods/k8e/pkg/proctitle"
 	"github.com/xiaods/k8e/pkg/secretsencrypt"
 	"github.com/xiaods/k8e/pkg/server"
 	"github.com/xiaods/k8e/pkg/version"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 func commandPrep(cfg *cmds.Server) (*clientaccess.Info, error) {
