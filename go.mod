@@ -89,7 +89,6 @@ require (
 	github.com/go-bindata/go-bindata v3.1.2+incompatible
 	github.com/go-logr/logr v1.4.2
 	github.com/go-logr/stdr v1.2.3-0.20220714215716-96bad1d688c5
-	github.com/go-sql-driver/mysql v1.8.1
 	github.com/go-test/deep v1.0.7
 	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.6.0
@@ -101,9 +100,7 @@ require (
 	github.com/k3s-io/helm-controller v0.16.5
 	github.com/k3s-io/kine v0.13.2
 	github.com/klauspost/compress v1.17.10
-	github.com/lib/pq v1.10.9
 	github.com/libp2p/go-libp2p v0.33.2
-	github.com/mattn/go-sqlite3 v1.14.23
 	github.com/minio/minio-go/v7 v7.0.70
 	github.com/morikuni/aec v1.0.0
 	github.com/mwitkow/go-http-dialer v0.0.0-20161116154839-378f744fb2b8
@@ -249,6 +246,7 @@ require (
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
+	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/gofrs/flock v0.8.1 // indirect
@@ -323,6 +321,7 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/marten-seemann/tcp v0.0.0-20210406111302-dfbc87cc63fd // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-sqlite3 v1.14.23 // indirect
 	github.com/miekg/dns v1.1.58 // indirect
 	github.com/miekg/pkcs11 v1.1.1 // indirect
 	github.com/mikioh/tcpinfo v0.0.0-20190314235526-30a79bb1804b // indirect
