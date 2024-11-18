@@ -70,7 +70,7 @@ func getNodeEnv() (string, error) {
 	return string(k8eEnvJSON), nil
 }
 
-// SetNodeConfigAnnotations stores a redacted version of the k8e cli args and
+// SetNodeConfigAnnotations stores a redacted version of the k3s cli args and
 // environment variables as annotations on the node object. It also stores a
 // hash of the combined args + variables. These are used by other components
 // to determine if the node configuration has been changed.
@@ -92,7 +92,7 @@ func SetNodeConfigAnnotations(nodeConfig *config.Node, node *corev1.Node) (bool,
 		node.Annotations = make(map[string]string)
 	}
 	configHash := h.Sum(nil)
-	encoded := base32.StdEncoding.EncodeToString(configHash)
+	encoded := base32.StdEncoding.EncodeToString(configHash[:])
 	if node.Annotations[NodeConfigHashAnnotation] == encoded {
 		return false, nil
 	}
@@ -139,7 +139,6 @@ func isSecret(key string) bool {
 		"-t",
 		"--agent-token",
 		"--datastore-endpoint",
-		"--cluster-secret",
 		"--etcd-s3-access-key",
 		"--etcd-s3-secret-key",
 	}
