@@ -30,16 +30,16 @@ var FakeNodeWithAnnotation = &corev1.Node{
 	ObjectMeta: metav1.ObjectMeta{
 		Name: "fakeNode-with-annotation",
 		Annotations: map[string]string{
-			NodeArgsAnnotation:       `["server"]`,
+			NodeArgsAnnotation:       `["server","--flannel-backend=none"]`,
 			NodeEnvAnnotation:        `{"` + TestEnvName + `":"fakeNode-with-annotation"}`,
-			NodeConfigHashAnnotation: "FIJ7GZ42FJLYYYPQVVRUGKP3RBJGL5YHUJPWGQMBBVF4OQ6MOSWA====",
+			NodeConfigHashAnnotation: "QWN2I4YW3HBDRDBQJQS7JCEKZDN263VYX6MXCKQOHVLVJYCDGWGA====",
 		},
 	},
 }
 
 func Test_UnitSetExistingNodeConfigAnnotations(t *testing.T) {
 	// adding same config
-	os.Args = []string{version.Program, "server"}
+	os.Args = []string{version.Program, "server", "--flannel-backend=none"}
 	os.Setenv(version.ProgramUpper+"_NODE_NAME", "fakeNode-with-annotation")
 	nodeUpdated, err := SetNodeConfigAnnotations(FakeNodeConfig, FakeNodeWithAnnotation)
 	if err != nil {
@@ -77,22 +77,22 @@ func Test_UnitSetNodeConfigAnnotations(t *testing.T) {
 			args: args{
 				config: FakeNodeConfig,
 				node:   FakeNodeWithAnnotation,
-				osArgs: []string{version.Program, "server"},
+				osArgs: []string{version.Program, "server", "--flannel-backend=none"},
 			},
 			want:               true,
-			wantNodeArgs:       `["server"]`,
+			wantNodeArgs:       `["server","--flannel-backend","none"]`,
 			wantNodeEnv:        `{"` + TestEnvName + `":"fakeNode-with-no-annotation"}`,
-			wantNodeConfigHash: "47ZWLMKZE6NJ7M5KJVPQY4GSJINRZOQEGHOFQFLRQBY3HBQX5HLA====",
+			wantNodeConfigHash: "MEHHZN5JQ7FNHXRPULUTET64QOCL7KRKKHN2YBD5MQV62OFLCWXA====",
 		},
 		{
 			name: "Set args with equal",
 			args: args{
 				config: FakeNodeConfig,
 				node:   FakeNodeWithNoAnnotation,
-				osArgs: []string{version.Program, "server", "--write-kubeconfig-mode=777"},
+				osArgs: []string{version.Program, "server", "--flannel-backend=none", "--write-kubeconfig-mode=777"},
 			},
 			want:         true,
-			wantNodeArgs: `["server","--write-kubeconfig-mode","777"]`,
+			wantNodeArgs: `["server","--flannel-backend","none","--write-kubeconfig-mode","777"]`,
 			wantNodeEnv:  `{"` + TestEnvName + `":"fakeNode-with-no-annotation"}`,
 		},
 	}
