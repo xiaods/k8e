@@ -1,9 +1,7 @@
 package cmds
 
 import (
-	"flag"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -28,7 +26,7 @@ var (
 	}
 	VModule = &cli.StringFlag{
 		Name:        "vmodule",
-		Usage:       "(logging) Comma-separated list of pattern=N settings for file-filtered logging",
+		Usage:       "(logging) Comma-separated list of FILE_PATTERN=LOG_LEVEL settings for file-filtered logging",
 		Destination: &LogConfig.VModule,
 	}
 	LogFile = &cli.StringFlag{
@@ -73,10 +71,6 @@ func checkUnixTimestamp() error {
 }
 
 func setupLogging() {
-	flag.Set("v", strconv.Itoa(LogConfig.VLevel))
-	flag.Set("vmodule", LogConfig.VModule)
-	flag.Set("alsologtostderr", strconv.FormatBool(Debug))
-	flag.Set("logtostderr", strconv.FormatBool(!Debug))
 	if Debug {
 		logrus.SetLevel(logrus.DebugLevel)
 	}
