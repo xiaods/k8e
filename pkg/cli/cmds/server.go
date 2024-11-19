@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 const (
@@ -36,7 +36,7 @@ type Server struct {
 	ClusterDomain        string
 	// The port which kubectl clients can access k8s
 	HTTPSPort int
-	// The port which custom k3s API runs on
+	// The port which custom k8e API runs on
 	SupervisorPort int
 	// The port which kube-apiserver runs on
 	APIServerPort            int
@@ -110,7 +110,7 @@ var (
 	ServerConfig Server
 	DataDirFlag  = &cli.StringFlag{
 		Name:        "data-dir,d",
-		Usage:       "(data) Folder to hold state default /var/lib/rancher/" + version.Program + " or ${HOME}/.rancher/" + version.Program + " if not root",
+		Usage:       "(data) Folder to hold state default /var/lib/" + version.Program + " or ${HOME}/.rancher/" + version.Program + " if not root",
 		Destination: &ServerConfig.DataDir,
 		EnvVar:      version.ProgramUpper + "_DATA_DIR",
 	}

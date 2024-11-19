@@ -70,7 +70,7 @@ func getNodeEnv() (string, error) {
 	return string(k8eEnvJSON), nil
 }
 
-// SetNodeConfigAnnotations stores a redacted version of the k3s cli args and
+// SetNodeConfigAnnotations stores a redacted version of the k8e cli args and
 // environment variables as annotations on the node object. It also stores a
 // hash of the combined args + variables. These are used by other components
 // to determine if the node configuration has been changed.

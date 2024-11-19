@@ -23,7 +23,7 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/etcd"
-	k3smetrics "github.com/xiaods/k8e/pkg/metrics"
+	k8emetrics "github.com/xiaods/k8e/pkg/metrics"
 	"github.com/xiaods/k8e/pkg/proctitle"
 	"github.com/xiaods/k8e/pkg/profile"
 	"github.com/xiaods/k8e/pkg/rootless"
@@ -553,7 +553,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	}
 
 	// same deal for metrics - these are not used if the extra metrics listener is not enabled.
-	metrics := k3smetrics.DefaultMetrics
+	metrics := k8emetrics.DefaultMetrics
 	metrics.Router = func(ctx context.Context, nodeConfig *config.Node) (*mux.Router, error) {
 		return https.Start(ctx, nodeConfig, serverConfig.ControlConfig.Runtime)
 	}

@@ -22,17 +22,17 @@ import (
 )
 
 var (
-	pipeFD             = "_K3S_ROOTLESS_FD"
-	childEnv           = "_K3S_ROOTLESS_SOCK"
-	evacuateCgroup2Env = "_K3S_ROOTLESS_EVACUATE_CGROUP2" // boolean
+	pipeFD             = "_K8E_ROOTLESS_FD"
+	childEnv           = "_K8E_ROOTLESS_SOCK"
+	evacuateCgroup2Env = "_K8E_ROOTLESS_EVACUATE_CGROUP2" // boolean
 	Sock               = ""
 
-	mtuEnv             = "K3S_ROOTLESS_MTU"
-	cidrEnv            = "K3S_ROOTLESS_CIDR"
-	enableIPv6Env      = "K3S_ROOTLESS_ENABLE_IPV6"
-	portDriverEnv      = "K3S_ROOTLESS_PORT_DRIVER"
-	disableLoopbackEnv = "K3S_ROOTLESS_DISABLE_HOST_LOOPBACK"
-	copyUpDirsEnv      = "K3S_ROOTLESS_COPYUPDIRS"
+	mtuEnv             = "K8E_ROOTLESS_MTU"
+	cidrEnv            = "K8E_ROOTLESS_CIDR"
+	enableIPv6Env      = "K8E_ROOTLESS_ENABLE_IPV6"
+	portDriverEnv      = "K8E_ROOTLESS_PORT_DRIVER"
+	disableLoopbackEnv = "K8E_ROOTLESS_DISABLE_HOST_LOOPBACK"
+	copyUpDirsEnv      = "K8E_ROOTLESS_COPYUPDIRS"
 )
 
 func Rootless(stateDir string, enableIPv6 bool) error {
@@ -152,9 +152,9 @@ func createParentOpt(driver portDriver, stateDir string, enableIPv6 bool) (*pare
 	} else {
 		selfCgroup2Dir := filepath.Join("/sys/fs/cgroup", selfCgroup2)
 		if unix.Access(selfCgroup2Dir, unix.W_OK) == nil {
-			opt.EvacuateCgroup2 = "k3s_evac"
+			opt.EvacuateCgroup2 = "k8e_evac"
 		} else {
-			logrus.Warn("Cannot set cgroup2 evacuation, make sure to run k3s as a systemd unit")
+			logrus.Warn("Cannot set cgroup2 evacuation, make sure to run k8e as a systemd unit")
 		}
 	}
 

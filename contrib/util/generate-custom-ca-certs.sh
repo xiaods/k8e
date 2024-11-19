@@ -4,7 +4,7 @@
 # 
 # This script will generate files sufficient to bootstrap K8e cluster certificate
 # authorities.  By default, the script will create the required files under
-# /var/lib/rancher/k8e/server/tls, where they will be found and used by K8e during initial
+# /var/lib/k8e/server/tls, where they will be found and used by K8e during initial
 # cluster startup. Note that these files MUST be present before K8e is started the first
 # time; certificate data SHOULD NOT be changed once the cluster has been initialized.
 #
@@ -153,7 +153,7 @@ echo "CA certificate generation complete. Required files are now present in: ${D
 echo "For security purposes, you should make a secure copy of the following files and remove them from cluster members:"
 ls ${DATA_DIR}/server/tls/root-ca.* ${DATA_DIR}/server/tls/intermediate-ca.* | xargs -n1 echo -e "\t"
 
-if [ "${DATA_DIR}" != "/var/lib/rancher/${PRODUCT}" ]; then
+if [ "${DATA_DIR}" != "/var/lib/${PRODUCT}" ]; then
   echo
   echo "To update certificates on an existing cluster, you may now run:"
   echo "    k8e certificate rotate-ca --path=${DATA_DIR}/server"
