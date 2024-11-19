@@ -36,7 +36,7 @@ func setupMounts(stateDir string) error {
 		{"/var/lib/cni", filepath.Join(stateDir, "cni")},
 		{"/var/lib/kubelet", filepath.Join(stateDir, "kubelet")},
 		{"/etc/rancher", filepath.Join(stateDir, "etc", "rancher")},
-		{"/run/k3s/containerd", filepath.Join(runDir, "k3s", "containerd")},
+		{"/run/k8e/containerd", filepath.Join(runDir, "k8e", "containerd")},
 	}
 
 	for _, v := range mountMap {

@@ -10,13 +10,13 @@ import (
 	"strings"
 
 	"github.com/containerd/containerd/remotes/docker"
+	"github.com/rancher/wharfie/pkg/registries"
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	util2 "github.com/xiaods/k8e/pkg/agent/util"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/rancher/wharfie/pkg/registries"
-	"github.com/sirupsen/logrus"
 )
 
 type HostConfigs map[string]templates.HostConfig
@@ -71,7 +71,7 @@ func writeContainerdHosts(cfg *config.Node, containerdConfig templates.Container
 }
 
 // cleanContainerdHosts removes any registry host config dirs containing a hosts.toml file
-// with a header that indicates it was created by k3s, or directories where a hosts.toml
+// with a header that indicates it was created by k8e, or directories where a hosts.toml
 // is about to be written.  Unmanaged directories not containing this file, or containing
 // a file without the header, are left alone.
 func cleanContainerdHosts(dir string, hosts HostConfigs) error {
@@ -81,7 +81,7 @@ func cleanContainerdHosts(dir string, hosts HostConfigs) error {
 		os.RemoveAll(hostsDir)
 	}
 
-	// clean directories that contain a hosts.toml with a header indicating it was  created by k3s
+	// clean directories that contain a hosts.toml with a header indicating it was  created by k8e
 	ents, err := os.ReadDir(dir)
 	if err != nil && !os.IsNotExist(err) {
 		return err

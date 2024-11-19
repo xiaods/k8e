@@ -18,4 +18,4 @@ https://getk8e.com/docs/install/200-quick-start/
 
 Acknowledgments
 --------------
-- Thanks [k3s](https://github.com/rancher/k3s) for the great open source project.
+- Thanks [k3s](https://github.com/k3s-io/k3s) for the great open source project.
