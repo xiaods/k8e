@@ -1,6 +1,6 @@
 module github.com/xiaods/k8e
 
-go 1.22.7
+go 1.22.6
 
 toolchain go1.22.9
 
