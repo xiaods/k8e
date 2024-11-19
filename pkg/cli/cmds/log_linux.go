@@ -10,11 +10,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	systemd "github.com/coreos/go-systemd/daemon"
-	"github.com/erikdubbelboer/gspt"
+	systemd "github.com/coreos/go-systemd/v22/daemon"
+	"github.com/xiaods/k8e/pkg/proctitle"
+	"github.com/xiaods/k8e/pkg/version"
 	"github.com/natefinch/lumberjack"
 	"github.com/pkg/errors"
-	"github.com/xiaods/k8e/pkg/version"
 	"golang.org/x/sys/unix"
 )
 
@@ -42,7 +42,7 @@ func forkIfLoggingOrReaping() error {
 	}
 
 	if enableLogRedirect || enableReaping {
-		gspt.SetProcTitle(os.Args[0] + " init")
+		proctitle.SetProcTitle(os.Args[0] + " init")
 
 		pwd, err := os.Getwd()
 		if err != nil {
@@ -83,7 +83,7 @@ func forkIfLoggingOrReaping() error {
 	return nil
 }
 
-//reapChildren calls Wait4 whenever SIGCHLD is received
+// reapChildren calls Wait4 whenever SIGCHLD is received
 func reapChildren() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGCHLD)
