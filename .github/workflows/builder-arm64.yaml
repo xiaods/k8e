@@ -18,9 +18,9 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
     steps:
     - uses: actions/checkout@master
-    - uses: actions/setup-go@v4
+    - uses: actions/setup-go@v5
       with:
-        go-version: '1.22'
+        go-version: '^1.22.6'
         cache-dependency-path: subdir/go.sum
     - name: generate resources
       run: mkdir -p {build/data,build/static}
