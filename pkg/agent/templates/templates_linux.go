@@ -19,6 +19,7 @@ version = 2
   enable_selinux = {{ .NodeConfig.SELinux }}
   enable_unprivileged_ports = {{ .EnableUnprivileged }}
   enable_unprivileged_icmp = {{ .EnableUnprivileged }}
+  device_ownership_from_security_context = {{ .NonrootDevices }}
 
 {{- if .DisableCgroup}}
   disable_cgroup = true
@@ -60,6 +61,12 @@ enable_keychain = true
 {{end}}
 {{end}}
 {{end}}
+{{end}}
+
+{{- if not .NodeConfig.NoFlannel }}
+[plugins."io.containerd.grpc.v1.cri".cni]
+  bin_dir = "{{ .NodeConfig.AgentConfig.CNIBinDir }}"
+  conf_dir = "{{ .NodeConfig.AgentConfig.CNIConfDir }}"
 {{end}}
 
 {{- if or .NodeConfig.Containerd.BlockIOConfig .NodeConfig.Containerd.RDTConfig }}
