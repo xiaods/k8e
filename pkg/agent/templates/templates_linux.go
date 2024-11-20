@@ -63,10 +63,6 @@ enable_keychain = true
 {{end}}
 {{end}}
 
-[plugins."io.containerd.grpc.v1.cri".cni]
-  bin_dir = "{{ .NodeConfig.AgentConfig.CNIBinDir }}"
-  conf_dir = "{{ .NodeConfig.AgentConfig.CNIConfDir }}"
-
 {{- if or .NodeConfig.Containerd.BlockIOConfig .NodeConfig.Containerd.RDTConfig }}
 [plugins."io.containerd.service.v1.tasks-service"]
   {{ if .NodeConfig.Containerd.BlockIOConfig }}blockio_config_file = "{{ .NodeConfig.Containerd.BlockIOConfig }}"{{end}}
