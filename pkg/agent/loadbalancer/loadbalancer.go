@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/inetaf/tcpproxy"
-	"github.com/xiaods/k8e/pkg/version"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/version"
 )
 
 // server tracks the connections to a server, so that they can be closed when the server is removed.
@@ -179,6 +179,8 @@ func (lb *LoadBalancer) dialContext(ctx context.Context, network, _ string) (net
 			if !allChecksFailed {
 				defer server.closeAll()
 			}
+		} else {
+			logrus.Debugf("Dial health check failed for %s", targetServer)
 		}
 
 		newServer, err := lb.nextServer(targetServer)
