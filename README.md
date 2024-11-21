@@ -1,21 +1,21 @@
-<img src="./docs/k8e-logo.png" alt="logo" style="zoom:30%;" /><br/>
-K8e 🚀 - Kubernetes Enterprise Edition that is ready to use immediately.
-===============================================
-[Kubernetes Easy Engine(k8e)🚀](https://getk8e.com) is a lightweight, scalable enterprise-grade Kubernetes distribution that allows users to manage, protect and obtain out-of-the-box Kubernetes clusters in a unified manner. It is suitable for enterprise environments.
+<img src="./docs/k8e-logo.png" alt="K8e Logo" width="200px"/><br/>
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/xiaods/k8e)](https://goreportcard.com/report/github.com/xiaods/k8e) [![Hex.pm](https://img.shields.io/hexpm/l/apa)](https://github.com/xiaods/k8e/blob/master/LICENSE)
+# K8e 🚀 - Instantly Ready Kubernetes Enterprise Edition
 
-# ✅ Features
-- [x] Support k8s components airgap images package
-- [x] 10 year certificate, support cluster backup, upgrade
-- [x] No dependency on ansible haproxy keepalived, a binary tool, 0 dependency
-- [x] natively support cilium network
-- [x] no kube-proxy component
+[Kubernetes Easy Engine (k8e) 🚀](https://getk8e.com) is a lightweight, scalable enterprise-grade Kubernetes distribution that allows users to manage, protect, and obtain out-of-the-box Kubernetes clusters in a unified manner. It is suitable for enterprise environments.
 
-Quick-Start - Building && Installing
---------------
-https://getk8e.com/docs/install/200-quick-start/
+[![Go Report Card](https://goreportcard.com/badge/github.com/xiaods/k8e)](https://goreportcard.com/report/github.com/xiaods/k8e)
+[![License](https://img.shields.io/hexpm/l/apa)](https://github.com/xiaods/k8e/blob/main/LICENSE)
 
-Acknowledgments
---------------
-- Thanks [k3s](https://github.com/k3s-io/k3s) for the great open source project.
+## ✅ Key Features
+- **Supports airgap images package for k8s components**
+- **10-year valid certificate, supports cluster backup and upgrade**
+- **No dependency on Ansible, HAProxy, or Keepalived; a binary tool with zero dependencies**
+- **Natively supports Cilium network**
+- **No kube-proxy component**
+
+## Quick Start - Building && Installing
+- [Installation Guide](https://getk8e.com/docs/install/200-quick-start/)
+
+## Acknowledgments
+- Thanks to [k3s](https://github.com/k3s-io/k3s) for the excellent open-source project.
