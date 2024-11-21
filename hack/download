@@ -9,8 +9,8 @@ CONTAINERD_DIR=build/src/github.com/containerd/containerd
 HCSSHIM_DIR=build/src/github.com/microsoft/hcsshim
 DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
-NERDCTL_VERSION=1.7.0
-CILIUMCLI_VERSION=v0.15.14
+NERDCTL_VERSION=2.0.0
+CILIUMCLI_VERSION=v0.16.20
 
 umask 022
 rm -rf ${CHARTS_DIR}
