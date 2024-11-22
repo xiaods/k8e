@@ -9,11 +9,11 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wharfie/pkg/registries"
 	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
 	"github.com/rancher/wrangler/v3/pkg/leader"
+	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
@@ -22,12 +22,12 @@ import (
 )
 
 const (
-	EgressSelectorModeAgent       = "agent"
-	EgressSelectorModeCluster     = "cluster"
-	EgressSelectorModeDisabled    = "disabled"
-	EgressSelectorModePod         = "pod"
-	CertificateRenewDays          = 90
-	StreamServerPort              = "10010"
+	EgressSelectorModeAgent    = "agent"
+	EgressSelectorModeCluster  = "cluster"
+	EgressSelectorModeDisabled = "disabled"
+	EgressSelectorModePod      = "pod"
+	CertificateRenewDays       = 90
+	StreamServerPort           = "10010"
 )
 
 type Node struct {
@@ -66,19 +66,20 @@ type EtcdS3 struct {
 }
 
 type Containerd struct {
-	Address       string
-	Log           string
-	Root          string
-	State         string
-	Config        string
-	Opt           string
-	Template      string
-	BlockIOConfig string
-	RDTConfig     string
-	Registry      string
-	NoDefault     bool
-	SELinux       bool
-	Debug         bool
+	Address        string
+	Log            string
+	Root           string
+	State          string
+	Config         string
+	Opt            string
+	Template       string
+	BlockIOConfig  string
+	RDTConfig      string
+	Registry       string
+	NoDefault      bool
+	NonrootDevices bool
+	SELinux        bool
+	Debug          bool
 }
 
 type CRIDockerd struct {
