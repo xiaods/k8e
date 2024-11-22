@@ -140,7 +140,7 @@ var (
 		Name:        "private-registry",
 		Usage:       "(agent/runtime) Private registry configuration file",
 		Destination: &AgentConfig.PrivateRegistry,
-		Value:       "/etc/rancher/" + version.Program + "/registries.yaml",
+		Value:       "/etc/" + version.Program + "/registries.yaml",
 	}
 	AirgapExtraRegistryFlag = &cli.StringSliceFlag{
 		Name:   "airgap-extra-registry",

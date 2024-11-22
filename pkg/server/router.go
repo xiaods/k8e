@@ -447,7 +447,7 @@ func verifyLocalPassword(ctx context.Context, config *Config, mu *sync.Mutex, de
 	if config.ControlConfig.Rootless {
 		nodePasswordRoot = filepath.Join(path.Dir(config.ControlConfig.DataDir), "agent")
 	}
-	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "rancher", "node")
+	nodeConfigPath := filepath.Join(nodePasswordRoot, "etc", "k8e", "node")
 	nodePasswordFile := filepath.Join(nodeConfigPath, "password")
 
 	passBytes, err := os.ReadFile(nodePasswordFile)
