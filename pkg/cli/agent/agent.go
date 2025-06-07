@@ -8,7 +8,7 @@ import (
 	"runtime"
 
 	"github.com/erikdubbelboer/gspt"
-	"github.com/rancher/wrangler/pkg/signals"
+	"github.com/rancher/wrangler/v3/pkg/signals"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/agent"

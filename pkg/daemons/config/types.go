@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/rancher/wharfie/pkg/registries"
-	"github.com/rancher/wrangler/pkg/leader"
+	"github.com/rancher/wrangler/v3/pkg/leader"
 	"github.com/xiaods/k8e/pkg/endpoint"
 	k8e "github.com/xiaods/k8e/pkg/generated/clientset/versioned"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
