@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -10,12 +11,15 @@ import (
 	"sync"
 
 	"github.com/rancher/wharfie/pkg/registries"
+	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
 	"github.com/rancher/wrangler/v3/pkg/leader"
 	"github.com/xiaods/k8e/pkg/endpoint"
-	k8e "github.com/xiaods/k8e/pkg/generated/clientset/versioned"
+	k8e "github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
-	core "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/record"
+	utilsnet "k8s.io/utils/net"
 )
 
 const (
@@ -347,9 +351,15 @@ type ControlRuntime struct {
 	ClientETCDKey            string
 
 	K8e        *k8e.Factory
-	Core       *core.Factory
+	Core       CoreFactory
 	Event      record.EventRecorder
 	EtcdConfig endpoint.ETCDConfig
+}
+
+type CoreFactory interface {
+	Core() core.Interface
+	Sync(ctx context.Context) error
+	Start(ctx context.Context, defaultThreadiness int) error
 }
 
 func NewRuntime(containerRuntimeReady <-chan struct{}) *ControlRuntime {
