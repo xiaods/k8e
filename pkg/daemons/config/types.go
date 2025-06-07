@@ -9,16 +9,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wharfie/pkg/registries"
-	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
-	"github.com/rancher/wrangler/v3/pkg/leader"
-	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	utilnet "k8s.io/apimachinery/pkg/util/net"
+	"github.com/rancher/wrangler/pkg/leader"
+	"github.com/xiaods/k8e/pkg/endpoint"
+	k8e "github.com/xiaods/k8e/pkg/generated/clientset/versioned"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
+	core "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/record"
-	utilsnet "k8s.io/utils/net"
 )
 
 const (
@@ -186,7 +183,6 @@ type Control struct {
 	KubeConfigGroup          string
 	HelmJobImage             string
 	DataDir                  string
-	KineTLS                  bool
 	Datastore                endpoint.Config `json:"-"`
 	Disables                 map[string]bool
 	DisableAgent             bool

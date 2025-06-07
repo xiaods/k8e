@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/endpoint"
 	"github.com/xiaods/k8e/pkg/etcd"
 	"k8s.io/apimachinery/pkg/util/wait"
 	utilsnet "k8s.io/utils/net"
@@ -142,41 +142,38 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 	return ready, nil
 }
 
-// startStorage starts the kine listener and configures the endpoints, if necessary.
-// This calls into the kine endpoint code, which sets up the database client
-// and unix domain socket listener if using an external database. In the case of an etcd
-// backend it just returns the user-provided etcd endpoints and tls config.
+// startStorage configures the native etcd storage endpoints and TLS settings.
+// This directly configures etcd without using kine as an intermediary.
 func (c *Cluster) startStorage(ctx context.Context, bootstrap bool) error {
-	if c.storageStarted && !c.config.KineTLS {
+	if c.storageStarted {
 		return nil
 	}
 	c.storageStarted = true
 
 	if !bootstrap {
-		// set the tls config for the kine storage
+		// set the tls config for the etcd storage
 		c.config.Datastore.ServerTLSConfig.CAFile = c.config.Runtime.ETCDServerCA
 		c.config.Datastore.ServerTLSConfig.CertFile = c.config.Runtime.ServerETCDCert
 		c.config.Datastore.ServerTLSConfig.KeyFile = c.config.Runtime.ServerETCDKey
 	}
 
-	// start listening on the kine socket as an etcd endpoint, or return the external etcd endpoints
-	etcdConfig, err := endpoint.Listen(ctx, c.config.Datastore)
-	if err != nil {
-		return errors.Wrap(err, "creating storage endpoint")
+	// Configure native etcd endpoints directly
+	etcdEndpoints := []string{"127.0.0.1:2379"} // Default etcd endpoint
+	if c.config.Datastore.Endpoint != "" {
+		etcdEndpoints = strings.Split(c.config.Datastore.Endpoint, ",")
 	}
 
-	// Persist the returned etcd configuration. We decide if we're doing leader election for embedded controllers
-	// based on what the kine wrapper tells us about the datastore. Single-node datastores like sqlite don't require
-	// leader election, while basically all others (etcd, external database, etc) do since they allow multiple servers.
+	// Create etcd configuration for native client
+	etcdConfig := endpoint.ETCDConfig{
+		Endpoints:   etcdEndpoints,
+		LeaderElect: true, // etcd always supports leader election
+		TLSConfig:   c.config.Datastore.BackendTLSConfig,
+	}
+
+	// Persist the etcd configuration
 	c.config.Runtime.EtcdConfig = etcdConfig
-
-	// after the bootstrap we need to set the args for api-server with kine in unixs or just set the
-	// values if the datastoreTLS is not enabled
-	if !bootstrap || !c.config.KineTLS {
-		c.config.Datastore.BackendTLSConfig = etcdConfig.TLSConfig
-		c.config.Datastore.Endpoint = strings.Join(etcdConfig.Endpoints, ",")
-		c.config.NoLeaderElect = !etcdConfig.LeaderElect
-	}
+	c.config.Datastore.Endpoint = strings.Join(etcdEndpoints, ",")
+	c.config.NoLeaderElect = false // etcd supports leader election
 
 	return nil
 }

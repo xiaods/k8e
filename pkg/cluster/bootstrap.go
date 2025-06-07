@@ -15,14 +15,13 @@ import (
 	"time"
 
 	"github.com/go-test/deep"
-	"github.com/k3s-io/kine/pkg/client"
-	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/endpoint"
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
@@ -266,9 +265,9 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 			return err
 		}
 
-		var value *client.Value
+		var value *Value
 
-		storageClient, err := client.New(c.config.Runtime.EtcdConfig)
+		storageClient, err := NewNativeStorageClient(c.config)
 		if err != nil {
 			return err
 		}

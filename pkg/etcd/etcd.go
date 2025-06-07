@@ -20,8 +20,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"github.com/k3s-io/kine/pkg/client"
-	endpoint2 "github.com/k3s-io/kine/pkg/endpoint"
 	cp "github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
@@ -29,11 +27,13 @@ import (
 	"github.com/rancher/wrangler/v3/pkg/start"
 	"github.com/robfig/cron/v3"
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/client"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control/deps"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
+	"github.com/xiaods/k8e/pkg/endpoint"
 	"github.com/xiaods/k8e/pkg/etcd/s3"
 	"github.com/xiaods/k8e/pkg/etcd/snapshot"
 	"github.com/xiaods/k8e/pkg/server/auth"
@@ -41,6 +41,7 @@ import (
 	"github.com/xiaods/k8e/pkg/version"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
+
 	"go.etcd.io/etcd/client/pkg/v3/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/credentials"
@@ -886,14 +887,14 @@ func (e *ETCD) migrateFromSQLite(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	_, err = endpoint2.Listen(ctx, endpoint2.Config{
+	_, err = endpoint.Listen(ctx, endpoint.Config{
 		Endpoint: "sqlite://",
 	})
 	if err != nil {
 		return err
 	}
 
-	sqliteClient, err := client.New(endpoint2.ETCDConfig{
+	sqliteClient, err := client.New(endpoint.ETCDConfig{
 		Endpoints: []string{"unix://kine.sock"},
 	})
 	if err != nil {
