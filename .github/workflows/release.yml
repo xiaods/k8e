@@ -6,7 +6,7 @@ name: Build x86_64 Release
 jobs:
   build:
     name: Build & Release
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
