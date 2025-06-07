@@ -1,8 +1,14 @@
-<img src="./docs/k8e-logo.png" alt="K8e Logo" width="200px"/><br/>
+<p align="center">
+  <img
+    src="docs/assets/k8e-logo.svg"
+    alt="K8e"
+    width="200"
+  />
+</p>
 
 # K8e 🚀 - Instantly Ready Kubernetes Enterprise Edition
 
-[Kubernetes Easy Engine (k8e) 🚀](https://getk8e.com) is a lightweight, scalable enterprise-grade Kubernetes distribution that allows users to manage, protect, and obtain out-of-the-box Kubernetes clusters in a unified manner. It is suitable for enterprise environments.
+[Kubernetes Easy Engine (k8e) 🚀](https://github.com/xiaods/k8e) is a lightweight, scalable enterprise-grade Kubernetes distribution that allows users to manage, protect, and obtain out-of-the-box Kubernetes clusters in a unified manner. It is suitable for enterprise environments.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/xiaods/k8e)](https://goreportcard.com/report/github.com/xiaods/k8e)
 [![License](https://img.shields.io/hexpm/l/apa)](https://github.com/xiaods/k8e/blob/main/LICENSE)
@@ -15,7 +21,9 @@
 - **No kube-proxy component**
 
 ## Quick Start - Building && Installing
-- [Installation Guide](https://getk8e.com/docs/install/200-quick-start/)
+- [Installation Guide]() -- Coming soon !!!
 
 ## Acknowledgments
-- Thanks to [k3s](https://github.com/k3s-io/k3s) for the excellent open-source project.
+This project is deeply inspired by and references the excellent work of the [K3s](https://github.com/k3s-io/k3s) project. We are grateful to the K3s community for their outstanding contributions to the Kubernetes ecosystem, which have made this project possible.
+
+- Special thanks to [K3s](https://github.com/k3s-io/k3s) - The lightweight Kubernetes distribution that inspired many of the design principles and implementation approaches used in K8e.
