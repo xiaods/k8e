@@ -69,7 +69,11 @@ func GetUserAgent(controllerName string) string {
 // support comma separated values, or no flags. We can't have all flags support comma separated values
 // because our kube-XXX-arg flags need to pass the value "as is" to the kubelet/kube-apiserver etc.
 func SplitStringSlice(ss []string) []string {
-	result := []string{}
+	if len(ss) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(ss)*2)
 	for _, s := range ss {
 		result = append(result, strings.Split(s, ",")...)
 	}
