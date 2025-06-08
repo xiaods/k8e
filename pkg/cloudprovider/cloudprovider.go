@@ -34,7 +34,7 @@ type k8e struct {
 	endpointsCache discoveryclient.EndpointSliceCache
 	nodeCache      coreclient.NodeCache
 	podCache       coreclient.PodCache
-	workqueue      workqueue.RateLimitingInterface
+	workqueue      workqueue.TypedRateLimitingInterface[any]
 }
 
 var _ cloudprovider.Interface = &k8e{}
