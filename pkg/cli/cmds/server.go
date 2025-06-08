@@ -59,7 +59,7 @@ type Server struct {
 	DatastoreCAFile          string
 	DatastoreCertFile        string
 	DatastoreKeyFile         string
-	KineTLS                  bool
+
 	AdvertiseIP              string
 	AdvertisePort            int
 	DisableScheduler         bool
@@ -289,15 +289,10 @@ var ServerFlags = []cli.Flag{
 		Usage: "(flags) Customized flag for kube-cloud-controller-manager process",
 		Value: &ServerConfig.ExtraCloudControllerArgs,
 	},
-	&cli.BoolFlag{
-		Name:        "kine-tls",
-		Usage:       "(experimental/db) Enable TLS on the kine etcd server socket",
-		Destination: &ServerConfig.KineTLS,
-		Hidden:      true,
-	},
+
 	&cli.StringFlag{
 		Name:        "datastore-endpoint",
-		Usage:       "(db) Specify etcd, NATS, MySQL, Postgres, or SQLite (default) data source name",
+		Usage:       "(db) Specify etcd data source endpoints (comma-separated list or etcd:// URL)",
 		Destination: &ServerConfig.DatastoreEndpoint,
 		EnvVar:      version.ProgramUpper + "_DATASTORE_ENDPOINT",
 	},

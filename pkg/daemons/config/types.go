@@ -8,12 +8,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wharfie/pkg/registries"
 	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
 	"github.com/rancher/wrangler/v3/pkg/leader"
 	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
@@ -63,6 +64,28 @@ type EtcdS3 struct {
 	Insecure      bool            `json:"insecure,omitempty"`
 	SkipSSLVerify bool            `json:"skipSSLVerify,omitempty"`
 	Timeout       metav1.Duration `json:"timeout,omitempty"`
+}
+
+// BackendTLSConfig represents backend TLS configuration
+type BackendTLSConfig struct {
+	CAFile   string
+	CertFile string
+	KeyFile  string
+}
+
+// ServerTLSConfig represents server TLS configuration
+type ServerTLSConfig struct {
+	CAFile   string
+	CertFile string
+	KeyFile  string
+}
+
+// Datastore represents the datastore configuration
+type Datastore struct {
+	Endpoint         string
+	BackendTLSConfig BackendTLSConfig
+	ServerTLSConfig  ServerTLSConfig
+	NotifyInterval   time.Duration
 }
 
 type Containerd struct {
@@ -186,8 +209,9 @@ type Control struct {
 	KubeConfigGroup          string
 	HelmJobImage             string
 	DataDir                  string
-	KineTLS                  bool
-	Datastore                endpoint.Config `json:"-"`
+	EtcdEndpoints            []string    `json:"-"`
+	EtcdTLSConfig            *tls.Config `json:"-"`
+	Datastore                Datastore   `json:"-"`
 	Disables                 map[string]bool
 	DisableAgent             bool
 	DisableAPIServer         bool
@@ -299,6 +323,7 @@ type ControlRuntime struct {
 	ClientKubeAPICert string
 	ClientKubeAPIKey  string
 	NodePasswdFile    string
+	EtcdConfig        *clientv3.Config
 
 	SigningClientCA   string
 	SigningServerCA   string
@@ -350,10 +375,11 @@ type ControlRuntime struct {
 	ClientETCDCert           string
 	ClientETCDKey            string
 
-	K8e        *k8e.Factory
-	Core       *core.Factory
-	Event      record.EventRecorder
-	EtcdConfig endpoint.ETCDConfig
+	K8e           *k8e.Factory
+	Core          *core.Factory
+	Event         record.EventRecorder
+	EtcdEndpoints []string
+	EtcdTLSConfig *tls.Config
 }
 
 func NewRuntime(containerRuntimeReady <-chan struct{}) *ControlRuntime {

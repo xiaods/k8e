@@ -20,8 +20,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
-	"github.com/k3s-io/kine/pkg/client"
-	endpoint2 "github.com/k3s-io/kine/pkg/endpoint"
+
 	cp "github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	certutil "github.com/rancher/dynamiclistener/cert"
@@ -279,10 +278,6 @@ func dbDir(config *config.Control) string {
 // walDir returns the path to etcdDBDir/member/wal
 func walDir(config *config.Control) string {
 	return filepath.Join(dbDir(config), "member", "wal")
-}
-
-func sqliteFile(config *config.Control) string {
-	return filepath.Join(config.DataDir, "db", "state.db")
 }
 
 // nameFile returns the path to etcdDBDir/name.
@@ -865,62 +860,8 @@ func (e *ETCD) newCluster(ctx context.Context, reset bool) error {
 	if err != nil {
 		return err
 	}
-	if !reset {
-		if err := e.migrateFromSQLite(ctx); err != nil {
-			return fmt.Errorf("failed to migrate content from sqlite to etcd: %w", err)
-		}
-	}
+
 	return nil
-}
-
-func (e *ETCD) migrateFromSQLite(ctx context.Context) error {
-	_, err := os.Stat(sqliteFile(e.config))
-	if os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-
-	logrus.Infof("Migrating content from sqlite to etcd")
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	_, err = endpoint2.Listen(ctx, endpoint2.Config{
-		Endpoint: "sqlite://",
-	})
-	if err != nil {
-		return err
-	}
-
-	sqliteClient, err := client.New(endpoint2.ETCDConfig{
-		Endpoints: []string{"unix://kine.sock"},
-	})
-	if err != nil {
-		return err
-	}
-	defer sqliteClient.Close()
-
-	etcdClient, conn, err := getClient(ctx, e.config)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-
-	values, err := sqliteClient.List(ctx, "/registry/", 0)
-	if err != nil {
-		return err
-	}
-
-	for _, value := range values {
-		logrus.Infof("Migrating etcd key %s", value.Key)
-		_, err := etcdClient.Put(ctx, string(value.Key), string(value.Data))
-		if err != nil {
-			return err
-		}
-	}
-
-	return os.Rename(sqliteFile(e.config), sqliteFile(e.config)+".migrated")
 }
 
 // peerURL returns the external peer access address for the local node.

@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/go-test/deep"
-	"github.com/k3s-io/kine/pkg/client"
-	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -26,6 +24,8 @@ import (
 	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
+	"go.etcd.io/etcd/api/v3/mvccpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // Bootstrap attempts to load a managed database driver, if one has been initialized or should be created/joined.
@@ -266,9 +266,12 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 			return err
 		}
 
-		var value *client.Value
+		var value *mvccpb.KeyValue
 
-		storageClient, err := client.New(c.config.Runtime.EtcdConfig)
+		storageClient, err := clientv3.New(clientv3.Config{
+			Endpoints: c.config.Runtime.EtcdEndpoints,
+			TLS:       c.config.Runtime.EtcdTLSConfig,
+		})
 		if err != nil {
 			return err
 		}
@@ -282,7 +285,7 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 			return nil
 		}
 
-		dbRawData, err = decrypt(normalizedToken, value.Data)
+		dbRawData, err = decrypt(normalizedToken, value.Value)
 		if err != nil {
 			return err
 		}
@@ -484,14 +487,14 @@ func ipsTo16Bytes(mySlice []*net.IPNet) {
 func (c *Cluster) reconcileEtcd(ctx context.Context) error {
 	logrus.Info("Starting temporary etcd to reconcile with datastore")
 
-	tempConfig := endpoint.ETCDConfig{Endpoints: []string{"http://127.0.0.1:2399"}}
-	originalConfig := c.config.Runtime.EtcdConfig
-	c.config.Runtime.EtcdConfig = tempConfig
+	tempEndpoints := []string{"http://127.0.0.1:2399"}
+	originalEndpoints := c.config.Runtime.EtcdEndpoints
+	c.config.Runtime.EtcdEndpoints = tempEndpoints
 	reconcileCtx, cancel := context.WithCancel(ctx)
 
 	defer func() {
 		cancel()
-		c.config.Runtime.EtcdConfig = originalConfig
+		c.config.Runtime.EtcdEndpoints = originalEndpoints
 	}()
 
 	e := etcd.NewETCD()

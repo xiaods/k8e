@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"os"
@@ -32,7 +34,6 @@ import (
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	"github.com/xiaods/k8e/pkg/vpn"
-	etcdversion "go.etcd.io/etcd/api/v3/version"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	kubeapiserverflag "k8s.io/component-base/cli/flag"
@@ -146,13 +147,43 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.ExtraEtcdArgs = cfg.ExtraEtcdArgs
 	serverConfig.ControlConfig.ExtraSchedulerAPIArgs = cfg.ExtraSchedulerArgs
 	serverConfig.ControlConfig.ClusterDomain = cfg.ClusterDomain
-	serverConfig.ControlConfig.Datastore.NotifyInterval = 5 * time.Second
-	serverConfig.ControlConfig.Datastore.EmulatedETCDVersion = etcdversion.Version
-	serverConfig.ControlConfig.Datastore.Endpoint = cfg.DatastoreEndpoint
-	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CAFile = cfg.DatastoreCAFile
-	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CertFile = cfg.DatastoreCertFile
-	serverConfig.ControlConfig.Datastore.BackendTLSConfig.KeyFile = cfg.DatastoreKeyFile
-	serverConfig.ControlConfig.KineTLS = cfg.KineTLS
+	// Configure etcd endpoints if provided
+	if cfg.DatastoreEndpoint != "" {
+		// Only support etcd:// endpoints now
+		if strings.HasPrefix(cfg.DatastoreEndpoint, "etcd://") {
+			endpoints := strings.TrimPrefix(cfg.DatastoreEndpoint, "etcd://")
+			serverConfig.ControlConfig.EtcdEndpoints = strings.Split(endpoints, ",")
+		} else if !strings.Contains(cfg.DatastoreEndpoint, "://") {
+			// Assume it's a comma-separated list of etcd endpoints
+			serverConfig.ControlConfig.EtcdEndpoints = strings.Split(cfg.DatastoreEndpoint, ",")
+		} else {
+			return errors.New("only etcd endpoints are supported, sqlite/mysql/postgresql are no longer supported")
+		}
+	}
+
+	// Configure etcd TLS if certificates are provided
+	if cfg.DatastoreCAFile != "" || cfg.DatastoreCertFile != "" || cfg.DatastoreKeyFile != "" {
+		tlsConfig := &tls.Config{}
+		if cfg.DatastoreCAFile != "" {
+			// Load CA certificate
+			caCert, err := os.ReadFile(cfg.DatastoreCAFile)
+			if err != nil {
+				return fmt.Errorf("failed to read CA file: %w", err)
+			}
+			caCertPool := x509.NewCertPool()
+			caCertPool.AppendCertsFromPEM(caCert)
+			tlsConfig.RootCAs = caCertPool
+		}
+		if cfg.DatastoreCertFile != "" && cfg.DatastoreKeyFile != "" {
+			// Load client certificate
+			cert, err := tls.LoadX509KeyPair(cfg.DatastoreCertFile, cfg.DatastoreKeyFile)
+			if err != nil {
+				return fmt.Errorf("failed to load client certificate: %w", err)
+			}
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+		serverConfig.ControlConfig.EtcdTLSConfig = tlsConfig
+	}
 	serverConfig.ControlConfig.AdvertiseIP = cfg.AdvertiseIP
 	serverConfig.ControlConfig.AdvertisePort = cfg.AdvertisePort
 	serverConfig.ControlConfig.EgressSelectorMode = cfg.EgressSelectorMode
@@ -215,11 +246,11 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		return errors.New("invalid flag use; --server is required with --disable-etcd")
 	}
 
-	if serverConfig.ControlConfig.Datastore.Endpoint != "" && serverConfig.ControlConfig.DisableAPIServer {
+	if cfg.DatastoreEndpoint != "" && serverConfig.ControlConfig.DisableAPIServer {
 		return errors.New("invalid flag use; cannot use --disable-apiserver with --datastore-endpoint")
 	}
 
-	if serverConfig.ControlConfig.Datastore.Endpoint != "" && serverConfig.ControlConfig.DisableETCD {
+	if cfg.DatastoreEndpoint != "" && serverConfig.ControlConfig.DisableETCD {
 		return errors.New("invalid flag use; cannot use --disable-etcd with --datastore-endpoint")
 	}
 
