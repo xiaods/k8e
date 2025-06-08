@@ -5,12 +5,15 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
+	"github.com/rancher/wrangler/v3/pkg/ratelimit"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/validation"
 	clientset "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -28,12 +31,24 @@ func GetKubeConfigPath(file string) string {
 
 // GetClientSet creates a Kubernetes client from the kubeconfig at the provided path.
 func GetClientSet(file string) (clientset.Interface, error) {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", file)
+	restConfig, err := GetRESTConfig(file)
 	if err != nil {
 		return nil, err
 	}
 
 	return clientset.NewForConfig(restConfig)
+}
+
+// GetRESTConfig returns a REST config with default timeouts and ratelimitsi cribbed from wrangler defaults.
+// ref: https://github.com/rancher/wrangler/blob/v3.0.0/pkg/clients/clients.go#L184-L190
+func GetRESTConfig(file string) (*rest.Config, error) {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", file)
+	if err != nil {
+		return nil, err
+	}
+	restConfig.Timeout = 15 * time.Minute
+	restConfig.RateLimiter = ratelimit.None
+	return restConfig, nil
 }
 
 // GetUserAgent builds a complete UserAgent string for a given controller, including the node name if possible.
@@ -48,10 +63,17 @@ func GetUserAgent(controllerName string) string {
 }
 
 // SplitStringSlice is a helper function to handle StringSliceFlag containing multiple values
-// By default, StringSliceFlag only supports repeated values, not multiple values
+// By default, StringSliceFlag supports repeated values, and multiple values, seperated by a comma
 // e.g. --foo="bar,car" --foo=baz will result in []string{"bar", "car". "baz"}
+// However, we disable this with urfave/cli/v2, as controls are not granular enough. You can either have all flags
+// support comma separated values, or no flags. We can't have all flags support comma separated values
+// because our kube-XXX-arg flags need to pass the value "as is" to the kubelet/kube-apiserver etc.
 func SplitStringSlice(ss []string) []string {
-	result := []string{}
+	if len(ss) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(ss)*2)
 	for _, s := range ss {
 		result = append(result, strings.Split(s, ",")...)
 	}

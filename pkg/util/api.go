@@ -2,16 +2,15 @@ package util
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
-	"github.com/pkg/errors"
-	"github.com/rancher/wrangler/pkg/merr"
-	"github.com/rancher/wrangler/pkg/schemes"
+	"github.com/rancher/wrangler/v3/pkg/merr"
+	"github.com/rancher/wrangler/v3/pkg/schemes"
 	"github.com/sirupsen/logrus"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	v1 "k8s.io/api/core/v1"
@@ -23,7 +22,6 @@ import (
 	authorizationv1client "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	coregetter "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 )
 
@@ -53,15 +51,19 @@ func GetAddresses(endpoint *v1.Endpoints) []string {
 	return serverAddresses
 }
 
-// WaitForAPIServerReady waits for the API Server's /readyz endpoint to report "ok" with timeout.
+// WaitForAPIServerReady waits for the API server's /readyz endpoint to report "ok" with timeout.
 // This is modified from WaitForAPIServer from the Kubernetes controller-manager app, but checks the
 // readyz endpoint instead of the deprecated healthz endpoint, and supports context.
 func WaitForAPIServerReady(ctx context.Context, kubeconfigPath string, timeout time.Duration) error {
-	var lastErr error
-	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	lastErr := errors.New("API server not polled")
+	restConfig, err := GetRESTConfig(kubeconfigPath)
 	if err != nil {
 		return err
 	}
+
+	// Probe apiserver readiness with a 15 second timeout
+	// https://github.com/kubernetes/kubernetes/blob/v1.24.0/cmd/kubeadm/app/util/staticpod/utils.go#L252
+	restConfig.Timeout = time.Second * 15
 
 	// By default, idle connections to the apiserver are returned to a global pool
 	// between requests.  Explicitly flag this client's request for closure so that
@@ -80,28 +82,42 @@ func WaitForAPIServerReady(ctx context.Context, kubeconfigPath string, timeout t
 		return err
 	}
 
-	err = wait.PollImmediateWithContext(ctx, time.Second, timeout, func(ctx context.Context) (bool, error) {
-		healthStatus := 0
-		result := restClient.Get().AbsPath("/readyz").Do(ctx).StatusCode(&healthStatus)
-		if rerr := result.Error(); rerr != nil {
-			lastErr = errors.Wrap(rerr, "failed to get apiserver /readyz status")
-			return false, nil
-		}
-		if healthStatus != http.StatusOK {
-			content, _ := result.Raw()
-			lastErr = fmt.Errorf("APIServer isn't ready: %v", string(content))
-			logrus.Warnf("APIServer isn't ready yet: %v. Waiting a little while.", string(content))
+	err = wait.PollUntilContextTimeout(ctx, time.Second*2, timeout, true, func(ctx context.Context) (bool, error) {
+		// DoRaw returns an error if the response code is < 200 OK or > 206 Partial Content
+		if _, err := restClient.Get().AbsPath("/readyz").Param("verbose", "").DoRaw(ctx); err != nil {
+			if err.Error() != lastErr.Error() {
+				logrus.Infof("Polling for API server readiness: GET /readyz failed: %v", err)
+			} else {
+				logrus.Debug("Polling for API server readiness: GET /readyz failed: status unchanged")
+			}
+			lastErr = err
 			return false, nil
 		}
 
 		return true, nil
 	})
 
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		return merr.NewErrors(err, lastErr)
 	}
 
 	return nil
+}
+
+// APIServerReadyChan wraps WaitForAPIServerReady, returning a channel that
+// is closed when the apiserver is ready.  If the apiserver does not become
+// ready within the expected duration, a fatal error is raised.
+func APIServerReadyChan(ctx context.Context, kubeConfig string, timeout time.Duration) <-chan struct{} {
+	ready := make(chan struct{})
+
+	go func() {
+		defer close(ready)
+		if err := WaitForAPIServerReady(ctx, kubeConfig, timeout); err != nil {
+			logrus.Fatalf("Failed to wait for API server to become ready: %v", err)
+		}
+	}()
+
+	return ready
 }
 
 type genericAccessReviewRequest func(context.Context) (*authorizationv1.SubjectAccessReviewStatus, error)
@@ -112,7 +128,7 @@ type genericAccessReviewRequest func(context.Context) (*authorizationv1.SubjectA
 // the access would be allowed.
 func WaitForRBACReady(ctx context.Context, kubeconfigPath string, timeout time.Duration, ra authorizationv1.ResourceAttributes, user string, groups ...string) error {
 	var lastErr error
-	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	restConfig, err := GetRESTConfig(kubeconfigPath)
 	if err != nil {
 		return err
 	}
@@ -128,7 +144,7 @@ func WaitForRBACReady(ctx context.Context, kubeconfigPath string, timeout time.D
 		reviewFunc = subjectAccessReview(authClient, ra, user, groups)
 	}
 
-	err = wait.PollImmediateWithContext(ctx, time.Second, timeout, func(ctx context.Context) (bool, error) {
+	err = wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
 		status, rerr := reviewFunc(ctx)
 		if rerr != nil {
 			lastErr = rerr
@@ -146,6 +162,34 @@ func WaitForRBACReady(ctx context.Context, kubeconfigPath string, timeout time.D
 	}
 
 	return nil
+}
+
+// CheckRBAC performs a single SelfSubjectAccessReview or SubjectAccessReview, returning a
+// boolean indicating whether or not the requested access would be allowed. This is basically
+// `kubectl auth can-i`.
+func CheckRBAC(ctx context.Context, kubeconfigPath string, ra authorizationv1.ResourceAttributes, user string, groups ...string) (bool, error) {
+	restConfig, err := GetRESTConfig(kubeconfigPath)
+	if err != nil {
+		return false, err
+	}
+	authClient, err := authorizationv1client.NewForConfig(restConfig)
+	if err != nil {
+		return false, err
+	}
+
+	var reviewFunc genericAccessReviewRequest
+	if len(user) == 0 && len(groups) == 0 {
+		reviewFunc = selfSubjectAccessReview(authClient, ra)
+	} else {
+		reviewFunc = subjectAccessReview(authClient, ra, user, groups)
+	}
+
+	status, err := reviewFunc(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	return status.Allowed, nil
 }
 
 // selfSubjectAccessReview returns a function that makes SelfSubjectAccessReview requests using the

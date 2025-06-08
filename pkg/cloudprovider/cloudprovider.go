@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/rancher/wrangler/pkg/apply"
-	appsclient "github.com/rancher/wrangler/pkg/generated/controllers/apps/v1"
-	coreclient "github.com/rancher/wrangler/pkg/generated/controllers/core/v1"
-	discoveryclient "github.com/rancher/wrangler/pkg/generated/controllers/discovery/v1"
+	"github.com/rancher/wrangler/v3/pkg/apply"
+	appsclient "github.com/rancher/wrangler/v3/pkg/generated/controllers/apps/v1"
+	coreclient "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
+	discoveryclient "github.com/rancher/wrangler/v3/pkg/generated/controllers/discovery/v1"
 	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -34,7 +34,7 @@ type k8e struct {
 	endpointsCache discoveryclient.EndpointSliceCache
 	nodeCache      coreclient.NodeCache
 	podCache       coreclient.PodCache
-	workqueue      workqueue.RateLimitingInterface
+	workqueue      workqueue.TypedRateLimitingInterface[any]
 }
 
 var _ cloudprovider.Interface = &k8e{}

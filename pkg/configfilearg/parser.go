@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rancher/wrangler/pkg/data/convert"
+	"github.com/rancher/wrangler/v3/pkg/data/convert"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/agent/util"
@@ -244,7 +244,23 @@ func dotDFiles(basefile string) (result []string, _ error) {
 	return
 }
 
+// Main function with reduced complexity
 func readConfigFile(file string) (result []string, _ error) {
+	files, err := prepareConfigFiles(file)
+	if err != nil {
+		return nil, err
+	}
+
+	values, keyOrder, err := parseConfigFiles(files)
+	if err != nil {
+		return nil, err
+	}
+
+	return formatCommandLineArgs(values, keyOrder), nil
+}
+
+// Extract file preparation logic
+func prepareConfigFiles(file string) ([]string, error) {
 	files, err := dotDFiles(file)
 	if err != nil {
 		return nil, err
@@ -252,65 +268,107 @@ func readConfigFile(file string) (result []string, _ error) {
 
 	_, err = os.Stat(file)
 	if os.IsNotExist(err) && len(files) > 0 {
-	} else if err != nil {
+		return files, nil
+	}
+	if err != nil {
 		return nil, err
-	} else {
-		files = append([]string{file}, files...)
 	}
+	
+	return append([]string{file}, files...), nil
+}
 
+// Extract config parsing logic
+func parseConfigFiles(files []string) (map[string]interface{}, []string, error) {
 	var (
-		keySeen  = map[string]bool{}
+		keySeen  = make(map[string]bool)
 		keyOrder []string
-		values   = map[string]interface{}{}
+		values   = make(map[string]interface{})
 	)
+
 	for _, file := range files {
-		bytes, err := readConfigFileData(file)
-		if err != nil {
-			return nil, err
-		}
-
-		data := yaml.MapSlice{}
-		if err := yaml.Unmarshal(bytes, &data); err != nil {
-			return nil, err
-		}
-
-		for _, i := range data {
-			k, v := convert.ToString(i.Key), i.Value
-			isAppend := strings.HasSuffix(k, "+")
-			k = strings.TrimSuffix(k, "+")
-
-			if !keySeen[k] {
-				keySeen[k] = true
-				keyOrder = append(keyOrder, k)
-			}
-
-			if oldValue, ok := values[k]; ok && isAppend {
-				values[k] = append(toSlice(oldValue), toSlice(v)...)
-			} else {
-				values[k] = v
-			}
+		if err := parseConfigFile(file, keySeen, &keyOrder, values); err != nil {
+			return nil, nil, err
 		}
 	}
+
+	return values, keyOrder, nil
+}
+
+// Extract single file parsing logic
+func parseConfigFile(file string, keySeen map[string]bool, keyOrder *[]string, values map[string]interface{}) error {
+	bytes, err := readConfigFileData(file)
+	if err != nil {
+		return err
+	}
+
+	data := yaml.MapSlice{}
+	if err := yaml.Unmarshal(bytes, &data); err != nil {
+		return err
+	}
+
+	for _, i := range data {
+		processConfigEntry(i, keySeen, keyOrder, values)
+	}
+
+	return nil
+}
+
+// Extract entry processing logic
+func processConfigEntry(entry yaml.MapItem, keySeen map[string]bool, keyOrder *[]string, values map[string]interface{}) {
+	k, v := convert.ToString(entry.Key), entry.Value
+	isAppend := strings.HasSuffix(k, "+")
+	k = strings.TrimSuffix(k, "+")
+
+	if !keySeen[k] {
+		keySeen[k] = true
+		*keyOrder = append(*keyOrder, k)
+	}
+
+	if oldValue, ok := values[k]; ok && isAppend {
+		values[k] = append(toSlice(oldValue), toSlice(v)...)
+	} else {
+		values[k] = v
+	}
+}
+
+// Extract formatting logic
+func formatCommandLineArgs(values map[string]interface{}, keyOrder []string) []string {
+	var result []string
 
 	for _, k := range keyOrder {
 		v := values[k]
-
-		prefix := "--"
-		if len(k) == 1 {
-			prefix = "-"
-		}
+		prefix := getArgPrefix(k)
 
 		if slice, ok := v.([]interface{}); ok {
-			for _, v := range slice {
-				result = append(result, prefix+k+"="+convert.ToString(v))
-			}
+			result = append(result, formatSliceArgs(prefix, k, slice)...)
 		} else {
-			str := convert.ToString(v)
-			result = append(result, prefix+k+"="+str)
+			result = append(result, formatSingleArg(prefix, k, v))
 		}
 	}
 
-	return
+	return result
+}
+
+// Extract prefix determination logic
+func getArgPrefix(key string) string {
+	if len(key) == 1 {
+		return "-"
+	}
+	return "--"
+}
+
+// Extract slice formatting logic
+func formatSliceArgs(prefix, key string, slice []interface{}) []string {
+	var args []string
+	for _, v := range slice {
+		args = append(args, prefix+key+"="+convert.ToString(v))
+	}
+	return args
+}
+
+// Extract single value formatting logic
+func formatSingleArg(prefix, key string, value interface{}) string {
+	return prefix + key + "=" + convert.ToString(value)
 }
 
 func toSlice(v interface{}) []interface{} {
