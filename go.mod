@@ -19,6 +19,7 @@ replace (
 	github.com/opencontainers/selinux => github.com/opencontainers/selinux v1.11.0
 	github.com/prometheus/client_golang => github.com/prometheus/client_golang v1.19.1
 	github.com/prometheus/common => github.com/prometheus/common v0.55.0
+	github.com/rancher/wrangler/v3 => github.com/rancher/wrangler/v3 v3.0.0-rc2
 	github.com/spegel-org/spegel => github.com/k3s-io/spegel v0.0.23-0.20240516234953-f3d2c4072314
 	github.com/ugorji/go => github.com/ugorji/go v1.2.11
 	go.etcd.io/etcd/api/v3 => github.com/k3s-io/etcd/api/v3 v3.5.16-k3s1
@@ -116,8 +117,8 @@ require (
 	github.com/rancher/permissions v0.0.0-20240523180510-4001d3d637f7
 	github.com/rancher/remotedialer v0.4.1
 	github.com/rancher/wharfie v0.6.7
-	github.com/rancher/wrangler v1.1.2
-	github.com/rancher/wrangler/v3 v3.0.0-rc2
+	github.com/rancher/wrangler v0.8.8
+	github.com/rancher/wrangler/v3 v3.1.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rootless-containers/rootlesskit v1.0.1
 	github.com/sirupsen/logrus v1.9.3
