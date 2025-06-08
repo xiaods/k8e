@@ -29,7 +29,7 @@ func MustParse(args []string) []string {
 func MustFindString(args []string, target string, commandsWithoutOverride ...string) string {
 	overrideFlags := []string{"--help", "-h", "--version", "-v"}
 	// Check to see if the command or subcommand being executed supports override flags.
-	// Some subcommands such as `k3s ctr` or just `ctr` need to be extracted out even to
+	// Some subcommands such as `k8e ctr` or just `ctr` need to be extracted out even to
 	// provide version or help text, and we cannot short-circuit loading the config file. For
 	// these commands, treat failure to load the config file as a warning instead of a fatal.
 	if len(args) > 0 && filepath.Base(args[0]) == version.Program {

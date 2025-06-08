@@ -1,11 +1,11 @@
 package config
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	utilsnet "k8s.io/utils/net"
 )
@@ -27,7 +28,7 @@ const (
 	EgressSelectorModeCluster  = "cluster"
 	EgressSelectorModeDisabled = "disabled"
 	EgressSelectorModePod      = "pod"
-	CertificateRenewDays       = 90
+	cateRenewDays              = 120
 	StreamServerPort           = "10010"
 )
 
@@ -375,11 +376,24 @@ type ControlRuntime struct {
 	ClientETCDCert           string
 	ClientETCDKey            string
 
+	K8s           kubernetes.Interface
 	K8e           *k8e.Factory
-	Core          *core.Factory
+	Core          CoreFactory
 	Event         record.EventRecorder
 	EtcdEndpoints []string
 	EtcdTLSConfig *tls.Config
+}
+
+type Cluster interface {
+	Bootstrap(ctx context.Context, reset bool) error
+	ListenAndServe(ctx context.Context) error
+	Start(ctx context.Context) error
+}
+
+type CoreFactory interface {
+	Core() core.Interface
+	Sync(ctx context.Context) error
+	Start(ctx context.Context, defaultThreadiness int) error
 }
 
 func NewRuntime(containerRuntimeReady <-chan struct{}) *ControlRuntime {
@@ -401,80 +415,4 @@ func (a ArgString) String() string {
 		b.WriteString(s)
 	}
 	return b.String()
-}
-
-// GetArgs appends extra arguments to existing arguments with logic to override any default
-// arguments whilst also allowing to prefix and suffix default string slice arguments.
-func GetArgs(initialArgs map[string]string, extraArgs []string) []string {
-	const hyphens = "--"
-
-	multiArgs := make(map[string][]string)
-
-	for _, unsplitArg := range extraArgs {
-		splitArg := strings.SplitN(strings.TrimPrefix(unsplitArg, hyphens), "=", 2)
-		arg := splitArg[0]
-		value := "true"
-		if len(splitArg) > 1 {
-			value = splitArg[1]
-		}
-
-		// After the first iteration, initial args will be empty when handling
-		// duplicate arguments as they will form part of existingValues
-		cleanedArg := strings.TrimRight(arg, "-+")
-		initialValue, initialValueExists := initialArgs[cleanedArg]
-		existingValues, existingValuesFound := multiArgs[cleanedArg]
-
-		newValues := make([]string, 0)
-		if strings.HasSuffix(arg, "+") { // Append value to initial args
-			if initialValueExists {
-				newValues = append(newValues, initialValue)
-			}
-			if existingValuesFound {
-				newValues = append(newValues, existingValues...)
-			}
-			newValues = append(newValues, value)
-
-		} else if strings.HasSuffix(arg, "-") { // Prepend value to initial args
-			newValues = append(newValues, value)
-			if initialValueExists {
-				newValues = append(newValues, initialValue)
-			}
-			if existingValuesFound {
-				newValues = append(newValues, existingValues...)
-			}
-		} else { // Append value ignoring initial args
-			if existingValuesFound {
-				newValues = append(newValues, existingValues...)
-			}
-			newValues = append(newValues, value)
-		}
-
-		delete(initialArgs, cleanedArg)
-		multiArgs[cleanedArg] = newValues
-
-	}
-
-	// Add any remaining initial args to the map
-	for arg, value := range initialArgs {
-		multiArgs[arg] = []string{value}
-	}
-
-	// Get args so we can output them sorted whilst preserving the order of
-	// repeated keys
-	var keys []string
-	for arg := range multiArgs {
-		keys = append(keys, arg)
-	}
-	sort.Strings(keys)
-
-	var args []string
-	for _, arg := range keys {
-		values := multiArgs[arg]
-		for _, value := range values {
-			cmd := fmt.Sprintf("%s%s=%s", hyphens, strings.TrimPrefix(arg, hyphens), value)
-			args = append(args, cmd)
-		}
-	}
-
-	return args
 }

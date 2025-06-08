@@ -999,6 +999,8 @@ github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-aggregator v1.31.2-k3s1 h1:
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-aggregator v1.31.2-k3s1/go.mod h1:xc/cVRFh9PdcOsDAnHdB0fuQWih/w8hxbF8Ca4FXHSU=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-controller-manager v1.31.2-k3s1 h1:eEvwssCPwE+pLKiQjQHmk5PgdgpxuX9toAiAlqj3GAs=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-controller-manager v1.31.2-k3s1/go.mod h1:l7Pv6S9sCmzj5ZLTQIf/twX4WrJ6D7WOPbDUfkllT0c=
+github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-proxy v1.31.2-k3s1 h1:zbvKs0ZX+qWmaypQw+0UMlSns5E+x0GF97PiukZhoFc=
+github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-proxy v1.31.2-k3s1/go.mod h1:oJOlcxyiohRkqraS+VHuxGd0oMp3N60mbMTaP3YTW0w=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-scheduler v1.31.2-k3s1 h1:emEWvPmVxHnZWmWkUPt/On2XF6qZV2lq6rF0aixvZEA=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kube-scheduler v1.31.2-k3s1/go.mod h1:z259VFq5HmPqCcBj78z2uPawedjLkjRagQ98aPQKG8c=
 github.com/k3s-io/kubernetes/staging/src/k8s.io/kubectl v1.31.2-k3s1 h1:NBgxcyI8SHUPdYfNyT8haApxf5rkyb9vCxCfxP8yxr0=
@@ -1167,6 +1169,8 @@ github.com/mitchellh/iochan v1.0.0/go.mod h1:JwYml1nuB7xOzsp52dPpHFffvOCDupsG0Qu
 github.com/mitchellh/mapstructure v0.0.0-20160808181253-ca63d7c062ee/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
 github.com/mitchellh/mapstructure v1.1.2/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=
 github.com/mndrix/tap-go v0.0.0-20171203230836-629fa407e90b/go.mod h1:pzzDgJWZ34fGzaAZGFW22KVZDfyrYW+QABMrWnJBnSs=
+github.com/moby/ipvs v1.1.0 h1:ONN4pGaZQgAx+1Scz5RvWV4Q7Gb+mvfRh3NsPS+1XQQ=
+github.com/moby/ipvs v1.1.0/go.mod h1:4VJMWuf098bsUMmZEiD4Tjk/O7mOn3l1PTD3s4OoYAs=
 github.com/moby/locker v1.0.1 h1:fOXqR41zeveg4fFODix+1Ch4mj/gT0NE1XJbp/epuBg=
 github.com/moby/locker v1.0.1/go.mod h1:S7SDdo5zpBK84bzzVlKr2V0hz+7x9hWbYC/kq7oQppc=
 github.com/moby/spdystream v0.2.0/go.mod h1:f7i0iNDQJ059oMTcWxx8MA/zKFIuD/lY+0GqbN2Wy8c=
@@ -2307,6 +2311,8 @@ sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.30.3 h1:2770sDpzrjjsA
 sigs.k8s.io/apiserver-network-proxy/konnectivity-client v0.30.3/go.mod h1:Ve9uj1L+deCXFrPOk1LpFXqTg7LCFzFso6PA48q/XZw=
 sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd h1:EDPBXCAspyGV4jQlpZSudPeMmr1bNJefnuqLsRAsHZo=
 sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd/go.mod h1:B8JuhiUyNFVKdsE8h686QcCxMaH6HrOAZj4vswFpcB0=
+sigs.k8s.io/knftables v0.0.17 h1:wGchTyRF/iGTIjd+vRaR1m676HM7jB8soFtyr/148ic=
+sigs.k8s.io/knftables v0.0.17/go.mod h1:f/5ZLKYEUPUhVjUCg6l80ACdL7CIIyeL0DxfgojGRTk=
 sigs.k8s.io/kustomize/api v0.17.2 h1:E7/Fjk7V5fboiuijoZHgs4aHuexi5Y2loXlVOAVAG5g=
 sigs.k8s.io/kustomize/api v0.17.2/go.mod h1:UWTz9Ct+MvoeQsHcJ5e+vziRRkwimm3HytpZgIYqye0=
 sigs.k8s.io/kustomize/kustomize/v5 v5.4.2 h1:9Zl5Gqg3XMdBEvkR54pVLCBj7FVO7W+VPNDDEzD6AyE=
