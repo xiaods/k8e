@@ -258,6 +258,7 @@ type Control struct {
 	SANSecurity bool
 	PrivateIP   string
 	Runtime     *ControlRuntime `json:"-"`
+	Cluster     Cluster         `json:"-"`
 }
 
 // BindAddressOrLoopback returns an IPv4 or IPv6 address suitable for embedding in
@@ -315,7 +316,6 @@ type ControlRuntimeBootstrap struct {
 type ControlRuntime struct {
 	ControlRuntimeBootstrap
 
-	HTTPBootstrap                        bool
 	APIServerReady                       <-chan struct{}
 	ContainerRuntimeReady                <-chan struct{}
 	ETCDReady                            <-chan struct{}
@@ -326,7 +326,6 @@ type ControlRuntime struct {
 	ClientKubeAPICert string
 	ClientKubeAPIKey  string
 	NodePasswdFile    string
-	EtcdConfig        *clientv3.Config
 
 	SigningClientCA   string
 	SigningServerCA   string
@@ -339,15 +338,20 @@ type ControlRuntime struct {
 	KubeConfigAPIServer       string
 	KubeConfigCloudController string
 
-	ServingKubeAPICert string
-	ServingKubeAPIKey  string
-	ServingKubeletKey  string
-	ServerToken        string
-	AgentToken         string
-	APIServer          http.Handler
-	Handler            http.Handler
-	Tunnel             http.Handler
-	Authenticator      authenticator.Request
+	ServingKubeAPICert        string
+	ServingKubeAPIKey         string
+	ServingKubeSchedulerCert  string
+	ServingKubeSchedulerKey   string
+	ServingKubeControllerCert string
+	ServingKubeControllerKey  string
+	ServingKubeletKey         string
+	ServerToken               string
+	AgentToken                string
+	APIServer                 http.Handler
+	Handler                   http.Handler
+	HTTPBootstrap             http.Handler
+	Tunnel                    http.Handler
+	Authenticator             authenticator.Request
 
 	EgressSelectorConfig  string
 	CloudControllerConfig string
@@ -384,6 +388,7 @@ type ControlRuntime struct {
 	Event         record.EventRecorder
 	EtcdEndpoints []string
 	EtcdTLSConfig *tls.Config
+	EtcdConfig    *clientv3.Config
 }
 
 type Cluster interface {

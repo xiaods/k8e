@@ -113,7 +113,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 	serverConfig := server.Config{}
 	serverConfig.DisableAgent = cfg.DisableAgent
-	serverConfig.ControlConfig.Runtime = config.NewRuntime(containerRuntimeReady)
+	serverConfig.ControlConfig.Runtime = config.NewRuntime()
 	serverConfig.ControlConfig.Token = cfg.Token
 	serverConfig.ControlConfig.AgentToken = cfg.AgentToken
 	serverConfig.ControlConfig.JoinURL = cfg.ServerURL

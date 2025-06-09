@@ -64,6 +64,26 @@ type Info struct {
 // ValidationOption is a callback to mutate the token prior to use
 type ValidationOption func(*Info)
 
+// WithCACertificate overrides the CA cert and hash with certs loaded from the
+// provided file. It is not an error if the file doesn't exist; the client
+// will just follow the normal hash validation steps if so.
+func WithCACertificate(certFile string) ValidationOption {
+	return func(i *Info) {
+		cacerts, err := os.ReadFile(certFile)
+		if err != nil {
+			return
+		}
+
+		digest, _ := hashCA(cacerts)
+		if i.caHash != "" && i.caHash != digest {
+			return
+		}
+
+		i.caHash = digest
+		i.CACerts = cacerts
+	}
+}
+
 // WithClientCertificate configures certs and keys to be used
 // to authenticate the request.
 func WithClientCertificate(certFile, keyFile string) ValidationOption {

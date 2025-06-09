@@ -10,9 +10,7 @@ import (
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/util"
-	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -31,7 +29,7 @@ func RotateBootstrapToken(ctx context.Context, config *config.Control, oldToken 
 		return err
 	}
 
-	storageClient, err := clientv3.New(*config.Runtime.EtcdConfig)
+	storageClient, err := NewEtcdStorageClient(config.Runtime.EtcdConfig)
 	if err != nil {
 		return err
 	}
@@ -39,13 +37,12 @@ func RotateBootstrapToken(ctx context.Context, config *config.Control, oldToken 
 
 	tokenKey := storageKey(normalizedToken)
 
-	var bootstrapList []*clientv3.GetResponse
+	var bootstrapList []BootstrapValue
 	if err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		resp, err := storageClient.Get(ctx, "/bootstrap", clientv3.WithPrefix())
+		bootstrapList, err = storageClient.List(ctx, "/bootstrap", 0)
 		if err != nil {
 			return false, err
 		}
-		bootstrapList = []*clientv3.GetResponse{resp}
 		return true, nil
 	}); err != nil {
 		return err
@@ -56,7 +53,7 @@ func RotateBootstrapToken(ctx context.Context, config *config.Control, oldToken 
 		return err
 	}
 	// reuse the existing migration function to reencrypt bootstrap data with new token
-	if err := migrateTokens(ctx, []*clientv3.GetResponse{bootstrapList[0]}, storageClient, "", tokenKey, normalizedToken, normalizedOldToken); err != nil {
+	if err := migrateTokens(ctx, bootstrapList, storageClient, "", tokenKey, normalizedToken, normalizedOldToken); err != nil {
 		return err
 	}
 
@@ -91,7 +88,7 @@ func Save(ctx context.Context, config *config.Control, override bool) error {
 		return err
 	}
 
-	storageClient, err := clientv3.New(*config.Runtime.EtcdConfig)
+	storageClient, err := NewEtcdStorageClient(config.Runtime.EtcdConfig)
 	if err != nil {
 		return err
 	}
@@ -103,32 +100,27 @@ func Save(ctx context.Context, config *config.Control, override bool) error {
 	}
 
 	// If there's an empty bootstrap key, then we've locked it and can override.
-	if currentKey != nil && len(currentKey.Value) == 0 {
+	if currentKey != nil && len(currentKey.Data) == 0 {
 		logrus.Info("Bootstrap key lock is held")
 		override = true
 	}
 
-	// Try to create the key, if it exists and override is true, update it
-	resp, err := storageClient.Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(storageKey(normalizedToken)), "=", 0)).
-		Then(clientv3.OpPut(storageKey(normalizedToken), string(data))).
-		Else(clientv3.OpGet(storageKey(normalizedToken))).
-		Commit()
-	if err != nil {
-		if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {
+	if err := storageClient.Create(ctx, storageKey(normalizedToken), data); err != nil {
+		if _, ok := err.(*KeyExistsError); ok {
+			if override {
+				bsd, err := bootstrapKeyData(ctx, storageClient)
+				if err != nil {
+					return err
+				}
+				return storageClient.Update(ctx, storageKey(normalizedToken), bsd.Modified, data)
+			}
+			logrus.Warn("Bootstrap key already exists")
+			return nil
+		} else if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {
 			logrus.Debug("Skipping bootstrap data save on learner")
 			return nil
 		}
 		return err
-	}
-
-	if !resp.Succeeded {
-		if override {
-			_, err := storageClient.Put(ctx, storageKey(normalizedToken), string(data))
-			return err
-		}
-		logrus.Warn("Bootstrap key already exists")
-		return nil
 	}
 
 	return nil
@@ -136,18 +128,18 @@ func Save(ctx context.Context, config *config.Control, override bool) error {
 
 // bootstrapKeyData lists keys stored in the datastore with the prefix "/bootstrap", and
 // will return the first such key. It will return an error if not exactly one key is found.
-func bootstrapKeyData(ctx context.Context, storageClient *clientv3.Client) (*mvccpb.KeyValue, error) {
-	resp, err := storageClient.Get(ctx, "/bootstrap", clientv3.WithPrefix())
+func bootstrapKeyData(ctx context.Context, storageClient *EtcdStorageClient) (*BootstrapValue, error) {
+	bootstrapList, err := storageClient.List(ctx, "/bootstrap", 0)
 	if err != nil {
 		return nil, err
 	}
-	if len(resp.Kvs) == 0 {
+	if len(bootstrapList) == 0 {
 		return nil, errors.New("no bootstrap data found")
 	}
-	if len(resp.Kvs) > 1 {
+	if len(bootstrapList) > 1 {
 		return nil, errors.New("found multiple bootstrap keys in storage")
 	}
-	return resp.Kvs[0], nil
+	return &bootstrapList[0], nil
 }
 
 // storageBootstrap loads data from the datastore's bootstrap key into the
@@ -161,7 +153,7 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 		return err
 	}
 
-	storageClient, err := clientv3.New(*c.config.Runtime.EtcdConfig)
+	storageClient, err := NewEtcdStorageClient(c.config.Runtime.EtcdConfig)
 	if err != nil {
 		return err
 	}
@@ -180,6 +172,13 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 			// that's AFTER generating CA certs and tokens. If the config is updated to set the
 			// matching key, further startups will still be blocked pending cleanup of the
 			// "newer" files as per the bootstrap reconciliation code.
+
+			_, err = getBootstrapValues(ctx, storageClient)
+			if err != nil {
+				return err
+			}
+			logrus.Info("Datastore connection validated successfully, proceeding with bootstrap data generation")
+
 			c.saveBootstrap = true
 			return nil
 		}
@@ -192,8 +191,12 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 
 	attempts := 0
 	tokenKey := storageKey(normalizedToken)
-	return wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
+	return wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		attempts++
+
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+
 		value, saveBootstrap, err := getBootstrapKeyFromStorage(ctx, storageClient, normalizedToken, token)
 		c.saveBootstrap = saveBootstrap
 		if err != nil {
@@ -204,30 +207,25 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 			// No bootstrap keys found in the datastore - create an empty bootstrap key as a lock to
 			// ensure that no other node races us to populate it.  If we fail to create the key, then
 			// some other node beat us to it and we should just wait for them to finish.
-			resp, err := storageClient.Txn(ctx).
-				If(clientv3.Compare(clientv3.CreateRevision(tokenKey), "=", 0)).
-				Then(clientv3.OpPut(tokenKey, "")).
-				Commit()
-			if err != nil {
+			if err := storageClient.Create(ctx, tokenKey, []byte{}); err != nil {
+				if _, ok := err.(*KeyExistsError); ok {
+					logrus.Info("Bootstrap key already locked - waiting for data to be populated by another server")
+					return false, nil
+				}
 				return false, err
-			}
-			if !resp.Succeeded {
-				logrus.Info("Bootstrap key already locked - waiting for data to be populated by another server")
-				return false, nil
 			}
 			logrus.Info("Bootstrap key locked for initial create")
 			return true, nil
 		}
 
-		if len(value.Value) == 0 {
+		if len(value.Data) == 0 {
 			// Empty (locked) bootstrap key found - check to see if we should continue waiting, or
 			// delete it and attempt to retake the lock on the next iteration (assuming that the
 			// other node failed while holding the lock).
 			if attempts >= maxBootstrapWaitAttempts {
 				logrus.Info("Bootstrap key lock timed out - deleting lock and retrying")
 				attempts = 0
-				_, err := storageClient.Delete(ctx, tokenKey)
-				if err != nil {
+				if err := storageClient.Delete(ctx, tokenKey, value.Modified); err != nil {
 					return false, err
 				}
 			} else {
@@ -236,7 +234,7 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 			return false, nil
 		}
 
-		data, err := decrypt(normalizedToken, value.Value)
+		data, err := decrypt(normalizedToken, value.Data)
 		if err != nil {
 			return false, err
 		}
@@ -245,29 +243,60 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 	})
 }
 
-// getBootstrapKeyFromStorage will list all keys that has prefix /bootstrap and will check for key that is
-// hashed with empty string and will check for any key that is hashed by different token than the one
-// passed to it, it will return error if it finds a key that is hashed with different token and will return
-// value if it finds the key hashed by passed token or empty string.
-// Upon receiving a "not supported for learner" error from etcd, this function will retry until the context is cancelled.
-func getBootstrapKeyFromStorage(ctx context.Context, storageClient *clientv3.Client, normalizedToken, oldToken string) (*mvccpb.KeyValue, bool, error) {
-	emptyStringKey := storageKey("")
-	tokenKey := storageKey(normalizedToken)
+// getBootstrapData makes a single attempt to retrieve and decrypt bootstrap data from the datastore.
+func (c *Cluster) getBootstrapData(ctx context.Context, token string) ([]byte, error) {
+	storageClient, err := NewEtcdStorageClient(c.config.Runtime.EtcdConfig)
+	if err != nil {
+		return nil, err
+	}
+	defer storageClient.Close()
 
-	var bootstrapList []*mvccpb.KeyValue
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	value, err := storageClient.Get(ctx, storageKey(token))
+	if err != nil {
+		return nil, err
+	}
+
+	return decrypt(token, value.Data)
+}
+
+// getBootstrapValues returns the value of all keys under the "/bootstrap" prefix, with a 10 second timeout.
+func getBootstrapValues(ctx context.Context, storageClient *EtcdStorageClient) ([]BootstrapValue, error) {
+	var bootstrapList []BootstrapValue
 	var err error
 
 	if err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		resp, err := storageClient.Get(ctx, "/bootstrap", clientv3.WithPrefix())
+		operationCtx, operationCancel := context.WithTimeout(ctx, 10*time.Second)
+		defer operationCancel()
+
+		bootstrapList, err = storageClient.List(operationCtx, "/bootstrap", 0)
 		if err != nil {
 			if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {
 				return false, nil
 			}
 			return false, err
 		}
-		bootstrapList = resp.Kvs
 		return true, nil
 	}); err != nil {
+		logrus.Errorf("Failed to validate datastore connection: %v", err)
+		return nil, err
+	}
+	return bootstrapList, nil
+}
+
+// getBootstrapKeyFromStorage will list all keys that has prefix /bootstrap and will check for key that is
+// hashed with empty string and will check for any key that is hashed by different token than the one
+// passed to it, it will return error if it finds a key that is hashed with different token and will return
+// value if it finds the key hashed by passed token or empty string.
+// Upon receiving a "not supported for learner" error from etcd, this function will retry until the context is cancelled.
+func getBootstrapKeyFromStorage(ctx context.Context, storageClient *EtcdStorageClient, normalizedToken, oldToken string) (*BootstrapValue, bool, error) {
+	emptyStringKey := storageKey("")
+	tokenKey := storageKey(normalizedToken)
+
+	bootstrapList, err := getBootstrapValues(ctx, storageClient)
+	if err != nil {
 		return nil, false, err
 	}
 
@@ -278,22 +307,20 @@ func getBootstrapKeyFromStorage(ctx context.Context, storageClient *clientv3.Cli
 		logrus.Warn("found multiple bootstrap keys in storage")
 	}
 	// check for empty string key and for old token format with k10 prefix
-	getResp := &clientv3.GetResponse{Kvs: bootstrapList}
-	if err := migrateTokens(ctx, []*clientv3.GetResponse{getResp}, storageClient, emptyStringKey, tokenKey, normalizedToken, oldToken); err != nil {
+	if err := migrateTokens(ctx, bootstrapList, storageClient, emptyStringKey, tokenKey, normalizedToken, oldToken); err != nil {
 		return nil, false, err
 	}
 
 	// getting the list of bootstrap again after migrating the empty key
-	resp, err := storageClient.Get(ctx, "/bootstrap", clientv3.WithPrefix())
+	bootstrapList, err = storageClient.List(ctx, "/bootstrap", 0)
 	if err != nil {
 		return nil, false, err
 	}
-	bootstrapList = resp.Kvs
 	for _, bootstrapKV := range bootstrapList {
 		// ensure bootstrap is stored in the current token's key
 		logrus.Debugf("checking bootstrap key %s against %s", string(bootstrapKV.Key), tokenKey)
 		if string(bootstrapKV.Key) == tokenKey {
-			return bootstrapKV, false, nil
+			return &bootstrapKV, false, nil
 		}
 	}
 
@@ -303,25 +330,23 @@ func getBootstrapKeyFromStorage(ctx context.Context, storageClient *clientv3.Cli
 // migrateTokens will list all keys that has prefix /bootstrap and will check for key that is
 // hashed with empty string and keys that is hashed with old token format before normalizing
 // then migrate those and resave only with the normalized token
-func migrateTokens(ctx context.Context, bootstrapList []*clientv3.GetResponse, storageClient *clientv3.Client, emptyStringKey, tokenKey, token, oldToken string) error {
+func migrateTokens(ctx context.Context, bootstrapList []BootstrapValue, storageClient *EtcdStorageClient, emptyStringKey, tokenKey, normalizedToken, oldToken string) error {
 	oldTokenKey := storageKey(oldToken)
 
-	for _, resp := range bootstrapList {
-		for _, bootstrapKV := range resp.Kvs {
-			// checking for empty string bootstrap key
-			logrus.Debug("Comparing ", string(bootstrapKV.Key), " to ", oldTokenKey)
-			if string(bootstrapKV.Key) == emptyStringKey {
-				logrus.Warn("Bootstrap data encrypted with empty string, deleting and resaving with token")
-				if err := doMigrateToken(ctx, storageClient, bootstrapKV, "", emptyStringKey, token, tokenKey); err != nil {
-					return err
-				}
-			} else if string(bootstrapKV.Key) == oldTokenKey && oldTokenKey != tokenKey {
-				if emptyStringKey != "" {
-					logrus.Warn("bootstrap data encrypted with old token format string, deleting and resaving with token")
-				}
-				if err := doMigrateToken(ctx, storageClient, bootstrapKV, oldToken, oldTokenKey, token, tokenKey); err != nil {
-					return err
-				}
+	for _, bootstrapKV := range bootstrapList {
+		// checking for empty string bootstrap key
+		logrus.Debug("Comparing ", string(bootstrapKV.Key), " to ", oldTokenKey)
+		if string(bootstrapKV.Key) == emptyStringKey {
+			logrus.Warn("Bootstrap data encrypted with empty string, deleting and resaving with token")
+			if err := doMigrateToken(ctx, storageClient, bootstrapKV, "", emptyStringKey, normalizedToken, tokenKey); err != nil {
+				return err
+			}
+		} else if string(bootstrapKV.Key) == oldTokenKey && oldTokenKey != tokenKey {
+			if emptyStringKey != "" {
+				logrus.Warn("bootstrap data encrypted with old token format string, deleting and resaving with token")
+			}
+			if err := doMigrateToken(ctx, storageClient, bootstrapKV, oldToken, oldTokenKey, normalizedToken, tokenKey); err != nil {
+				return err
 			}
 		}
 	}
@@ -329,9 +354,9 @@ func migrateTokens(ctx context.Context, bootstrapList []*clientv3.GetResponse, s
 	return nil
 }
 
-func doMigrateToken(ctx context.Context, storageClient *clientv3.Client, keyValue *mvccpb.KeyValue, oldToken, oldTokenKey, newToken, newTokenKey string) error {
+func doMigrateToken(ctx context.Context, storageClient *EtcdStorageClient, keyValue BootstrapValue, oldToken, oldTokenKey, newToken, newTokenKey string) error {
 	// make sure that the process is non-destructive by decrypting/re-encrypting/storing the data before deleting the old key
-	data, err := decrypt(oldToken, keyValue.Value)
+	data, err := decrypt(oldToken, keyValue.Data)
 	if err != nil {
 		return err
 	}
@@ -342,24 +367,20 @@ func doMigrateToken(ctx context.Context, storageClient *clientv3.Client, keyValu
 	}
 
 	// saving the new encrypted data with the right token key
-	resp, err := storageClient.Txn(ctx).
-		If(clientv3.Compare(clientv3.CreateRevision(newTokenKey), "=", 0)).
-		Then(clientv3.OpPut(newTokenKey, string(encryptedData))).
-		Commit()
-	if err != nil {
-		if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {
+	if err := storageClient.Create(ctx, newTokenKey, encryptedData); err != nil {
+		if _, ok := err.(*KeyExistsError); ok {
+			logrus.Warn("bootstrap key exists")
+		} else if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {
 			logrus.Debug("skipping bootstrap data save on learner")
 			return nil
+		} else {
+			return err
 		}
-		return err
-	}
-	if !resp.Succeeded {
-		logrus.Warn("bootstrap key exists")
 	}
 
 	logrus.Infof("created bootstrap key %s", newTokenKey)
 	// deleting the old key
-	if _, err := storageClient.Delete(ctx, oldTokenKey); err != nil {
+	if err := storageClient.Delete(ctx, oldTokenKey, keyValue.Modified); err != nil {
 		logrus.Warnf("failed to delete old bootstrap key %s", oldTokenKey)
 	}
 
