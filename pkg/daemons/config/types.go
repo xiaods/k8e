@@ -28,7 +28,7 @@ const (
 	EgressSelectorModeCluster  = "cluster"
 	EgressSelectorModeDisabled = "disabled"
 	EgressSelectorModePod      = "pod"
-	cateRenewDays              = 120
+	CertificateRenewDays       = 120
 	StreamServerPort           = "10010"
 )
 
@@ -184,6 +184,7 @@ type CriticalControlArgs struct {
 	DisableCCM            bool         `cli:"disable-cloud-controller"`
 	DisableHelmController bool         `cli:"disable-helm-controller"`
 	EncryptSecrets        bool         `cli:"secrets-encryption"`
+	EncryptProvider       string       `cli:"secrets-encryption-provider"`
 	EmbeddedRegistry      bool         `cli:"embedded-registry"`
 	EgressSelectorMode    string       `cli:"egress-selector-mode"`
 	ServiceIPRange        *net.IPNet   `cli:"service-cidr"`

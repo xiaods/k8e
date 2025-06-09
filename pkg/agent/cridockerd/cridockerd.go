@@ -1,17 +1,24 @@
+//go:build !no_cri_dockerd
+// +build !no_cri_dockerd
+
 package cridockerd
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime/debug"
 	"strings"
 
 	"github.com/Mirantis/cri-dockerd/cmd"
 	"github.com/Mirantis/cri-dockerd/cmd/version"
+
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/cri"
 	"github.com/xiaods/k8e/pkg/cgroups"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/util"
+
 	utilsnet "k8s.io/utils/net"
 )
 
@@ -32,7 +39,12 @@ func Run(ctx context.Context, cfg *config.Node) error {
 				logrus.WithField("stack", string(debug.Stack())).Fatalf("cri-dockerd panic: %v", err)
 			}
 		}()
-		logrus.Fatalf("cri-dockerd exited: %v", command.ExecuteContext(ctx))
+		err := command.ExecuteContext(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logrus.Errorf("cri-dockerd exited: %v", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}()
 
 	return cri.WaitForService(ctx, cfg.CRIDockerd.Address, "cri-dockerd")
@@ -42,6 +54,7 @@ func getDockerCRIArgs(cfg *config.Node) []string {
 	argsMap := map[string]string{
 		"container-runtime-endpoint": cfg.CRIDockerd.Address,
 		"cri-dockerd-root-directory": cfg.CRIDockerd.Root,
+		"streaming-bind-addr":        "127.0.0.1:10010",
 	}
 
 	if dualNode, _ := utilsnet.IsDualStackIPs(cfg.AgentConfig.NodeIPs); dualNode {
@@ -78,5 +91,5 @@ func getDockerCRIArgs(cfg *config.Node) []string {
 		argsMap["runtime-cgroups"] = runtimeRoot
 	}
 
-	return config.GetArgs(argsMap, nil)
+	return util.GetArgs(argsMap, nil)
 }
