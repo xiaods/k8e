@@ -11,7 +11,7 @@ import (
 
 // GenerateDataDir creates a temporary directory at "/tmp/k8e/<RANDOM_STRING>/".
 // The latest directory created with this function is soft linked to "/tmp/k8e/latest/".
-// This allows tests to replicate the "/var/lib/k8e" directory structure.
+// This allows tests to replicate the "/var/lib/rancher/k8e" directory structure.
 func GenerateDataDir(cnf *config.Control) error {
 	if err := os.MkdirAll(cnf.DataDir, 0700); err != nil {
 		return err
@@ -43,7 +43,8 @@ func CleanupDataDir(cnf *config.Control) {
 // GenerateRuntime creates a temporary data dir and configures
 // config.ControlRuntime with all the appropriate certificate keys.
 func GenerateRuntime(cnf *config.Control) error {
-	cnf.Runtime = config.NewRuntime(nil)
+	// reuse ready channel from existing runtime if set
+	cnf.Runtime = config.NewRuntime()
 	if err := GenerateDataDir(cnf); err != nil {
 		return err
 	}

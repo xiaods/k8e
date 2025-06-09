@@ -375,9 +375,9 @@ func cloudControllerManager(ctx context.Context, cfg *config.Control) error {
 		argsMap["controllers"] = argsMap["controllers"] + ",-cloud-node,-cloud-node-lifecycle"
 		argsMap["secure-port"] = "0"
 	}
-	if cfg.DisableServiceLB {
-		argsMap["controllers"] = argsMap["controllers"] + ",-service"
-	}
+
+	argsMap["controllers"] = argsMap["controllers"] + ",-service"
+
 	if cfg.VLevel != 0 {
 		argsMap["v"] = strconv.Itoa(cfg.VLevel)
 	}
