@@ -28,3 +28,4 @@ __pycache__
 /tests/.vscode
 /sonobuoy-output
 *.tmp
+.trae/*
