@@ -117,7 +117,6 @@ require (
 	github.com/rancher/permissions v0.0.0-20240523180510-4001d3d637f7
 	github.com/rancher/remotedialer v0.4.1
 	github.com/rancher/wharfie v0.6.7
-	github.com/rancher/wrangler v0.8.8
 	github.com/rancher/wrangler/v3 v3.1.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/rootless-containers/rootlesskit v1.0.1
