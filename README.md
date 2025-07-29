@@ -21,7 +21,7 @@
 - **No kube-proxy component**
 
 ## Quick Start - Building && Installing
-- [Installation Guide]() -- Coming soon !!!
+- [Installation Guide](https://getk8e-site.pages.dev/docs/install/200-quick-start/) 🚀🚀🚀
 
 ## Acknowledgments
 This project is deeply inspired by and references the excellent work of the [K3s](https://github.com/k3s-io/k3s) project. We are grateful to the K3s community for their outstanding contributions to the Kubernetes ecosystem, which have made this project possible.
