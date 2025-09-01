@@ -6,9 +6,9 @@
   />
 </p>
 
-# K8e 🚀 - Instantly Ready Kubernetes Enterprise Edition
+# KEE 🚀 - Instantly Ready Kubernetes Enterprise Edition
 
-[Kubernetes Easy Engine (k8e) 🚀](https://github.com/xiaods/k8e) is a lightweight, scalable enterprise-grade Kubernetes distribution that allows users to manage, protect, and obtain out-of-the-box Kubernetes clusters in a unified manner. It is suitable for enterprise environments.
+[Kubernetes Easy Engine (KEE) 🚀](https://github.com/xiaods/k8e) is a lightweight, scalable enterprise-grade Kubernetes distribution that allows users to manage, protect, and obtain out-of-the-box Kubernetes clusters in a unified manner. It is suitable for enterprise environments.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/xiaods/k8e)](https://goreportcard.com/report/github.com/xiaods/k8e)
 [![License](https://img.shields.io/hexpm/l/apa)](https://github.com/xiaods/k8e/blob/main/LICENSE)
