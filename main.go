@@ -27,7 +27,8 @@ import (
 
 func main() {
 	app := cmds.NewApp()
-	app.Commands = []cli.Command{
+	app.DisableSliceFlagSeparator = true
+	app.Commands = []*cli.Command{
 		cmds.NewServerCommand(server.Run),
 		cmds.NewAgentCommand(agent.Run),
 		cmds.NewKubectlCommand(kubectl.Run),
@@ -52,7 +53,10 @@ func main() {
 			cert.Rotate,
 			cert.RotateCA,
 		),
-		cmds.NewCompletionCommand(completion.Run),
+		cmds.NewCompletionCommand(
+			completion.Bash,
+			completion.Zsh,
+		),
 	}
 
 	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil && !errors.Is(err, context.Canceled) {
