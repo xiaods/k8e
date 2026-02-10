@@ -1,6 +1,6 @@
 <p align="center">
   <img
-    src="docs/assets/k8e-logo.svg"
+    src="docs/assets/k8e-logo.png"
     alt="K8e"
     width="200"
   />
