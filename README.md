@@ -6,9 +6,13 @@
         <img src="https://raw.githubusercontent.com/xiaods/k8e/main/docs/assets/k8e-logo.png" alt="K8E" width="500">
     </picture>
 </p>
+<p>
+    <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
+    <img src="https://img.shields.io/badge/Arch-x86__64%2C%20ARM64%2C%20RISC--V-blue" alt="Hardware">
+    <img src="https://img.shields.io/badge/license-Apache%202.0-blue" alt="License">
+</p>
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/xiaods/k8e)](https://goreportcard.com/report/github.com/xiaods/k8e)
-[![License](https://img.shields.io/hexpm/l/apa)](https://github.com/xiaods/k8e/blob/main/LICENSE)
+---
 
 **K8E** (Kubernetes Easy Engine) is a lightweight, CNCF-conformant Kubernetes distribution engineered for rapid deployment and enterprise-scale operations. Built on the foundation of K3s with strategic enhancements for production environments, **K8E** delivers a fully compliant Kubernetes experience in a single binary under 100 MB—enabling clusters to be up and running in under 60 seconds.
 
