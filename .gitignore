@@ -28,4 +28,5 @@ __pycache__
 /tests/.vscode
 /sonobuoy-output
 *.tmp
-.trae/*
+.zig-cache
+zig-out

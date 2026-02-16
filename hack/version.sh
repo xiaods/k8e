@@ -63,7 +63,11 @@ fi
 VERSION_CNIPLUGINS="v1.6.0-k3s1"
 
 DEPENDENCIES_URL="https://raw.githubusercontent.com/kubernetes/kubernetes/${VERSION_K8S}/build/dependencies.yaml"
-VERSION_GOLANG="go"$(curl -sL "${DEPENDENCIES_URL}" | yq e '.dependencies[] | select(.name == "golang: upstream version").version' -)
+if command -v yq >/dev/null 2>&1 && yq --version >/dev/null 2>&1; then
+    VERSION_GOLANG="go"$(curl -sL "${DEPENDENCIES_URL}" | yq e '.dependencies[] | select(.name == "golang: upstream version").version' -)
+else
+    VERSION_GOLANG="go"$(curl -sL "${DEPENDENCIES_URL}" | grep -A 2 "golang: upstream version" | grep "version:" | cut -d: -f2 | xargs)
+fi
 
 
 if [[ -n "$GIT_TAG" ]]; then
@@ -81,3 +85,4 @@ BINARY_POSTFIX=
 if [ ${OS} = windows ]; then
     BINARY_POSTFIX=.exe
 fi
+export VERSION VERSION_TAG VERSION_GOLANG VERSION_K8S VERSION_CRICTL VERSION_CONTAINERD VERSION_CNIPLUGINS VERSION_RUNC VERSION_HCSSHIM VERSION_CRI_DOCKERD PKG_CONTAINERD_K8E COMMIT TREE_STATE

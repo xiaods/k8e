@@ -1,31 +1,31 @@
-TARGETS := $(shell ls hack | grep -v \\.sh)
-GO_FILES ?= $$(find . -name '*.go' | grep -v generated)
+.DEFAULT_GOAL := all
 
-.dapper:
-	@echo Downloading dapper
-	@curl -sL https://releases.rancher.com/dapper/v0.6.0/dapper-$$(uname -s)-$$(uname -m) > .dapper.tmp
-	@@chmod +x .dapper.tmp
-	@./.dapper.tmp -v
-	@mv .dapper.tmp .dapper
+.PHONY: all k8e clean deps format generate package package-cli package-airgap
 
-$(TARGETS): .dapper
-	./.dapper $@
+all:
+	zig build all
 
-.PHONY: deps
+k8e:
+	zig build k8e
+
+clean:
+	rm -rf bin .zig-cache zig-out
+
 deps:
 	go mod tidy
 
+format:
+	go fmt ./...
+	zig fmt build.zig
 
-.DEFAULT_GOAL := ci
+generate:
+	hack/generate
 
-.PHONY: $(TARGETS)
+package:
+	hack/package
 
-build/data:
-	mkdir -p $@
+package-cli:
+	hack/package-cli
 
 package-airgap:
-	./hack/package-airgap.sh
-
-format:
-	gofmt -s -l -w $(GO_FILES)
-	goimports -w $(GO_FILES)
+	hack/package-airgap.sh
