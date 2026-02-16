@@ -1,7 +1,7 @@
 on:
   release:
     types:
-    - published
+      - published
 name: Build Arm64 Release
 jobs:
   build:
@@ -17,25 +17,31 @@ jobs:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
     steps:
-    - uses: actions/checkout@master
-    - uses: actions/setup-go@v5
-      with:
-        go-version: '1.22'
-        check-latest: true
-        cache-dependency-path: subdir/go.sum
-    - name: generate resources
-      run: mkdir -p {build/data,build/static}
-    - name: package bin
-      run: SKIP_VALIDATE=true make
-    - name: package airgap image
-      run: make package-airgap
-    - name: sha256sum artifacts
-      run: cd dist/artifacts/ && sha256sum k8e-${{ matrix.goarch }} k8e-airgap-images-${{ matrix.goarch }}.tar.gz >> k8e-hashes-${{ matrix.goarch }}.txt
-    - name: Uploading assets...
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          dist/artifacts/k8e-${{ matrix.goarch }}
-          dist/artifacts/k8e-airgap-images-${{ matrix.goarch }}.tar.gz
-          dist/artifacts/k8e-images-${{ matrix.goarch }}.txt
-          dist/artifacts/k8e-hashes-${{ matrix.goarch }}.txt
+      - uses: actions/checkout@master
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          check-latest: true
+          cache-dependency-path: go.sum
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: generate resources
+        run: |
+          mkdir -p {build/data,build/static}
+          zig build download
+      - name: package bin
+        run: SKIP_VALIDATE=true make
+      - name: package airgap image
+        run: make package-airgap
+      - name: sha256sum artifacts
+        run: cd dist/artifacts/ && sha256sum k8e-${{ matrix.goarch }} k8e-airgap-images-${{ matrix.goarch }}.tar.gz >> k8e-hashes-${{ matrix.goarch }}.txt
+      - name: Uploading assets...
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/artifacts/k8e-${{ matrix.goarch }}
+            dist/artifacts/k8e-airgap-images-${{ matrix.goarch }}.tar.gz
+            dist/artifacts/k8e-images-${{ matrix.goarch }}.txt
+            dist/artifacts/k8e-hashes-${{ matrix.goarch }}.txt

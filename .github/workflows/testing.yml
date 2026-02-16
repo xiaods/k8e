@@ -16,27 +16,32 @@ jobs:
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
     steps:
-    - uses: actions/checkout@v2
-      with:
-        ref: 'dev'
-    - uses: actions/setup-go@v5
-      with:
-        go-version: '1.23'
-        check-latest: true
-        cache-dependency-path: subdir/go.sum
-    - name: generate resources
-      run: |
-        mkdir -p {build/data,build/static}
-        go generate ./...
-    - name: Test
-      id: gotest
-      run: |
-        export GOPATH="$HOME/go/"
-        export PATH=$PATH:$GOPATH/bin
-        go install github.com/jstemmer/go-junit-report/v2@latest
-        go test -v 2>&1 ./... | go-junit-report -set-exit-code > report.xml
-    - name: Publish Unit Test Results
-      uses: EnricoMi/publish-unit-test-result-action@v1.39
-      if: always()
-      with:
-        files: "./report.xml"
+      - uses: actions/checkout@v2
+        with:
+          ref: "dev"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          check-latest: true
+          cache-dependency-path: go.sum
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: generate resources
+        run: |
+          mkdir -p {build/data,build/static}
+          zig build download
+          go generate ./...
+      - name: Test
+        id: gotest
+        run: |
+          export GOPATH="$HOME/go/"
+          export PATH=$PATH:$GOPATH/bin
+          go install github.com/jstemmer/go-junit-report/v2@latest
+          zig build test 2>&1 | go-junit-report -set-exit-code > report.xml
+      - name: Publish Unit Test Results
+        uses: EnricoMi/publish-unit-test-result-action@v1.39
+        if: always()
+        with:
+          files: "./report.xml"
