@@ -13,14 +13,14 @@ jobs:
           - goarch: amd64
             goos: linux
     env:
-      RELEASE_TAG: ${{secrets.RELEASE_TAG}}
+      RELEASE_TAG: ${{ secrets.RELEASE_TAG }}
       GOOS: ${{ matrix.goos }}
       GOARCH: ${{ matrix.goarch }}
     steps:
-      - uses: actions/checkout@master
+      - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: go.mod
           check-latest: true
           cache-dependency-path: go.sum
       - name: Setup Zig
@@ -31,17 +31,19 @@ jobs:
         run: sudo apt-get install -y libseccomp-dev
       - name: generate resources
         run: |
-          mkdir -p {build/data,build/static}
+          mkdir -p build/data build/static
           zig build download
           make generate
+      - name: build k8e
+        run: make k8e
       - name: package bin
-        run: SKIP_VALIDATE=true make
+        run: make package-cli
       - name: package airgap image
         run: make package-airgap
       - name: sha256sum artifacts
         run: cd dist/artifacts/ && sha256sum k8e k8e-airgap-images.tar.gz >> k8e-hashes.txt
       - name: Uploading assets...
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/artifacts/k8e
