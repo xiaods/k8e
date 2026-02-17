@@ -39,9 +39,9 @@ pub fn build(b: *std.Build) !void {
 
     // Symlinks
     const k8e_binaries = [_][]const u8{
-        "k8e-agent", "k8e-server", "k8e-token", "k8e-etcd-snapshot",
-        "k8e-secrets-encrypt", "k8e-certificate", "k8e-completion",
-        "kubectl", "containerd", "crictl", "ctr",
+        "k8e-agent",           "k8e-server",      "k8e-token",      "k8e-etcd-snapshot",
+        "k8e-secrets-encrypt", "k8e-certificate", "k8e-completion", "kubectl",
+        "containerd",          "crictl",          "ctr",
     };
     for (k8e_binaries) |name| {
         const bin_path = b.fmt("bin/{s}", .{name});
@@ -92,7 +92,7 @@ fn buildGoBinary(b: *std.Build, target: std.Build.ResolvedTarget, options: struc
     go_build.setEnvironmentVariable("GOOS", goos);
     go_build.setEnvironmentVariable("GOARCH", goarch);
     go_build.setEnvironmentVariable("CGO_ENABLED", "1");
-    const zig_target = b.fmt("{s}-{s}-{s}", .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag), @tagName(target.result.abi) });
+    const zig_target = b.fmt("{s}-{s}-{s}", .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag), if (target.result.os.tag == .linux) "musl" else @tagName(target.result.abi) });
     go_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{zig_target}));
     go_build.setEnvironmentVariable("CXX", b.fmt("zig c++ -target {s}", .{zig_target}));
     go_build.addArgs(&.{ "-tags", options.tags });
