@@ -54,7 +54,44 @@ pub fn build(b: *std.Build) !void {
     const go_test = b.addSystemCommand(&.{ "go", "test", "-v", "./..." });
     test_step.dependOn(&go_test.step);
 
+    // Build containerd-shim-runc-v2 (Linux only)
+    const shim_step = b.step("shim", "Build containerd-shim-runc-v2");
+    const shim_tags = "netgo osusergo static_build";
+    const containerd_src = "build/src/github.com/containerd/containerd";
+    const shim_build = b.addSystemCommand(&.{ "go", "build" });
+    shim_build.setEnvironmentVariable("CGO_ENABLED", "1");
+    shim_build.setEnvironmentVariable("GOPATH", b.fmt("{s}/build", .{b.build_root}));
+    const shim_zig_target = b.fmt("{s}-linux-musl", .{@tagName(target.result.cpu.arch)});
+    shim_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{shim_zig_target}));
+    shim_build.setEnvironmentVariable("CXX", b.fmt("zig c++ -target {s}", .{shim_zig_target}));
+    shim_build.setEnvironmentVariable("GOOS", "linux");
+    shim_build.setEnvironmentVariable("GOARCH", goarch_str(target));
+    shim_build.setCwd(b.path(containerd_src));
+    const shim_ldflags = b.fmt("-w -s -extldflags '-static' -X {s}/version.Version={s} -X {s}/version.Package={s}", .{
+        "github.com/containerd/containerd", version_env.get("VERSION_CONTAINERD") orelse "v0.0.0",
+        "github.com/containerd/containerd", version_env.get("PKG_CONTAINERD_K8E") orelse "github.com/containerd/containerd",
+    });
+    shim_build.addArgs(&.{ "-tags", shim_tags, "-ldflags", shim_ldflags, "-o", b.fmt("{s}/bin/containerd-shim-runc-v2", .{b.build_root}), "./cmd/containerd-shim-runc-v2" });
+    shim_build.step.dependOn(&download_cmd.step);
+    shim_step.dependOn(&shim_build.step);
+
+    // Build runc (Linux only)
+    const runc_step = b.step("runc", "Build runc");
+    const runc_src = "build/src/github.com/opencontainers/runc";
+    const runc_build = b.addSystemCommand(&.{"make"});
+    runc_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{shim_zig_target}));
+    runc_build.setEnvironmentVariable("EXTRA_LDFLAGS", "-w -s");
+    runc_build.setEnvironmentVariable("BUILDTAGS", "apparmor seccomp");
+    runc_build.setCwd(b.path(runc_src));
+    runc_build.addArgs(&.{"static"});
+    runc_build.step.dependOn(&download_cmd.step);
+    const runc_cp = b.addSystemCommand(&.{ "cp", "-f", b.fmt("{s}/{s}/runc", .{ b.build_root, runc_src }), b.fmt("{s}/bin/runc", .{b.build_root}) });
+    runc_cp.step.dependOn(&runc_build.step);
+    runc_step.dependOn(&runc_cp.step);
+
     all_step.dependOn(k8e_step);
+    all_step.dependOn(shim_step);
+    all_step.dependOn(runc_step);
 }
 
 fn getVersionEnv(b: *std.Build) !std.StringHashMap([]const u8) {
@@ -70,6 +107,15 @@ fn getVersionEnv(b: *std.Build) !std.StringHashMap([]const u8) {
     return map;
 }
 
+fn goarch_str(target: std.Build.ResolvedTarget) []const u8 {
+    return switch (target.result.cpu.arch) {
+        .x86_64 => "amd64",
+        .aarch64 => "arm64",
+        .arm => "arm",
+        else => "amd64",
+    };
+}
+
 fn buildGoBinary(b: *std.Build, target: std.Build.ResolvedTarget, options: struct {
     name: []const u8,
     package: []const u8,
@@ -83,12 +129,7 @@ fn buildGoBinary(b: *std.Build, target: std.Build.ResolvedTarget, options: struc
         .macos => "darwin",
         else => "linux",
     };
-    const goarch = switch (target.result.cpu.arch) {
-        .x86_64 => "amd64",
-        .aarch64 => "arm64",
-        .arm => "arm",
-        else => "amd64",
-    };
+    const goarch = goarch_str(target);
     go_build.setEnvironmentVariable("GOOS", goos);
     go_build.setEnvironmentVariable("GOARCH", goarch);
     go_build.setEnvironmentVariable("CGO_ENABLED", "1");
