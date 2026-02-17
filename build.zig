@@ -118,12 +118,13 @@ pub fn build(b: *std.Build) !void {
     const zig_arch = @tagName(target.result.cpu.arch);
     const seccomp_build_script = try std.fmt.allocPrint(
         b.allocator,
-        "set -ex && rm -rf {s} && mkdir -p {s} && cd {s}" ++
+        "set -ex && rm -rf {s} && mkdir -p {s}/bin && cd {s}" ++
             " && curl -sL https://github.com/seccomp/libseccomp/releases/download/v{s}/libseccomp-{s}.tar.gz | tar xz" ++
             " && cd libseccomp-{s}" ++
-            " && ./configure --host={s}-linux-musl --prefix={s} CC=\"zig cc -target {s}\" --enable-static --disable-shared" ++
+            " && if ! command -v gperf >/dev/null 2>&1; then printf '#!/bin/sh\\necho gperf stub\\n' > {s}/bin/gperf && chmod +x {s}/bin/gperf; fi" ++
+            " && PATH=\"{s}/bin:$PATH\" ./configure --host={s}-linux-musl --prefix={s} CC=\"zig cc -target {s}\" --enable-static --disable-shared" ++
             " && make -j$(nproc) install",
-        .{ seccomp_dir, seccomp_dir, seccomp_dir, seccomp_version, seccomp_version, seccomp_version, zig_arch, seccomp_install, shim_zig_target },
+        .{ seccomp_dir, seccomp_dir, seccomp_dir, seccomp_version, seccomp_version, seccomp_version, seccomp_dir, seccomp_dir, seccomp_dir, zig_arch, seccomp_install, shim_zig_target },
     );
     const seccomp_build = b.addSystemCommand(&.{ "bash", "-c", seccomp_build_script });
 
