@@ -1,6 +1,6 @@
 module github.com/xiaods/k8e
 
-go 1.23.6
+go 1.22.8
 
 replace (
 	github.com/Microsoft/hcsshim => github.com/Microsoft/hcsshim v0.11.7
