@@ -115,8 +115,10 @@ pub fn build(b: *std.Build) !void {
     const runc_step = b.step("runc", "Build runc");
     const runc_src = "build/src/github.com/opencontainers/runc";
     const runc_build = b.addSystemCommand(&.{"make"});
+    runc_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{shim_zig_target}));
     runc_build.setEnvironmentVariable("EXTRA_LDFLAGS", "-w -s");
-    runc_build.setEnvironmentVariable("BUILDTAGS", "apparmor seccomp");
+    runc_build.setEnvironmentVariable("BUILDTAGS", "apparmor");
+    runc_build.setEnvironmentVariable("CGO_ENABLED", "1");
     runc_build.setCwd(b.path(runc_src));
     runc_build.addArgs(&.{"static"});
     runc_build.step.dependOn(&download_cmd.step);
