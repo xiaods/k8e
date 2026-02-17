@@ -115,7 +115,6 @@ pub fn build(b: *std.Build) !void {
     const runc_step = b.step("runc", "Build runc");
     const runc_src = "build/src/github.com/opencontainers/runc";
     const runc_build = b.addSystemCommand(&.{"make"});
-    runc_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{shim_zig_target}));
     runc_build.setEnvironmentVariable("EXTRA_LDFLAGS", "-w -s");
     runc_build.setEnvironmentVariable("BUILDTAGS", "apparmor seccomp");
     runc_build.setCwd(b.path(runc_src));
@@ -202,7 +201,7 @@ fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo) ![]const u8 {
     const commit_short = if (v.commit.len >= 8) v.commit[0..8] else v.commit;
 
     const parts = [_][]const u8{
-        "-w -s -extldflags '-static -lm -ldl -lz -lpthread'",
+        "-w -s -extldflags '-static'",
         // k8e version
         try xflag(allocator, PKG ++ "/pkg/version.Version", v.version),
         try xflag(allocator, PKG ++ "/pkg/version.GitCommit", commit_short),
