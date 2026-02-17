@@ -9,7 +9,7 @@ k8e:
 	zig build k8e
 
 clean:
-	rm -rf bin .zig-cache zig-out
+	rm -rf bin .zig-cache zig-out .cni-build
 
 deps:
 	go mod tidy
