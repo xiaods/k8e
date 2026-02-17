@@ -30,3 +30,4 @@ __pycache__
 *.tmp
 .zig-cache
 zig-out
+.claude/*

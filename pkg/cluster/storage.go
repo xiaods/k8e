@@ -6,10 +6,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/k3s-io/kine/pkg/client"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/etcdstorage"
 	"github.com/xiaods/k8e/pkg/util"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -30,7 +30,7 @@ func RotateBootstrapToken(ctx context.Context, config *config.Control, oldToken 
 		return err
 	}
 
-	storageClient, err := client.New(config.Runtime.EtcdConfig)
+	storageClient, err := etcdstorage.New(config.Runtime.EtcdConfig)
 	if err != nil {
 		return err
 	}
@@ -38,7 +38,7 @@ func RotateBootstrapToken(ctx context.Context, config *config.Control, oldToken 
 
 	tokenKey := storageKey(normalizedToken)
 
-	var bootstrapList []client.Value
+	var bootstrapList []etcdstorage.Value
 	if err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		bootstrapList, err = storageClient.List(ctx, "/bootstrap", 0)
 		if err != nil {
@@ -89,7 +89,7 @@ func Save(ctx context.Context, config *config.Control, override bool) error {
 		return err
 	}
 
-	storageClient, err := client.New(config.Runtime.EtcdConfig)
+	storageClient, err := etcdstorage.New(config.Runtime.EtcdConfig)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func Save(ctx context.Context, config *config.Control, override bool) error {
 
 // bootstrapKeyData lists keys stored in the datastore with the prefix "/bootstrap", and
 // will return the first such key. It will return an error if not exactly one key is found.
-func bootstrapKeyData(ctx context.Context, storageClient client.Client) (*client.Value, error) {
+func bootstrapKeyData(ctx context.Context, storageClient etcdstorage.Client) (*etcdstorage.Value, error) {
 	bootstrapList, err := storageClient.List(ctx, "/bootstrap", 0)
 	if err != nil {
 		return nil, err
@@ -150,24 +150,11 @@ func bootstrapKeyData(ctx context.Context, storageClient client.Client) (*client
 // bootstrap key as a lock. This function will not return successfully until either the
 // bootstrap key has been locked, or data is read into the struct.
 func (c *Cluster) storageBootstrap(ctx context.Context) error {
-	if c.config.KineTLS {
-		bootstrapCtx, cancel := context.WithCancel(ctx)
-		defer func() {
-			time.Sleep(time.Second)
-			cancel()
-		}()
-
-		logrus.Info("Starting temporary kine to reconcile with datastore")
-		if err := c.startStorage(bootstrapCtx, true); err != nil {
-			return err
-		}
-	} else {
-		if err := c.startStorage(ctx, true); err != nil {
-			return err
-		}
+	if err := c.startStorage(ctx, true); err != nil {
+		return err
 	}
 
-	storageClient, err := client.New(c.config.Runtime.EtcdConfig)
+	storageClient, err := etcdstorage.New(c.config.Runtime.EtcdConfig)
 	if err != nil {
 		return err
 	}
@@ -251,11 +238,11 @@ func (c *Cluster) storageBootstrap(ctx context.Context) error {
 // passed to it, it will return error if it finds a key that is hashed with different token and will return
 // value if it finds the key hashed by passed token or empty string.
 // Upon receiving a "not supported for learner" error from etcd, this function will retry until the context is cancelled.
-func getBootstrapKeyFromStorage(ctx context.Context, storageClient client.Client, normalizedToken, oldToken string) (*client.Value, bool, error) {
+func getBootstrapKeyFromStorage(ctx context.Context, storageClient etcdstorage.Client, normalizedToken, oldToken string) (*etcdstorage.Value, bool, error) {
 	emptyStringKey := storageKey("")
 	tokenKey := storageKey(normalizedToken)
 
-	var bootstrapList []client.Value
+	var bootstrapList []etcdstorage.Value
 	var err error
 
 	if err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
@@ -301,7 +288,7 @@ func getBootstrapKeyFromStorage(ctx context.Context, storageClient client.Client
 // migrateTokens will list all keys that has prefix /bootstrap and will check for key that is
 // hashed with empty string and keys that is hashed with old token format before normalizing
 // then migrate those and resave only with the normalized token
-func migrateTokens(ctx context.Context, bootstrapList []client.Value, storageClient client.Client, emptyStringKey, tokenKey, token, oldToken string) error {
+func migrateTokens(ctx context.Context, bootstrapList []etcdstorage.Value, storageClient etcdstorage.Client, emptyStringKey, tokenKey, token, oldToken string) error {
 	oldTokenKey := storageKey(oldToken)
 
 	for _, bootstrapKV := range bootstrapList {
@@ -325,7 +312,7 @@ func migrateTokens(ctx context.Context, bootstrapList []client.Value, storageCli
 	return nil
 }
 
-func doMigrateToken(ctx context.Context, storageClient client.Client, keyValue client.Value, oldToken, oldTokenKey, newToken, newTokenKey string) error {
+func doMigrateToken(ctx context.Context, storageClient etcdstorage.Client, keyValue etcdstorage.Value, oldToken, oldTokenKey, newToken, newTokenKey string) error {
 	// make sure that the process is non-destructive by decrypting/re-encrypting/storing the data before deleting the old key
 	data, err := decrypt(oldToken, keyValue.Data)
 	if err != nil {

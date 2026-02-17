@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/go-test/deep"
-	"github.com/k3s-io/kine/pkg/client"
-	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/otiai10/copy"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -24,6 +22,7 @@ import (
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd"
+	"github.com/xiaods/k8e/pkg/etcdstorage"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 )
@@ -266,9 +265,9 @@ func (c *Cluster) ReconcileBootstrapData(ctx context.Context, buf io.ReadSeeker,
 			return err
 		}
 
-		var value *client.Value
+		var value *etcdstorage.Value
 
-		storageClient, err := client.New(c.config.Runtime.EtcdConfig)
+		storageClient, err := etcdstorage.New(c.config.Runtime.EtcdConfig)
 		if err != nil {
 			return err
 		}
@@ -484,7 +483,7 @@ func ipsTo16Bytes(mySlice []*net.IPNet) {
 func (c *Cluster) reconcileEtcd(ctx context.Context) error {
 	logrus.Info("Starting temporary etcd to reconcile with datastore")
 
-	tempConfig := endpoint.ETCDConfig{Endpoints: []string{"http://127.0.0.1:2399"}}
+	tempConfig := config.ETCDConfig{Endpoints: []string{"http://127.0.0.1:2399"}}
 	originalConfig := c.config.Runtime.EtcdConfig
 	c.config.Runtime.EtcdConfig = tempConfig
 	reconcileCtx, cancel := context.WithCancel(ctx)

@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
-	"github.com/k3s-io/kine/pkg/endpoint"
 	"github.com/rancher/wharfie/pkg/registries"
 	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
 	"github.com/rancher/wrangler/v3/pkg/leader"
@@ -29,6 +29,28 @@ const (
 	CertificateRenewDays       = 90
 	StreamServerPort           = "10010"
 )
+
+// TLSConfig holds TLS certificate file paths for etcd connections.
+type TLSConfig struct {
+	CAFile   string
+	CertFile string
+	KeyFile  string
+}
+
+// DatastoreConfig holds configuration for the etcd datastore.
+type DatastoreConfig struct {
+	Endpoint         string
+	BackendTLSConfig TLSConfig
+	ServerTLSConfig  TLSConfig
+	NotifyInterval   time.Duration
+}
+
+// ETCDConfig holds runtime etcd connection information.
+type ETCDConfig struct {
+	Endpoints   []string
+	TLSConfig   TLSConfig
+	LeaderElect bool
+}
 
 type Node struct {
 	Docker                   bool
@@ -186,8 +208,7 @@ type Control struct {
 	KubeConfigGroup          string
 	HelmJobImage             string
 	DataDir                  string
-	KineTLS                  bool
-	Datastore                endpoint.Config `json:"-"`
+	Datastore                DatastoreConfig `json:"-"`
 	Disables                 map[string]bool
 	DisableAgent             bool
 	DisableAPIServer         bool
@@ -353,7 +374,7 @@ type ControlRuntime struct {
 	K8e        *k8e.Factory
 	Core       *core.Factory
 	Event      record.EventRecorder
-	EtcdConfig endpoint.ETCDConfig
+	EtcdConfig ETCDConfig
 }
 
 func NewRuntime(containerRuntimeReady <-chan struct{}) *ControlRuntime {
