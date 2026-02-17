@@ -16,7 +16,7 @@ cp contrib/util/check-config.sh bin/check-config
 cp contrib/util/init-os-config.sh bin/init-os-config
 
 rm -rf build/data
-mkdir -p build/data build/out
+mkdir -p build/data build/out build/static
 mkdir -p dist/artifacts
 mkdir -p ./etc
 
