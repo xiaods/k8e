@@ -111,15 +111,35 @@ pub fn build(b: *std.Build) !void {
     shim_build.step.dependOn(&mkdir_bin.step);
     shim_step.dependOn(&shim_build.step);
 
+    // Build libseccomp static library (for runc seccomp support)
+    const seccomp_version = "2.5.5";
+    const seccomp_dir = b.fmt("{s}/.libseccomp", .{root});
+    const seccomp_install = b.fmt("{s}/install", .{seccomp_dir});
+    const zig_arch = @tagName(target.result.cpu.arch);
+    const seccomp_build_script = try std.fmt.allocPrint(
+        b.allocator,
+        "set -ex && rm -rf {s} && mkdir -p {s} && cd {s}" ++
+            " && curl -sL https://github.com/seccomp/libseccomp/releases/download/v{s}/libseccomp-{s}.tar.gz | tar xz" ++
+            " && cd libseccomp-{s}" ++
+            " && ./configure --host={s}-linux-musl --prefix={s} CC=\"zig cc -target {s}\" --enable-static --disable-shared" ++
+            " && make -j$(nproc) install",
+        .{ seccomp_dir, seccomp_dir, seccomp_dir, seccomp_version, seccomp_version, seccomp_version, zig_arch, seccomp_install, shim_zig_target },
+    );
+    const seccomp_build = b.addSystemCommand(&.{ "bash", "-c", seccomp_build_script });
+
     // Build runc (Linux only)
     const runc_step = b.step("runc", "Build runc");
     const runc_src = "build/src/github.com/opencontainers/runc";
     const runc_build = b.addSystemCommand(&.{"make"});
     runc_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{shim_zig_target}));
     runc_build.setEnvironmentVariable("CGO_ENABLED", "1");
+    runc_build.setEnvironmentVariable("CGO_CFLAGS", b.fmt("-I{s}/include", .{seccomp_install}));
+    runc_build.setEnvironmentVariable("CGO_LDFLAGS", b.fmt("-L{s}/lib", .{seccomp_install}));
+    runc_build.setEnvironmentVariable("PKG_CONFIG_PATH", b.fmt("{s}/lib/pkgconfig", .{seccomp_install}));
     runc_build.setCwd(b.path(runc_src));
-    runc_build.addArgs(&.{ "BUILDTAGS=apparmor", "EXTRA_LDFLAGS=-w -s", "static" });
+    runc_build.addArgs(&.{ "BUILDTAGS=apparmor seccomp", "EXTRA_LDFLAGS=-w -s", "static" });
     runc_build.step.dependOn(&download_cmd.step);
+    runc_build.step.dependOn(&seccomp_build.step);
     const runc_cp = b.addSystemCommand(&.{ "cp", "-vf", b.fmt("{s}/{s}/runc", .{ root, runc_src }), b.fmt("{s}/bin/runc", .{root}) });
     runc_cp.step.dependOn(&runc_build.step);
     runc_cp.step.dependOn(&mkdir_bin.step);
