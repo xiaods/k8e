@@ -3,6 +3,7 @@ package etcdstorage
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"time"
@@ -153,7 +154,7 @@ func tlsConfigFromFiles(cfg config.TLSConfig) (*tls.Config, error) {
 		certificates = append(certificates, clientCert)
 	}
 
-	var rootCAs *tls.CertPool
+	var rootCAs *x509.CertPool
 	if cfg.CAFile != "" {
 		pool, err := certutil.NewPool(cfg.CAFile)
 		if err != nil {
