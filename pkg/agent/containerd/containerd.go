@@ -11,13 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/containerd"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/pkg/cri/constants"
-	"github.com/containerd/containerd/pkg/cri/labels"
-	"github.com/containerd/containerd/reference/docker"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
+	"github.com/containerd/errdefs"
+	docker "github.com/distribution/reference"
 	"github.com/natefinch/lumberjack"
 	"github.com/pkg/errors"
 	"github.com/rancher/wharfie/pkg/tarfile"
@@ -36,6 +34,16 @@ var (
 	// ref: https://github.com/containerd/containerd/blob/release/1.7/pkg/cri/labels/labels.go
 	k8ePinnedImageLabelKey   = "io.cattle." + version.Program + ".pinned"
 	k8ePinnedImageLabelValue = "pinned"
+)
+
+const (
+	// these were previously exported via containerd/containerd/pkg/cri/constants
+	// and containerd/containerd/pkg/cri/labels but have been made internal as of
+	// containerd v2.
+	criContainerdPrefix       = "io.cri-containerd"
+	criPinnedImageLabelKey    = criContainerdPrefix + ".pinned"
+	criPinnedImageLabelValue  = "pinned"
+	criK8sContainerdNamespace = "k8s.io"
 )
 
 // Run configures and starts containerd as a child process. Once it is up, images are preloaded
@@ -66,8 +74,8 @@ func Run(ctx context.Context, cfg *config.Node) error {
 	}
 
 	go func() {
-		env := []string{}
-		cenv := []string{}
+		var env []string
+		var cenv []string
 
 		for _, e := range os.Environ() {
 			pair := strings.SplitN(e, "=", 2)
@@ -92,7 +100,8 @@ func Run(ctx context.Context, cfg *config.Node) error {
 		cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 		cmd.Stdout = stdOut
 		cmd.Stderr = stdErr
-		cmd.Env = append(env, cenv...)
+		env = append(env, cenv...)
+		cmd.Env = env
 
 		addDeathSig(cmd)
 		err := cmd.Run()
@@ -150,7 +159,7 @@ func PreloadImages(ctx context.Context, cfg *config.Node) error {
 	imageClient := runtimeapi.NewImageServiceClient(criConn)
 
 	// Ensure that our images are imported into the correct namespace
-	ctx = namespaces.WithNamespace(ctx, constants.K8sContainerdNamespace)
+	ctx = namespaces.WithNamespace(ctx, criK8sContainerdNamespace)
 
 	// At startup all leases from k8e are cleared; we no longer use leases to lock content
 	if err := clearLeases(ctx, client); err != nil {
@@ -255,7 +264,7 @@ func clearLabels(ctx context.Context, client *containerd.Client) error {
 	}
 	for _, image := range images {
 		delete(image.Labels, k8ePinnedImageLabelKey)
-		delete(image.Labels, labels.PinnedImageLabelKey)
+		delete(image.Labels, criPinnedImageLabelKey)
 		if _, err := imageService.Update(ctx, image, "labels"); err != nil {
 			errs = append(errs, errors.Wrap(err, "failed to delete labels from image "+image.Name))
 		}
@@ -270,7 +279,7 @@ func labelImages(ctx context.Context, client *containerd.Client, images []images
 	imageService := client.ImageService()
 	for i, image := range images {
 		if image.Labels[k8ePinnedImageLabelKey] == k8ePinnedImageLabelValue &&
-			image.Labels[labels.PinnedImageLabelKey] == labels.PinnedImageLabelValue {
+			image.Labels[criPinnedImageLabelKey] == criPinnedImageLabelValue {
 			continue
 		}
 
@@ -278,7 +287,7 @@ func labelImages(ctx context.Context, client *containerd.Client, images []images
 			image.Labels = map[string]string{}
 		}
 		image.Labels[k8ePinnedImageLabelKey] = k8ePinnedImageLabelValue
-		image.Labels[labels.PinnedImageLabelKey] = labels.PinnedImageLabelValue
+		image.Labels[criPinnedImageLabelKey] = criPinnedImageLabelValue
 		updatedImage, err := imageService.Update(ctx, image, "labels")
 		if err != nil {
 			errs = append(errs, errors.Wrap(err, "failed to add labels to image "+image.Name))
@@ -347,8 +356,8 @@ func parseNamedTagged(name string) (docker.NamedTagged, error) {
 // or is successfully pulled, information about the image is retrieved from the image store.
 // NOTE: Pulls MUST be done via CRI API, not containerd API, in order to use mirrors and rewrites.
 func prePullImages(ctx context.Context, client *containerd.Client, imageClient runtimeapi.ImageServiceClient, imageList io.Reader) ([]images.Image, error) {
-	errs := []error{}
-	images := []images.Image{}
+	var errs []error
+	var images []images.Image
 	imageService := client.ImageService()
 	scanner := bufio.NewScanner(imageList)
 	for scanner.Scan() {

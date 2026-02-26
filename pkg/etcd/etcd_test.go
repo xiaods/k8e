@@ -18,7 +18,7 @@ import (
 	testutil "github.com/xiaods/k8e/tests"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/server/v3/etcdserver"
+	etcderrors "go.etcd.io/etcd/server/v3/etcdserver/errors"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -174,9 +174,7 @@ func Test_UnitETCD_Register(t *testing.T) {
 				config:  generateTestConfig(),
 				handler: generateTestHandler(),
 			},
-			setup: func(cnf *config.Control) error {
-				return testutil.GenerateRuntime(cnf)
-			},
+			setup: testutil.GenerateRuntime,
 			teardown: func(cnf *config.Control) error {
 				testutil.CleanupDataDir(cnf)
 				return nil
@@ -279,7 +277,7 @@ func Test_UnitETCD_Start(t *testing.T) {
 				ctxInfo.cancel()
 				time.Sleep(5 * time.Second)
 				testutil.CleanupDataDir(e.config)
-				if err != nil && err.Error() != etcdserver.ErrNotEnoughStartedMembers.Error() {
+				if err != nil && err.Error() != etcderrors.ErrNotEnoughStartedMembers.Error() {
 					return err
 				}
 				return nil
@@ -307,7 +305,7 @@ func Test_UnitETCD_Start(t *testing.T) {
 				ctxInfo.cancel()
 				time.Sleep(5 * time.Second)
 				testutil.CleanupDataDir(e.config)
-				if err != nil && err.Error() != etcdserver.ErrNotEnoughStartedMembers.Error() {
+				if err != nil && err.Error() != etcderrors.ErrNotEnoughStartedMembers.Error() {
 					return err
 				}
 				return nil
@@ -338,7 +336,7 @@ func Test_UnitETCD_Start(t *testing.T) {
 				time.Sleep(5 * time.Second)
 				testutil.CleanupDataDir(e.config)
 				os.Remove(walDir(e.config))
-				if err != nil && err.Error() != etcdserver.ErrNotEnoughStartedMembers.Error() {
+				if err != nil && err.Error() != etcderrors.ErrNotEnoughStartedMembers.Error() {
 					return err
 				}
 				return nil
@@ -588,7 +586,7 @@ func Test_UnitETCD_Test(t *testing.T) {
 			}
 			start := time.Now()
 			err := e.Test(tt.fields.context.ctx)
-			duration := time.Now().Sub(start)
+			duration := time.Since(start)
 			t.Logf("ETCD.Test() completed in %v with err=%v", duration, err)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ETCD.Test() error = %v, wantErr %v", err, tt.wantErr)
@@ -611,7 +609,7 @@ func startMock(ctx context.Context, e *ETCD, isLearner, isCorrupt, noLeader bool
 	}
 
 	// set up tls if enabled
-	gopts := []grpc.ServerOption{}
+	var gopts []grpc.ServerOption
 	if e.config.Datastore.ServerTLSConfig.CertFile != "" && e.config.Datastore.ServerTLSConfig.KeyFile != "" {
 		creds, err := credentials.NewServerTLSFromFile(e.config.Datastore.ServerTLSConfig.CertFile, e.config.Datastore.ServerTLSConfig.KeyFile)
 		if err != nil {
@@ -755,7 +753,7 @@ func (m *mockEtcd) Status(context.Context, *etcdserverpb.StatusRequest) (*etcdse
 	}
 	if m.noLeader {
 		res.Leader = 0
-		res.Errors = append(res.Errors, etcdserver.ErrNoLeader.Error())
+		res.Errors = append(res.Errors, etcderrors.ErrNoLeader.Error())
 	}
 	for _, a := range m.alarms() {
 		res.Errors = append(res.Errors, a.String())
@@ -803,7 +801,7 @@ func (m *mockEtcd) MemberAdd(context.Context, *etcdserverpb.MemberAddRequest) (*
 }
 func (m *mockEtcd) MemberRemove(context.Context, *etcdserverpb.MemberRemoveRequest) (*etcdserverpb.MemberRemoveResponse, error) {
 	m.inc("memberremove")
-	return nil, etcdserver.ErrNotEnoughStartedMembers
+	return nil, etcderrors.ErrNotEnoughStartedMembers
 }
 func (m *mockEtcd) MemberUpdate(context.Context, *etcdserverpb.MemberUpdateRequest) (*etcdserverpb.MemberUpdateResponse, error) {
 	m.inc("memberupdate")

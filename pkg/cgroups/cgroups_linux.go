@@ -11,8 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containerd/cgroups"
-	cgroupsv2 "github.com/containerd/cgroups/v2"
+	cgroups "github.com/containerd/cgroups/v3"
+	cgroupsv2 "github.com/containerd/cgroups/v3/cgroup2"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/version"
 )
@@ -44,7 +44,7 @@ func validateCgroupsV1() error {
 }
 
 func validateCgroupsV2() error {
-	manager, err := cgroupsv2.LoadManager("/sys/fs/cgroup", "/")
+	manager, err := cgroupsv2.Load("/")
 	if err != nil {
 		return err
 	}
@@ -64,6 +64,48 @@ func validateCgroupsV2() error {
 	return nil
 }
 
+// loadV2CgroupControllers populates the controllers map with cgroup v2 controllers.
+func loadV2CgroupControllers(controllers map[string]bool) {
+	m, err := cgroupsv2.Load("/")
+	if err != nil {
+		return
+	}
+	enabledControllers, err := m.Controllers()
+	if err != nil {
+		return
+	}
+	for _, controller := range enabledControllers {
+		controllers[controller] = true
+	}
+}
+
+// checkPID1CgroupRoots inspects /proc/1/cgroup to determine kubelet and runtime
+// cgroup roots when running inside a container.
+func checkPID1CgroupRoots(cgroupsModeV2 bool) (kubeletRoot, runtimeRoot string) {
+	g, err := os.Open("/proc/1/cgroup")
+	if err != nil {
+		return
+	}
+	defer g.Close()
+
+	scan := bufio.NewScanner(g)
+	for scan.Scan() {
+		parts := strings.Split(scan.Text(), ":")
+		if len(parts) < 3 {
+			continue
+		}
+		for _, controller := range strings.Split(parts[1], ",") {
+			if controller == "name=systemd" || cgroupsModeV2 {
+				last := parts[len(parts)-1]
+				if last != "/" && last != "/init.scope" {
+					return "/" + version.Program, "/" + version.Program
+				}
+			}
+		}
+	}
+	return
+}
+
 func CheckCgroups() (kubeletRoot, runtimeRoot string, controllers map[string]bool) {
 	cgroupsModeV2 := cgroups.Mode() == cgroups.Unified
 	controllers = make(map[string]bool)
@@ -71,18 +113,7 @@ func CheckCgroups() (kubeletRoot, runtimeRoot string, controllers map[string]boo
 	// For Unified (v2) cgroups we can directly check to see what controllers are mounted
 	// under the unified hierarchy.
 	if cgroupsModeV2 {
-		m, err := cgroupsv2.LoadManager("/sys/fs/cgroup", "/")
-		if err != nil {
-			return
-		}
-		enabledControllers, err := m.Controllers()
-		if err != nil {
-			return
-		}
-		// Intentionally using an expressionless switch to match the logic below
-		for _, controller := range enabledControllers {
-			controllers[controller] = true
-		}
+		loadV2CgroupControllers(controllers)
 	}
 
 	f, err := os.Open("/proc/self/cgroup")
@@ -112,8 +143,7 @@ func CheckCgroups() (kubeletRoot, runtimeRoot string, controllers map[string]boo
 				// `--docker`, we will inadvertently move the cgroup `dockerd` lives in
 				//  which is not ideal and causes dockerd to become unmanageable by systemd.
 				last := parts[len(parts)-1]
-				i := strings.LastIndex(last, ".scope")
-				if i > 0 {
+				if strings.LastIndex(last, ".scope") > 0 {
 					kubeletRoot = "/" + version.Program
 				}
 			case controller == "cpu":
@@ -139,31 +169,7 @@ func CheckCgroups() (kubeletRoot, runtimeRoot string, controllers map[string]boo
 		// It either lives at `/` or `/init.scope` according to https://man7.org/linux/man-pages/man7/systemd.special.7.html
 		// When containerized, process 1 will be generally be in a cgroup, otherwise, we may be running in
 		// a host PID scenario but we don't support this.
-		g, err := os.Open("/proc/1/cgroup")
-		if err != nil {
-			return
-		}
-		defer g.Close()
-		scan = bufio.NewScanner(g)
-		for scan.Scan() {
-			parts := strings.Split(scan.Text(), ":")
-			if len(parts) < 3 {
-				continue
-			}
-			controllers := strings.Split(parts[1], ",")
-			// For v1 or hybrid, controller can be a single value {"blkio"}, or a comounted set {"cpu","cpuacct"}
-			// For v2, controllers = {""} (only contains a single empty string)
-			for _, controller := range controllers {
-				switch {
-				case controller == "name=systemd" || cgroupsModeV2:
-					last := parts[len(parts)-1]
-					if last != "/" && last != "/init.scope" {
-						kubeletRoot = "/" + version.Program
-						runtimeRoot = "/" + version.Program
-					}
-				}
-			}
-		}
+		kubeletRoot, runtimeRoot = checkPID1CgroupRoots(cgroupsModeV2)
 	}
 	return
 }

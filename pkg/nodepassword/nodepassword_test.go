@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/golang/mock/gomock"
+	"go.uber.org/mock/gomock"
 	"github.com/rancher/wrangler/v3/pkg/generic/fake"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -103,7 +103,7 @@ func Test_UnitMigrateFileNodes(t *testing.T) {
 	nodeCache := fake.NewMockNonNamespacedCacheInterface[*v1.Node](ctrl)
 	nodeStore := &mockNodeStore{}
 
-	nodeStore.nodes = make([]v1.Node, createNumNodes, createNumNodes)
+	nodeStore.nodes = make([]v1.Node, createNumNodes)
 	for i := range nodeStore.nodes {
 		nodeStore.nodes[i].Name = fmt.Sprintf("node%d", i+1)
 	}

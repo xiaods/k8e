@@ -117,7 +117,7 @@ func Save(ctx context.Context, config *config.Control, override bool) error {
 			}
 			logrus.Warn("Bootstrap key already exists")
 			return nil
-		} else if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {
+		} else if errors.Is(err, rpctypes.ErrGRPCNotSupportedForLearner) {
 			logrus.Debug("Skipping bootstrap data save on learner")
 			return nil
 		}
@@ -248,7 +248,7 @@ func getBootstrapKeyFromStorage(ctx context.Context, storageClient etcdstorage.C
 	if err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
 		bootstrapList, err = storageClient.List(ctx, "/bootstrap", 0)
 		if err != nil {
-			if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {
+			if errors.Is(err, rpctypes.ErrGRPCNotSupportedForLearner) {
 				return false, nil
 			}
 			return false, err
@@ -328,7 +328,7 @@ func doMigrateToken(ctx context.Context, storageClient etcdstorage.Client, keyVa
 	if err := storageClient.Create(ctx, newTokenKey, encryptedData); err != nil {
 		if err.Error() == "key exists" {
 			logrus.Warn("bootstrap key exists")
-		} else if errors.Is(err, rpctypes.ErrGPRCNotSupportedForLearner) {
+		} else if errors.Is(err, rpctypes.ErrGRPCNotSupportedForLearner) {
 			logrus.Debug("skipping bootstrap data save on learner")
 			return nil
 		} else {

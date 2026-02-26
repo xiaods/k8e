@@ -1,5 +1,4 @@
 //go:build ctrd
-// +build ctrd
 
 /*
    Copyright The containerd Authors.
@@ -20,8 +19,8 @@
 package containerd
 
 import (
-	_ "github.com/containerd/containerd/diff/lcow"
-	_ "github.com/containerd/containerd/diff/windows"
-	_ "github.com/containerd/containerd/snapshots/lcow"
-	_ "github.com/containerd/containerd/snapshots/windows"
+	_ "github.com/containerd/containerd/v2/plugins/diff/lcow"
+	_ "github.com/containerd/containerd/v2/plugins/diff/windows"
+	_ "github.com/containerd/containerd/v2/plugins/snapshots/lcow"
+	_ "github.com/containerd/containerd/v2/plugins/snapshots/windows"
 )

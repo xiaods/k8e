@@ -29,12 +29,13 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.13.0
+          version: 0.15.2
       - name: Install dependencies
-        run: sudo apt-get install -y libseccomp-dev
+        run: sudo apt-get update && sudo apt-get install -y pkg-config build-essential libc6-dev zlib1g-dev libseccomp-dev
       - name: Generate resources
         run: |
           mkdir -p build/data build/static
+          make deps
           zig build download
           make generate
       - name: Test
@@ -43,7 +44,7 @@ jobs:
           export GOPATH="$HOME/go/"
           export PATH=$PATH:$GOPATH/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
-          go test -v ./... 2>&1 | go-junit-report -set-exit-code > report.xml
+          CGO_ENABLED=1 GOLANG_PROTOBUF_REGISTRATION_CONFLICT=warn go test -v ./... 2>&1 | go-junit-report -set-exit-code > report.xml
       - name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()

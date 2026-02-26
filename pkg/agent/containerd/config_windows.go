@@ -4,7 +4,7 @@
 package containerd
 
 import (
-	"github.com/containerd/containerd"
+	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	util3 "github.com/xiaods/k8e/pkg/util"

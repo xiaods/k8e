@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: all k8e clean deps format generate package package-cli package-airgap
+.PHONY: all k8e clean deps format generate package package-cli package-airgap test
 
 all:
 	zig build all
@@ -9,23 +9,25 @@ k8e:
 	zig build k8e
 
 clean:
-	rm -rf bin .zig-cache zig-out .cni-build .libseccomp
+	zig build clean
 
 deps:
-	go mod tidy
+	zig build deps
 
 format:
-	go fmt ./...
-	zig fmt build.zig
+	zig build fmt
 
 generate:
-	hack/generate
+	zig build generate
 
 package:
-	hack/package
+	zig build package
 
 package-cli:
-	hack/package-cli
+	zig build package-cli
 
 package-airgap:
-	hack/package-airgap.sh
+	zig build package-airgap
+
+test:
+	zig build test

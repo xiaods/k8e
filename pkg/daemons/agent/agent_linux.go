@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/opencontainers/runc/libcontainer/userns"
+	"github.com/moby/sys/userns"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/cgroups"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -32,55 +32,20 @@ func createRootlessConfig(argsMap map[string]string, controllers map[string]bool
 	logrus.Fatal("delegated cgroup v2 controllers are required for rootless.")
 }
 
-func kubeletArgs(cfg *config.Agent) map[string]string {
-	bindAddress := "127.0.0.1"
-	isIPv6 := utilsnet.IsIPv6(net.ParseIP([]string{cfg.NodeIP}[0]))
-	if isIPv6 {
-		bindAddress = "::1"
+// applyRuntimeSocketArgs sets kubelet args for the container runtime and image service sockets.
+func applyRuntimeSocketArgs(argsMap map[string]string, cfg *config.Agent) {
+	if cfg.RuntimeSocket == "" {
+		return
 	}
-	argsMap := map[string]string{
-		"healthz-bind-address":         bindAddress,
-		"read-only-port":               "0",
-		"cluster-domain":               cfg.ClusterDomain,
-		"kubeconfig":                   cfg.KubeConfigKubelet,
-		"eviction-hard":                "imagefs.available<5%,nodefs.available<5%",
-		"eviction-minimum-reclaim":     "imagefs.available=10%,nodefs.available=10%",
-		"fail-swap-on":                 "false",
-		"cgroup-driver":                "cgroupfs",
-		"authentication-token-webhook": "true",
-		"anonymous-auth":               "false",
-		"authorization-mode":           modes.ModeWebhook,
+	argsMap["serialize-image-pulls"] = "false"
+	if strings.Contains(cfg.RuntimeSocket, "containerd") {
+		argsMap["containerd"] = cfg.RuntimeSocket
 	}
-	if cfg.PodManifests != "" && argsMap["pod-manifest-path"] == "" {
-		argsMap["pod-manifest-path"] = cfg.PodManifests
-	}
-	if err := os.MkdirAll(argsMap["pod-manifest-path"], 0755); err != nil {
-		logrus.Errorf("Failed to mkdir %s: %v", argsMap["pod-manifest-path"], err)
-	}
-	if cfg.RootDir != "" {
-		argsMap["root-dir"] = cfg.RootDir
-		argsMap["cert-dir"] = filepath.Join(cfg.RootDir, "pki")
-	}
-	if len(cfg.ClusterDNS) > 0 {
-		argsMap["cluster-dns"] = util.JoinIPs(cfg.ClusterDNSs)
-	}
-	if cfg.ResolvConf != "" {
-		argsMap["resolv-conf"] = cfg.ResolvConf
-	}
-	if cfg.RuntimeSocket != "" {
-		argsMap["serialize-image-pulls"] = "false"
-		if strings.Contains(cfg.RuntimeSocket, "containerd") {
-			argsMap["containerd"] = cfg.RuntimeSocket
-		}
-		// cadvisor wants the containerd CRI socket without the prefix, but kubelet wants it with the prefix
-		if strings.HasPrefix(cfg.RuntimeSocket, socketPrefix) {
-			argsMap["container-runtime-endpoint"] = cfg.RuntimeSocket
-		} else {
-			argsMap["container-runtime-endpoint"] = socketPrefix + cfg.RuntimeSocket
-		}
-	}
-	if cfg.PauseImage != "" {
-		argsMap["pod-infra-container-image"] = cfg.PauseImage
+	// cadvisor wants the containerd CRI socket without the prefix, but kubelet wants it with the prefix
+	if strings.HasPrefix(cfg.RuntimeSocket, socketPrefix) {
+		argsMap["container-runtime-endpoint"] = cfg.RuntimeSocket
+	} else {
+		argsMap["container-runtime-endpoint"] = socketPrefix + cfg.RuntimeSocket
 	}
 	if cfg.ImageServiceSocket != "" {
 		if strings.HasPrefix(cfg.ImageServiceSocket, socketPrefix) {
@@ -89,27 +54,10 @@ func kubeletArgs(cfg *config.Agent) map[string]string {
 			argsMap["image-service-endpoint"] = socketPrefix + cfg.ImageServiceSocket
 		}
 	}
-	if cfg.ListenAddress != "" {
-		argsMap["address"] = cfg.ListenAddress
-	}
-	if cfg.ClientCA != "" {
-		argsMap["anonymous-auth"] = "false"
-		argsMap["client-ca-file"] = cfg.ClientCA
-	}
-	if cfg.ServingKubeletCert != "" && cfg.ServingKubeletKey != "" {
-		argsMap["tls-cert-file"] = cfg.ServingKubeletCert
-		argsMap["tls-private-key-file"] = cfg.ServingKubeletKey
-	}
-	if cfg.NodeName != "" {
-		argsMap["hostname-override"] = cfg.NodeName
-	}
-	if nodeIPs := util.JoinIPs(cfg.NodeIPs); nodeIPs != "" {
-		dualStack, err := utilsnet.IsDualStackIPs(cfg.NodeIPs)
-		if err == nil && !dualStack {
-			argsMap["node-ip"] = cfg.NodeIP
-		}
-	}
-	kubeletRoot, runtimeRoot, controllers := cgroups.CheckCgroups()
+}
+
+// applyCgroupArgs sets kubelet cgroup args and validates required cgroup controllers.
+func applyCgroupArgs(argsMap map[string]string, cfg *config.Agent, controllers map[string]bool, kubeletRoot, runtimeRoot string) {
 	if !controllers["cpu"] {
 		logrus.Warn("Disabling CPU quotas due to missing cpu controller or cpu.cfs_period_us")
 		argsMap["cpu-cfs-quota"] = "false"
@@ -126,6 +74,84 @@ func kubeletArgs(cfg *config.Agent) map[string]string {
 	if userns.RunningInUserNS() {
 		argsMap["feature-gates"] = util.AddFeatureGate(argsMap["feature-gates"], "DevicePlugins=false")
 	}
+}
+
+// computeBindAddress returns "::1" for IPv6 nodes, or "127.0.0.1" otherwise.
+func computeBindAddress(cfg *config.Agent) string {
+	if utilsnet.IsIPv6(net.ParseIP([]string{cfg.NodeIP}[0])) {
+		return "::1"
+	}
+	return "127.0.0.1"
+}
+
+// applyPathArgs sets kubelet args related to pod manifest and root directory paths.
+func applyPathArgs(argsMap map[string]string, cfg *config.Agent) {
+	if cfg.PodManifests != "" && argsMap["pod-manifest-path"] == "" {
+		argsMap["pod-manifest-path"] = cfg.PodManifests
+	}
+	if err := os.MkdirAll(argsMap["pod-manifest-path"], 0755); err != nil {
+		logrus.Errorf("Failed to mkdir %s: %v", argsMap["pod-manifest-path"], err)
+	}
+	if cfg.RootDir != "" {
+		argsMap["root-dir"] = cfg.RootDir
+		argsMap["cert-dir"] = filepath.Join(cfg.RootDir, "pki")
+	}
+}
+
+// applyConnectivityArgs sets kubelet args related to DNS, image registry, listen address, and TLS.
+func applyConnectivityArgs(argsMap map[string]string, cfg *config.Agent) {
+	if len(cfg.ClusterDNS) > 0 {
+		argsMap["cluster-dns"] = util.JoinIPs(cfg.ClusterDNSs)
+	}
+	if cfg.ResolvConf != "" {
+		argsMap["resolv-conf"] = cfg.ResolvConf
+	}
+	if cfg.ListenAddress != "" {
+		argsMap["address"] = cfg.ListenAddress
+	}
+	if cfg.ClientCA != "" {
+		argsMap["anonymous-auth"] = "false"
+		argsMap["client-ca-file"] = cfg.ClientCA
+	}
+	if cfg.ServingKubeletCert != "" && cfg.ServingKubeletKey != "" {
+		argsMap["tls-cert-file"] = cfg.ServingKubeletCert
+		argsMap["tls-private-key-file"] = cfg.ServingKubeletKey
+	}
+}
+
+// applyNodeIdentityArgs sets kubelet args related to node hostname and IP address.
+func applyNodeIdentityArgs(argsMap map[string]string, cfg *config.Agent) {
+	if cfg.NodeName != "" {
+		argsMap["hostname-override"] = cfg.NodeName
+	}
+	if util.JoinIPs(cfg.NodeIPs) != "" {
+		dualStack, err := utilsnet.IsDualStackIPs(cfg.NodeIPs)
+		if err == nil && !dualStack {
+			argsMap["node-ip"] = cfg.NodeIP
+		}
+	}
+}
+
+func kubeletArgs(cfg *config.Agent) map[string]string {
+	argsMap := map[string]string{
+		"healthz-bind-address":         computeBindAddress(cfg),
+		"read-only-port":               "0",
+		"cluster-domain":               cfg.ClusterDomain,
+		"kubeconfig":                   cfg.KubeConfigKubelet,
+		"eviction-hard":                "imagefs.available<5%,nodefs.available<5%",
+		"eviction-minimum-reclaim":     "imagefs.available=10%,nodefs.available=10%",
+		"fail-swap-on":                 "false",
+		"cgroup-driver":                "cgroupfs",
+		"authentication-token-webhook": "true",
+		"anonymous-auth":               "false",
+		"authorization-mode":           modes.ModeWebhook,
+	}
+	applyPathArgs(argsMap, cfg)
+	applyConnectivityArgs(argsMap, cfg)
+	applyRuntimeSocketArgs(argsMap, cfg)
+	applyNodeIdentityArgs(argsMap, cfg)
+	kubeletRoot, runtimeRoot, controllers := cgroups.CheckCgroups()
+	applyCgroupArgs(argsMap, cfg, controllers, kubeletRoot, runtimeRoot)
 
 	argsMap["node-labels"] = strings.Join(cfg.NodeLabels, ",")
 	if len(cfg.NodeTaints) > 0 {
