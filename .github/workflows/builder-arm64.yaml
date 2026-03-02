@@ -26,21 +26,24 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.13.0
-      - name: generate resources
+          version: 0.15.2
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config build-essential libc6-dev zlib1g-dev libseccomp-dev || sudo yum install -y glibc-static zlib-static libseccomp-static libseccomp-devel
+      - name: Generate resources
         run: |
           mkdir -p build/data build/static
+          make deps
           zig build download
           make generate
-      - name: build k8e
+      - name: Build k8e
         run: make k8e
-      - name: package bin
+      - name: Package bin
         run: make package-cli
-      - name: package airgap image
+      - name: Package airgap image
         run: make package-airgap
       - name: sha256sum artifacts
         run: cd dist/artifacts/ && sha256sum k8e-${{ matrix.goarch }} k8e-airgap-images-${{ matrix.goarch }}.tar.gz >> k8e-hashes-${{ matrix.goarch }}.txt
-      - name: Uploading assets...
+      - name: Upload assets
         uses: softprops/action-gh-release@v2
         with:
           files: |

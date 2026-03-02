@@ -30,12 +30,10 @@ func (r *EtcdSimpleResolver) Build(target resolver.Target, cc resolver.ClientCon
 		return nil, err
 	}
 
-	if r.CC != nil {
-		addr, serverName := interpret(r.endpoint)
-		r.UpdateState(resolver.State{
-			Addresses: []resolver.Address{{Addr: addr, ServerName: serverName}},
-		})
-	}
+	addr, serverName := interpret(r.endpoint)
+	r.UpdateState(resolver.State{
+		Addresses: []resolver.Address{{Addr: addr, ServerName: serverName}},
+	})
 
 	return res, nil
 }

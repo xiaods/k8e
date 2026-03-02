@@ -29,7 +29,7 @@ import (
 	"github.com/xiaods/k8e/pkg/version"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/apiserver/pkg/apis/apiserver"
+	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/client-go/util/keyutil"
@@ -314,6 +314,30 @@ func getSigningCertFactory(regen bool, altNames *certutil.AltNames, extKeyUsage 
 	}
 }
 
+// certKeyKubeConfig holds the parameters for generating a client certificate and optional kubeconfig.
+type certKeyKubeConfig struct {
+	commonName string
+	orgs       []string
+	certFile   string
+	keyFile    string
+	kubeConfig string // if empty, no kubeconfig is generated
+}
+
+// generateCertAndKubeConfig generates a client certificate using factory and, if kubeConfig is set,
+// writes a kubeconfig file pointing to apiEndpoint.
+func generateCertAndKubeConfig(factory signedCertFactory, c certKeyKubeConfig, apiEndpoint, serverCA string) error {
+	certGen, err := factory(c.commonName, c.orgs, c.certFile, c.keyFile)
+	if err != nil {
+		return err
+	}
+	if certGen && c.kubeConfig != "" {
+		if err := KubeConfig(c.kubeConfig, apiEndpoint, serverCA, c.certFile, c.keyFile); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func genClientCerts(config *config.Control) error {
 	runtime := config.Runtime
 	regen, err := createSigningCertKey(version.Program+"-client", runtime.ClientCA, runtime.ClientCAKey)
@@ -334,78 +358,27 @@ func genClientCerts(config *config.Control) error {
 	}
 
 	factory := getSigningCertFactory(regen, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, runtime.ClientCA, runtime.ClientCAKey)
-
-	var certGen bool
-
 	apiEndpoint := fmt.Sprintf("https://%s:%d", config.Loopback(true), config.APIServerPort)
 
-	certGen, err = factory("system:admin", []string{user.SystemPrivilegedGroup}, runtime.ClientAdminCert, runtime.ClientAdminKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err := KubeConfig(runtime.KubeConfigAdmin, apiEndpoint, runtime.ServerCA, runtime.ClientAdminCert, runtime.ClientAdminKey); err != nil {
-			return err
-		}
-	}
-
-	certGen, err = factory("system:"+version.Program+"-supervisor", []string{user.SystemPrivilegedGroup}, runtime.ClientSupervisorCert, runtime.ClientSupervisorKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err := KubeConfig(runtime.KubeConfigSupervisor, apiEndpoint, runtime.ServerCA, runtime.ClientSupervisorCert, runtime.ClientSupervisorKey); err != nil {
-			return err
-		}
+	certConfigs := []certKeyKubeConfig{
+		{commonName: "system:admin", orgs: []string{user.SystemPrivilegedGroup}, certFile: runtime.ClientAdminCert, keyFile: runtime.ClientAdminKey, kubeConfig: runtime.KubeConfigAdmin},
+		{commonName: "system:" + version.Program + "-supervisor", orgs: []string{user.SystemPrivilegedGroup}, certFile: runtime.ClientSupervisorCert, keyFile: runtime.ClientSupervisorKey, kubeConfig: runtime.KubeConfigSupervisor},
+		{commonName: user.KubeControllerManager, certFile: runtime.ClientControllerCert, keyFile: runtime.ClientControllerKey, kubeConfig: runtime.KubeConfigController},
+		{commonName: user.KubeScheduler, certFile: runtime.ClientSchedulerCert, keyFile: runtime.ClientSchedulerKey, kubeConfig: runtime.KubeConfigScheduler},
+		{commonName: user.APIServerUser, orgs: []string{user.SystemPrivilegedGroup}, certFile: runtime.ClientKubeAPICert, keyFile: runtime.ClientKubeAPIKey, kubeConfig: runtime.KubeConfigAPIServer},
+		// This user (system:k8e-controller by default) must be bound to a role in rolebindings.yaml or the downstream equivalent
+		{commonName: "system:" + version.Program + "-controller", certFile: runtime.ClientK8eControllerCert, keyFile: runtime.ClientK8eControllerKey},
+		{commonName: version.Program + "-cloud-controller-manager", certFile: runtime.ClientCloudControllerCert, keyFile: runtime.ClientCloudControllerKey, kubeConfig: runtime.KubeConfigCloudController},
 	}
 
-	certGen, err = factory(user.KubeControllerManager, nil, runtime.ClientControllerCert, runtime.ClientControllerKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err := KubeConfig(runtime.KubeConfigController, apiEndpoint, runtime.ServerCA, runtime.ClientControllerCert, runtime.ClientControllerKey); err != nil {
+	for _, c := range certConfigs {
+		if err := generateCertAndKubeConfig(factory, c, apiEndpoint, runtime.ServerCA); err != nil {
 			return err
 		}
-	}
-
-	certGen, err = factory(user.KubeScheduler, nil, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err := KubeConfig(runtime.KubeConfigScheduler, apiEndpoint, runtime.ServerCA, runtime.ClientSchedulerCert, runtime.ClientSchedulerKey); err != nil {
-			return err
-		}
-	}
-
-	certGen, err = factory(user.APIServerUser, []string{user.SystemPrivilegedGroup}, runtime.ClientKubeAPICert, runtime.ClientKubeAPIKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err := KubeConfig(runtime.KubeConfigAPIServer, apiEndpoint, runtime.ServerCA, runtime.ClientKubeAPICert, runtime.ClientKubeAPIKey); err != nil {
-			return err
-		}
-	}
-
-	// This user (system:k8e-controller by default) must be bound to a role in rolebindings.yaml or the downstream equivalent
-	if _, err = factory("system:"+version.Program+"-controller", nil, runtime.ClientK8eControllerCert, runtime.ClientK8eControllerKey); err != nil {
-		return err
 	}
 
 	if _, _, err := certutil.LoadOrGenerateKeyFile(runtime.ClientKubeletKey, regen); err != nil {
 		return err
-	}
-
-	certGen, err = factory(version.Program+"-cloud-controller-manager", nil, runtime.ClientCloudControllerCert, runtime.ClientCloudControllerKey)
-	if err != nil {
-		return err
-	}
-	if certGen {
-		if err := KubeConfig(runtime.KubeConfigCloudController, apiEndpoint, runtime.ServerCA, runtime.ClientCloudControllerCert, runtime.ClientCloudControllerKey); err != nil {
-			return err
-		}
 	}
 
 	return nil
@@ -780,19 +753,19 @@ func genEncryptionConfigAndState(controlConfig *config.Control) error {
 }
 
 func genEgressSelectorConfig(controlConfig *config.Control) error {
-	var clusterConn apiserver.Connection
+	var clusterConn apiserverv1beta1.Connection
 
 	if controlConfig.EgressSelectorMode == config.EgressSelectorModeDisabled {
-		clusterConn = apiserver.Connection{
-			ProxyProtocol: apiserver.ProtocolDirect,
+		clusterConn = apiserverv1beta1.Connection{
+			ProxyProtocol: apiserverv1beta1.ProtocolDirect,
 		}
 	} else {
-		clusterConn = apiserver.Connection{
-			ProxyProtocol: apiserver.ProtocolHTTPConnect,
-			Transport: &apiserver.Transport{
-				TCP: &apiserver.TCPTransport{
+		clusterConn = apiserverv1beta1.Connection{
+			ProxyProtocol: apiserverv1beta1.ProtocolHTTPConnect,
+			Transport: &apiserverv1beta1.Transport{
+				TCP: &apiserverv1beta1.TCPTransport{
 					URL: fmt.Sprintf("https://%s:%d", controlConfig.BindAddressOrLoopback(false, true), controlConfig.SupervisorPort),
-					TLSConfig: &apiserver.TLSConfig{
+					TLSConfig: &apiserverv1beta1.TLSConfig{
 						CABundle:   controlConfig.Runtime.ServerCA,
 						ClientKey:  controlConfig.Runtime.ClientKubeAPIKey,
 						ClientCert: controlConfig.Runtime.ClientKubeAPICert,
@@ -802,12 +775,12 @@ func genEgressSelectorConfig(controlConfig *config.Control) error {
 		}
 	}
 
-	egressConfig := apiserver.EgressSelectorConfiguration{
+	egressConfig := apiserverv1beta1.EgressSelectorConfiguration{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "EgressSelectorConfiguration",
 			APIVersion: "apiserver.k8s.io/v1beta1",
 		},
-		EgressSelections: []apiserver.EgressSelection{
+		EgressSelections: []apiserverv1beta1.EgressSelection{
 			{
 				Name:       "cluster",
 				Connection: clusterConn,

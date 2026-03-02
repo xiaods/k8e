@@ -4,6 +4,8 @@ kind: ServiceAccount
 metadata:
   name: metrics-server
   namespace: kube-system
+  labels:
+    k8s-app: metrics-server
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -17,7 +19,7 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       k8s-app: metrics-server
@@ -27,8 +29,10 @@ spec:
       labels:
         k8s-app: metrics-server
     spec:
-      priorityClassName: "system-node-critical"
+      priorityClassName: "system-cluster-critical"
       serviceAccountName: metrics-server
+      nodeSelector:
+        kubernetes.io/os: linux
       tolerations:
         - key: "CriticalAddonsOnly"
           operator: "Exists"
@@ -39,23 +43,22 @@ spec:
           operator: "Exists"
           effect: "NoSchedule"
       volumes:
-      # mount in tmp so we can safely use from-scratch images and/or read-only containers
       - name: tmp-dir
         emptyDir: {}
       containers:
       - name: metrics-server
-        image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/mirrored-metrics-server:v0.6.3
+        image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/mirrored-metrics-server:v0.8.1
+        imagePullPolicy: IfNotPresent
         args:
         - --cert-dir=/tmp
         - --secure-port=10250
         - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
         - --kubelet-use-node-status-port
         - --metric-resolution=15s
-        - --tls-cipher-suites=TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
         resources:
           requests:
             cpu: 100m
-            memory: 70Mi
+            memory: 200Mi
         ports:
         - name: https
           containerPort: 10250
@@ -65,26 +68,26 @@ spec:
             path: /readyz
             port: https
             scheme: HTTPS
-          initialDelaySeconds: 0
-          periodSeconds: 2
-          timeoutSeconds: 1
-          successThreshold: 1
+          initialDelaySeconds: 20
+          periodSeconds: 10
           failureThreshold: 3
         livenessProbe:
           httpGet:
             path: /livez
             port: https
             scheme: HTTPS
-          initialDelaySeconds: 60
           periodSeconds: 10
-          timeoutSeconds: 1
-          successThreshold: 1
           failureThreshold: 3
         securityContext:
           readOnlyRootFilesystem: true
           runAsNonRoot: true
           runAsUser: 1000
           allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
         volumeMounts:
         - name: tmp-dir
           mountPath: /tmp

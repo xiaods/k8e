@@ -14,7 +14,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/golang/mock/gomock"
+	"go.uber.org/mock/gomock"
 	"github.com/gorilla/mux"
 	"github.com/rancher/dynamiclistener/cert"
 	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
@@ -1473,13 +1473,15 @@ var _ corev1.Interface = &v1Mock{}
 
 type v1Mock struct {
 	configMap             *fake.MockControllerInterface[*v1.ConfigMap, *v1.ConfigMapList]
-	endpoints             *fake.MockControllerInterface[*v1.Endpoints, *v1.EndpointsList]
+	endpoints             *fake.MockControllerInterface[*v1.Endpoints, *v1.EndpointsList] // skipcq: GO-W1009
 	event                 *fake.MockControllerInterface[*v1.Event, *v1.EventList]
+	limitRange            *fake.MockControllerInterface[*v1.LimitRange, *v1.LimitRangeList]
 	namespace             *fake.MockNonNamespacedControllerInterface[*v1.Namespace, *v1.NamespaceList]
 	node                  *fake.MockNonNamespacedControllerInterface[*v1.Node, *v1.NodeList]
 	persistentVolume      *fake.MockNonNamespacedControllerInterface[*v1.PersistentVolume, *v1.PersistentVolumeList]
 	persistentVolumeClaim *fake.MockControllerInterface[*v1.PersistentVolumeClaim, *v1.PersistentVolumeClaimList]
 	pod                   *fake.MockControllerInterface[*v1.Pod, *v1.PodList]
+	resourceQuota         *fake.MockControllerInterface[*v1.ResourceQuota, *v1.ResourceQuotaList]
 	secret                *fake.MockControllerInterface[*v1.Secret, *v1.SecretList]
 	service               *fake.MockControllerInterface[*v1.Service, *v1.ServiceList]
 	serviceAccount        *fake.MockControllerInterface[*v1.ServiceAccount, *v1.ServiceAccountList]
@@ -1488,13 +1490,15 @@ type v1Mock struct {
 func newV1Mock(c *gomock.Controller) *v1Mock {
 	return &v1Mock{
 		configMap:             fake.NewMockControllerInterface[*v1.ConfigMap, *v1.ConfigMapList](c),
-		endpoints:             fake.NewMockControllerInterface[*v1.Endpoints, *v1.EndpointsList](c),
+		endpoints:             fake.NewMockControllerInterface[*v1.Endpoints, *v1.EndpointsList](c), // skipcq: GO-W1009
 		event:                 fake.NewMockControllerInterface[*v1.Event, *v1.EventList](c),
+		limitRange:            fake.NewMockControllerInterface[*v1.LimitRange, *v1.LimitRangeList](c),
 		namespace:             fake.NewMockNonNamespacedControllerInterface[*v1.Namespace, *v1.NamespaceList](c),
 		node:                  fake.NewMockNonNamespacedControllerInterface[*v1.Node, *v1.NodeList](c),
 		persistentVolume:      fake.NewMockNonNamespacedControllerInterface[*v1.PersistentVolume, *v1.PersistentVolumeList](c),
 		persistentVolumeClaim: fake.NewMockControllerInterface[*v1.PersistentVolumeClaim, *v1.PersistentVolumeClaimList](c),
 		pod:                   fake.NewMockControllerInterface[*v1.Pod, *v1.PodList](c),
+		resourceQuota:         fake.NewMockControllerInterface[*v1.ResourceQuota, *v1.ResourceQuotaList](c),
 		secret:                fake.NewMockControllerInterface[*v1.Secret, *v1.SecretList](c),
 		service:               fake.NewMockControllerInterface[*v1.Service, *v1.ServiceList](c),
 		serviceAccount:        fake.NewMockControllerInterface[*v1.ServiceAccount, *v1.ServiceAccountList](c),
@@ -1511,6 +1515,10 @@ func (m *v1Mock) Endpoints() corev1.EndpointsController {
 
 func (m *v1Mock) Event() corev1.EventController {
 	return m.event
+}
+
+func (m *v1Mock) LimitRange() corev1.LimitRangeController {
+	return m.limitRange
 }
 
 func (m *v1Mock) Namespace() corev1.NamespaceController {
@@ -1531,6 +1539,10 @@ func (m *v1Mock) PersistentVolumeClaim() corev1.PersistentVolumeClaimController 
 
 func (m *v1Mock) Pod() corev1.PodController {
 	return m.pod
+}
+
+func (m *v1Mock) ResourceQuota() corev1.ResourceQuotaController {
+	return m.resourceQuota
 }
 
 func (m *v1Mock) Secret() corev1.SecretController {

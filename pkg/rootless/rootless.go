@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opencontainers/runc/libcontainer/cgroups"
+	"github.com/opencontainers/cgroups"
 	"github.com/pkg/errors"
 	"github.com/rootless-containers/rootlesskit/pkg/child"
 	"github.com/rootless-containers/rootlesskit/pkg/copyup/tmpfssymlink"
@@ -36,11 +36,6 @@ var (
 )
 
 func Rootless(stateDir string, enableIPv6 bool) error {
-	defer func() {
-		os.Unsetenv(pipeFD)
-		os.Unsetenv(childEnv)
-	}()
-
 	hasFD := os.Getenv(pipeFD) != ""
 	hasChildEnv := os.Getenv(childEnv) != ""
 	rootlessDir := filepath.Join(stateDir, "rootless")
@@ -60,6 +55,8 @@ func Rootless(stateDir string, enableIPv6 bool) error {
 	if hasChildEnv {
 		Sock = os.Getenv(childEnv)
 		logrus.Debug("Running rootless process")
+		os.Unsetenv(pipeFD)
+		os.Unsetenv(childEnv)
 		return setupMounts(stateDir)
 	}
 
@@ -128,6 +125,32 @@ func parseCIDR(s string) (*net.IPNet, error) {
 	return ipnet, nil
 }
 
+// parseEnvInt reads an environment variable and parses it as an integer.
+// Returns defaultVal and logs a warning if the variable is set but cannot be parsed.
+func parseEnvInt(key string, defaultVal int) int {
+	if val := os.Getenv(key); val != "" {
+		if v, err := strconv.ParseInt(val, 10, 0); err != nil {
+			logrus.Warnf("Failed to parse %s value; using default", key)
+		} else {
+			return int(v)
+		}
+	}
+	return defaultVal
+}
+
+// parseEnvBool reads an environment variable and parses it as a boolean.
+// Returns defaultVal and logs a warning if the variable is set but cannot be parsed.
+func parseEnvBool(key string, defaultVal bool) bool {
+	if val := os.Getenv(key); val != "" {
+		if v, err := strconv.ParseBool(val); err != nil {
+			logrus.Warnf("Failed to parse %s value; using default", key)
+		} else {
+			return v
+		}
+	}
+	return defaultVal
+}
+
 func createParentOpt(driver portDriver, stateDir string, enableIPv6 bool) (*parent.Opt, error) {
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return nil, errors.Wrapf(err, "failed to mkdir %s", stateDir)
@@ -158,31 +181,9 @@ func createParentOpt(driver portDriver, stateDir string, enableIPv6 bool) (*pare
 		}
 	}
 
-	mtu := 0
-	if val := os.Getenv(mtuEnv); val != "" {
-		if v, err := strconv.ParseInt(val, 10, 0); err != nil {
-			logrus.Warn("Failed to parse rootless mtu value; using default")
-		} else {
-			mtu = int(v)
-		}
-	}
-
-	disableHostLoopback := true
-	if val := os.Getenv(disableLoopbackEnv); val != "" {
-		if v, err := strconv.ParseBool(val); err != nil {
-			logrus.Warn("Failed to parse rootless disable-host-loopback value; using default")
-		} else {
-			disableHostLoopback = v
-		}
-	}
-
-	if val := os.Getenv(enableIPv6Env); val != "" {
-		if v, err := strconv.ParseBool(val); err != nil {
-			logrus.Warn("Failed to parse rootless enable-ipv6 value; using default")
-		} else {
-			enableIPv6 = v
-		}
-	}
+	mtu := parseEnvInt(mtuEnv, 0)
+	disableHostLoopback := parseEnvBool(disableLoopbackEnv, true)
+	enableIPv6 = parseEnvBool(enableIPv6Env, enableIPv6)
 
 	cidr := "10.41.0.0/16"
 	if val := os.Getenv(cidrEnv); val != "" {

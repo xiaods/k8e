@@ -4,7 +4,7 @@ const PKG = "github.com/xiaods/k8e";
 const PKG_K8S_CLIENT = "k8s.io/client-go/pkg";
 const PKG_K8S_BASE = "k8s.io/component-base";
 const PKG_CRICTL = "sigs.k8s.io/cri-tools/pkg";
-const PKG_CONTAINERD = "github.com/containerd/containerd";
+const PKG_CONTAINERD = "github.com/containerd/containerd/v2";
 const PKG_CNI_PLUGINS = "github.com/containernetworking/plugins";
 const PKG_CRI_DOCKERD = "github.com/Mirantis/cri-dockerd";
 const PKG_ETCD = "go.etcd.io/etcd";
@@ -14,17 +14,20 @@ fn buildRoot(b: *std.Build) []const u8 {
 }
 
 pub fn build(b: *std.Build) !void {
-    const target = b.standardTargetOptions(.{});
+    _ = b.standardTargetOptions(.{});
     _ = b.standardOptimizeOption(.{});
-
-    const use_seccomp = b.option(bool, "seccomp", "Enable seccomp support") orelse false;
-    const use_selinux = b.option(bool, "selinux", "Enable selinux support") orelse false;
-    const use_apparmor = b.option(bool, "apparmor", "Enable apparmor support") orelse false;
 
     // Steps
     const k8e_step = b.step("k8e", "Build k8e");
     const download_step = b.step("download", "Download dependencies");
     const test_step = b.step("test", "Run unit tests");
+    const deps_step = b.step("deps", "Tidy go module dependencies");
+    const fmt_step = b.step("fmt", "Format source code");
+    const generate_step = b.step("generate", "Run code generation");
+    const package_step = b.step("package", "Package release artifacts");
+    const package_cli_step = b.step("package-cli", "Package CLI release artifacts");
+    const package_airgap_step = b.step("package-airgap", "Package air-gap release artifacts");
+    const clean_step = b.step("clean", "Remove build artifacts");
     const all_step = b.step("all", "Build all");
     b.default_step = all_step;
 
@@ -36,11 +39,8 @@ pub fn build(b: *std.Build) !void {
     const download_cmd = b.addSystemCommand(&.{ "bash", "hack/download" });
     download_step.dependOn(&download_cmd.step);
 
-    // Tags
-    var tags: []const u8 = "ctrd netcgo osusergo providerless urfave_cli_no_docs static_build";
-    if (use_seccomp) tags = b.fmt("{s} seccomp", .{tags});
-    if (use_selinux) tags = b.fmt("{s} selinux", .{tags});
-    if (use_apparmor) tags = b.fmt("{s} apparmor", .{tags});
+    // Tags (aligned with k3s: ctrd netcgo osusergo providerless urfave_cli_no_docs static_build apparmor seccomp)
+    const tags = "ctrd netcgo osusergo providerless urfave_cli_no_docs static_build apparmor seccomp";
 
     // Ensure bin directory exists
     const mkdir_bin = b.addSystemCommand(&.{ "mkdir", "-p", "bin" });
@@ -61,15 +61,14 @@ pub fn build(b: *std.Build) !void {
     };
     const ldflags = try buildVersionFlags(b.allocator, vi);
 
-    // Build k8e
-    const k8e_bin = try buildGoBinary(b, target, .{
-        .name = "k8e",
-        .package = "./cmd/server",
-        .tags = tags,
-        .ldflags = ldflags,
-    });
-    k8e_bin.step.dependOn(&mkdir_bin.step);
-    k8e_step.dependOn(&k8e_bin.step);
+    // Build k8e (aligned with k3s: system gcc, SQLite CGO flags)
+    const k8e_build = b.addSystemCommand(&.{ "go", "build" });
+    k8e_build.setEnvironmentVariable("CGO_ENABLED", "1");
+    k8e_build.setEnvironmentVariable("CGO_CFLAGS", "-DSQLITE_ENABLE_DBSTAT_VTAB=1 -DSQLITE_USE_ALLOCA=1");
+    k8e_build.addArgs(&.{ "-tags", tags, "-buildvcs=false", "-ldflags", ldflags });
+    k8e_build.addArgs(&.{ "-o", "bin/k8e", "./cmd/server" });
+    k8e_build.step.dependOn(&mkdir_bin.step);
+    k8e_step.dependOn(&k8e_build.step);
 
     // Symlinks
     const k8e_binaries = [_][]const u8{
@@ -80,67 +79,72 @@ pub fn build(b: *std.Build) !void {
     for (k8e_binaries) |name| {
         const bin_path = b.fmt("bin/{s}", .{name});
         const symlink = b.addSystemCommand(&.{ "ln", "-sf", "k8e", bin_path });
-        symlink.step.dependOn(&k8e_bin.step);
+        symlink.step.dependOn(&k8e_build.step);
         k8e_step.dependOn(&symlink.step);
     }
 
     // Test
     const go_test = b.addSystemCommand(&.{ "go", "test", "-v", "./..." });
+    go_test.setEnvironmentVariable("CGO_ENABLED", "1");
+    go_test.setEnvironmentVariable("GOLANG_PROTOBUF_REGISTRATION_CONFLICT", "warn");
     test_step.dependOn(&go_test.step);
 
+    // Deps
+    const go_mod_tidy = b.addSystemCommand(&.{ "go", "mod", "tidy" });
+    deps_step.dependOn(&go_mod_tidy.step);
+
+    // Format
+    const go_fmt = b.addSystemCommand(&.{ "go", "fmt", "./..." });
+    const zig_fmt = b.addSystemCommand(&.{ "zig", "fmt", "build.zig" });
+    fmt_step.dependOn(&go_fmt.step);
+    fmt_step.dependOn(&zig_fmt.step);
+
+    // Generate
+    const generate_cmd = b.addSystemCommand(&.{ "bash", "hack/generate" });
+    generate_step.dependOn(&generate_cmd.step);
+
+    // Package
+    const package_cmd = b.addSystemCommand(&.{ "bash", "hack/package" });
+    package_step.dependOn(&package_cmd.step);
+
+    const package_cli_cmd = b.addSystemCommand(&.{ "bash", "hack/package-cli" });
+    package_cli_step.dependOn(&package_cli_cmd.step);
+
+    const package_airgap_cmd = b.addSystemCommand(&.{ "bash", "hack/package-airgap.sh" });
+    package_airgap_step.dependOn(&package_airgap_cmd.step);
+
+    // Clean
+    const clean_cmd = b.addSystemCommand(&.{ "rm", "-rf", "bin", "dist", "build", ".zig-cache", "zig-out", ".cni-build" });
+    clean_step.dependOn(&clean_cmd.step);
+
     // Build containerd-shim-runc-v2 (Linux only)
+    // Aligned with k3s: uses system gcc, GOPATH, tags with netgo (not netcgo)
     const shim_step = b.step("shim", "Build containerd-shim-runc-v2");
-    const shim_tags = "netgo osusergo static_build";
+    const shim_tags = "ctrd netgo osusergo providerless urfave_cli_no_docs static_build apparmor seccomp";
     const containerd_src = "build/src/github.com/containerd/containerd";
     const shim_build = b.addSystemCommand(&.{ "go", "build" });
     shim_build.setEnvironmentVariable("CGO_ENABLED", "1");
     shim_build.setEnvironmentVariable("GOPATH", b.fmt("{s}/build", .{root}));
-    const shim_zig_target = b.fmt("{s}-linux-musl", .{@tagName(target.result.cpu.arch)});
-    shim_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{shim_zig_target}));
-    shim_build.setEnvironmentVariable("CXX", b.fmt("zig c++ -target {s}", .{shim_zig_target}));
-    shim_build.setEnvironmentVariable("GOOS", "linux");
-    shim_build.setEnvironmentVariable("GOARCH", goarch_str(target));
     shim_build.setCwd(b.path(containerd_src));
     shim_build.addArgs(&.{
-        "-tags",                         shim_tags,
-        "-ldflags",                      ldflags,
-        "-o",                            b.fmt("{s}/bin/containerd-shim-runc-v2", .{root}),
+        "-tags",    shim_tags,
+        "-ldflags", ldflags,
+        "-o",       b.fmt("{s}/bin/containerd-shim-runc-v2", .{root}),
         "./cmd/containerd-shim-runc-v2",
     });
     shim_build.step.dependOn(&download_cmd.step);
     shim_build.step.dependOn(&mkdir_bin.step);
     shim_step.dependOn(&shim_build.step);
 
-    // Build libseccomp static library (for runc seccomp support)
-    const seccomp_version = "2.5.5";
-    const seccomp_dir = b.fmt("{s}/.libseccomp", .{root});
-    const seccomp_install = b.fmt("{s}/install", .{seccomp_dir});
-    const zig_arch = @tagName(target.result.cpu.arch);
-    const seccomp_build_script = try std.fmt.allocPrint(
-        b.allocator,
-        "set -ex && rm -rf {s} && mkdir -p {s}/bin && cd {s}" ++
-            " && curl -sL https://github.com/seccomp/libseccomp/releases/download/v{s}/libseccomp-{s}.tar.gz | tar xz" ++
-            " && cd libseccomp-{s}" ++
-            " && if ! command -v gperf >/dev/null 2>&1; then printf '#!/bin/sh\\necho gperf stub\\n' > {s}/bin/gperf && chmod +x {s}/bin/gperf; fi" ++
-            " && PATH=\"{s}/bin:$PATH\" ./configure --host={s}-linux-musl --prefix={s} CC=\"zig cc -target {s}\" --enable-static --disable-shared" ++
-            " && make -j$(nproc) install",
-        .{ seccomp_dir, seccomp_dir, seccomp_dir, seccomp_version, seccomp_version, seccomp_version, seccomp_dir, seccomp_dir, seccomp_dir, zig_arch, seccomp_install, shim_zig_target },
-    );
-    const seccomp_build = b.addSystemCommand(&.{ "bash", "-c", seccomp_build_script });
-
     // Build runc (Linux only)
+    // Aligned with k3s: system gcc + system libseccomp-dev
+    // Requires: apt install libseccomp-dev
     const runc_step = b.step("runc", "Build runc");
     const runc_src = "build/src/github.com/opencontainers/runc";
     const runc_build = b.addSystemCommand(&.{"make"});
-    runc_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{shim_zig_target}));
-    runc_build.setEnvironmentVariable("CGO_ENABLED", "1");
-    runc_build.setEnvironmentVariable("CGO_CFLAGS", b.fmt("-I{s}/include", .{seccomp_install}));
-    runc_build.setEnvironmentVariable("CGO_LDFLAGS", b.fmt("-L{s}/lib", .{seccomp_install}));
-    runc_build.setEnvironmentVariable("PKG_CONFIG_PATH", b.fmt("{s}/lib/pkgconfig", .{seccomp_install}));
     runc_build.setCwd(b.path(runc_src));
-    runc_build.addArgs(&.{ "BUILDTAGS=apparmor seccomp", "EXTRA_LDFLAGS=-w -s", "static" });
+    runc_build.addArgs(&.{ "EXTRA_LDFLAGS=-w -s", "BUILDTAGS=apparmor seccomp", "static" });
     runc_build.step.dependOn(&download_cmd.step);
-    runc_build.step.dependOn(&seccomp_build.step);
     const runc_cp = b.addSystemCommand(&.{ "cp", "-vf", b.fmt("{s}/{s}/runc", .{ root, runc_src }), b.fmt("{s}/bin/runc", .{root}) });
     runc_cp.step.dependOn(&runc_build.step);
     runc_cp.step.dependOn(&mkdir_bin.step);
@@ -159,8 +163,6 @@ pub fn build(b: *std.Build) !void {
     cni_build.setEnvironmentVariable("GO111MODULE", "off");
     cni_build.setEnvironmentVariable("GOPATH", cni_clone_abs);
     cni_build.setEnvironmentVariable("CGO_ENABLED", "0");
-    cni_build.setEnvironmentVariable("GOOS", "linux");
-    cni_build.setEnvironmentVariable("GOARCH", goarch_str(target));
     const cni_ldflags = b.fmt("-w -s -extldflags '-static' -X " ++ PKG_CNI_PLUGINS ++ "/pkg/utils/buildversion.BuildVersion={s}", .{vi.version_cniplugins});
     cni_build.addArgs(&.{
         "-tags",    tags,
@@ -192,15 +194,6 @@ fn getVersionEnv(b: *std.Build) !std.StringHashMap([]const u8) {
     return map;
 }
 
-fn goarch_str(target: std.Build.ResolvedTarget) []const u8 {
-    return switch (target.result.cpu.arch) {
-        .x86_64 => "amd64",
-        .aarch64 => "arm64",
-        .arm => "arm",
-        else => "amd64",
-    };
-}
-
 const VersionInfo = struct {
     version: []const u8,
     commit: []const u8,
@@ -222,7 +215,7 @@ fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo) ![]const u8 {
     const commit_short = if (v.commit.len >= 8) v.commit[0..8] else v.commit;
 
     const parts = [_][]const u8{
-        "-w -s -extldflags '-static'",
+        "-w -s -extldflags '-static -lm -ldl -lz -lpthread'",
         // k8e version
         try xflag(allocator, PKG ++ "/pkg/version.Version", v.version),
         try xflag(allocator, PKG ++ "/pkg/version.GitCommit", commit_short),
@@ -252,29 +245,4 @@ fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo) ![]const u8 {
         try xflag(allocator, PKG_ETCD ++ "/api/v3/version.GitSHA", "HEAD"),
     };
     return std.mem.join(allocator, " ", &parts);
-}
-
-fn buildGoBinary(b: *std.Build, target: std.Build.ResolvedTarget, options: struct {
-    name: []const u8,
-    package: []const u8,
-    tags: []const u8,
-    ldflags: []const u8,
-}) !*std.Build.Step.Run {
-    const go_build = b.addSystemCommand(&.{ "go", "build" });
-    const goos = switch (target.result.os.tag) {
-        .linux => "linux",
-        .windows => "windows",
-        .macos => "darwin",
-        else => "linux",
-    };
-    const goarch = goarch_str(target);
-    go_build.setEnvironmentVariable("GOOS", goos);
-    go_build.setEnvironmentVariable("GOARCH", goarch);
-    go_build.setEnvironmentVariable("CGO_ENABLED", "1");
-    const zig_target = b.fmt("{s}-{s}-{s}", .{ @tagName(target.result.cpu.arch), @tagName(target.result.os.tag), if (target.result.os.tag == .linux) "musl" else @tagName(target.result.abi) });
-    go_build.setEnvironmentVariable("CC", b.fmt("zig cc -target {s}", .{zig_target}));
-    go_build.setEnvironmentVariable("CXX", b.fmt("zig c++ -target {s}", .{zig_target}));
-    go_build.addArgs(&.{ "-tags", options.tags, "-buildvcs=false", "-ldflags", options.ldflags });
-    go_build.addArgs(&.{ "-o", b.fmt("bin/{s}", .{options.name}), options.package });
-    return go_build;
 }

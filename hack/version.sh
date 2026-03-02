@@ -31,8 +31,8 @@ get-module-path(){
   go list -m -f '{{if .Replace}}{{.Replace.Path}}{{else}}{{.Path}}{{end}}' $1
 }
 
-PKG_CONTAINERD_K8E=$(get-module-path github.com/containerd/containerd)
-VERSION_CONTAINERD=$(get-module-version github.com/containerd/containerd)
+PKG_CONTAINERD_K8E=$(get-module-path github.com/containerd/containerd/v2)
+VERSION_CONTAINERD=$(get-module-version github.com/containerd/containerd/v2)
 
 VERSION_CRICTL=$(get-module-version sigs.k8s.io/cri-tools)
 if [ -z "$VERSION_CRICTL" ]; then

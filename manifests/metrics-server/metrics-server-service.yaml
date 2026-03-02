@@ -5,14 +5,16 @@ metadata:
   name: metrics-server
   namespace: kube-system
   labels:
+    k8s-app: metrics-server
     kubernetes.io/name: "Metrics-server"
     kubernetes.io/cluster-service: "true"
 spec:
   selector:
     k8s-app: metrics-server
   ports:
-  - port: 443
+  - appProtocol: https
     name: https
+    port: 443
     protocol: TCP
     targetPort: https
   ipFamilyPolicy: PreferDualStack

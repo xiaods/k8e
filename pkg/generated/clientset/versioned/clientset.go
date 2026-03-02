@@ -18,8 +18,8 @@ limitations under the License.
 package versioned
 
 import (
-	"fmt"
-	"net/http"
+	fmt "fmt"
+	http "net/http"
 
 	k8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1"
 	discovery "k8s.io/client-go/discovery"
