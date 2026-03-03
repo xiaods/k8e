@@ -135,6 +135,7 @@ pub fn build(b: *std.Build) !void {
     package_step.dependOn(&package_cmd.step);
 
     const package_cli_cmd = b.addSystemCommand(&.{ "bash", "hack/package-cli" });
+    package_cli_cmd.step.dependOn(all_step);
     package_cli_step.dependOn(&package_cli_cmd.step);
 
     const package_airgap_cmd = b.addSystemCommand(&.{ "bash", "hack/package-airgap.sh" });
