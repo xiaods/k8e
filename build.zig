@@ -58,8 +58,38 @@ pub fn build(b: *std.Build) !void {
         .pkg_containerd = version_env.get("PKG_CONTAINERD_K8E") orelse PKG_CONTAINERD,
         .version_cniplugins = version_env.get("VERSION_CNIPLUGINS") orelse "v0.0.0",
         .version_cri_dockerd = version_env.get("VERSION_CRI_DOCKERD") orelse "v0.0.0",
+        .version_hcsshim = version_env.get("VERSION_HCSSHIM") orelse "v0.0.0",
     };
     const ldflags = try buildVersionFlags(b.allocator, vi);
+
+    // Pre-build cleanup: remove stale k8e binaries (aligned with k3s scripts/build)
+    const k8e_binaries = [_][]const u8{
+        "k8e-agent",           "k8e-server",      "k8e-token",      "k8e-etcd-snapshot",
+        "k8e-secrets-encrypt", "k8e-certificate", "k8e-completion", "kubectl",
+        "containerd",          "crictl",          "ctr",
+    };
+    const cleanup_k8e = b.addSystemCommand(&.{
+        "bash", "-c",
+        "for i in bin/k8e bin/k8e-agent bin/k8e-server bin/k8e-token bin/k8e-etcd-snapshot " ++
+            "bin/k8e-secrets-encrypt bin/k8e-certificate bin/k8e-completion " ++
+            "bin/kubectl bin/containerd bin/crictl bin/ctr" ++
+            "; do [ -f \"$i\" ] && echo \"Removing $i\" && rm -f \"$i\" || true; done",
+    });
+
+    // Pre-build cleanup: remove stale containerd binaries (aligned with k3s scripts/build)
+    // containerd_binaries=(
+    //     "bin/containerd-shim"
+    //     "bin/containerd-shim-runc-v2"
+    //     "bin/runc"
+    //     "bin/containerd-shim-runhcs-v1"
+    //     "bin/runhcs"
+    // )
+    const cleanup_containerd = b.addSystemCommand(&.{
+        "bash", "-c",
+        "for i in bin/containerd-shim bin/containerd-shim-runc-v2 bin/runc " ++
+            "bin/containerd-shim-runhcs-v1 bin/runhcs" ++
+            "; do [ -f \"$i\" ] && echo \"Removing $i\" && rm -f \"$i\" || true; done",
+    });
 
     // Build k8e (aligned with k3s: system gcc, SQLite CGO flags)
     const k8e_build = b.addSystemCommand(&.{ "go", "build" });
@@ -68,14 +98,11 @@ pub fn build(b: *std.Build) !void {
     k8e_build.addArgs(&.{ "-tags", tags, "-buildvcs=false", "-ldflags", ldflags });
     k8e_build.addArgs(&.{ "-o", "bin/k8e", "./cmd/server" });
     k8e_build.step.dependOn(&mkdir_bin.step);
+    k8e_build.step.dependOn(&cleanup_k8e.step);
+    k8e_build.step.dependOn(&cleanup_containerd.step);
     k8e_step.dependOn(&k8e_build.step);
 
-    // Symlinks
-    const k8e_binaries = [_][]const u8{
-        "k8e-agent",           "k8e-server",      "k8e-token",      "k8e-etcd-snapshot",
-        "k8e-secrets-encrypt", "k8e-certificate", "k8e-completion", "kubectl",
-        "containerd",          "crictl",          "ctr",
-    };
+    // Symlinks for k8e binaries
     for (k8e_binaries) |name| {
         const bin_path = b.fmt("bin/{s}", .{name});
         const symlink = b.addSystemCommand(&.{ "ln", "-sf", "k8e", bin_path });
@@ -117,9 +144,16 @@ pub fn build(b: *std.Build) !void {
     const clean_cmd = b.addSystemCommand(&.{ "rm", "-rf", "bin", "dist", "build", ".zig-cache", "zig-out", ".cni-build" });
     clean_step.dependOn(&clean_cmd.step);
 
+    // =========================================================================
+    // Containerd binaries: containerd-shim-runc-v2, runc (Linux)
+    //                      containerd-shim-runhcs-v1, runhcs (Windows)
+    // Aligned with k3s scripts/build containerd_binaries handling
+    // =========================================================================
+
     // Build containerd-shim-runc-v2 (Linux only)
     // Aligned with k3s: uses system gcc, GOPATH, tags with netgo (not netcgo)
-    const shim_step = b.step("shim", "Build containerd-shim-runc-v2");
+    // Outputs to containerd source bin/ dir, then copies to project bin/ (like upstream)
+    const shim_step = b.step("shim", "Build containerd-shim-runc-v2 (Linux)");
     const shim_tags = "ctrd netgo osusergo providerless urfave_cli_no_docs static_build apparmor seccomp";
     const containerd_src = "build/src/github.com/containerd/containerd";
     const shim_build = b.addSystemCommand(&.{ "go", "build" });
@@ -127,28 +161,82 @@ pub fn build(b: *std.Build) !void {
     shim_build.setEnvironmentVariable("GOPATH", b.fmt("{s}/build", .{root}));
     shim_build.setCwd(b.path(containerd_src));
     shim_build.addArgs(&.{
-        "-tags",    shim_tags,
-        "-ldflags", ldflags,
-        "-o",       b.fmt("{s}/bin/containerd-shim-runc-v2", .{root}),
+        "-tags",                         shim_tags,
+        "-ldflags",                      ldflags,
+        "-o",                            "bin/containerd-shim-runc-v2",
         "./cmd/containerd-shim-runc-v2",
     });
     shim_build.step.dependOn(&download_cmd.step);
     shim_build.step.dependOn(&mkdir_bin.step);
-    shim_step.dependOn(&shim_build.step);
+    shim_build.step.dependOn(&cleanup_containerd.step);
+    // Copy containerd build output to project bin/ (aligned with k3s: cp -vf ./build/src/.../containerd/bin/* ./bin/)
+    const shim_cp = b.addSystemCommand(&.{
+        "bash",                                                                  "-c",
+        b.fmt("cp -vf {s}/{s}/bin/* {s}/bin/", .{ root, containerd_src, root }),
+    });
+    shim_cp.step.dependOn(&shim_build.step);
+    shim_step.dependOn(&shim_cp.step);
 
     // Build runc (Linux only)
     // Aligned with k3s: system gcc + system libseccomp-dev
     // Requires: apt install libseccomp-dev
-    const runc_step = b.step("runc", "Build runc");
+    const runc_step = b.step("runc", "Build runc (Linux)");
     const runc_src = "build/src/github.com/opencontainers/runc";
     const runc_build = b.addSystemCommand(&.{"make"});
     runc_build.setCwd(b.path(runc_src));
     runc_build.addArgs(&.{ "EXTRA_LDFLAGS=-w -s", "BUILDTAGS=apparmor seccomp", "static" });
     runc_build.step.dependOn(&download_cmd.step);
+    runc_build.step.dependOn(&cleanup_containerd.step);
+    // Copy runc binary to project bin/ (aligned with k3s: cp -vf ./build/src/.../runc/runc ./bin/)
     const runc_cp = b.addSystemCommand(&.{ "cp", "-vf", b.fmt("{s}/{s}/runc", .{ root, runc_src }), b.fmt("{s}/bin/runc", .{root}) });
     runc_cp.step.dependOn(&runc_build.step);
     runc_cp.step.dependOn(&mkdir_bin.step);
     runc_step.dependOn(&runc_cp.step);
+
+    // Build containerd-shim-runhcs-v1 and runhcs (Windows only)
+    // Aligned with k3s: builds from hcsshim source, CGO_ENABLED=0, tags with netgo
+    const hcsshim_step = b.step("hcsshim", "Build containerd-shim-runhcs-v1 and runhcs (Windows)");
+    const hcsshim_tags = "ctrd netgo osusergo providerless urfave_cli_no_docs static_build";
+    const hcsshim_src = "build/src/github.com/microsoft/hcsshim";
+
+    // Build containerd-shim-runhcs-v1
+    const runhcs_shim_build = b.addSystemCommand(&.{ "go", "build" });
+    runhcs_shim_build.setEnvironmentVariable("CGO_ENABLED", "0");
+    runhcs_shim_build.setEnvironmentVariable("GOPATH", b.fmt("{s}/build", .{root}));
+    runhcs_shim_build.setCwd(b.path(hcsshim_src));
+    runhcs_shim_build.addArgs(&.{
+        "-tags",                           hcsshim_tags,
+        "-ldflags",                        ldflags,
+        "-o",                              "bin/containerd-shim-runhcs-v1",
+        "./cmd/containerd-shim-runhcs-v1",
+    });
+    runhcs_shim_build.step.dependOn(&download_cmd.step);
+    runhcs_shim_build.step.dependOn(&mkdir_bin.step);
+    runhcs_shim_build.step.dependOn(&cleanup_containerd.step);
+
+    // Build runhcs
+    const runhcs_build = b.addSystemCommand(&.{ "go", "build" });
+    runhcs_build.setEnvironmentVariable("CGO_ENABLED", "0");
+    runhcs_build.setEnvironmentVariable("GOPATH", b.fmt("{s}/build", .{root}));
+    runhcs_build.setCwd(b.path(hcsshim_src));
+    runhcs_build.addArgs(&.{
+        "-tags",        hcsshim_tags,
+        "-ldflags",     ldflags,
+        "-o",           "bin/runhcs",
+        "./cmd/runhcs",
+    });
+    runhcs_build.step.dependOn(&download_cmd.step);
+    runhcs_build.step.dependOn(&mkdir_bin.step);
+    runhcs_build.step.dependOn(&cleanup_containerd.step);
+
+    // Copy hcsshim build output to project bin/
+    const hcsshim_cp = b.addSystemCommand(&.{
+        "bash",                                                               "-c",
+        b.fmt("cp -vf {s}/{s}/bin/* {s}/bin/", .{ root, hcsshim_src, root }),
+    });
+    hcsshim_cp.step.dependOn(&runhcs_shim_build.step);
+    hcsshim_cp.step.dependOn(&runhcs_build.step);
+    hcsshim_step.dependOn(&hcsshim_cp.step);
 
     // Build CNI plugins
     const cni_step = b.step("cni", "Build CNI plugins");
@@ -178,12 +266,13 @@ pub fn build(b: *std.Build) !void {
     all_step.dependOn(k8e_step);
     all_step.dependOn(shim_step);
     all_step.dependOn(runc_step);
+    all_step.dependOn(hcsshim_step);
     all_step.dependOn(cni_step);
 }
 
 fn getVersionEnv(b: *std.Build) !std.StringHashMap([]const u8) {
     var map = std.StringHashMap([]const u8).init(b.allocator);
-    const res = b.run(&.{ "bash", "-c", "source hack/version.sh && env | grep -E '^(VERSION|COMMIT|TREE_STATE|VERSION_GOLANG|VERSION_CRICTL|VERSION_CONTAINERD|PKG_CONTAINERD_K8E|VERSION_CNIPLUGINS|VERSION_CRI_DOCKERD|VERSION_RUNC)='" });
+    const res = b.run(&.{ "bash", "-c", "source hack/version.sh && env | grep -E '^(VERSION|COMMIT|TREE_STATE|VERSION_GOLANG|VERSION_CRICTL|VERSION_CONTAINERD|PKG_CONTAINERD_K8E|VERSION_CNIPLUGINS|VERSION_CRI_DOCKERD|VERSION_RUNC|VERSION_HCSSHIM)='" });
     var it = std.mem.tokenizeAny(u8, res, "\n");
     while (it.next()) |line| {
         var parts = std.mem.splitScalar(u8, line, '=');
@@ -205,6 +294,7 @@ const VersionInfo = struct {
     pkg_containerd: []const u8,
     version_cniplugins: []const u8,
     version_cri_dockerd: []const u8,
+    version_hcsshim: []const u8,
 };
 
 fn xflag(allocator: std.mem.Allocator, comptime key: []const u8, value: []const u8) ![]const u8 {
