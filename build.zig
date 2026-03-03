@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const PKG = "github.com/xiaods/k8e";
 const PKG_K8S_CLIENT = "k8s.io/client-go/pkg";
@@ -267,8 +268,11 @@ pub fn build(b: *std.Build) !void {
     all_step.dependOn(k8e_step);
     all_step.dependOn(shim_step);
     all_step.dependOn(runc_step);
-    all_step.dependOn(hcsshim_step);
     all_step.dependOn(cni_step);
+    // hcsshim is Windows-only; only include on Windows hosts
+    if (builtin.os.tag == .windows) {
+        all_step.dependOn(hcsshim_step);
+    }
 }
 
 fn getVersionEnv(b: *std.Build) !std.StringHashMap([]const u8) {
