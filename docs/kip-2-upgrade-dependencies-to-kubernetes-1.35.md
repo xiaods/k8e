@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-02-28 | In Progress |
+| @xiaods | 2026-03-04 | Done |
 
 ## Summary
 
@@ -514,6 +514,188 @@ sudo yum install -y glibc-static zlib-static libseccomp-static libseccomp-devel
 
 **Note:** k3s builds inside a Docker container (via `Dockerfile.dapper`) that has all static libraries pre-installed. When building k8e directly on the host, these packages must be installed manually.
 
+### 21. EgressSelectorConfiguration Strict Decoding Failure
+
+**Error:**
+```
+Error: failed to read egress selector config: strict decoding error: unknown field "EgressSelections"
+```
+
+**Root Cause:** `genEgressSelectorConfig()` in `pkg/daemons/control/deps/deps.go` used the internal (unversioned) type `k8s.io/apiserver/pkg/apis/apiserver.EgressSelectorConfiguration` to construct the egress selector config, then serialized it with `json.Marshal`. Internal types have no JSON struct tags, so the `EgressSelections` field serialized as `"EgressSelections"` (PascalCase). However, the apiserver reads this config file using strict decoding against the `v1beta1` schema, which expects `"egressSelections"` (camelCase, from JSON tag). The field name mismatch caused a strict decoding error.
+
+**Affected File:** `pkg/daemons/control/deps/deps.go`
+
+**Resolution:** Replace all internal type references with the versioned `v1beta1` types that have correct JSON tags:
+
+```diff
+- "k8s.io/apiserver/pkg/apis/apiserver"
++ apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
+
+- var clusterConn apiserver.Connection
++ var clusterConn apiserverv1beta1.Connection
+
+- egressConfig := apiserver.EgressSelectorConfiguration{
++ egressConfig := apiserverv1beta1.EgressSelectorConfiguration{
+
+- EgressSelections: []apiserver.EgressSelection{
++ EgressSelections: []apiserverv1beta1.EgressSelection{
+```
+
+### 22. Kubelet `--pod-infra-container-image` Flag Removed in Kubernetes 1.35
+
+**Error:**
+```
+Error: failed to parse kubelet flag: unknown flag: --pod-infra-container-image
+```
+
+**Root Cause:** The `--pod-infra-container-image` kubelet flag was deprecated and fully removed in Kubernetes 1.35. The pause container image is now managed entirely by the container runtime (containerd/CRI), not kubelet.
+
+**Affected Files:**
+- `pkg/daemons/agent/agent_linux.go`
+- `pkg/daemons/agent/agent_windows.go`
+
+**Resolution:** Remove the `pod-infra-container-image` argument from kubelet args on both platforms:
+
+```diff
+- if cfg.PauseImage != "" {
+-     argsMap["pod-infra-container-image"] = cfg.PauseImage
+- }
+```
+
+**Note:** The same flag in `pkg/agent/cridockerd/cridockerd.go` was retained, as it is a cri-dockerd parameter, not a kubelet flag.
+
+### 23. `CloudDualStackNodeIPs` Feature Gate Removed in Kubernetes 1.35
+
+**Error:**
+```
+ERRO cloud-controller-manager exited: invalid argument "CloudDualStackNodeIPs=true"
+for "--feature-gates" flag: unrecognized feature gate: CloudDualStackNodeIPs
+```
+
+**Root Cause:** The `CloudDualStackNodeIPs` feature gate graduated to GA in a prior release and was removed from the codebase in Kubernetes 1.35. GA-graduated feature gates are cleaned up after a standard deprecation cycle.
+
+**Affected File:** `pkg/daemons/control/server.go`
+
+**Resolution:** Remove the feature gate from cloud-controller-manager args:
+
+```diff
+  argsMap := map[string]string{
+      ...
+      "bind-address": cfg.Loopback(false),
+-     "feature-gates": "CloudDualStackNodeIPs=true",
+  }
+```
+
+### 24. metrics-server Upgrade v0.6.3 → v0.8.1
+
+**Error:**
+```
+loading OpenAPI spec for "v1beta1.metrics.k8s.io" failed with: failed to download
+v1beta1.metrics.k8s.io: ResponseCode: 503, Body: service unavailable
+```
+
+**Root Cause:** metrics-server v0.6.3 is incompatible with Kubernetes 1.35. The metrics-server compatibility matrix shows v0.8.x is required for Kubernetes 1.31+.
+
+**Affected Files:**
+- `manifests/metrics-server/metrics-server-deployment.yaml`
+- `manifests/metrics-server/metrics-server-service.yaml`
+- `manifests/metrics-server/aggregated-metrics-reader.yaml`
+- `pkg/deploy/zz_generated_bindata.go` (regenerated)
+
+**Resolution:** Upgrade to metrics-server v0.8.1 with the following changes:
+
+| Setting | v0.6.3 | v0.8.1 |
+|---------|--------|--------|
+| Image tag | `v0.6.3` | `v0.8.1` |
+| `maxUnavailable` | `1` | `0` |
+| `priorityClassName` | `system-node-critical` | `system-cluster-critical` |
+| `nodeSelector` | (none) | `kubernetes.io/os: linux` |
+| Memory request | `70Mi` | `200Mi` |
+| Readiness `initialDelaySeconds` | `0` | `20` |
+| `--tls-cipher-suites` | explicit list | removed (secure defaults built-in) |
+| `seccompProfile` | (none) | `RuntimeDefault` |
+| `capabilities.drop` | (none) | `ALL` |
+| Service `appProtocol` | (none) | `https` |
+
+Run `go generate` on Linux to regenerate `pkg/deploy/zz_generated_bindata.go`.
+
+### 25. `genClientCerts` Cyclomatic Complexity Refactoring
+
+**Issue:** DeepSource flagged `genClientCerts` with cyclomatic complexity of 24 (GO-R1005, "high" risk).
+
+**Root Cause:** The function contained 7 repetitive blocks of certificate generation + optional kubeconfig writing, each with its own error handling branches.
+
+**Affected File:** `pkg/daemons/control/deps/deps.go`
+
+**Resolution:** Extracted a `certKeyKubeConfig` struct and `generateCertAndKubeConfig` helper function, replacing 7 repetitive blocks with a declarative config slice and loop:
+
+```go
+type certKeyKubeConfig struct {
+    commonName string
+    orgs       []string
+    certFile   string
+    keyFile    string
+    kubeConfig string // if empty, no kubeconfig is generated
+}
+
+func generateCertAndKubeConfig(factory signedCertFactory, c certKeyKubeConfig, apiEndpoint, serverCA string) error {
+    certGen, err := factory(c.commonName, c.orgs, c.certFile, c.keyFile)
+    if err != nil { return err }
+    if certGen && c.kubeConfig != "" {
+        return KubeConfig(c.kubeConfig, apiEndpoint, serverCA, c.certFile, c.keyFile)
+    }
+    return nil
+}
+```
+
+### 26. Scheduler Deadlock with `waitForUntaintedNode`
+
+**Error:** All pods stuck in `Pending` state. Scheduler process starts but port 10259 never opens. No scheduling occurs.
+
+**Root Cause:** A three-way deadlock between the scheduler, CNI, and cloud-controller-manager:
+
+1. **Scheduler** calls `waitForUntaintedNode()` before starting, waiting for CCM to remove the `node.cloudprovider.kubernetes.io/uninitialized` taint from at least one node
+2. **`waitForUntaintedNode`** uses the kubelet kubeconfig (`KubeConfigKubelet`), but the Node Authorizer restricts kubelet to only accessing its own Node object — `List` and `Watch` on all nodes are forbidden, so the watch silently fails
+3. **CNI (cilium)** pods are Pending because no scheduler is running to schedule them
+4. **Node stays NotReady** because CNI is not initialized
+5. **CCM cannot remove the taint** because the node is not ready → back to step 1
+
+**Affected File:** `pkg/daemons/executor/embed.go`
+
+**Resolution:** Removed the `waitForUntaintedNode` call from the scheduler startup path. The scheduler does not need to wait for untainted nodes — critical DaemonSet pods (CNI, etc.) configure `tolerations: [{operator: Exists}]` which allows scheduling on tainted nodes. Also removed the now-unused `waitForUntaintedNode` and `getCloudTaint` functions and their associated imports.
+
+```diff
+  go func() {
+      <-apiReady
+      for e.nodeConfig == nil {
+          runtime.Gosched()
+      }
+-     if !e.nodeConfig.AgentConfig.DisableCCM {
+-         if err := waitForUntaintedNode(ctx, e.nodeConfig.AgentConfig.KubeConfigKubelet); err != nil {
+-             logrus.Fatalf("failed to wait for untained node: %v", err)
+-         }
+-     }
+      defer func() {
+```
+
+### 27. Bootstrap Token Mismatch on Re-initialization
+
+**Error:**
+```
+level=fatal msg="Failed to reconcile with temporary etcd: bootstrap data already
+found and encrypted with different token"
+```
+
+**Root Cause:** This is an operational error, not a code bug. The etcd bootstrap data is encrypted using the cluster token (`K8E_TOKEN`) as the encryption key. When the server is restarted with a different token than the one used during initial cluster creation, the stored bootstrap data cannot be decrypted. The token comparison in `pkg/cluster/storage.go` (`getBootstrapKeyFromStorage`) correctly detects the mismatch and returns an error.
+
+**Resolution (operational):** Either use the original token, or clear the data directory to reinitialize:
+
+```bash
+systemctl stop k8e
+rm -rf /var/lib/rancher/k8e/server/db
+systemctl start k8e
+```
+
 ## Changes Summary
 
 ### go.mod
@@ -546,7 +728,7 @@ sudo yum install -y glibc-static zlib-static libseccomp-static libseccomp-devel
 | `pkg/agent/containerd/config_linux.go` | `runc/libcontainer/userns` → `moby/sys/userns`; containerd v1 → v2 client, overlayutils, fuse-overlayfs/v2 |
 | `pkg/agent/containerd/config_windows.go` | containerd v1 → v2 client |
 | `pkg/agent/containerd/containerd.go` | containerd v1 → v2 (client, images, namespaces, errdefs), local CRI constants |
-| `pkg/daemons/agent/agent_linux.go` | `runc/libcontainer/userns` → `moby/sys/userns` |
+| `pkg/daemons/agent/agent_linux.go` | `runc/libcontainer/userns` → `moby/sys/userns`; removed `--pod-infra-container-image` kubelet flag |
 | `pkg/rootless/rootless.go` | `runc/libcontainer/cgroups` → `opencontainers/cgroups` |
 | `pkg/cgroups/cgroups_linux.go` | `containerd/cgroups` v1/v2 → `containerd/cgroups/v3`, `LoadManager` → `Load` |
 | `pkg/ctr/main.go` | `containerd/containerd/cmd/ctr` → `containerd/v2/cmd/ctr`, `urfave/cli` → `cli/v2` |
@@ -559,7 +741,13 @@ sudo yum install -y glibc-static zlib-static libseccomp-static libseccomp-devel
 | `pkg/spegel/bootstrap.go` | Rewritten for new Bootstrapper interface (`Get(ctx)`, `Run(ctx, AddrInfo)`) |
 | `pkg/spegel/spegel.go` | Updated for new spegel OCI/registry/routing APIs |
 | `pkg/spegel/store.go` | New: deferred OCI store (ported from k3s) |
-| `pkg/daemons/executor/embed.go` | `NewSchedulerCommand()` → `NewSchedulerCommand(ctx.Done())` |
+| `pkg/daemons/executor/embed.go` | `NewSchedulerCommand()` → `NewSchedulerCommand(ctx.Done())`; removed `waitForUntaintedNode` deadlock |
+| `pkg/daemons/control/deps/deps.go` | EgressSelector internal types → `v1beta1` versioned types; `genClientCerts` complexity refactoring |
+| `pkg/daemons/agent/agent_windows.go` | Removed `--pod-infra-container-image` kubelet flag |
+| `pkg/daemons/control/server.go` | Removed `CloudDualStackNodeIPs` feature gate from CCM args |
+| `manifests/metrics-server/metrics-server-deployment.yaml` | Upgraded metrics-server v0.6.3 → v0.8.1 with security and resource changes |
+| `manifests/metrics-server/metrics-server-service.yaml` | Added `appProtocol: https` |
+| `manifests/metrics-server/aggregated-metrics-reader.yaml` | Added `k8s-app: metrics-server` label |
 | `pkg/etcd/etcd.go` | `etcdserver.ErrNoLeader` → `etcderrors.ErrNoLeader`, `credentials.NewBundle` → `NewTransportCredential` |
 | `pkg/etcd/snapshot.go` | `snapshotv3.Save` → `snapshotv3.SaveWithVersion` |
 | `pkg/cluster/storage.go` | `ErrGPRCNotSupportedForLearner` → `ErrGRPCNotSupportedForLearner` (typo fix) |
@@ -704,7 +892,7 @@ GOLANG_PROTOBUF_REGISTRATION_CONFLICT=warn go test ./...
 - Upstream k3s go.mod: `github.com/k3s-io/k3s` branch `release-1.35`
 - etcd v3.6.x changelog: raft extracted to `github.com/etcd-io/raft`, `client/v2` removed
 - runc v1.4.0 release notes: `libcontainer/userns` → `github.com/moby/sys/userns`, `libcontainer/cgroups` → `github.com/opencontainers/cgroups`
-- Kubernetes v1.35.1: new staging module `k8s.io/externaljwt`, `NewSchedulerCommand` signature change
+- Kubernetes v1.35.1: new staging module `k8s.io/externaljwt`, `NewSchedulerCommand` signature change, `--pod-infra-container-image` removed, `CloudDualStackNodeIPs` feature gate removed
 - opencontainers/runtime-spec v1.3.0: `LinuxPids.Limit` changed from `int64` to `*int64`
 - opencontainers/cgroups v0.0.6: `Resources.PidsLimit` changed from `int64` to `*int64`
 - containerd/cgroups v3: `LoadManager` → `Load`, gogo/protobuf → google/protobuf
@@ -716,3 +904,5 @@ GOLANG_PROTOBUF_REGISTRATION_CONFLICT=warn go test ./...
 - Protobuf namespace conflict FAQ: https://protobuf.dev/reference/go/faq#namespace-conflict
 - k3s build script: `github.com/k3s-io/k3s/blob/release-1.35/scripts/build`
 - containerd v2 migration: `github.com/containerd/containerd/v2` module layout
+- metrics-server compatibility matrix: https://github.com/kubernetes-sigs/metrics-server#compatibility-matrix
+- k8s.io/apiserver EgressSelectorConfiguration: internal types lack JSON tags, must use versioned types for serialization
