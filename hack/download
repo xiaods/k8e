@@ -10,7 +10,7 @@ HCSSHIM_DIR=build/src/github.com/microsoft/hcsshim
 DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
 NERDCTL_VERSION=2.0.0
-CILIUMCLI_VERSION=v0.16.20
+CILIUM_CHART_VERSION=${VERSION_CILIUM_CHART}
 
 umask 022
 rm -rf ${CHARTS_DIR}
@@ -46,12 +46,9 @@ fi
 }
 
 download_and_package_cilium() {
-  echo "download Cilium-cli..."
-  if [ ${ARCH} = amd64 ]; then
-    curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-amd64.tar.gz | tar -zxf - -C bin
-  elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-    curl --compressed -sfL https://github.com/cilium/cilium-cli/releases/download/${CILIUMCLI_VERSION}/cilium-linux-arm64.tar.gz | tar -zxf - -C bin
-  fi
+  echo "download Cilium Helm chart..."
+  helm repo add cilium https://helm.cilium.io/ --force-update
+  helm pull cilium/cilium --version ${CILIUM_CHART_VERSION} -d ${CHARTS_DIR}
 }
 
 download_and_package_nerdctl

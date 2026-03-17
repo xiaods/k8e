@@ -157,7 +157,6 @@ type Agent struct {
 	SystemDefaultRegistry   string
 	AirgapExtraRegistry     []string
 	DisableCCM              bool
-	DisableNPC              bool
 	MinTLSVersion           string
 	CipherSuites            []string
 	Rootless                bool

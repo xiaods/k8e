@@ -30,16 +30,16 @@ var FakeNodeWithAnnotation = &corev1.Node{
 	ObjectMeta: metav1.ObjectMeta{
 		Name: "fakeNode-with-annotation",
 		Annotations: map[string]string{
-			NodeArgsAnnotation:       `["server","--flannel-backend=none"]`,
+			NodeArgsAnnotation:       `["server","--cluster-cidr","10.42.0.0/16"]`,
 			NodeEnvAnnotation:        `{"` + TestEnvName + `":"fakeNode-with-annotation"}`,
-			NodeConfigHashAnnotation: "QWN2I4YW3HBDRDBQJQS7JCEKZDN263VYX6MXCKQOHVLVJYCDGWGA====",
+			NodeConfigHashAnnotation: "VIDBVZ4PGLAA5IAXKC6R7ZFLYMOQ3APCWYPZATRTDGRMR6PJ2QFA====",
 		},
 	},
 }
 
 func Test_UnitSetExistingNodeConfigAnnotations(t *testing.T) {
 	// adding same config
-	os.Args = []string{version.Program, "server", "--flannel-backend=none"}
+	os.Args = []string{version.Program, "server", "--cluster-cidr=10.42.0.0/16"}
 	os.Setenv(version.ProgramUpper+"_NODE_NAME", "fakeNode-with-annotation")
 	nodeUpdated, err := SetNodeConfigAnnotations(FakeNodeConfig, FakeNodeWithAnnotation)
 	if err != nil {
@@ -77,22 +77,22 @@ func Test_UnitSetNodeConfigAnnotations(t *testing.T) {
 			args: args{
 				config: FakeNodeConfig,
 				node:   FakeNodeWithAnnotation,
-				osArgs: []string{version.Program, "server", "--flannel-backend=none"},
+				osArgs: []string{version.Program, "server", "--cluster-cidr=10.42.0.0/16"},
 			},
 			want:               true,
-			wantNodeArgs:       `["server","--flannel-backend","none"]`,
+			wantNodeArgs:       `["server","--cluster-cidr","10.42.0.0/16"]`,
 			wantNodeEnv:        `{"` + TestEnvName + `":"fakeNode-with-no-annotation"}`,
-			wantNodeConfigHash: "MEHHZN5JQ7FNHXRPULUTET64QOCL7KRKKHN2YBD5MQV62OFLCWXA====",
+			wantNodeConfigHash: "JNAUWCNTKEKWTQ3EFLORG3BDSUDB5FW4MLNZAC3MS2NV6WQJOWYQ====",
 		},
 		{
 			name: "Set args with equal",
 			args: args{
 				config: FakeNodeConfig,
 				node:   FakeNodeWithNoAnnotation,
-				osArgs: []string{version.Program, "server", "--flannel-backend=none", "--write-kubeconfig-mode=777"},
+				osArgs: []string{version.Program, "server", "--cluster-cidr=10.42.0.0/16", "--write-kubeconfig-mode=777"},
 			},
 			want:         true,
-			wantNodeArgs: `["server","--flannel-backend","none","--write-kubeconfig-mode","777"]`,
+			wantNodeArgs: `["server","--cluster-cidr","10.42.0.0/16","--write-kubeconfig-mode","777"]`,
 			wantNodeEnv:  `{"` + TestEnvName + `":"fakeNode-with-no-annotation"}`,
 		},
 	}

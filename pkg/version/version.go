@@ -14,6 +14,8 @@ var (
 	GitCommit    = "HEAD"
 
 	UpstreamGolang = ""
+
+	CiliumChartVersion = "1.17.1"
 )
 
 func PrintK8eASCIIArt() {
