@@ -47,8 +47,8 @@ fi
 
 download_and_package_cilium() {
   echo "download Cilium Helm chart..."
-  helm repo add cilium https://helm.cilium.io/ --force-update
-  helm pull cilium/cilium --version ${CILIUM_CHART_VERSION} -d ${CHARTS_DIR}
+  curl --compressed -sfL -o ${CHARTS_DIR}/cilium-${CILIUM_CHART_VERSION}.tgz \
+    https://helm.cilium.io/cilium-${CILIUM_CHART_VERSION}.tgz
 }
 
 download_and_package_nerdctl

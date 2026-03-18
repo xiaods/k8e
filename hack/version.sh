@@ -2,7 +2,7 @@
 
 GO=${GO-go}
 ARCH=${ARCH:-$(${GO} env GOARCH)}
-OS=${OS:-$("${GO}" env GOOS)}
+OS=$("${GO}" env GOOS)
 SUFFIX="-${ARCH}"
 GIT_TAG=$RELEASE_TAG
 TREE_STATE=clean

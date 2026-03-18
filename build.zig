@@ -18,6 +18,9 @@ pub fn build(b: *std.Build) !void {
     _ = b.standardTargetOptions(.{});
     _ = b.standardOptimizeOption(.{});
 
+    // Find bash (on Windows, check common Git for Windows paths)
+    const bash = findBash();
+
     // Steps
     const k8e_step = b.step("k8e", "Build k8e");
     const download_step = b.step("download", "Download dependencies");
@@ -33,11 +36,11 @@ pub fn build(b: *std.Build) !void {
     b.default_step = all_step;
 
     // Versioning
-    const version_env = try getVersionEnv(b);
-    const build_date = std.mem.trim(u8, b.run(&.{ "date", "-u", "+%Y-%m-%dT%H:%M:%SZ" }), &std.ascii.whitespace);
+    const version_env = try getVersionEnv(b, bash);
+    const build_date = std.mem.trim(u8, b.run(&.{ bash, "-c", "date -u '+%Y-%m-%dT%H:%M:%SZ'" }), &std.ascii.whitespace);
 
     // Download
-    const download_cmd = b.addSystemCommand(&.{ "bash", "hack/download" });
+    const download_cmd = b.addSystemCommand(&.{ bash, "hack/download" });
     download_step.dependOn(&download_cmd.step);
 
     // Tags (aligned with k3s: ctrd netcgo osusergo providerless urfave_cli_no_docs static_build apparmor seccomp)
@@ -70,7 +73,7 @@ pub fn build(b: *std.Build) !void {
         "containerd",          "crictl",          "ctr",
     };
     const cleanup_k8e = b.addSystemCommand(&.{
-        "bash", "-c",
+        bash, "-c",
         "for i in bin/k8e bin/k8e-agent bin/k8e-server bin/k8e-token bin/k8e-etcd-snapshot " ++
             "bin/k8e-secrets-encrypt bin/k8e-certificate bin/k8e-completion " ++
             "bin/kubectl bin/containerd bin/crictl bin/ctr" ++
@@ -86,7 +89,7 @@ pub fn build(b: *std.Build) !void {
     //     "bin/runhcs"
     // )
     const cleanup_containerd = b.addSystemCommand(&.{
-        "bash", "-c",
+        bash, "-c",
         "for i in bin/containerd-shim bin/containerd-shim-runc-v2 bin/runc " ++
             "bin/containerd-shim-runhcs-v1 bin/runhcs" ++
             "; do [ -f \"$i\" ] && echo \"Removing $i\" && rm -f \"$i\" || true; done",
@@ -128,18 +131,18 @@ pub fn build(b: *std.Build) !void {
     fmt_step.dependOn(&zig_fmt.step);
 
     // Generate
-    const generate_cmd = b.addSystemCommand(&.{ "bash", "hack/generate" });
+    const generate_cmd = b.addSystemCommand(&.{ bash, "hack/generate" });
     generate_step.dependOn(&generate_cmd.step);
 
     // Package
-    const package_cmd = b.addSystemCommand(&.{ "bash", "hack/package" });
+    const package_cmd = b.addSystemCommand(&.{ bash, "hack/package" });
     package_step.dependOn(&package_cmd.step);
 
-    const package_cli_cmd = b.addSystemCommand(&.{ "bash", "hack/package-cli" });
+    const package_cli_cmd = b.addSystemCommand(&.{ bash, "hack/package-cli" });
     package_cli_cmd.step.dependOn(all_step);
     package_cli_step.dependOn(&package_cli_cmd.step);
 
-    const package_airgap_cmd = b.addSystemCommand(&.{ "bash", "hack/package-airgap.sh" });
+    const package_airgap_cmd = b.addSystemCommand(&.{ bash, "hack/package-airgap.sh" });
     package_airgap_step.dependOn(&package_airgap_cmd.step);
 
     // Clean
@@ -173,7 +176,7 @@ pub fn build(b: *std.Build) !void {
     shim_build.step.dependOn(&cleanup_containerd.step);
     // Copy containerd build output to project bin/ (aligned with k3s: cp -vf ./build/src/.../containerd/bin/* ./bin/)
     const shim_cp = b.addSystemCommand(&.{
-        "bash",                                                                  "-c",
+        bash,                                                                    "-c",
         b.fmt("cp -vf {s}/{s}/bin/* {s}/bin/", .{ root, containerd_src, root }),
     });
     shim_cp.step.dependOn(&shim_build.step);
@@ -233,7 +236,7 @@ pub fn build(b: *std.Build) !void {
 
     // Copy hcsshim build output to project bin/
     const hcsshim_cp = b.addSystemCommand(&.{
-        "bash",                                                               "-c",
+        bash,                                                                 "-c",
         b.fmt("cp -vf {s}/{s}/bin/* {s}/bin/", .{ root, hcsshim_src, root }),
     });
     hcsshim_cp.step.dependOn(&runhcs_shim_build.step);
@@ -246,7 +249,7 @@ pub fn build(b: *std.Build) !void {
     const cni_clone_abs = b.fmt("{s}/.cni-build", .{root});
     const cni_workdir_abs = b.fmt("{s}/src/github.com/containernetworking/plugins", .{cni_clone_abs});
     const cni_clone = b.addSystemCommand(&.{
-        "bash",                                                                                                                                                                                              "-c",
+        bash,                                                                                                                                                                                                    "-c",
         b.fmt("rm -rf {s} && mkdir -p {s} && git clone --single-branch --depth=1 --branch={s} https://github.com/rancher/plugins.git {s}", .{ cni_clone_abs, cni_clone_abs, cni_version, cni_workdir_abs }),
     });
     const cni_build = b.addSystemCommand(&.{ "go", "build" });
@@ -275,9 +278,9 @@ pub fn build(b: *std.Build) !void {
     }
 }
 
-fn getVersionEnv(b: *std.Build) !std.StringHashMap([]const u8) {
+fn getVersionEnv(b: *std.Build, bash: []const u8) !std.StringHashMap([]const u8) {
     var map = std.StringHashMap([]const u8).init(b.allocator);
-    const res = b.run(&.{ "bash", "-c", "source hack/version.sh && env | grep -E '^(VERSION|COMMIT|TREE_STATE|VERSION_GOLANG|VERSION_CRICTL|VERSION_CONTAINERD|PKG_CONTAINERD_K8E|VERSION_CNIPLUGINS|VERSION_CRI_DOCKERD|VERSION_RUNC|VERSION_HCSSHIM)='" });
+    const res = b.run(&.{ bash, "-c", "source hack/version.sh && env | grep -E '^(VERSION|COMMIT|TREE_STATE|VERSION_GOLANG|VERSION_CRICTL|VERSION_CONTAINERD|PKG_CONTAINERD_K8E|VERSION_CNIPLUGINS|VERSION_CRI_DOCKERD|VERSION_RUNC|VERSION_HCSSHIM)='" });
     var it = std.mem.tokenizeAny(u8, res, "\n");
     while (it.next()) |line| {
         var parts = std.mem.splitScalar(u8, line, '=');
@@ -340,4 +343,21 @@ fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo) ![]const u8 {
         try xflag(allocator, PKG_ETCD ++ "/api/v3/version.GitSHA", "HEAD"),
     };
     return std.mem.join(allocator, " ", &parts);
+}
+
+fn findBash() []const u8 {
+    if (builtin.os.tag == .windows) {
+        // On Windows, bash from Git for Windows may not be in the system PATH.
+        // Check common installation locations.
+        const candidates = [_][]const u8{
+            "C:/Program Files/Git/bin/bash.exe",
+            "C:/Program Files (x86)/Git/bin/bash.exe",
+        };
+        for (candidates) |path| {
+            const file = std.fs.openFileAbsolute(path, .{}) catch continue;
+            file.close();
+            return path;
+        }
+    }
+    return "bash";
 }
