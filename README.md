@@ -1,9 +1,6 @@
 <div align="center">
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0f2027,50:203a43,100:2c5364&height=200&section=header&text=K8E%20🚀&fontSize=80&fontColor=ffffff&fontAlignY=38&desc=Open%20Source%20Agentic%20AI%20Sandbox%20Matrix&descAlignY=60&descSize=22&animation=fadeIn" width="100%"/>
-
-<img src="https://raw.githubusercontent.com/xiaods/k8e/main/docs/assets/k8e-logo.png" alt="K8E Logo" width="140"/>
-
 <br/>
 
 <a href="https://git.io/typing-svg">
@@ -12,13 +9,11 @@
 
 <br/><br/>
 
-[![Go Version](https://img.shields.io/badge/Go-1.24+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.35-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://kubernetes.io)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge&logo=apache&logoColor=white)](https://github.com/xiaods/k8e/blob/main/LICENSE)
 [![Stars](https://img.shields.io/github/stars/xiaods/k8e?style=for-the-badge&logo=github&color=FFD700)](https://github.com/xiaods/k8e/stargazers)
-[![Forks](https://img.shields.io/github/forks/xiaods/k8e?style=for-the-badge&logo=github&color=orange)](https://github.com/xiaods/k8e/forks)
 [![Release](https://img.shields.io/github/v/release/xiaods/k8e?style=for-the-badge&logo=github&color=green)](https://github.com/xiaods/k8e/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/xiaods/k8e/action-ci.yml?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/xiaods/k8e/actions)
 [![Arch](https://img.shields.io/badge/Arch-x86__64%20%7C%20ARM64%20%7C%20RISC--V-blueviolet?style=for-the-badge)](https://github.com/xiaods/k8e/releases)
 
 <br/>
@@ -383,8 +378,8 @@ Apache License 2.0 — see [LICENSE](https://github.com/xiaods/k8e/blob/main/LIC
 **k8e.sh — Open Source Agentic AI Sandbox Matrix**
 
 [![GitHub](https://img.shields.io/badge/GitHub-xiaods%2Fk8e-181717?style=for-the-badge&logo=github)](https://github.com/xiaods/k8e)
-[![Website](https://img.shields.io/badge/Website-get.k8e.sh-00D4FF?style=for-the-badge&logo=googlechrome&logoColor=white)](https://get.k8e.sh)
-[![Docs](https://img.shields.io/badge/Docs-get.k8e.sh%2Fdocs-green?style=for-the-badge&logo=gitbook&logoColor=white)](https://get.k8e.sh/docs/concepts/introduction/)
+[![Website](https://img.shields.io/badge/Website-k8e.sh-00D4FF?style=for-the-badge&logo=googlechrome&logoColor=white)](https://k8e.sh)
+[![Docs](https://img.shields.io/badge/Docs-k8e.sh%2Fdocs-green?style=for-the-badge&logo=gitbook&logoColor=white)](https://k8e.sh/docs/)
 
 *If K8E powers your agents, give us a ⭐ — it means the world to us!*
 
