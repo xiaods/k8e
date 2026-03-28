@@ -251,10 +251,6 @@ create_symlinks() {
     done
     info "Create nerdctl symlink for k8e"
     $SUDO ln -sf /var/lib/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
-    info "Create cilium ctl symlink for k8e"
-    $SUDO ln -sf /var/lib/k8e/data/current/bin/cilium ${BIN_DIR}/cilium
-    info "Create osm edge symlink for k8e"
-    $SUDO ln -sf /var/lib/k8e/data/current/bin/osm ${BIN_DIR}/osm
 }
 
 # --- seutp profile ---
@@ -450,20 +446,6 @@ service_enable_and_start() {
     return 0
 }
 
-# --- install cilium network cni/operator ---
-setup_cilium() {
-    # waiting for k8e extract cilium binary
-    sleep 1
-
-    case "${INSTALL_K8E_EXEC}" in
-        *"cluster-init"*) info "Installing cilium network cni/operator"
-        $SUDO chmod 644 /etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml
-        [ -z ${API_SERVER_IP} ] && API_SERVER_IP="127.0.0.1"
-        # cilium helm values https://github.com/cilium/cilium/tree/master/install/kubernetes/cilium
-        $SUDO KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml $BIN_DIR/cilium install --version=1.14.4 --set image.useDigest=false --set operator.image.useDigest=false --set ipam.operator.clusterPoolIPv4PodCIDRList="10.42.0.0/16" --set k8sServiceHost=${API_SERVER_IP};;
-    esac
-}
-
 # --- download and verify k8e ---
 download_and_verify() {
     if can_skip_download_binary; then
@@ -509,7 +491,7 @@ download_and_verify() {
     $SUDO chown root:root "$targetFile"
     echo "Download complete."
     $SUDO mv -f "$targetFile" $BIN_DIR/$REPO
-    
+
 }
 
 # --- check-config  ---
@@ -524,11 +506,11 @@ if [ -z "${INSTALL_K8E_EXEC}" ] && [ -z "${K8E_URL}" ] && [ "$#" -eq 0 ]; then
     info "Auto-configuring K8e Server for one-click install"
     LOCAL_IP=$(ip route get 1 2>/dev/null | grep -Eo 'src [0-9\.]+' | awk '{print $2}' | head -n 1)
     [ -n "$LOCAL_IP" ] || LOCAL_IP="127.0.0.1"
-    
+
     export K8E_TOKEN=${K8E_TOKEN:-ilovek8e}
     export K8E_URL="https://${LOCAL_IP}:6443"
     export API_SERVER_IP="${LOCAL_IP}"
-    
+
     if command -v docker >/dev/null 2>&1; then
         export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666 --docker"
     else
@@ -553,6 +535,5 @@ eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
     create_service_file
     service_enable_and_start
     check_config
-    setup_cilium
     info "Done! K8E - Kubernetes Easy Engine, Happy deployment."
 }
