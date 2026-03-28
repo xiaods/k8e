@@ -276,6 +276,11 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		"%{DEFAULT_LOCAL_STORAGE_PATH}%":  controlConfig.DefaultLocalStoragePath,
 		"%{SYSTEM_DEFAULT_REGISTRY}%":     registryTemplate(controlConfig.SystemDefaultRegistry),
 		"%{SYSTEM_DEFAULT_REGISTRY_RAW}%": controlConfig.SystemDefaultRegistry,
+		"%{SYSTEM_DATA_DIR}%":             controlConfig.DataDir,
+		"%{CILIUM_VERSION}%":              version.CiliumChartVersion,
+		"%{CLUSTER_CIDR}%":                util.JoinIPNets(controlConfig.ClusterIPRanges),
+		"%{CNI_BIN_DIR}%":                 "/opt/cni/bin",
+		"%{CNI_CONF_DIR}%":                "/etc/cni/net.d",
 	}
 
 	skip := controlConfig.Skips
