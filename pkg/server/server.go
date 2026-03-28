@@ -281,6 +281,9 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		"%{CLUSTER_CIDR}%":                util.JoinIPNets(controlConfig.ClusterIPRanges),
 		"%{CNI_BIN_DIR}%":                 "/opt/cni/bin",
 		"%{CNI_CONF_DIR}%":                "/etc/cni/net.d",
+		"%{API_SERVER_HOST}%":             controlConfig.Loopback(false),
+		"%{API_SERVER_PORT}%":             fmt.Sprint(controlConfig.HTTPSPort),
+		"%{KUBERNETES_API}%":              fmt.Sprintf("%s:%d", controlConfig.Loopback(true), controlConfig.HTTPSPort),
 	}
 
 	skip := controlConfig.Skips

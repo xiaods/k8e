@@ -6,7 +6,7 @@ metadata:
   annotations:
     helm.cattle.io/chart-url: ""
 spec:
-  chart: "%{SYSTEM_DATA_DIR}%/static/charts/cilium-%{CILIUM_VERSION}%.tgz"
+  chart: https://%{KUBERNETES_API}%/static/charts/cilium-%{CILIUM_VERSION}%.tgz
   targetNamespace: kube-system
   bootstrap: true
   valuesContent: |-
