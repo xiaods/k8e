@@ -1,0 +1,22 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: cilium
+  namespace: kube-system
+  annotations:
+    helm.cattle.io/chart-url: ""
+spec:
+  chart: "%{SYSTEM_DATA_DIR}%/static/charts/cilium-%{CILIUM_VERSION}%.tgz"
+  targetNamespace: kube-system
+  bootstrap: true
+  valuesContent: |-
+    operator:
+      replicas: 1
+    cni:
+      binPath: "%{CNI_BIN_DIR}%"
+      confPath: "%{CNI_CONF_DIR}%"
+    ipam:
+      operator:
+        clusterPoolIPv4PodCIDRList:
+          - "%{CLUSTER_CIDR}%"
+    kubeProxyReplacement: "true"

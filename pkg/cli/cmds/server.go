@@ -68,6 +68,7 @@ type Server struct {
 	DisableCCM               bool
 	DisableHelmController    bool
 	DisableKubeProxy         bool
+	DisableCilium            bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
 	DisableETCD              bool
@@ -443,6 +444,11 @@ var ServerFlags = []cli.Flag{
 		Name:        "disable-helm-controller",
 		Usage:       "(components) Disable Helm controller",
 		Destination: &ServerConfig.DisableHelmController,
+	},
+	&cli.BoolFlag{
+		Name:        "disable-cilium",
+		Usage:       "(networking) Disable embedded Cilium CNI",
+		Destination: &ServerConfig.DisableCilium,
 	},
 	&cli.BoolFlag{
 		Name:        "disable-apiserver",

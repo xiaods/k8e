@@ -519,6 +519,23 @@ check_config() {
     $SUDO $BIN_DIR/k8e check-config
 }
 
+# --- smart defaults for one-click install ---
+if [ -z "${INSTALL_K8E_EXEC}" ] && [ -z "${K8E_URL}" ] && [ "$#" -eq 0 ]; then
+    info "Auto-configuring K8e Server for one-click install"
+    LOCAL_IP=$(ip route get 1 2>/dev/null | grep -Eo 'src [0-9\.]+' | awk '{print $2}' | head -n 1)
+    [ -n "$LOCAL_IP" ] || LOCAL_IP="127.0.0.1"
+    
+    export K8E_TOKEN=${K8E_TOKEN:-ilovek8e}
+    export K8E_URL="https://${LOCAL_IP}:6443"
+    export API_SERVER_IP="${LOCAL_IP}"
+    
+    if command -v docker >/dev/null 2>&1; then
+        export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666 --docker"
+    else
+        export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666"
+    fi
+fi
+
 # --- re-evaluate args to include env command ---
 eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
 
