@@ -24,7 +24,7 @@ echo 'net.ipv4.ip_local_reserved_ports = 30000-32767' >> /etc/sysctl.conf
 echo 'vm.max_map_count = 262144' >> /etc/sysctl.conf
 echo 'vm.swappiness = 1' >> /etc/sysctl.conf
 echo 'fs.inotify.max_user_instances = 524288' >> /etc/sysctl.conf
-echo 'kernel.pid_max = 65535' >> /etc/sysctl.conf
+echo 'kernel.pid_max = 4194304' >> /etc/sysctl.conf
 #See https://imroc.io/posts/kubernetes/troubleshooting-with-kubernetes-network/
 sed -r -i "s@#{0,}?net.ipv4.tcp_tw_recycle ?= ?(0|1)@net.ipv4.tcp_tw_recycle = 0@g" /etc/sysctl.conf
 sed -r -i  "s@#{0,}?net.ipv4.ip_forward ?= ?(0|1)@net.ipv4.ip_forward = 1@g" /etc/sysctl.conf
@@ -35,7 +35,7 @@ sed -r -i  "s@#{0,}?net.ipv4.ip_local_reserved_ports ?= ?([0-9]{1,}-{0,1},{0,1})
 sed -r -i  "s@#{0,}?vm.max_map_count ?= ?([0-9]{1,})@vm.max_map_count = 262144@g" /etc/sysctl.conf
 sed -r -i  "s@#{0,}?vm.swappiness ?= ?([0-9]{1,})@vm.swappiness = 1@g" /etc/sysctl.conf
 sed -r -i  "s@#{0,}?fs.inotify.max_user_instances ?= ?([0-9]{1,})@fs.inotify.max_user_instances = 524288@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?kernel.pid_max ?= ?([0-9]{1,})@kernel.pid_max = 65535@g" /etc/sysctl.conf
+sed -r -i  "s@#{0,}?kernel.pid_max ?= ?([0-9]{1,})@kernel.pid_max = 4194304@g" /etc/sysctl.conf
 tmpfile="$$.tmp"
 awk ' !x[$0]++{print > "'$tmpfile'"}' /etc/sysctl.conf
 mv $tmpfile /etc/sysctl.conf
@@ -54,10 +54,10 @@ if [ $? -eq 0 ]; then
 	   modprobe overlay
 	      echo 'overlay' >> /etc/modules-load.d/kubekey-br_netfilter.conf
 fi
-modprobe ip_vs
-modprobe ip_vs_rr
-modprobe ip_vs_wrr
-modprobe ip_vs_sh
+modprobe ip_vs 2>/dev/null || true
+modprobe ip_vs_rr 2>/dev/null || true
+modprobe ip_vs_wrr 2>/dev/null || true
+modprobe ip_vs_sh 2>/dev/null || true
 cat > /etc/modules-load.d/kube_proxy-ipvs.conf << EOF
 ip_vs
 ip_vs_rr
