@@ -15,8 +15,7 @@ kind: RuntimeClass
 metadata:
   name: firecracker
 handler: aws.firecracker
-  scheduling:
-    nodeClassification:
-      tolerations:
-      - key: sandbox.k8e.io/kvm
-        operator: Exists
+scheduling:
+  tolerations:
+  - key: sandbox.k8e.io/kvm
+    operator: Exists

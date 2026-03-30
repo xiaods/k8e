@@ -16,6 +16,11 @@ type ContainerdRuntimeConfig struct {
 	BinaryName  string
 }
 
+type SandboxRuntimeConfig struct {
+	GVisor      bool
+	Firecracker bool
+}
+
 type ContainerdConfig struct {
 	NodeConfig            *config.Node
 	DisableCgroup         bool
@@ -26,6 +31,7 @@ type ContainerdConfig struct {
 	NonrootDevices        bool
 	PrivateRegistryConfig *registries.Registry
 	ExtraRuntimes         map[string]ContainerdRuntimeConfig
+	SandboxRuntimes       SandboxRuntimeConfig
 	Program               string
 }
 

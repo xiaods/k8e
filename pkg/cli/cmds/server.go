@@ -104,6 +104,7 @@ type Server struct {
 	EtcdS3ConfigSecret       string
 	EtcdS3Timeout            time.Duration
 	EtcdS3Insecure           bool
+	DisableSandboxMatrix     bool
 }
 
 var (
@@ -522,6 +523,11 @@ var ServerFlags = []cli.Flag{
 	PreferBundledBin,
 	SELinuxFlag,
 	LBServerPortFlag,
+	&cli.BoolFlag{
+		Name:        "disable-sandbox-matrix",
+		Usage:       "(components) Disable Agentic AI Sandbox Matrix",
+		Destination: &ServerConfig.DisableSandboxMatrix,
+	},
 
 	// Hidden/Deprecated flags below
 
