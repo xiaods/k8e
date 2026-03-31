@@ -351,44 +351,98 @@ GET  /files/list?since=<unix-timestamp>
 
 ```
 sandboxd/
-├── build.zig          # standalone build file; also imported by root build.zig
+├── build.zig            # standalone build file; cross-compiles for 3 targets + test step
 └── src/
-    ├── main.zig       # HTTP server, signal handling, zombie reaping (PID 1)
-    ├── exec.zig       # subprocess spawn, stdout/stderr capture, SSE streaming
-    └── files.zig      # /workspace read/write/list handlers
+    ├── main.zig         # HTTP server, signal handling, zombie reaping (PID 1)
+    ├── exec.zig         # subprocess spawn, stdout/stderr capture, SSE streaming
+    ├── exec_test.zig    # unit tests: jsonEscape (5 cases)
+    ├── files.zig        # /workspace read/write/list handlers
+    └── files_test.zig   # unit tests: extractQueryParam (5 cases)
 ```
+
+Run tests: `cd sandboxd && zig build test --summary all`
 
 #### `build.zig` Integration
 
-The root `build.zig` gains a `sandboxd` step that cross-compiles for all K8E target architectures:
+The root `build.zig` gains a `sandboxd` step that cross-compiles for all K8E target architectures. Note: Zig ≥ 0.15 requires `root_module` (not `root_source_file`) in `addExecutable` and `addTest`:
 
 ```zig
-// In build.zig — new sandboxd step
-const sandboxd_step = b.step("sandboxd", "Build sandboxd init process (Zig)");
+const sandboxd_step = b.step("sandboxd", "Build sandboxd init process");
 const targets = [_][]const u8{ "x86_64-linux-musl", "aarch64-linux-musl", "riscv64-linux-musl" };
+
 for (targets) |triple| {
-    const exe = b.addExecutable(.{
-        .name = b.fmt("sandboxd-{s}", .{triple}),
-        .root_source_file = b.path("sandboxd/src/main.zig"),
-        .target = b.resolveTargetQuery(
-            std.Target.Query.parse(.{ .arch_os_abi = triple }) catch unreachable,
-        ),
+    const query = std.Target.Query.parse(.{ .arch_os_abi = triple }) catch unreachable;
+    const target = b.resolveTargetQuery(query);
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
         .optimize = .ReleaseSafe,
     });
-    const install = b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .{ .custom = "bin" } } });
+    const exe = b.addExecutable(.{
+        .name = b.fmt("sandboxd-{s}", .{triple}),
+        .root_module = mod,
+    });
+    const install = b.addInstallArtifact(exe, .{
+        .dest_dir = .{ .override = .{ .custom = "../../bin" } },
+    });
     sandboxd_step.dependOn(&install.step);
+}
+
+// Unit tests (native target only)
+const test_step = b.step("test", "Run unit tests");
+const native = b.standardTargetOptions(.{});
+for ([_][]const u8{ "src/exec_test.zig", "src/files_test.zig" }) |src| {
+    const mod = b.createModule(.{ .root_source_file = b.path(src), .target = native });
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mod })).step);
 }
 ```
 
-The `all` step depends on `sandboxd_step`, so `zig build` produces `bin/sandboxd-x86_64-linux-musl`, `bin/sandboxd-aarch64-linux-musl`, and `bin/sandboxd-riscv64-linux-musl` alongside the main `k8e` binary.
+`zig build sandboxd` produces `bin/sandboxd-x86_64-linux-musl`, `bin/sandboxd-aarch64-linux-musl`, and `bin/sandboxd-riscv64-linux-musl`. `zig build test` runs unit tests for `exec.zig` (`jsonEscape`) and `files.zig` (`extractQueryParam`).
 
-The correct architecture binary is copied into the `k8e-sandbox` container image at Docker build time:
+The correct architecture binary is copied into the `k8e-sandbox` container image at Docker build time using a two-stage build:
 
 ```dockerfile
 # sandbox/Dockerfile
+# syntax=docker/dockerfile:1
+ARG TARGETARCH=amd64
+
+# Stage 1: select the correct sandboxd binary for this arch
+FROM busybox:musl AS picker
 ARG TARGETARCH
-COPY bin/sandboxd-${TARGETARCH}-linux-musl /sandboxd
+COPY bin/sandboxd-x86_64-linux-musl   /bins/sandboxd-amd64
+COPY bin/sandboxd-aarch64-linux-musl  /bins/sandboxd-arm64
+COPY bin/sandboxd-riscv64-linux-musl  /bins/sandboxd-riscv64
+RUN cp /bins/sandboxd-${TARGETARCH} /sandboxd && chmod +x /sandboxd
+
+# Stage 2: runtime image
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash curl git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# Node.js LTS via NodeSource (apt nodejs is too old for agent workloads)
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir --upgrade pip
+RUN mkdir -p /workspace
+WORKDIR /workspace
+COPY --from=picker /sandboxd /sandboxd
+EXPOSE 2024
 ENTRYPOINT ["/sandboxd"]
+```
+
+**Two-stage rationale**: all three architecture binaries are `COPY`-ed into the `picker` stage; only the one matching `TARGETARCH` is carried into the final image, keeping the image lean. The final image is based on `python:3.11-slim` with Node.js LTS added via NodeSource — the apt-bundled nodejs is typically too old for agent workloads. `/workspace` is set as `WORKDIR` to match `sandboxd`'s default `workdir` field.
+
+Build command:
+```bash
+# Build sandboxd binaries first
+cd sandboxd && zig build sandboxd
+
+# Multi-arch image
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t xiaods/k8e-sandbox:latest \
+  sandbox/
 ```
 
 `sandboxd` forwards signals to child processes and reaps zombies as PID 1. It does not manage credentials or network policy — those are handled by Cilium and the gRPC gateway respectively.
@@ -472,8 +526,9 @@ sandboxd/                            # Zig project — PID 1 init process
     └── files.zig                    # /workspace read/write/list handlers
 
 sandbox/
-├── Dockerfile                       # k8e-sandbox base image; copies sandboxd binary for TARGETARCH
-└── rootfs/                          # pre-installed: python3, node, bash, standard Unix tools
+└── Dockerfile                       # k8e-sandbox image; two-stage build: picker (busybox) selects
+                                     # arch-matched sandboxd binary; runtime stage is python:3.11-slim
+                                     # + Node.js LTS + git/curl; ENTRYPOINT ["/sandboxd"]
 
 pkg/sandboxmatrix/
 ├── api/v1alpha1/
@@ -530,7 +585,17 @@ Verification: `kubectl get runtimeclass` shows `firecracker`, `gvisor`, `kata`. 
 
 ### Task 4 — gRPC Gateway
 
-Implement `pkg/sandboxmatrix/grpc/server.go`: gRPC service on `:50051` implementing `SandboxService`. Session registry backed by etcd (reuses K8E's embedded etcd). Routes `Exec`/`WriteFile`/`ReadFile` calls to the target pod's `sandboxd` via HTTP. Deploy as `manifests/sandbox-matrix/grpc-gateway.yaml`.
+Implement `pkg/sandboxmatrix/grpc/server.go`: gRPC service implementing `SandboxService`. Routes `Exec`/`WriteFile`/`ReadFile` calls to the target pod's `sandboxd` via HTTP. Deploy as `manifests/sandbox-matrix/grpc-gateway.yaml`.
+
+**Security hardening applied (GSC-G102, GO-S0902):**
+- Listener binds to `127.0.0.1:50051` (loopback only) instead of `0.0.0.0` — prevents exposure on all interfaces.
+- `grpc.NewServer()` is secured with TLS credentials loaded from K8E's existing server certificate (`/var/lib/k8e/server/tls/serving-kube-apiserver.crt` / `.key`), which are generated automatically at cluster startup. `NewServer` signature:
+
+```go
+func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFile string) *Server
+```
+
+The `Register` function in `pkg/sandboxmatrix/controller.go` passes the cert/key paths from `tlsDir = "/var/lib/k8e/server/tls"`. The gRPC gateway is started only after the API server is ready, ensuring the TLS certificates exist before `credentials.NewServerTLSFromFile` is called.
 
 Verification: Python client `stub.Exec(ExecRequest(session_id=..., command="hostname"))` returns the sandbox pod's hostname.
 
@@ -579,7 +644,7 @@ Following agentbox's reasoning: gVisor and Firecracker both provide strong enoug
 ## Compatibility
 
 - **Existing K8E clusters**: Sandbox Matrix is additive. No existing APIs or behaviors change. Disable with `--disable-sandbox-matrix`.
-- **Zig toolchain**: `sandboxd` requires Zig ≥ 0.14. K8E already uses Zig as its build system, so no new toolchain is introduced. The `zig build sandboxd` step is additive and does not affect the existing `zig build k8e` Go build path.
+- **Zig toolchain**: `sandboxd` requires Zig ≥ 0.15. K8E already uses Zig as its build system, so no new toolchain is introduced. Zig 0.15 changed the `addExecutable` / `addTest` API to require `root_module` instead of `root_source_file` — the `build.zig` uses the 0.15 API. The `zig build sandboxd` and `zig build test` steps are additive and do not affect the existing Go build path.
 - **Cilium version**: Requires Cilium ≥ 1.14 for `toFQDNs` stability. K8E's bundled Cilium version satisfies this.
 - **Firecracker**: Only activated on nodes with `/dev/kvm`. Clusters without KVM support use gVisor or Kata as fallback.
 - **kubernetes-sigs/agent-sandbox**: The `SandboxWarmPool` and `SandboxTemplate` CRDs are designed to be compatible with the upstream `agents.x-k8s.io/v1alpha1` API group for future alignment.
