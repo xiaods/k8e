@@ -6,29 +6,12 @@ on:
 
 jobs:
   build-k8e:
-    name: Build k8e (${{ matrix.goarch }})
-    runs-on: ${{ matrix.runs-on }}
-    strategy:
-      matrix:
-        include:
-          - goarch: amd64
-            goos: linux
-            runs-on: ubuntu-latest
-            artifact: k8e
-            airgap: k8e-airgap-images.tar.gz
-            images: k8e-images.txt
-            hashes: k8e-hashes.txt
-          - goarch: arm64
-            goos: linux
-            runs-on: [self-hosted, linux, ARM64]
-            artifact: k8e-arm64
-            airgap: k8e-airgap-images-arm64.tar.gz
-            images: k8e-images-arm64.txt
-            hashes: k8e-hashes-arm64.txt
+    name: Build k8e
+    runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ secrets.RELEASE_TAG }}
-      GOOS: ${{ matrix.goos }}
-      GOARCH: ${{ matrix.goarch }}
+      GOOS: linux
+      GOARCH: amd64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -57,15 +40,15 @@ jobs:
       - name: Package airgap image
         run: make package-airgap
       - name: sha256sum
-        run: cd dist/artifacts/ && sha256sum ${{ matrix.artifact }} ${{ matrix.airgap }} >> ${{ matrix.hashes }}
+        run: cd dist/artifacts/ && sha256sum k8e k8e-airgap-images.tar.gz >> k8e-hashes.txt
       - name: Upload assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/artifacts/${{ matrix.artifact }}
-            dist/artifacts/${{ matrix.airgap }}
-            dist/artifacts/${{ matrix.images }}
-            dist/artifacts/${{ matrix.hashes }}
+            dist/artifacts/k8e
+            dist/artifacts/k8e-airgap-images.tar.gz
+            dist/artifacts/k8e-images.txt
+            dist/artifacts/k8e-hashes.txt
 
   build-sandbox:
     name: Build sandbox image
