@@ -41,9 +41,10 @@ curl -sfL https://k8e.sh/install.sh | sh -
 | 4 | [🏗️ Architecture](#️-architecture) |
 | 5 | [⚙️ Components](#️-components) |
 | 6 | [🚀 Quick Start](#-quick-start) |
-| 7 | [🖥️ Installation Guide](#️-installation-guide) |
-| 8 | [🔧 Configuration](#-configuration) |
-| 9 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
+| 7 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup-optional) |
+| 8 | [🖥️ Installation Guide](#️-installation-guide) |
+| 9 | [🔧 Configuration](#-configuration) |
+| 10 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
 | 10 | [🤝 Contributing](#-contributing) |
 | 11 | [🙏 Acknowledgments](#-acknowledgments) |
 
@@ -270,6 +271,52 @@ curl -sfL https://k8e.sh/install.sh | \
   K8E_URL=https://<server-ip>:6443 \
   INSTALL_K8E_EXEC="agent" \
   sh -
+```
+
+---
+
+## 🔒 Sandbox Runtime Setup (Optional)
+
+The Sandbox Matrix starts automatically, but sandbox pods require a container runtime shim on each node. K8E auto-detects available runtimes and configures containerd accordingly.
+
+### gVisor — Default (no KVM required)
+
+```bash
+# Install runsc
+curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
+  https://storage.googleapis.com/gvisor/releases release main" \
+  > /etc/apt/sources.list.d/gvisor.list
+apt-get update && apt-get install -y runsc
+runsc install   # registers containerd shim
+```
+
+### Firecracker — Strongest isolation (requires `/dev/kvm`)
+
+```bash
+# Verify KVM
+ls /dev/kvm
+
+# Install firecracker-containerd shim + devmapper snapshotter
+# See: https://github.com/firecracker-microvm/firecracker-containerd
+
+# Prepare microVM kernel and rootfs
+mkdir -p /var/lib/firecracker-containerd/runtime
+# Place hello-vmlinux.bin and default-rootfs.img here
+```
+
+### Kata Containers — VM-backed fallback
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/kata-containers/kata-containers/main/utils/kata-manager.sh) install-packages"
+kata-runtime check
+```
+
+After installing any runtime, restart k8e to regenerate containerd config:
+
+```bash
+systemctl restart k8e
+kubectl get runtimeclass   # gvisor / firecracker / kata
 ```
 
 ---

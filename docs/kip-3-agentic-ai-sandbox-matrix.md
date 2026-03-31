@@ -573,6 +573,103 @@ No CGO, no libc dependency, no runtime. The binary is ~200KB stripped.
 
 Verification: `curl http://<pod-ip>:2024/exec -d '{"command":"python3 -c \"print(42)\""}'` returns `{"stdout":"42\n","exit_code":0}`. `zig build sandboxd` produces three static binaries in `bin/`.
 
+### Node Runtime Prerequisites
+
+Before sandbox pods can be scheduled with a specific `runtimeClass`, the corresponding container runtime shim must be installed and registered on each worker node. K8E's `SetupContainerdConfig` auto-detects available runtimes and injects the appropriate containerd shim configuration.
+
+#### Detection Flow
+
+```
+k8e agent startup
+    │
+    ▼
+SetupContainerdConfig()
+    ├── which runsc      → SandboxRuntimes.GVisor = true
+    ├── /dev/kvm exists  → SandboxRuntimes.Firecracker = true
+    └── which kata-runtime → ExtraRuntimes["kata"] (via findContainerRuntimes())
+    │
+    ▼
+containerd.toml rendered with active shim blocks only
+```
+
+#### gVisor (`runsc`) — Recommended default, no KVM required
+
+```bash
+# Install runsc (Debian/Ubuntu)
+curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
+  https://storage.googleapis.com/gvisor/releases release main" \
+  > /etc/apt/sources.list.d/gvisor.list
+apt-get update && apt-get install -y runsc
+
+# Register containerd shim
+runsc install
+```
+
+containerd shim block injected automatically when `runsc` is found in PATH:
+```toml
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+  runtime_type = "io.containerd.runsc.v1"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
+  TypeUrl = "io.containerd.runsc.v1.options"
+```
+
+#### Firecracker — Strongest isolation, requires `/dev/kvm`
+
+```bash
+# Verify KVM is available
+ls /dev/kvm
+
+# Install firecracker-containerd (shim + agent)
+# See: https://github.com/firecracker-microvm/firecracker-containerd/blob/main/docs/getting-started.md
+
+# Set up devmapper thin-pool snapshotter
+# (loop device for dev/test; real thin-pool for production)
+dmsetup create containerd-pool ...
+
+# Start devmapper snapshotter daemon
+containerd-dev-snapshotter &
+# Listens on: /run/containerd-dev-snapshotter/snapshotter.sock
+
+# Prepare microVM kernel and rootfs
+mkdir -p /var/lib/firecracker-containerd/runtime
+# hello-vmlinux.bin  — stripped Linux kernel for Firecracker
+# default-rootfs.img — minimal ext4 rootfs with firecracker-agent
+```
+
+containerd shim block injected automatically when `/dev/kvm` is present:
+```toml
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."aws.firecracker"]
+  runtime_type = "aws.firecracker"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."aws.firecracker".options]
+  kernel_image_path = "/var/lib/firecracker-containerd/runtime/hello-vmlinux.bin"
+  root_drive        = "/var/lib/firecracker-containerd/runtime/default-rootfs.img"
+
+[proxy_plugins.devmapper]
+  type    = "snapshot"
+  address = "/run/containerd-dev-snapshotter/snapshotter.sock"
+```
+
+#### Kata Containers — VM-backed, auto-discovered via PATH
+
+```bash
+# Install kata-containers
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/kata-containers/kata-containers/main/utils/kata-manager.sh) install-packages"
+
+# Verify hardware virtualisation support
+kata-runtime check
+```
+
+Kata is discovered automatically by `findContainerRuntimes()` scanning `PATH` for `kata-runtime`. No explicit flag required.
+
+#### Runtime Selection Summary
+
+| Runtime | Node Requirement | Isolation | Boot Time | Recommended For |
+|---|---|---|---|---|
+| `gvisor` | `runsc` in PATH | Syscall interception | ~10ms | Default; no KVM needed |
+| `firecracker` | `/dev/kvm` + shim + devmapper | Hardware microVM | ~125ms | Production; strongest isolation |
+| `kata` | `kata-runtime` in PATH + KVM | VM (QEMU) | ~500ms | Compatibility fallback |
+
 ### Task 3 — Firecracker and gVisor RuntimeClass Integration
 
 Extend K8E's containerd config template (`pkg/agent/templates/`) with:
