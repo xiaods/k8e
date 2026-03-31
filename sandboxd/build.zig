@@ -28,4 +28,16 @@ pub fn build(b: *std.Build) void {
     }
 
     b.default_step = sandboxd_step;
+
+    // Tests (native target only)
+    const test_step = b.step("test", "Run unit tests");
+    const native = b.standardTargetOptions(.{});
+
+    const exec_mod = b.createModule(.{ .root_source_file = b.path("src/exec_test.zig"), .target = native });
+    const exec_tests = b.addTest(.{ .root_module = exec_mod });
+    test_step.dependOn(&b.addRunArtifact(exec_tests).step);
+
+    const files_mod = b.createModule(.{ .root_source_file = b.path("src/files_test.zig"), .target = native });
+    const files_tests = b.addTest(.{ .root_module = files_mod });
+    test_step.dependOn(&b.addRunArtifact(files_tests).step);
 }
