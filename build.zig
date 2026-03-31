@@ -268,10 +268,32 @@ pub fn build(b: *std.Build) !void {
     cni_build.step.dependOn(&mkdir_bin.step);
     cni_step.dependOn(&cni_build.step);
 
+    // sandboxd: cross-compile PID 1 init process for all K8E target architectures
+    const sandboxd_step = b.step("sandboxd", "Build sandboxd init process (Zig)");
+    const sandboxd_targets = [_][]const u8{ "x86_64-linux-musl", "aarch64-linux-musl", "riscv64-linux-musl" };
+    for (sandboxd_targets) |triple| {
+        const query = std.Target.Query.parse(.{ .arch_os_abi = triple }) catch unreachable;
+        const sandboxd_target = b.resolveTargetQuery(query);
+        const sandboxd_mod = b.createModule(.{
+            .root_source_file = b.path("sandboxd/src/main.zig"),
+            .target = sandboxd_target,
+            .optimize = .ReleaseSafe,
+        });
+        const sandboxd_exe = b.addExecutable(.{
+            .name = b.fmt("sandboxd-{s}", .{triple}),
+            .root_module = sandboxd_mod,
+        });
+        const sandboxd_install = b.addInstallArtifact(sandboxd_exe, .{
+            .dest_dir = .{ .override = .{ .custom = "bin" } },
+        });
+        sandboxd_step.dependOn(&sandboxd_install.step);
+    }
+
     all_step.dependOn(k8e_step);
     all_step.dependOn(shim_step);
     all_step.dependOn(runc_step);
     all_step.dependOn(cni_step);
+    all_step.dependOn(sandboxd_step);
     // hcsshim is Windows-only; only include on Windows hosts
     if (builtin.os.tag == .windows) {
         all_step.dependOn(hcsshim_step);

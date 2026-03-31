@@ -97,6 +97,26 @@ enable_keychain = true
   BinaryName = "{{$v.BinaryName}}"
   SystemdCgroup = {{ $.SystemdCgroup }}
 {{end}}
+
+{{- if .SandboxRuntimes.GVisor }}
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+  runtime_type = "io.containerd.runsc.v1"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
+  TypeUrl = "io.containerd.runsc.v1.options"
+{{end}}
+
+{{- if .SandboxRuntimes.Firecracker }}
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."aws.firecracker"]
+  runtime_type = "aws.firecracker"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."aws.firecracker".options]
+  kernel_image_path = "/var/lib/firecracker-containerd/runtime/hello-vmlinux.bin"
+  root_drive = "/var/lib/firecracker-containerd/runtime/default-rootfs.img"
+
+[proxy_plugins]
+  [proxy_plugins.devmapper]
+    type = "snapshot"
+    address = "/run/containerd-dev-snapshotter/snapshotter.sock"
+{{end}}
 `
 
 // Linux config templates do not need fixups

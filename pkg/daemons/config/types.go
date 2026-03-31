@@ -245,6 +245,7 @@ type Control struct {
 	ServerNodeName           string
 	VLevel                   int
 	VModule                  string
+	DisableSandboxMatrix     bool
 
 	BindAddress string
 	SANs        []string

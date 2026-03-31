@@ -28,6 +28,7 @@ import (
 	"github.com/xiaods/k8e/pkg/node"
 	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/rootlessports"
+	"github.com/xiaods/k8e/pkg/sandboxmatrix"
 	"github.com/xiaods/k8e/pkg/secretsencrypt"
 	"github.com/xiaods/k8e/pkg/static"
 	"github.com/xiaods/k8e/pkg/util"
@@ -248,6 +249,12 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		return rootlessports.Register(ctx,
 			sc.Core.Core().V1().Service(),
 			config.ControlConfig.HTTPSPort)
+	}
+
+	if !config.ControlConfig.DisableSandboxMatrix {
+		if err := sandboxmatrix.Register(ctx, sc.K8s, config.ControlConfig.Runtime.KubeConfigSupervisor); err != nil {
+			logrus.Warnf("sandbox matrix: %v", err)
+		}
 	}
 
 	return nil

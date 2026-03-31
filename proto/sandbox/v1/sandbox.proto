@@ -1,0 +1,78 @@
+syntax = "proto3";
+package sandbox.v1;
+option go_package = "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb";
+
+service SandboxService {
+  rpc CreateSession(CreateSessionRequest)   returns (CreateSessionResponse);
+  rpc DestroySession(DestroySessionRequest) returns (DestroySessionResponse);
+  rpc Exec(ExecRequest)                     returns (ExecResponse);
+  rpc ExecStream(ExecRequest)               returns (stream ExecStreamResponse);
+  rpc WriteFile(WriteFileRequest)           returns (WriteFileResponse);
+  rpc ReadFile(ReadFileRequest)             returns (ReadFileResponse);
+  rpc ListFiles(ListFilesRequest)           returns (ListFilesResponse);
+  rpc PipInstall(PipInstallRequest)         returns (PipInstallResponse);
+  rpc RunSubAgent(RunSubAgentRequest)       returns (RunSubAgentResponse);
+  rpc ConfirmAction(ConfirmActionRequest)   returns (ConfirmActionResponse);
+}
+
+message CreateSessionRequest {
+  string          session_id     = 1;
+  string          tenant_id      = 2;
+  repeated string allowed_hosts  = 3;
+  string          runtime_class  = 4;
+}
+message CreateSessionResponse {
+  string session_id = 1;
+  string pod_ip     = 2;
+}
+
+message DestroySessionRequest  { string session_id = 1; }
+message DestroySessionResponse { bool   ok         = 1; }
+
+message ExecRequest {
+  string session_id = 1;
+  string command    = 2;
+  int32  timeout    = 3;
+  string workdir    = 4;
+}
+message ExecResponse {
+  string stdout    = 1;
+  string stderr    = 2;
+  int32  exit_code = 3;
+}
+message ExecStreamResponse { string chunk = 1; }
+
+message WriteFileRequest {
+  string session_id = 1;
+  string path       = 2;
+  string content    = 3;
+  string mode       = 4;
+}
+message WriteFileResponse { bool ok = 1; }
+
+message ReadFileRequest  { string session_id = 1; string path = 2; }
+message ReadFileResponse { string content    = 1; }
+
+message ListFilesRequest  { string session_id = 1; int64 since = 2; }
+message ListFilesResponse { repeated FileEntry files = 1; }
+message FileEntry         { string path = 1; int64 modified = 2; }
+
+message PipInstallRequest  { string session_id = 1; repeated string packages = 2; }
+message PipInstallResponse { string output = 1; int32 exit_code = 2; }
+
+message RunSubAgentRequest {
+  string parent_session_id = 1;
+  string agent_type        = 2;
+  string workspace_path    = 3;
+}
+message RunSubAgentResponse { string session_id = 1; }
+
+message ConfirmActionRequest {
+  string session_id  = 1;
+  string action      = 2;
+  string approval_id = 3;
+}
+message ConfirmActionResponse {
+  string approval_id = 1;
+  bool   approved    = 2;
+}

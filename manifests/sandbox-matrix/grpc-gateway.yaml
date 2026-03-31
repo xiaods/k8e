@@ -1,0 +1,78 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-grpc-gateway
+  namespace: sandbox-matrix
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sandbox-grpc-gateway
+rules:
+- apiGroups: ["k8e.cattle.io"]
+  resources: ["sandboxsessions", "sandboxsessions/status", "sandboxwarmpools", "sandboxwarmpools/status", "sandboxmatrices"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods", "pods/status", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["cilium.io"]
+  resources: ["ciliumnetworkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sandbox-grpc-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sandbox-grpc-gateway
+subjects:
+- kind: ServiceAccount
+  name: sandbox-grpc-gateway
+  namespace: sandbox-matrix
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-grpc-gateway
+  namespace: sandbox-matrix
+  labels:
+    app: sandbox-grpc-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-grpc-gateway
+  template:
+    metadata:
+      labels:
+        app: sandbox-grpc-gateway
+    spec:
+      serviceAccountName: sandbox-grpc-gateway
+      containers:
+      - name: gateway
+        image: xiaods/k8e:latest
+        args: ["sandbox-gateway"]
+        ports:
+        - containerPort: 50051
+          name: grpc
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-grpc-gateway
+  namespace: sandbox-matrix
+  labels:
+    app: sandbox-grpc-gateway
+spec:
+  selector:
+    app: sandbox-grpc-gateway
+  ports:
+  - name: grpc
+    port: 50051
+    targetPort: 50051
