@@ -11,14 +11,9 @@ jobs:
   build:
     name: Build & Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goarch: amd64
-            goos: linux
     env:
-      GOOS: ${{ matrix.goos }}
-      GOARCH: ${{ matrix.goarch }}
+      GOOS: linux
+      GOARCH: amd64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -38,13 +33,15 @@ jobs:
           make deps
           zig build download
           make generate
-      - name: Test
+      - name: Go test
         id: gotest
         run: |
           export GOPATH="$HOME/go/"
           export PATH=$PATH:$GOPATH/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
           CGO_ENABLED=1 GOLANG_PROTOBUF_REGISTRATION_CONFLICT=warn go test -v ./... 2>&1 | go-junit-report -set-exit-code > report.xml
+      - name: Zig test (sandboxd)
+        run: cd sandboxd && zig build test --summary all
       - name: Publish Unit Test Results
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
