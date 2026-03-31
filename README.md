@@ -225,14 +225,40 @@ kubectl apply -f agent-sandbox.yaml
 curl -sfL https://k8e.sh/install.sh | sh -
 ```
 
-### Step 2 — Verify
+### Step 2 — Verify Cluster
 
 ```bash
 export KUBECONFIG=/etc/k8e/k8e.yaml
 kubectl get nodes
 ```
 
-### Step 3 — Add a Worker Node (Optional)
+### Step 3 — Verify Agentic AI Sandbox Matrix (auto-started)
+
+The Sandbox Matrix starts automatically with the cluster. No extra steps needed.
+
+```bash
+# CRDs are applied automatically
+kubectl get crd | grep k8e.cattle.io
+
+# sandbox-matrix namespace and gRPC gateway are ready
+kubectl -n sandbox-matrix get pods
+
+# RuntimeClass: gvisor and kata are registered automatically
+# firecracker is registered only when /dev/kvm is present on the node
+kubectl get runtimeclass
+
+# gRPC gateway is listening on 127.0.0.1:50051 (TLS)
+# Cilium base deny-all NetworkPolicy is applied to warm pods
+kubectl -n sandbox-matrix get ciliumnetworkpolicies
+```
+
+To disable the Sandbox Matrix:
+
+```bash
+curl -sfL https://k8e.sh/install.sh | INSTALL_K8E_EXEC="server --disable-sandbox-matrix" sh -
+```
+
+### Step 4 — Add a Worker Node (Optional)
 
 ```bash
 # Get token from server
