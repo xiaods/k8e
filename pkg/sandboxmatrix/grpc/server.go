@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -25,26 +26,39 @@ const sandboxdPort = 2024
 
 // Server implements the SandboxService gRPC interface.
 type Server struct {
-	k8s  kubernetes.Interface
-	dyn  dynamic.Interface
-	orch *Orchestrator
+	k8s     kubernetes.Interface
+	dyn     dynamic.Interface
+	orch    *Orchestrator
+	lisAddr string
+	certFile string
+	keyFile  string
 }
 
-func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface) *Server {
-	s := &Server{k8s: k8s, dyn: dyn}
+func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFile string) *Server {
+	s := &Server{
+		k8s:      k8s,
+		dyn:      dyn,
+		lisAddr:  "127.0.0.1:50051",
+		certFile: certFile,
+		keyFile:  keyFile,
+	}
 	s.orch = NewOrchestrator(k8s, dyn)
 	return s
 }
 
-// Start registers the gRPC server and begins listening on :50051.
+// Start registers the gRPC server and begins listening on lisAddr (default 127.0.0.1:50051).
 func (s *Server) Start(ctx context.Context) error {
-	lis, err := net.Listen("tcp", ":50051")
+	lis, err := net.Listen("tcp", s.lisAddr)
 	if err != nil {
 		return fmt.Errorf("grpc listen: %w", err)
 	}
-	gs := grpc.NewServer()
+	creds, err := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
+	if err != nil {
+		return fmt.Errorf("grpc tls credentials: %w", err)
+	}
+	gs := grpc.NewServer(grpc.Creds(creds))
 	RegisterSandboxServiceServer(gs, s)
-	logrus.Info("sandbox gRPC gateway listening on :50051")
+	logrus.Infof("sandbox gRPC gateway listening on %s", s.lisAddr)
 	go func() {
 		<-ctx.Done()
 		gs.GracefulStop()
@@ -163,7 +177,7 @@ func (s *Server) ReadFile(ctx context.Context, req *ReadFileRequest) (*ReadFileR
 		return nil, err
 	}
 	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("http://%s:%d/files/read?path=%s", podIP, sandboxdPort, req.Path), nil)
+		fmt.Sprintf("http://%s:%d/files/read?path=%s", podIP, sandboxdPort, req.Path), http.NoBody)
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd read: %v", err)
@@ -180,7 +194,7 @@ func (s *Server) ListFiles(ctx context.Context, req *ListFilesRequest) (*ListFil
 		return nil, err
 	}
 	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("http://%s:%d/files/list?since=%d", podIP, sandboxdPort, req.Since), nil)
+		fmt.Sprintf("http://%s:%d/files/list?since=%d", podIP, sandboxdPort, req.Since), http.NoBody)
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd list: %v", err)

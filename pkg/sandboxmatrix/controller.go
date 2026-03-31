@@ -20,6 +20,8 @@ import (
 
 var warmPoolGVR = schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxwarmpools"}
 
+const tlsDir = "/var/lib/k8e/server/tls"
+
 // Register starts the SandboxMatrix controller and gRPC gateway.
 func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string) error {
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -34,7 +36,10 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string) 
 
 	go runWarmPoolReconciler(ctx, k8s, dyn)
 
-	srv := sandboxgrpc.NewServer(k8s, dyn)
+	srv := sandboxgrpc.NewServer(k8s, dyn,
+		tlsDir+"/serving-kube-apiserver.crt",
+		tlsDir+"/serving-kube-apiserver.key",
+	)
 	go func() {
 		if err := srv.Start(ctx); err != nil {
 			logrus.Errorf("sandbox gRPC gateway: %v", err)
