@@ -55,6 +55,10 @@ spec:
         hostPath:
           path: /var/lib/k8e/data/current/bin/k8e
           type: File
+      - name: k8e-tls
+        hostPath:
+          path: /var/lib/k8e/server/tls
+          type: Directory
       containers:
       - name: gateway
         image: busybox:musl
@@ -69,6 +73,9 @@ spec:
         volumeMounts:
         - name: k8e-bin
           mountPath: /k8e
+        - name: k8e-tls
+          mountPath: /var/lib/k8e/server/tls
+          readOnly: true
 ---
 apiVersion: v1
 kind: Service
