@@ -29,7 +29,7 @@ const (
 	labelSessionID = "sandbox.k8e.io/session-id"
 	stateWarm      = "warm"
 	stateActive    = "active"
-	sandboxImage   = "xiaods/k8e-sandbox:latest"
+	sandboxImage   = "ghcr.io/xiaods/k8e-sandbox:latest"
 )
 
 var (
