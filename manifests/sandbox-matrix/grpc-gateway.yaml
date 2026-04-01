@@ -50,10 +50,15 @@ spec:
         app: sandbox-grpc-gateway
     spec:
       serviceAccountName: sandbox-grpc-gateway
+      volumes:
+      - name: k8e-bin
+        hostPath:
+          path: /var/lib/k8e/data/current/bin/k8e
+          type: File
       containers:
       - name: gateway
-        image: xiaods/k8e:latest
-        args: ["sandbox-gateway"]
+        image: busybox:musl
+        command: ["/k8e", "sandbox-gateway"]
         ports:
         - containerPort: 50051
           name: grpc
@@ -61,6 +66,9 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "500m"
+        volumeMounts:
+        - name: k8e-bin
+          mountPath: /k8e
 ---
 apiVersion: v1
 kind: Service
