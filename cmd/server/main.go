@@ -77,6 +77,7 @@ func main() {
 			cert.RotateCA,
 		),
 		cmds.NewCompletionCommand(completion.Run),
+		cmds.NewSandboxGatewayCommand(cmds.SandboxGateway),
 	}
 
 	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil && !errors.Is(err, context.Canceled) {
