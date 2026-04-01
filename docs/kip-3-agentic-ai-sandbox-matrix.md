@@ -535,8 +535,11 @@ pkg/sandboxmatrix/
 │   ├── types.go                     # CRD Go types
 │   └── zz_generated_deepcopy.go
 ├── grpc/
-│   ├── server.go                    # SandboxService gRPC implementation
-│   └── orchestrator.go              # RunSubAgent + ConfirmAction
+│   ├── server.go                    # SandboxService gRPC implementation (uses pb package)
+│   ├── orchestrator.go              # RunSubAgent + ConfirmAction
+│   └── pb/sandbox/v1/
+│       ├── sandbox.pb.go            # protoc-generated message types
+│       └── sandbox_grpc.pb.go       # protoc-generated RegisterSandboxServiceServer + client stub
 ├── pool.go                          # WarmPool reconciler
 └── policy.go                        # CiliumNetworkPolicy generator per session
 
@@ -684,15 +687,96 @@ Verification: `kubectl get runtimeclass` shows `firecracker`, `gvisor`, `kata`. 
 
 Implement `pkg/sandboxmatrix/grpc/server.go`: gRPC service implementing `SandboxService`. Routes `Exec`/`WriteFile`/`ReadFile` calls to the target pod's `sandboxd` via HTTP. Deploy as `manifests/sandbox-matrix/grpc-gateway.yaml`.
 
-**Security hardening applied (GSC-G102, GO-S0902):**
-- Listener binds to `127.0.0.1:50051` (loopback only) instead of `0.0.0.0` — prevents exposure on all interfaces.
-- `grpc.NewServer()` is secured with TLS credentials loaded from K8E's existing server certificate (`/var/lib/k8e/server/tls/serving-kube-apiserver.crt` / `.key`), which are generated automatically at cluster startup. `NewServer` signature:
+#### Proto-generated code (required)
 
+The gRPC service registration **must** use `protoc`-generated code. A hand-written `RegisterSandboxServiceServer` stub (no-op) will compile but result in `Unimplemented: unknown service sandbox.v1.SandboxService` at runtime. Generate the real registration code:
+
+```bash
+protoc \
+  --go_out=pkg/sandboxmatrix/grpc/pb \
+  --go_opt=paths=source_relative \
+  --go-grpc_out=pkg/sandboxmatrix/grpc/pb \
+  --go-grpc_opt=paths=source_relative \
+  -I proto \
+  sandbox/v1/sandbox.proto
+```
+
+This produces `pkg/sandboxmatrix/grpc/pb/sandbox/v1/sandbox.pb.go` and `sandbox_grpc.pb.go`. The hand-written `types.go` is deleted; `server.go` and `orchestrator.go` import `pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"` instead.
+
+`server.go` registers via the generated function:
+```go
+pb.RegisterSandboxServiceServer(gs, s)
+```
+
+And embeds `pb.UnimplementedSandboxServiceServer` for forward compatibility:
+```go
+type Server struct {
+    pb.UnimplementedSandboxServiceServer
+    ...
+}
+```
+
+#### Listener address
+
+The gRPC listener binds to `0.0.0.0:50051` inside the pod so the Kubernetes Service can route traffic to it. The TLS layer and Cilium NetworkPolicy together provide the security boundary — binding to loopback (`127.0.0.1`) would make the Service unreachable.
+
+#### TLS credentials
+
+`credentials.NewServerTLSFromFile` requires the cert and key files to exist **inside the container**. The files live on the host at `/var/lib/k8e/server/tls/`. Mount the entire directory via `hostPath`:
+
+```yaml
+volumes:
+- name: k8e-bin
+  hostPath:
+    path: /var/lib/k8e/data/current/bin/k8e
+    type: File
+- name: k8e-tls
+  hostPath:
+    path: /var/lib/k8e/server/tls
+    type: Directory
+containers:
+- name: gateway
+  image: busybox:musl
+  command: ["/k8e", "sandbox-gateway"]
+  volumeMounts:
+  - name: k8e-bin
+    mountPath: /k8e
+  - name: k8e-tls
+    mountPath: /var/lib/k8e/server/tls
+    readOnly: true
+```
+
+`NewServer` signature:
 ```go
 func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFile string) *Server
 ```
 
-The `Register` function in `pkg/sandboxmatrix/controller.go` passes the cert/key paths from `tlsDir = "/var/lib/k8e/server/tls"`. The gRPC gateway is started only after the API server is ready, ensuring the TLS certificates exist before `credentials.NewServerTLSFromFile` is called.
+Default cert/key paths: `/var/lib/k8e/server/tls/serving-kube-apiserver.crt` and `.key`, overridable via `K8E_SANDBOX_CERT` / `K8E_SANDBOX_KEY` env vars.
+
+#### CLI subcommand registration
+
+`sandbox-gateway` must be registered as a CLI subcommand in **`cmd/server/main.go`** (the actual k8e binary entrypoint built by `zig build k8e`). The root `main.go` is only used by the `cmd/k8e` multicall wrapper and is not the binary that runs in production.
+
+```go
+// cmd/server/main.go
+app.Commands = []cli.Command{
+    ...
+    cmds.NewSandboxGatewayCommand(cmds.SandboxGateway),
+}
+```
+
+`pkg/cli/cmds/sandbox_gateway.go` builds an in-cluster Kubernetes client and starts the gRPC server:
+
+```go
+func SandboxGateway(ctx *cli.Context) error {
+    cfg, _ := rest.InClusterConfig()
+    k8s, _ := kubernetes.NewForConfig(cfg)
+    dyn, _ := dynamic.NewForConfig(cfg)
+    srv := sandboxgrpc.NewServer(k8s, dyn, ctx.String("tls-cert"), ctx.String("tls-key"))
+    // signal handling + context cancellation omitted for brevity
+    return srv.Start(c)
+}
+```
 
 #### Deployment — hostPath Binary Mount
 
@@ -704,6 +788,10 @@ volumes:
   hostPath:
     path: /var/lib/k8e/data/current/bin/k8e
     type: File
+- name: k8e-tls
+  hostPath:
+    path: /var/lib/k8e/server/tls
+    type: Directory
 containers:
 - name: gateway
   image: busybox:musl          # minimal public image; provides the container runtime environment
@@ -711,16 +799,40 @@ containers:
   volumeMounts:
   - name: k8e-bin
     mountPath: /k8e
+  - name: k8e-tls
+    mountPath: /var/lib/k8e/server/tls
+    readOnly: true
 ```
 
 **Rationale:**
 - `xiaods/k8e:latest` is not yet published to a public registry; requiring it would cause `ImagePullBackOff` on every fresh install.
-- The k8e binary is always present at `/var/lib/k8e/data/current/bin/k8e` on any node where k8e is installed — it is the same binary that runs the server and agent processes.
-- `busybox:musl` is a publicly available minimal image that provides the container execution environment without any application logic of its own.
-- This approach eliminates the image build and push step from the critical path of cluster startup, keeping the "60-second setup" promise intact.
-- When `xiaods/k8e` is eventually published, the Deployment can be updated to use it directly and the `hostPath` volume removed.
+- The k8e binary is always present at `/var/lib/k8e/data/current/bin/k8e` on any node where k8e is installed.
+- `busybox:musl` is a publicly available minimal image that provides the container execution environment.
+- When `xiaods/k8e` is eventually published, the Deployment can be updated to use it directly and the `hostPath` volumes removed.
 
 **Prerequisite:** Every worker node that may schedule the gateway pod must have k8e installed (i.e., running as a k8e agent). This is already required for the node to join the cluster.
+
+#### Sandbox image registry
+
+Warm pool pods use `ghcr.io/xiaods/k8e-sandbox:latest` (GitHub Container Registry). The Docker Hub name `xiaods/k8e-sandbox` does not exist. The CI pipeline builds and pushes to GHCR via `.github/workflows/release.yml`.
+
+#### grpcurl verification
+
+```bash
+# port-forward to bypass ClusterIP TLS SAN mismatch
+kubectl -n sandbox-matrix port-forward svc/sandbox-grpc-gateway 50051:50051 &
+
+grpcurl \
+  -cacert /var/lib/k8e/server/tls/server-ca.crt \
+  -authority 127.0.0.1 \
+  -import-path proto \
+  -proto sandbox/v1/sandbox.proto \
+  -d '{"session_id": "hello-world-01"}' \
+  127.0.0.1:50051 \
+  sandbox.v1.SandboxService/CreateSession
+```
+
+Note: grpcurl's `--reflect` mode requires the server to register `grpc/reflection`. Without it, always pass `-import-path` and `-proto`.
 
 Verification: Python client `stub.Exec(ExecRequest(session_id=..., command="hostname"))` returns the sandbox pod's hostname.
 
