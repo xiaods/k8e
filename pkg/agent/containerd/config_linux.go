@@ -5,6 +5,7 @@ package containerd
 
 import (
 	"os"
+	"os/exec"
 
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/plugins/snapshots/overlay/overlayutils"
@@ -67,6 +68,20 @@ func SetupContainerdConfig(cfg *config.Node) error {
 		return errors.Errorf("default runtime %s was not found", cfg.DefaultRuntime)
 	}
 
+	sandboxRuntimes := templates.SandboxRuntimeConfig{}
+	if _, err := os.Stat("/usr/bin/runsc"); err == nil {
+		sandboxRuntimes.GVisor = true
+		logrus.Info("containerd: runsc found, enabling gVisor runtime")
+	} else if runscPath, err := exec.LookPath("runsc"); err == nil {
+		_ = runscPath
+		sandboxRuntimes.GVisor = true
+		logrus.Info("containerd: runsc found in PATH, enabling gVisor runtime")
+	}
+	if _, err := os.Stat("/dev/kvm"); err == nil {
+		sandboxRuntimes.Firecracker = true
+		logrus.Info("containerd: /dev/kvm found, enabling Firecracker runtime")
+	}
+
 	containerdConfig := templates.ContainerdConfig{
 		NodeConfig:            cfg,
 		DisableCgroup:         disableCgroup,
@@ -76,6 +91,7 @@ func SetupContainerdConfig(cfg *config.Node) error {
 		NonrootDevices:        cfg.Containerd.NonrootDevices,
 		PrivateRegistryConfig: cfg.AgentConfig.Registry,
 		ExtraRuntimes:         extraRuntimes,
+		SandboxRuntimes:       sandboxRuntimes,
 		Program:               version.Program,
 		NoDefaultEndpoint:     cfg.Containerd.NoDefault,
 	}

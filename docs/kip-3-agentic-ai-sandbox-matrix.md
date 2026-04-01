@@ -946,6 +946,90 @@ const SandboxdPort = sandboxdPort  // exported for controller use
 
 Verification: `k8e server --sandbox-default-runtime=kata --sandbox-grpc-port=50052 --sandbox-default-memory=1Gi` starts the gRPC gateway on `:50052`; warm pods are created with `runtimeClassName: kata` and `memory: 1Gi` limit.
 
+### Task 10 — gVisor Runtime Auto-Detection in containerd Config
+
+#### Problem
+
+`runsc install` only updates Docker's `daemon.json` — it does not touch containerd config. K8E manages its own containerd config at `/var/lib/k8e/agent/etc/containerd/config.toml`, generated from a Go template on every agent startup. Manually appending the `runsc` shim block to this file is overwritten on the next `systemctl restart k8e`.
+
+The template already has the gVisor block gated behind `{{- if .SandboxRuntimes.GVisor }}`, but `SandboxRuntimes.GVisor` was never set to `true` anywhere in the codebase.
+
+#### Fix
+
+`SetupContainerdConfig` in `pkg/agent/containerd/config_linux.go` is extended to auto-detect `runsc` and `/dev/kvm` before rendering the template:
+
+```go
+sandboxRuntimes := templates.SandboxRuntimeConfig{}
+if _, err := os.Stat("/usr/bin/runsc"); err == nil {
+    sandboxRuntimes.GVisor = true
+} else if _, err := exec.LookPath("runsc"); err == nil {
+    sandboxRuntimes.GVisor = true
+}
+if _, err := os.Stat("/dev/kvm"); err == nil {
+    sandboxRuntimes.Firecracker = true
+}
+
+containerdConfig := templates.ContainerdConfig{
+    ...
+    SandboxRuntimes: sandboxRuntimes,
+    ...
+}
+```
+
+After this change, restarting k8e on a node where `runsc` is installed automatically injects:
+
+```toml
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+  runtime_type = "io.containerd.runsc.v1"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
+  TypeUrl = "io.containerd.runsc.v1.options"
+```
+
+#### gRPC Gateway — CreateSession Flow
+
+The `sandbox-grpc-gateway` is reachable at `ClusterIP:50051` inside the cluster. From the host, it is already listening on `127.0.0.1:50051` (bound by the embedded controller). No `kubectl port-forward` is needed from the host.
+
+```bash
+# CreateSession with gvisor runtime
+grpcurl \
+  -cacert /var/lib/k8e/server/tls/server-ca.crt \
+  -authority 127.0.0.1 \
+  -import-path /root/k8e/proto \
+  -proto sandbox/v1/sandbox.proto \
+  -d '{"session_id": "test-gvisor-01", "runtime_class": "gvisor", "allowed_hosts": ["pypi.org"]}' \
+  127.0.0.1:50051 \
+  sandbox.v1.SandboxService/CreateSession
+
+# Exec python helloworld once pod is Ready
+grpcurl \
+  -cacert /var/lib/k8e/server/tls/server-ca.crt \
+  -authority 127.0.0.1 \
+  -import-path /root/k8e/proto \
+  -proto sandbox/v1/sandbox.proto \
+  -d '{"session_id": "test-gvisor-01", "command": "python3 -c \"print(\\\"Hello, World!\\\")\"", "timeout": 30}' \
+  127.0.0.1:50051 \
+  sandbox.v1.SandboxService/Exec
+
+# Destroy session
+grpcurl \
+  -cacert /var/lib/k8e/server/tls/server-ca.crt \
+  -authority 127.0.0.1 \
+  -import-path /root/k8e/proto \
+  -proto sandbox/v1/sandbox.proto \
+  -d '{"session_id": "test-gvisor-01"}' \
+  127.0.0.1:50051 \
+  sandbox.v1.SandboxService/DestroySession
+```
+
+#### Lessons Learned
+
+| Issue | Root Cause | Fix |
+|---|---|---|
+| `runsc install` has no effect on k8e | `runsc install` targets Docker `daemon.json`, not containerd | Auto-detect `runsc` in `SetupContainerdConfig` and set `SandboxRuntimes.GVisor = true` |
+| Manual edits to `config.toml` are lost | k8e regenerates containerd config from template on every restart | All runtime config must go through the template rendering path |
+| `SandboxRuntimes.GVisor` always `false` | Field existed in template but was never populated | Wire detection logic in `config_linux.go` before `ContainerdConfig` is constructed |
+| gRPC gateway port-forward not needed from host | Controller binds `0.0.0.0:50051` on the host directly | Connect to `127.0.0.1:50051` directly; use `-authority 127.0.0.1` for TLS SNI |
+
 ## Security Considerations
 
 ### Isolation Layers (defense in depth)
