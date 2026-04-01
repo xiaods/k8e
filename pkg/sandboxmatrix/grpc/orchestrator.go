@@ -252,8 +252,8 @@ func sandboxPodSpec(runtimeClass string) corev1.PodSpec {
 			Ports: []corev1.ContainerPort{{ContainerPort: 2024}},
 			Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("4"),
-					corev1.ResourceMemory: resource.MustParse("4Gi"),
+					corev1.ResourceCPU:    resource.MustParse("500m"),
+					corev1.ResourceMemory: resource.MustParse("512Mi"),
 				},
 			},
 			SecurityContext: &corev1.SecurityContext{ReadOnlyRootFilesystem: boolPtr(true)},

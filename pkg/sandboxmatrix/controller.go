@@ -3,6 +3,7 @@ package sandboxmatrix
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	sandboxgrpc "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc"
 )
 
@@ -23,7 +25,27 @@ var warmPoolGVR = schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "
 const tlsDir = "/var/lib/k8e/server/tls"
 
 // Register starts the SandboxMatrix controller and gRPC gateway.
-func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string) error {
+func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, cfg config.SandboxConfig) error {
+	// Apply defaults
+	if cfg.DefaultRuntime == "" {
+		cfg.DefaultRuntime = "gvisor"
+	}
+	if cfg.DefaultImage == "" {
+		cfg.DefaultImage = "ghcr.io/xiaods/k8e-sandbox:latest"
+	}
+	if cfg.DefaultCPU == "" {
+		cfg.DefaultCPU = "500m"
+	}
+	if cfg.DefaultMemory == "" {
+		cfg.DefaultMemory = "512Mi"
+	}
+	if cfg.GRPCPort == 0 {
+		cfg.GRPCPort = 50051
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = "sandbox-matrix"
+	}
+
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return err
@@ -34,11 +56,12 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string) 
 		return err
 	}
 
-	go runWarmPoolReconciler(ctx, k8s, dyn)
+	go runWarmPoolReconciler(ctx, k8s, dyn, cfg)
 
 	srv := sandboxgrpc.NewServer(k8s, dyn,
 		tlsDir+"/serving-kube-apiserver.crt",
 		tlsDir+"/serving-kube-apiserver.key",
+		cfg.GRPCPort,
 	)
 	go func() {
 		if err := srv.Start(ctx); err != nil {
@@ -52,11 +75,12 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string) 
 		logrus.Info("sandbox-matrix: /dev/kvm not found, Firecracker RuntimeClass skipped")
 	}
 
-	logrus.Info("sandbox-matrix: controller started")
+	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d)",
+		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort)
 	return nil
 }
 
-func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface) {
+func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -64,13 +88,13 @@ func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dy
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reconcileWarmPools(ctx, k8s, dyn)
+			reconcileWarmPools(ctx, k8s, dyn, cfg)
 		}
 	}
 }
 
-func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface) {
-	pools, err := dyn.Resource(warmPoolGVR).Namespace("sandbox-matrix").List(ctx, metav1.ListOptions{})
+func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig) {
+	pools, err := dyn.Resource(warmPoolGVR).Namespace(cfg.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return
 	}
@@ -78,8 +102,11 @@ func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynam
 		specMap, _ := pool.Object["spec"].(map[string]interface{})
 		size, _ := specMap["size"].(int64)
 		runtimeClass, _ := specMap["runtimeClass"].(string)
+		if runtimeClass == "" {
+			runtimeClass = cfg.DefaultRuntime
+		}
 
-		pods, err := k8s.CoreV1().Pods("sandbox-matrix").List(ctx, metav1.ListOptions{
+		pods, err := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: "sandbox.k8e.io/state=warm",
 		})
 		if err != nil {
@@ -90,26 +117,26 @@ func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynam
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: "sandbox-warm-",
-					Namespace:    "sandbox-matrix",
+					Namespace:    cfg.Namespace,
 					Labels:       map[string]string{"sandbox.k8e.io/state": "warm"},
 				},
-				Spec: warmPodSpec(runtimeClass),
+				Spec: warmPodSpec(runtimeClass, cfg),
 			}
-			k8s.CoreV1().Pods("sandbox-matrix").Create(ctx, pod, metav1.CreateOptions{})
+			k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 		}
 	}
 }
 
-func warmPodSpec(runtimeClass string) corev1.PodSpec {
+func warmPodSpec(runtimeClass string, cfg config.SandboxConfig) corev1.PodSpec {
 	spec := corev1.PodSpec{
 		Containers: []corev1.Container{{
 			Name:  "sandbox",
-			Image: "ghcr.io/xiaods/k8e-sandbox:latest",
-			Ports: []corev1.ContainerPort{{ContainerPort: 2024}},
+			Image: cfg.DefaultImage,
+			Ports: []corev1.ContainerPort{{ContainerPort: int32(sandboxgrpc.SandboxdPort)}},
 			Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("4"),
-					corev1.ResourceMemory: resource.MustParse("4Gi"),
+					corev1.ResourceCPU:    resource.MustParse(cfg.DefaultCPU),
+					corev1.ResourceMemory: resource.MustParse(cfg.DefaultMemory),
 				},
 			},
 		}},
@@ -119,4 +146,9 @@ func warmPodSpec(runtimeClass string) corev1.PodSpec {
 		spec.RuntimeClassName = &runtimeClass
 	}
 	return spec
+}
+
+// sandboxdPortAddr returns the gRPC listen address for the given port.
+func sandboxdPortAddr(port int) string {
+	return fmt.Sprintf("127.0.0.1:%d", port)
 }

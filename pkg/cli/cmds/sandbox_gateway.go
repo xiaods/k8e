@@ -28,6 +28,7 @@ func NewSandboxGatewayCommand(action func(*cli.Context) error) cli.Command {
 		Flags: []cli.Flag{
 			cli.StringFlag{Name: "tls-cert", Value: defaultCertFile, EnvVar: "K8E_SANDBOX_CERT"},
 			cli.StringFlag{Name: "tls-key", Value: defaultKeyFile, EnvVar: "K8E_SANDBOX_KEY"},
+			cli.IntFlag{Name: "grpc-port", Value: 50051, EnvVar: "K8E_SANDBOX_GRPC_PORT"},
 		},
 	}
 }
@@ -46,7 +47,7 @@ func SandboxGateway(ctx *cli.Context) error {
 		return err
 	}
 
-	srv := sandboxgrpc.NewServer(k8s, dyn, ctx.String("tls-cert"), ctx.String("tls-key"))
+	srv := sandboxgrpc.NewServer(k8s, dyn, ctx.String("tls-cert"), ctx.String("tls-key"), ctx.Int("grpc-port"))
 
 	c, cancel := context.WithCancel(context.Background())
 	defer cancel()
