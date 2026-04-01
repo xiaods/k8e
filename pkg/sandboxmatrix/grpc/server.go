@@ -25,6 +25,9 @@ import (
 
 const sandboxdPort = 2024
 
+// SandboxdPort is exported for use by the controller.
+const SandboxdPort = sandboxdPort
+
 // Server implements the SandboxService gRPC interface.
 type Server struct {
 	pb.UnimplementedSandboxServiceServer
@@ -36,11 +39,14 @@ type Server struct {
 	keyFile  string
 }
 
-func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFile string) *Server {
+func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFile string, grpcPort int) *Server {
+	if grpcPort == 0 {
+		grpcPort = 50051
+	}
 	s := &Server{
 		k8s:      k8s,
 		dyn:      dyn,
-		lisAddr:  "0.0.0.0:50051",
+		lisAddr:  fmt.Sprintf("0.0.0.0:%d", grpcPort),
 		certFile: certFile,
 		keyFile:  keyFile,
 	}

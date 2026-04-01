@@ -188,6 +188,16 @@ type CriticalControlArgs struct {
 	SupervisorMetrics     bool         `cli:"supervisor-metrics"`
 }
 
+// SandboxConfig holds configuration for the Agentic AI Sandbox Matrix.
+type SandboxConfig struct {
+	DefaultRuntime string
+	DefaultImage   string
+	DefaultCPU     string
+	DefaultMemory  string
+	GRPCPort       int
+	Namespace      string
+}
+
 type Control struct {
 	CriticalControlArgs
 	AdvertisePort int
@@ -245,7 +255,8 @@ type Control struct {
 	ServerNodeName           string
 	VLevel                   int
 	VModule                  string
-	DisableSandboxMatrix     bool
+	DisableSandboxMatrix bool
+	SandboxConfig        SandboxConfig
 
 	BindAddress string
 	SANs        []string

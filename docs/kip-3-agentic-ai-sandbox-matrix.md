@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-03-29 | Draft |
+| @xiaods | 2026-04-01 | Draft |
 
 ## Summary
 
@@ -856,11 +856,95 @@ Implement `pkg/sandboxmatrix/grpc/orchestrator.go`:
 
 Verification: Orchestrator spawns two sub-agents in parallel; both write to `/workspace/results/`; parent reads via `ListFiles`. Attempt to spawn grandchild returns `PERMISSION_DENIED`. `ConfirmAction` blocks until external approval.
 
-### Task 8 — K8E Server Integration
+## Task 8 — K8E Server Integration
 
 Register SandboxMatrix controller, gRPC gateway, and `sandboxd` mutation webhook in `pkg/server/server.go`. Add all manifests to `pkg/deploy/` bundle. Add `--disable-sandbox-matrix` opt-out flag. Apply Firecracker `RuntimeClass` only when `/dev/kvm` is present on the node.
 
 Verification: Fresh `k8e server --cluster-init` → gRPC gateway reachable on `:50051` → Python client creates session, runs code, egress enforced by Cilium `toFQDNs`, session destroyed, CNP cleaned up.
+
+### Task 9 — Sandbox Runtime Configuration
+
+Expose fine-grained sandbox defaults as server-level CLI flags so operators can tune the Sandbox Matrix without modifying CRDs. All flags are optional; sensible defaults are applied when omitted.
+
+#### Design
+
+A `SandboxConfig` struct is added to `pkg/daemons/config/types.go` and embedded in `Control`:
+
+```go
+// SandboxConfig holds configuration for the Agentic AI Sandbox Matrix.
+type SandboxConfig struct {
+    DefaultRuntime string // gvisor | kata | firecracker
+    DefaultImage   string // warm pod container image
+    DefaultCPU     string // resource.Quantity string, e.g. "500m"
+    DefaultMemory  string // resource.Quantity string, e.g. "512Mi"
+    GRPCPort       int    // gRPC gateway listen port (default 50051)
+    Namespace      string // Kubernetes namespace (default sandbox-matrix)
+}
+```
+
+The config flows through the standard K8E pipeline:
+
+```
+CLI flags (pkg/cli/cmds/server.go)
+    │
+    ▼
+cmds.Server struct fields
+    │  (pkg/cli/server/server.go)
+    ▼
+config.Control.SandboxConfig
+    │  (pkg/server/server.go)
+    ▼
+sandboxmatrix.Register(ctx, k8s, kubeconfig, cfg)
+    │
+    ├── runWarmPoolReconciler(ctx, k8s, dyn, cfg)
+    │       uses cfg.DefaultRuntime, cfg.DefaultImage, cfg.DefaultCPU, cfg.DefaultMemory, cfg.Namespace
+    │
+    └── sandboxgrpc.NewServer(k8s, dyn, certFile, keyFile, cfg.GRPCPort)
+            binds to 0.0.0.0:<GRPCPort>
+```
+
+#### CLI Flags
+
+| Flag | Env Var | Default | Description |
+|---|---|---|---|
+| `--sandbox-default-runtime` | `K8E_SANDBOX_DEFAULT_RUNTIME` | `gvisor` | Default runtimeClass for warm pods |
+| `--sandbox-default-image` | `K8E_SANDBOX_DEFAULT_IMAGE` | `ghcr.io/xiaods/k8e-sandbox:latest` | Container image for warm pods |
+| `--sandbox-default-cpu` | `K8E_SANDBOX_DEFAULT_CPU` | `500m` | CPU limit per sandbox pod |
+| `--sandbox-default-memory` | `K8E_SANDBOX_DEFAULT_MEMORY` | `512Mi` | Memory limit per sandbox pod |
+| `--sandbox-grpc-port` | `K8E_SANDBOX_GRPC_PORT` | `50051` | gRPC gateway listen port |
+| `--sandbox-namespace` | `K8E_SANDBOX_NAMESPACE` | `sandbox-matrix` | Kubernetes namespace for sandbox workloads |
+
+#### WarmPool CRD Override
+
+Per-pool `runtimeClass` in `SandboxWarmPool.spec.runtimeClass` takes precedence over `--sandbox-default-runtime`. If the CRD field is empty, the controller falls back to `cfg.DefaultRuntime`. This allows mixed-runtime clusters (e.g., gVisor for most pools, Firecracker for high-security pools) without changing the server flag.
+
+#### gRPC Gateway Port
+
+`sandboxgrpc.NewServer` now accepts `grpcPort int` as a parameter. The `sandbox-gateway` CLI subcommand also exposes `--grpc-port` / `K8E_SANDBOX_GRPC_PORT` so the standalone gateway deployment can be configured independently of the embedded controller.
+
+#### Exported Constant
+
+`sandboxgrpc.SandboxdPort` (= `2024`) is exported so `controller.go` can reference the sandboxd HTTP port without importing a magic number:
+
+```go
+// grpc/server.go
+const sandboxdPort = 2024
+const SandboxdPort = sandboxdPort  // exported for controller use
+```
+
+#### Files Changed
+
+| File | Change |
+|---|---|
+| `pkg/daemons/config/types.go` | Add `SandboxConfig` struct; embed in `Control` |
+| `pkg/cli/cmds/server.go` | Add 6 sandbox flags to `Server` struct and flag list |
+| `pkg/cli/server/server.go` | Map `cfg.*` → `serverConfig.ControlConfig.SandboxConfig` |
+| `pkg/server/server.go` | Pass `config.ControlConfig.SandboxConfig` to `sandboxmatrix.Register` |
+| `pkg/sandboxmatrix/controller.go` | `Register` accepts `config.SandboxConfig`; apply defaults; pass to reconciler and gRPC server |
+| `pkg/sandboxmatrix/grpc/server.go` | `NewServer` accepts `grpcPort int`; export `SandboxdPort` |
+| `pkg/cli/cmds/sandbox_gateway.go` | Add `--grpc-port` flag; pass to `NewServer` |
+
+Verification: `k8e server --sandbox-default-runtime=kata --sandbox-grpc-port=50052 --sandbox-default-memory=1Gi` starts the gRPC gateway on `:50052`; warm pods are created with `runtimeClassName: kata` and `memory: 1Gi` limit.
 
 ## Security Considerations
 

@@ -104,7 +104,13 @@ type Server struct {
 	EtcdS3ConfigSecret       string
 	EtcdS3Timeout            time.Duration
 	EtcdS3Insecure           bool
-	DisableSandboxMatrix     bool
+	DisableSandboxMatrix    bool
+	SandboxDefaultRuntime   string
+	SandboxDefaultImage     string
+	SandboxDefaultCPU       string
+	SandboxDefaultMemory    string
+	SandboxGRPCPort         int
+	SandboxNamespace        string
 }
 
 var (
@@ -527,6 +533,48 @@ var ServerFlags = []cli.Flag{
 		Name:        "disable-sandbox-matrix",
 		Usage:       "(components) Disable Agentic AI Sandbox Matrix",
 		Destination: &ServerConfig.DisableSandboxMatrix,
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-default-runtime",
+		Usage:       "(sandbox) Default runtimeClass for sandbox pods (gvisor, kata, firecracker)",
+		Value:       "gvisor",
+		Destination: &ServerConfig.SandboxDefaultRuntime,
+		EnvVar:      "K8E_SANDBOX_DEFAULT_RUNTIME",
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-default-image",
+		Usage:       "(sandbox) Default container image for sandbox pods",
+		Value:       "ghcr.io/xiaods/k8e-sandbox:latest",
+		Destination: &ServerConfig.SandboxDefaultImage,
+		EnvVar:      "K8E_SANDBOX_DEFAULT_IMAGE",
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-default-cpu",
+		Usage:       "(sandbox) Default CPU limit for sandbox pods",
+		Value:       "500m",
+		Destination: &ServerConfig.SandboxDefaultCPU,
+		EnvVar:      "K8E_SANDBOX_DEFAULT_CPU",
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-default-memory",
+		Usage:       "(sandbox) Default memory limit for sandbox pods",
+		Value:       "512Mi",
+		Destination: &ServerConfig.SandboxDefaultMemory,
+		EnvVar:      "K8E_SANDBOX_DEFAULT_MEMORY",
+	},
+	&cli.IntFlag{
+		Name:        "sandbox-grpc-port",
+		Usage:       "(sandbox) gRPC gateway listen port",
+		Value:       50051,
+		Destination: &ServerConfig.SandboxGRPCPort,
+		EnvVar:      "K8E_SANDBOX_GRPC_PORT",
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-namespace",
+		Usage:       "(sandbox) Kubernetes namespace for sandbox workloads",
+		Value:       "sandbox-matrix",
+		Destination: &ServerConfig.SandboxNamespace,
+		EnvVar:      "K8E_SANDBOX_NAMESPACE",
 	},
 
 	// Hidden/Deprecated flags below
