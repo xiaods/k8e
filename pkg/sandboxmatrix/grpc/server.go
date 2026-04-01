@@ -251,8 +251,19 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 		return "", status.Errorf(codes.NotFound, "session %s not found", sessionID)
 	}
 	podIP, _, _ := unstructured.NestedString(u.Object, "status", "podIP")
-	if podIP == "" {
-		return "", status.Errorf(codes.Unavailable, "session %s has no pod IP yet", sessionID)
+	if podIP != "" {
+		return podIP, nil
 	}
-	return podIP, nil
+	// fallback: look up pod directly by session label
+	pods, err := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSessionID + "=" + sessionID,
+	})
+	if err == nil {
+		for _, pod := range pods.Items {
+			if pod.Status.PodIP != "" {
+				return pod.Status.PodIP, nil
+			}
+		}
+	}
+	return "", status.Errorf(codes.Unavailable, "session %s has no pod IP yet", sessionID)
 }
