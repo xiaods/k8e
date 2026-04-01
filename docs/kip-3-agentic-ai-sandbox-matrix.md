@@ -1030,6 +1030,86 @@ grpcurl \
 | `SandboxRuntimes.GVisor` always `false` | Field existed in template but was never populated | Wire detection logic in `config_linux.go` before `ContainerdConfig` is constructed |
 | gRPC gateway port-forward not needed from host | Controller binds `0.0.0.0:50051` on the host directly | Connect to `127.0.0.1:50051` directly; use `-authority 127.0.0.1` for TLS SNI |
 
+### Task 11 — End-to-End Sandbox Validation
+
+#### Image Registry
+
+The sandbox image must be published to **GHCR** (`ghcr.io/xiaods/k8e-sandbox:latest`) and set to **public** visibility. Docker Hub (`xiaods/k8e-sandbox`) does not exist. GHCR packages default to private — set visibility to public at:
+
+```
+https://github.com/users/xiaods/packages/container/k8e-sandbox/settings
+→ Danger Zone → Change visibility → Public
+```
+
+Without this, pods fail with `401 Unauthorized` on image pull.
+
+#### Session podIP Race Condition
+
+`CreateSession` creates the pod and immediately writes `status.podIP` from `pod.Status.PodIP`. At creation time the pod has no IP yet, so the session status stores an empty string. Subsequent `Exec` calls fail with `session has no pod IP yet`.
+
+**Fix**: `getPodIP` in `server.go` falls back to listing pods by `sandbox.k8e.io/session-id` label when `status.podIP` is empty:
+
+```go
+func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error) {
+    // 1. try session status first (fast path)
+    podIP, _ := unstructured.NestedString(u.Object, "status", "podIP")
+    if podIP != "" {
+        return podIP, nil
+    }
+    // 2. fallback: query pod directly by label
+    pods, _ := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+        LabelSelector: labelSessionID + "=" + sessionID,
+    })
+    for _, pod := range pods.Items {
+        if pod.Status.PodIP != "" {
+            return pod.Status.PodIP, nil
+        }
+    }
+    return "", status.Errorf(codes.Unavailable, "session %s has no pod IP yet", sessionID)
+}
+```
+
+#### Full E2E Test via grpcurl
+
+```bash
+SESSION="kiro-$(date +%s)"
+
+# 1. CreateSession
+grpcurl -cacert /var/lib/k8e/server/tls/server-ca.crt -authority 127.0.0.1 \
+  -import-path /root/k8e/proto -proto sandbox/v1/sandbox.proto \
+  -d "{\"session_id\":\"$SESSION\",\"allowed_hosts\":[\"pypi.org\"]}" \
+  127.0.0.1:50051 sandbox.v1.SandboxService/CreateSession
+
+# 2. Wait for pod Ready
+kubectl wait pod -n sandbox-matrix -l "sandbox.k8e.io/session-id=$SESSION" \
+  --for=condition=Ready --timeout=120s
+
+# 3. Exec
+grpcurl -cacert /var/lib/k8e/server/tls/server-ca.crt -authority 127.0.0.1 \
+  -import-path /root/k8e/proto -proto sandbox/v1/sandbox.proto \
+  -d "{\"session_id\":\"$SESSION\",\"command\":\"python3 -c \\\"print('Hello, World!')\\\"\",\"timeout\":30}" \
+  127.0.0.1:50051 sandbox.v1.SandboxService/Exec
+
+# 4. DestroySession
+grpcurl -cacert /var/lib/k8e/server/tls/server-ca.crt -authority 127.0.0.1 \
+  -import-path /root/k8e/proto -proto sandbox/v1/sandbox.proto \
+  -d "{\"session_id\":\"$SESSION\"}" \
+  127.0.0.1:50051 sandbox.v1.SandboxService/DestroySession
+```
+
+#### Unit Test Coverage
+
+12 unit tests added across two packages (no cluster required):
+
+| Package | Tests |
+|---|---|
+| `pkg/sandboxmatrix` | `TestWarmPodSpec_*` (7), `TestApplyDefaults` (1) |
+| `pkg/sandboxmatrix/grpc` | `TestCreateSession_GeneratesID`, `TestCreateSession_DefaultRuntime`, `TestRunSubAgent_MaxDepthEnforced`, `TestDestroySession_NotFound` |
+
+Key fix required for fake dynamic client: all nested maps in `applyCNP` must use `map[string]interface{}` — `map[string]string` causes `cannot deep copy` panic in `dynfake`.
+
+Run: `go test ./pkg/sandboxmatrix/... -v`
+
 ## Security Considerations
 
 ### Isolation Layers (defense in depth)
