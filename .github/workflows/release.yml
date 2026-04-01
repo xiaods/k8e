@@ -73,6 +73,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
+      - name: Sanitize tag
+        id: tag
+        run: echo "value=$(echo '${{ github.ref_name }}' | tr '+' '-')" >> $GITHUB_OUTPUT
       - name: Build and push sandbox image
         uses: docker/build-push-action@v6
         with:
@@ -81,7 +84,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ghcr.io/xiaods/k8e-sandbox:${{ github.ref_name }}
+            ghcr.io/xiaods/k8e-sandbox:${{ steps.tag.outputs.value }}
             ghcr.io/xiaods/k8e-sandbox:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
