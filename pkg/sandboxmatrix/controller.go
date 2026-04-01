@@ -104,7 +104,7 @@ func warmPodSpec(runtimeClass string) corev1.PodSpec {
 	spec := corev1.PodSpec{
 		Containers: []corev1.Container{{
 			Name:  "sandbox",
-			Image: "xiaods/k8e-sandbox:latest",
+			Image: "ghcr.io/xiaods/k8e-sandbox:latest",
 			Ports: []corev1.ContainerPort{{ContainerPort: 2024}},
 			Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
