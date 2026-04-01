@@ -7,6 +7,10 @@ permissions:
   checks: write
   pull-requests: write
   contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build & Test
@@ -15,14 +19,14 @@ jobs:
       GOOS: linux
       GOARCH: amd64
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
           cache-dependency-path: go.sum
       - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@v2.2.1
         with:
           version: 0.15.2
       - name: Install dependencies
@@ -43,7 +47,7 @@ jobs:
       - name: Zig test (sandboxd)
         run: cd sandboxd && zig build test --summary all
       - name: Publish Unit Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action@v2.23.0
         if: always()
         with:
           files: "./report.xml"
