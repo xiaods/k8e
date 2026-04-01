@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -26,10 +27,11 @@ const sandboxdPort = 2024
 
 // Server implements the SandboxService gRPC interface.
 type Server struct {
-	k8s     kubernetes.Interface
-	dyn     dynamic.Interface
-	orch    *Orchestrator
-	lisAddr string
+	pb.UnimplementedSandboxServiceServer
+	k8s      kubernetes.Interface
+	dyn      dynamic.Interface
+	orch     *Orchestrator
+	lisAddr  string
 	certFile string
 	keyFile  string
 }
@@ -38,7 +40,7 @@ func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFil
 	s := &Server{
 		k8s:      k8s,
 		dyn:      dyn,
-		lisAddr:  "127.0.0.1:50051",
+		lisAddr:  "0.0.0.0:50051",
 		certFile: certFile,
 		keyFile:  keyFile,
 	}
@@ -46,7 +48,7 @@ func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFil
 	return s
 }
 
-// Start registers the gRPC server and begins listening on lisAddr (default 127.0.0.1:50051).
+// Start registers the gRPC server and begins listening on lisAddr (default 0.0.0.0:50051).
 func (s *Server) Start(ctx context.Context) error {
 	lis, err := net.Listen("tcp", s.lisAddr)
 	if err != nil {
@@ -57,7 +59,7 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("grpc tls credentials: %w", err)
 	}
 	gs := grpc.NewServer(grpc.Creds(creds))
-	RegisterSandboxServiceServer(gs, s)
+	pb.RegisterSandboxServiceServer(gs, s)
 	logrus.Infof("sandbox gRPC gateway listening on %s", s.lisAddr)
 	go func() {
 		<-ctx.Done()
@@ -66,22 +68,22 @@ func (s *Server) Start(ctx context.Context) error {
 	return gs.Serve(lis)
 }
 
-func (s *Server) CreateSession(ctx context.Context, req *CreateSessionRequest) (*CreateSessionResponse, error) {
+func (s *Server) CreateSession(ctx context.Context, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
 	session, err := s.orch.CreateSession(ctx, req)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "create session: %v", err)
 	}
-	return &CreateSessionResponse{SessionId: session.Name, PodIp: session.Status.PodIP}, nil
+	return &pb.CreateSessionResponse{SessionId: session.Name, PodIp: session.Status.PodIP}, nil
 }
 
-func (s *Server) DestroySession(ctx context.Context, req *DestroySessionRequest) (*DestroySessionResponse, error) {
+func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionRequest) (*pb.DestroySessionResponse, error) {
 	if err := s.orch.DestroySession(ctx, req.SessionId); err != nil {
 		return nil, status.Errorf(codes.Internal, "destroy session: %v", err)
 	}
-	return &DestroySessionResponse{Ok: true}, nil
+	return &pb.DestroySessionResponse{Ok: true}, nil
 }
 
-func (s *Server) Exec(ctx context.Context, req *ExecRequest) (*ExecResponse, error) {
+func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
 	podIP, err := s.getPodIP(ctx, req.SessionId)
 	if err != nil {
 		return nil, err
@@ -115,10 +117,10 @@ func (s *Server) Exec(ctx context.Context, req *ExecRequest) (*ExecResponse, err
 		ExitCode int32  `json:"exit_code"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return &ExecResponse{Stdout: result.Stdout, Stderr: result.Stderr, ExitCode: result.ExitCode}, nil
+	return &pb.ExecResponse{Stdout: result.Stdout, Stderr: result.Stderr, ExitCode: result.ExitCode}, nil
 }
 
-func (s *Server) ExecStream(req *ExecRequest, stream SandboxService_ExecStreamServer) error {
+func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecStreamServer) error {
 	podIP, err := s.getPodIP(stream.Context(), req.SessionId)
 	if err != nil {
 		return err
@@ -137,7 +139,7 @@ func (s *Server) ExecStream(req *ExecRequest, stream SandboxService_ExecStreamSe
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			if serr := stream.Send(&ExecStreamResponse{Chunk: string(buf[:n])}); serr != nil {
+			if serr := stream.Send(&pb.ExecStreamResponse{Chunk: string(buf[:n])}); serr != nil {
 				return serr
 			}
 		}
@@ -150,7 +152,7 @@ func (s *Server) ExecStream(req *ExecRequest, stream SandboxService_ExecStreamSe
 	}
 }
 
-func (s *Server) WriteFile(ctx context.Context, req *WriteFileRequest) (*WriteFileResponse, error) {
+func (s *Server) WriteFile(ctx context.Context, req *pb.WriteFileRequest) (*pb.WriteFileResponse, error) {
 	podIP, err := s.getPodIP(ctx, req.SessionId)
 	if err != nil {
 		return nil, err
@@ -168,10 +170,10 @@ func (s *Server) WriteFile(ctx context.Context, req *WriteFileRequest) (*WriteFi
 		return nil, status.Errorf(codes.Unavailable, "sandboxd write: %v", err)
 	}
 	resp.Body.Close()
-	return &WriteFileResponse{Ok: resp.StatusCode == http.StatusOK}, nil
+	return &pb.WriteFileResponse{Ok: resp.StatusCode == http.StatusOK}, nil
 }
 
-func (s *Server) ReadFile(ctx context.Context, req *ReadFileRequest) (*ReadFileResponse, error) {
+func (s *Server) ReadFile(ctx context.Context, req *pb.ReadFileRequest) (*pb.ReadFileResponse, error) {
 	podIP, err := s.getPodIP(ctx, req.SessionId)
 	if err != nil {
 		return nil, err
@@ -185,10 +187,10 @@ func (s *Server) ReadFile(ctx context.Context, req *ReadFileRequest) (*ReadFileR
 	defer resp.Body.Close()
 	var result struct{ Content string `json:"content"` }
 	json.NewDecoder(resp.Body).Decode(&result)
-	return &ReadFileResponse{Content: result.Content}, nil
+	return &pb.ReadFileResponse{Content: result.Content}, nil
 }
 
-func (s *Server) ListFiles(ctx context.Context, req *ListFilesRequest) (*ListFilesResponse, error) {
+func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.ListFilesResponse, error) {
 	podIP, err := s.getPodIP(ctx, req.SessionId)
 	if err != nil {
 		return nil, err
@@ -207,14 +209,14 @@ func (s *Server) ListFiles(ctx context.Context, req *ListFilesRequest) (*ListFil
 		} `json:"files"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	entries := make([]*FileEntry, len(result.Files))
+	entries := make([]*pb.FileEntry, len(result.Files))
 	for i, f := range result.Files {
-		entries[i] = &FileEntry{Path: f.Path, Modified: f.Modified}
+		entries[i] = &pb.FileEntry{Path: f.Path, Modified: f.Modified}
 	}
-	return &ListFilesResponse{Files: entries}, nil
+	return &pb.ListFilesResponse{Files: entries}, nil
 }
 
-func (s *Server) PipInstall(ctx context.Context, req *PipInstallRequest) (*PipInstallResponse, error) {
+func (s *Server) PipInstall(ctx context.Context, req *pb.PipInstallRequest) (*pb.PipInstallResponse, error) {
 	pkgList := ""
 	for i, p := range req.Packages {
 		if i > 0 {
@@ -222,18 +224,18 @@ func (s *Server) PipInstall(ctx context.Context, req *PipInstallRequest) (*PipIn
 		}
 		pkgList += p
 	}
-	execResp, err := s.Exec(ctx, &ExecRequest{SessionId: req.SessionId, Command: "pip install " + pkgList, Timeout: 120})
+	execResp, err := s.Exec(ctx, &pb.ExecRequest{SessionId: req.SessionId, Command: "pip install " + pkgList, Timeout: 120})
 	if err != nil {
 		return nil, err
 	}
-	return &PipInstallResponse{Output: execResp.Stdout + execResp.Stderr, ExitCode: execResp.ExitCode}, nil
+	return &pb.PipInstallResponse{Output: execResp.Stdout + execResp.Stderr, ExitCode: execResp.ExitCode}, nil
 }
 
-func (s *Server) RunSubAgent(ctx context.Context, req *RunSubAgentRequest) (*RunSubAgentResponse, error) {
+func (s *Server) RunSubAgent(ctx context.Context, req *pb.RunSubAgentRequest) (*pb.RunSubAgentResponse, error) {
 	return s.orch.RunSubAgent(ctx, req)
 }
 
-func (s *Server) ConfirmAction(ctx context.Context, req *ConfirmActionRequest) (*ConfirmActionResponse, error) {
+func (s *Server) ConfirmAction(ctx context.Context, req *pb.ConfirmActionRequest) (*pb.ConfirmActionResponse, error) {
 	return s.orch.ConfirmAction(ctx, req)
 }
 

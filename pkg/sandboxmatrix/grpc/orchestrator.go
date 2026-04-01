@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 )
 
@@ -59,7 +60,7 @@ func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestra
 	return &Orchestrator{k8s: k8s, dynamic: dyn, approvals: make(map[string]*pendingApproval)}
 }
 
-func (o *Orchestrator) CreateSession(ctx context.Context, req *CreateSessionRequest) (*sandboxv1.SandboxSession, error) {
+func (o *Orchestrator) CreateSession(ctx context.Context, req *pb.CreateSessionRequest) (*sandboxv1.SandboxSession, error) {
 	sessionID := req.SessionId
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
@@ -106,7 +107,7 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 	return o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Delete(ctx, sessionID, metav1.DeleteOptions{})
 }
 
-func (o *Orchestrator) RunSubAgent(ctx context.Context, req *RunSubAgentRequest) (*RunSubAgentResponse, error) {
+func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentRequest) (*pb.RunSubAgentResponse, error) {
 	parent, err := o.getSession(ctx, req.ParentSessionId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "parent session not found: %v", err)
@@ -145,10 +146,10 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *RunSubAgentRequest)
 	if err := o.applyCNP(ctx, child); err != nil {
 		return nil, status.Errorf(codes.Internal, "network policy: %v", err)
 	}
-	return &RunSubAgentResponse{SessionId: childID}, nil
+	return &pb.RunSubAgentResponse{SessionId: childID}, nil
 }
 
-func (o *Orchestrator) ConfirmAction(ctx context.Context, req *ConfirmActionRequest) (*ConfirmActionResponse, error) {
+func (o *Orchestrator) ConfirmAction(ctx context.Context, req *pb.ConfirmActionRequest) (*pb.ConfirmActionResponse, error) {
 	if req.ApprovalId != "" {
 		o.mu.Lock()
 		pa, ok := o.approvals[req.ApprovalId]
@@ -161,7 +162,7 @@ func (o *Orchestrator) ConfirmAction(ctx context.Context, req *ConfirmActionRequ
 			o.mu.Lock()
 			delete(o.approvals, req.ApprovalId)
 			o.mu.Unlock()
-			return &ConfirmActionResponse{ApprovalId: req.ApprovalId, Approved: approved}, nil
+			return &pb.ConfirmActionResponse{ApprovalId: req.ApprovalId, Approved: approved}, nil
 		case <-ctx.Done():
 			return nil, status.Errorf(codes.Canceled, "cancelled")
 		case <-time.After(30 * time.Second):
@@ -173,7 +174,7 @@ func (o *Orchestrator) ConfirmAction(ctx context.Context, req *ConfirmActionRequ
 	o.mu.Lock()
 	o.approvals[approvalID] = &pendingApproval{action: req.Action, approved: make(chan bool, 1)}
 	o.mu.Unlock()
-	return &ConfirmActionResponse{ApprovalId: approvalID, Approved: false}, nil
+	return &pb.ConfirmActionResponse{ApprovalId: approvalID, Approved: false}, nil
 }
 
 func (o *Orchestrator) Approve(approvalID string, approved bool) error {
