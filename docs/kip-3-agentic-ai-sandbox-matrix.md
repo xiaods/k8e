@@ -694,6 +694,34 @@ func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFil
 
 The `Register` function in `pkg/sandboxmatrix/controller.go` passes the cert/key paths from `tlsDir = "/var/lib/k8e/server/tls"`. The gRPC gateway is started only after the API server is ready, ensuring the TLS certificates exist before `credentials.NewServerTLSFromFile` is called.
 
+#### Deployment — hostPath Binary Mount
+
+The gRPC gateway Deployment does not use a separately published container image. Instead, it mounts the k8e binary already present on every node via `hostPath` and runs it as a sub-command:
+
+```yaml
+volumes:
+- name: k8e-bin
+  hostPath:
+    path: /var/lib/k8e/data/current/bin/k8e
+    type: File
+containers:
+- name: gateway
+  image: busybox:musl          # minimal public image; provides the container runtime environment
+  command: ["/k8e", "sandbox-gateway"]
+  volumeMounts:
+  - name: k8e-bin
+    mountPath: /k8e
+```
+
+**Rationale:**
+- `xiaods/k8e:latest` is not yet published to a public registry; requiring it would cause `ImagePullBackOff` on every fresh install.
+- The k8e binary is always present at `/var/lib/k8e/data/current/bin/k8e` on any node where k8e is installed — it is the same binary that runs the server and agent processes.
+- `busybox:musl` is a publicly available minimal image that provides the container execution environment without any application logic of its own.
+- This approach eliminates the image build and push step from the critical path of cluster startup, keeping the "60-second setup" promise intact.
+- When `xiaods/k8e` is eventually published, the Deployment can be updated to use it directly and the `hostPath` volume removed.
+
+**Prerequisite:** Every worker node that may schedule the gateway pod must have k8e installed (i.e., running as a k8e agent). This is already required for the node to join the cluster.
+
 Verification: Python client `stub.Exec(ExecRequest(session_id=..., command="hostname"))` returns the sandbox pod's hostname.
 
 ### Task 5 — Cilium-Based Egress Control
