@@ -277,7 +277,7 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 	}
 	fqdns := make([]interface{}, len(hosts))
 	for i, h := range hosts {
-		fqdns[i] = map[string]string{"matchName": h}
+		fqdns[i] = map[string]interface{}{"matchName": h}
 	}
 	obj := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cilium.io/v2",
@@ -288,20 +288,20 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 		},
 		"spec": map[string]interface{}{
 			"endpointSelector": map[string]interface{}{
-				"matchLabels": map[string]string{labelSessionID: session.Name},
+				"matchLabels": map[string]interface{}{labelSessionID: session.Name},
 			},
 			"egress": []interface{}{
 				map[string]interface{}{
 					"toEndpoints": []interface{}{
-						map[string]interface{}{"matchLabels": map[string]string{
+						map[string]interface{}{"matchLabels": map[string]interface{}{
 							"k8s:io.kubernetes.pod.namespace": "kube-system",
 							"k8s:k8s-app":                    "kube-dns",
 						}},
 					},
 					"toPorts": []interface{}{
 						map[string]interface{}{
-							"ports": []interface{}{map[string]string{"port": "53", "protocol": "ANY"}},
-							"rules": map[string]interface{}{"dns": []interface{}{map[string]string{"matchPattern": "*"}}},
+							"ports": []interface{}{map[string]interface{}{"port": "53", "protocol": "ANY"}},
+							"rules": map[string]interface{}{"dns": []interface{}{map[string]interface{}{"matchPattern": "*"}}},
 						},
 					},
 				},
@@ -309,7 +309,7 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 					"toFQDNs": fqdns,
 					"toPorts": []interface{}{
 						map[string]interface{}{
-							"ports": []interface{}{map[string]string{"port": "443", "protocol": "TCP"}},
+							"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
 						},
 					},
 				},
