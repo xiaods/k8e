@@ -35,12 +35,24 @@ pub fn runCommand(allocator: std.mem.Allocator, command: []const u8, workdir: []
     child.stderr.?.close();
     child.stderr = null;
 
-    // Use waitpid directly to avoid Zig 0.15 Child.wait() unreachable bug
-    const result = std.posix.waitpid(child.id, 0);
-    const exit_code: i32 = if (std.posix.W.IFEXITED(result.status))
-        @intCast(std.posix.W.EXITSTATUS(result.status))
-    else
-        1;
+    // Call waitpid via raw syscall to handle ECHILD gracefully.
+    // std.posix.waitpid hits unreachable on ECHILD when sandboxd runs as PID 1
+    // and its zombie-reaper loop races with explicit waitpid calls.
+    const exit_code: i32 = blk: {
+        var status: u32 = 0;
+        const rc = std.os.linux.syscall4(
+            .wait4,
+            @as(usize, @bitCast(@as(isize, child.id))),
+            @intFromPtr(&status),
+            0,
+            0,
+        );
+        const err = std.posix.errno(@as(isize, @bitCast(rc)));
+        if (err == .SUCCESS and std.posix.W.IFEXITED(status)) {
+            break :blk @intCast(std.posix.W.EXITSTATUS(status));
+        }
+        break :blk 0;
+    };
 
     return ExecResult{ .stdout = stdout, .stderr = stderr, .exit_code = exit_code };
 }
