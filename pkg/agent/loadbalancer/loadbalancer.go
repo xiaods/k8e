@@ -174,7 +174,7 @@ func (lb *LoadBalancer) dialContext(ctx context.Context, network, _ string) (net
 			if err == nil {
 				return conn, nil
 			}
-			logrus.Debugf("Dial error from load balancer %s after %s: %s", lb.serviceName, time.Now().Sub(dialTime), err)
+			logrus.Debugf("Dial error from load balancer %s after %s: %s", lb.serviceName, time.Since(dialTime), err)
 			// Don't close connections to the failed server if we're retrying with health checks ignored.
 			// We don't want to disrupt active connections if it is unlikely they will have anywhere to go.
 			if !allChecksFailed {
