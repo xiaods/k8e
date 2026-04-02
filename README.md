@@ -36,125 +36,37 @@ curl -sfL https://k8e.sh/install.sh | sh -
 | # | Section |
 |---|---------|
 | 1 | [🤖 What is K8E?](#-what-is-k8e) |
-| 2 | [🔒 Agentic AI Sandbox](#-agentic-ai-sandbox) |
-| 3 | [✨ Why K8E?](#-why-k8e) |
-| 4 | [🏗️ Architecture](#️-architecture) |
-| 5 | [⚙️ Components](#️-components) |
-| 6 | [🚀 Quick Start](#-quick-start) |
-| 7 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup-optional) |
-| 8 | [🖥️ Installation Guide](#️-installation-guide) |
-| 9 | [🔧 Configuration](#-configuration) |
-| 10 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
-| 10 | [🤝 Contributing](#-contributing) |
-| 11 | [🙏 Acknowledgments](#-acknowledgments) |
+| 2 | [🏗️ Architecture](#️-architecture) |
+| 3 | [⚙️ Components](#️-components) |
+| 4 | [🚀 Quick Start](#-quick-start) |
+| 5 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup) |
+| 6 | [🤖 Sandbox MCP Skill](#-sandbox-mcp-skill) |
+| 7 | [🖥️ Advanced Installation](#️-advanced-installation) |
+| 8 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
+| 9 | [🤝 Contributing](#-contributing) |
+| 10 | [🙏 Acknowledgments](#-acknowledgments) |
 
 ---
 
 ## 🤖 What is K8E?
 
-**K8E (Kubernetes Easy Engine)** is an open-source, enterprise-grade Kubernetes distribution and the foundation for the **Agentic AI Sandbox Matrix** — a Kubernetes-native platform for running secure, isolated AI agent workloads at scale.
+**K8E** is the **Open Source Agentic AI Sandbox Matrix** — a Kubernetes-native platform for running secure, isolated AI agent workloads at scale, packaged as a single binary under 100MB.
 
-As autonomous AI agents increasingly generate and execute untrusted code, the need for robust sandboxing infrastructure becomes critical. K8E addresses this directly: it ships as a single binary with everything needed to spin up a production-grade Kubernetes cluster in under 60 seconds, with first-class primitives for agent isolation, resource governance, and ephemeral execution environments.
+As autonomous AI agents increasingly generate and execute untrusted code, robust sandboxing infrastructure is no longer optional. K8E ships everything needed to spin up a production-grade cluster in under 60 seconds, with first-class primitives for agent isolation, resource governance, and ephemeral execution environments — purpose-built for the AI era.
 
 > 🔒 **One cluster. Many agents. Zero trust between them.**
-
----
-
-## 🔒 Agentic AI Sandbox
-
-K8E is purpose-built for the AI era. The **Agentic AI Sandbox Matrix** provides Kubernetes-native infrastructure for deploying, isolating, and governing autonomous AI agent workloads.
-
-<div align="center">
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              AGENTIC AI SANDBOX MATRIX (K8E)                │
-│                                                             │
-│  ┌──────────────┐    ┌──────────────────────────────────┐   │
-│  │  LLM Agent   │───▶│        Sandbox Namespace         │   │
-│  │  (any model) │    │                                  │   │
-│  └──────────────┘    │  ┌────────────────────────────┐  │   │
-│                      │  │      Isolated Pod          │  │   │
-│  ┌──────────────┐    │  │  ┌──────────────────────┐  │  │   │
-│  │  Tool Use    │───▶│  │  │  Untrusted Code Exec │  │  │   │
-│  │  Code/Browse │    │  │  └──────────────────────┘  │  │   │
-│  └──────────────┘    │  │  Network Policy            │  │   │
-│                      │  │  Resource Quota            │  │   │
-│  ┌──────────────┐    │  │  Kata / runc runtime       │  │   │
-│  │  Orchestrator│───▶│  └────────────────────────────┘  │   │
-│  │  (MCP/A2A)   │    └──────────────────────────────────┘   │
-│  └──────────────┘                                           │
-└─────────────────────────────────────────────────────────────┘
-```
-
-</div>
-
-### Deploy an Agent Sandbox
-
-```yaml
-# agent-sandbox.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: agent-sandbox
-  labels:
-    sandbox: "true"
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: ai-agent
-  namespace: agent-sandbox
-spec:
-  containers:
-  - name: agent
-    image: python:3.11-slim
-    resources:
-      limits:
-        memory: "512Mi"
-        cpu: "500m"
-    securityContext:
-      runAsNonRoot: true
-      allowPrivilegeEscalation: false
-      readOnlyRootFilesystem: true
-  restartPolicy: Never
-```
-
-```bash
-kubectl apply -f agent-sandbox.yaml
-```
 
 ### Sandbox Capabilities
 
 | Capability | Description |
 |---|---|
-| 🔒 **Hardware Isolation** | Kata Containers integration for VM-level agent isolation |
-| 🌐 **Network Policies** | Prevent agent data exfiltration between sandboxes |
-| ⚖️ **Resource Quotas** | Cap compute per agent to prevent runaway costs |
+| 🔒 **Hardware Isolation** | Pluggable runtimes: gVisor (default), Kata Containers, Firecracker microVM |
+| 🌐 **Network Policies** | Cilium eBPF `toFQDNs` egress control — per-session, no proxy process needed |
+| ⚖️ **Resource Quotas** | CPU/memory caps per agent session to prevent runaway costs |
 | 🗑️ **Ephemeral Workspaces** | Auto-cleanup after agent session ends |
-| 🧠 **Stateful Runtimes** | Persistent identity and storage for long-running agents |
+| 🧠 **Warm Pool** | Pre-booted sandbox pods for sub-500ms session claim latency |
 | 🤝 **agent-sandbox compatible** | Works with [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) |
-| 🔄 **MCP / A2A ready** | Orchestrate multi-agent pipelines declaratively |
-
----
-
-## ✨ Why K8E?
-
-<div align="center">
-
-| Feature | What it means |
-|---|---|
-| 🤖 **Agentic Sandbox Matrix** | Native platform for secure AI agent execution |
-| ⚡ **60-second setup** | Cluster running before your coffee brews |
-| 📦 **Single binary < 100MB** | Download once, run anywhere |
-| 🔒 **Security hardened** | Enterprise-grade policies built in |
-| 🌐 **CNCF Conformant** | 100% standard Kubernetes — no vendor lock-in |
-| 🏗️ **HA with embedded etcd** | Production-grade clustering out of the box |
-| 🧩 **Cilium networking** | eBPF-powered, high-performance networking |
-| 💻 **Multi-arch** | x86_64, ARM64, RISC-V all supported |
-| 🔄 **Helm controller built-in** | GitOps-ready from day one |
-
-</div>
+| 🔄 **MCP / A2A ready** | Any MCP-compatible agent (kiro, claude, gemini) connects via `k8e sandbox-mcp` |
 
 ---
 
@@ -163,34 +75,44 @@ kubectl apply -f agent-sandbox.yaml
 <div align="center">
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        K8E CLUSTER                          │
-│                                                             │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │              CONTROL PLANE (Server Node)            │   │
-│   │                                                     │   │
-│   │  ┌──────────────┐  ┌─────────────┐  ┌──────────┐   │   │
-│   │  │  API Server  │  │  Scheduler  │  │   etcd   │   │   │
-│   │  └──────────────┘  └─────────────┘  └──────────┘   │   │
-│   │  ┌──────────────────┐  ┌─────────────────────────┐  │   │
-│   │  │ Controller Mgr   │  │    Helm Controller       │  │   │
-│   │  └──────────────────┘  └─────────────────────────┘  │   │
-│   └─────────────────────────────────────────────────────┘   │
-│                          │                                   │
-│              ┌───────────┴────────────┐                     │
-│   ┌──────────▼──────────┐  ┌──────────▼──────────┐         │
-│   │   WORKER NODE 1     │  │   WORKER NODE 2     │         │
-│   │  ┌───────────────┐  │  │  ┌───────────────┐  │         │
-│   │  │ Agent Sandbox │  │  │  │ Agent Sandbox │  │         │
-│   │  └───────────────┘  │  │  └───────────────┘  │         │
-│   │  ┌───────────────┐  │  │  ┌───────────────┐  │         │
-│   │  │  Containerd   │  │  │  │  Containerd   │  │         │
-│   │  └───────────────┘  │  │  └───────────────┘  │         │
-│   │  ┌───────────────┐  │  │  ┌───────────────┐  │         │
-│   │  │ Cilium (CNI)  │  │  │  │ Cilium (CNI)  │  │         │
-│   │  └───────────────┘  │  │  └───────────────┘  │         │
-│   └─────────────────────┘  └─────────────────────┘         │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                          K8E CLUSTER                            │
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                CONTROL PLANE (Server Node)              │   │
+│   │  ┌──────────────┐  ┌─────────────┐  ┌──────────┐       │   │
+│   │  │  API Server  │  │  Scheduler  │  │   etcd   │       │   │
+│   │  └──────────────┘  └─────────────┘  └──────────┘       │   │
+│   │  ┌──────────────────┐  ┌──────────────────────────────┐ │   │
+│   │  │  Controller Mgr  │  │  SandboxMatrix Controller    │ │   │
+│   │  └──────────────────┘  └──────────────────────────────┘ │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                              │                                   │
+│                 ┌────────────┴────────────┐                     │
+│   ┌─────────────▼───────────┐  ┌──────────▼──────────────┐     │
+│   │      WORKER NODE        │  │      WORKER NODE        │     │
+│   │  ┌─────────────────┐    │  │  ┌─────────────────┐    │     │
+│   │  │  sandbox-matrix │    │  │  │  sandbox-matrix │    │     │
+│   │  │  grpc-gateway   │    │  │  │  grpc-gateway   │    │     │
+│   │  │  :50051 (TLS)   │    │  │  │  :50051 (TLS)   │    │     │
+│   │  └────────┬────────┘    │  │  └────────┬────────┘    │     │
+│   │           │             │  │           │             │     │
+│   │  ┌────────▼────────┐    │  │  ┌────────▼────────┐    │     │
+│   │  │  Isolated Pods  │    │  │  │  Isolated Pods  │    │     │
+│   │  │ gVisor/Kata/FC  │    │  │  │ gVisor/Kata/FC  │    │     │
+│   │  └─────────────────┘    │  │  └─────────────────┘    │     │
+│   │  Cilium CNI (eBPF)      │  │  Cilium CNI (eBPF)      │     │
+│   └─────────────────────────┘  └─────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────┘
+         ▲
+         │  gRPC (TLS)
+┌────────┴────────┐
+│  k8e sandbox-mcp│  ← MCP stdio bridge
+└────────┬────────┘
+         │  stdin/stdout
+┌────────┴────────┐
+│  AI Agent       │  (kiro / claude / gemini / any MCP client)
+└─────────────────┘
 ```
 
 </div>
@@ -204,15 +126,15 @@ kubectl apply -f agent-sandbox.yaml
 | Component | Version | Purpose |
 |---|---|---|
 | ☸️ **Kubernetes** | v1.35.x | Core orchestration engine |
-| 🔷 **Cilium** | Latest | eBPF networking & network policy enforcement |
+| 🔷 **Cilium** | Latest | eBPF networking & per-session egress policy |
 | 📦 **Containerd** | v1.7.x | Container runtime |
 | 🔑 **etcd** | v3.5.x | Distributed key-value store |
 | 🌐 **CoreDNS** | v1.11.x | Cluster DNS |
 | ⚓ **Helm Controller** | v0.16.x | GitOps & chart management |
 | 📈 **Metrics Server** | v0.7.x | Resource metrics |
 | 💾 **Local Path Provisioner** | v0.0.30 | Persistent storage |
-| 🔧 **Kine** | v0.13.x | etcd shim for SQLite/MySQL |
-| 🛡️ **Runc / Kata** | v1.2.x | OCI & hardware-isolated runtimes |
+| 🛡️ **gVisor / Kata / Firecracker** | — | Pluggable sandbox isolation runtimes |
+| 🤖 **Sandbox MCP Server** | built-in | `k8e sandbox-mcp` — agent tool bridge |
 
 </div>
 
@@ -220,7 +142,7 @@ kubectl apply -f agent-sandbox.yaml
 
 ## 🚀 Quick Start
 
-### Step 1 — Install K8E Server
+### Step 1 — Install K8E
 
 ```bash
 curl -sfL https://k8e.sh/install.sh | sh -
@@ -231,38 +153,192 @@ curl -sfL https://k8e.sh/install.sh | sh -
 ```bash
 export KUBECONFIG=/etc/k8e/k8e.yaml
 kubectl get nodes
+kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
 ```
 
-### Step 3 — Verify Agentic AI Sandbox Matrix (auto-started)
+### Step 3 — Install a Sandbox Runtime
 
-The Sandbox Matrix starts automatically with the cluster. No extra steps needed.
+The Sandbox Matrix starts automatically, but sandbox pods need at least one runtime shim. **gVisor is recommended** — no KVM required.
 
 ```bash
-# CRDs are applied automatically
-kubectl get crd | grep k8e.cattle.io
+# Add gVisor apt repository
+curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
+  https://storage.googleapis.com/gvisor/releases release main" \
+  > /etc/apt/sources.list.d/gvisor.list
+apt-get update && apt-get install -y runsc
+runsc install
 
-# sandbox-matrix namespace and gRPC gateway are ready
-kubectl -n sandbox-matrix get pods
+# Restart k8e to register the RuntimeClass
+systemctl restart k8e
+kubectl get runtimeclass   # should show: gvisor
+```
 
-# RuntimeClass: gvisor and kata are registered automatically
-# firecracker is registered only when /dev/kvm is present on the node
+> Need stronger isolation? See [Sandbox Runtime Setup](#-sandbox-runtime-setup) for Kata Containers and Firecracker.
+
+### Step 4 — Connect Your AI Agent
+
+```bash
+k8e sandbox-install-skill all   # installs into kiro, claude, gemini at once
+```
+
+Then ask your agent naturally:
+
+> "Run this Python snippet in a sandbox"
+
+That's it. The agent calls `sandbox_run` automatically — no session management needed.
+
+---
+
+## 🔒 Sandbox Runtime Setup
+
+K8E auto-detects installed runtimes and registers the corresponding `RuntimeClass`. Choose based on your isolation requirements:
+
+| Runtime | Isolation | Requirement | Boot time |
+|---|---|---|---|
+| **gVisor** | Syscall interception (userspace kernel) | None | ~10ms |
+| **Kata Containers** | VM-backed (QEMU) | Nested virt or bare metal | ~500ms |
+| **Firecracker** | Hardware microVM (KVM) | `/dev/kvm` | ~125ms |
+
+### gVisor — Recommended Default
+
+```bash
+curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
+  https://storage.googleapis.com/gvisor/releases release main" \
+  > /etc/apt/sources.list.d/gvisor.list
+apt-get update && apt-get install -y runsc
+runsc install
+```
+
+### Kata Containers
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/kata-containers/kata-containers/main/utils/kata-manager.sh) install-packages"
+kata-runtime check
+```
+
+### Firecracker (requires `/dev/kvm`)
+
+```bash
+ls /dev/kvm   # verify KVM is available
+
+# Install firecracker-containerd shim + devmapper snapshotter
+# See: https://github.com/firecracker-microvm/firecracker-containerd
+mkdir -p /var/lib/firecracker-containerd/runtime
+# Place hello-vmlinux.bin and default-rootfs.img here
+```
+
+### Apply Changes
+
+```bash
+systemctl restart k8e
 kubectl get runtimeclass
-
-# gRPC gateway is listening on 127.0.0.1:50051 (TLS)
-# Cilium base deny-all NetworkPolicy is applied to warm pods
-kubectl -n sandbox-matrix get ciliumnetworkpolicies
+# NAME          HANDLER       AGE
+# gvisor        runsc         10s
+# kata          kata-qemu     10s
+# firecracker   firecracker   10s   ← only if /dev/kvm present
 ```
 
-To disable the Sandbox Matrix:
+---
 
-```bash
-curl -sfL https://k8e.sh/install.sh | INSTALL_K8E_EXEC="server --disable-sandbox-matrix" sh -
+## 🤖 Sandbox MCP Skill
+
+`k8e sandbox-mcp` is a built-in MCP server that bridges any MCP-compatible AI agent to K8E's sandbox infrastructure over gRPC — no extra binaries, no manual endpoint config.
+
+```
+AI Agent (kiro / claude / gemini)
+    │  stdin/stdout
+    ▼
+k8e sandbox-mcp
+    │  gRPC (TLS, auto-discovered)
+    ▼
+sandbox-grpc-gateway:50051
+    │
+    ▼
+Isolated Pod (gVisor / Kata / Firecracker)
 ```
 
-### Step 4 — Add a Worker Node (Optional)
+### Install the Skill
 
 ```bash
-# Get token from server
+# All supported agents at once
+k8e sandbox-install-skill all
+
+# Or per agent
+k8e sandbox-install-skill kiro      # → .kiro/settings.json (workspace)
+k8e sandbox-install-skill claude    # → ~/.claude.json
+k8e sandbox-install-skill gemini    # → ~/.gemini/settings.json
+```
+
+**Manual setup** — add to your agent's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "k8e-sandbox": {
+      "command": "k8e",
+      "args": ["sandbox-mcp"]
+    }
+  }
+}
+```
+
+For claude code:
+
+```bash
+claude mcp add k8e-sandbox -- k8e sandbox-mcp
+```
+
+### Verify
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test","version":"1.0"},"capabilities":{}}}' \
+  | k8e sandbox-mcp
+```
+
+### Available Tools
+
+| Tool | Description |
+|---|---|
+| `sandbox_run` | Run code/commands — auto-manages full session lifecycle |
+| `sandbox_status` | Check if sandbox service is available |
+| `sandbox_create_session` | Create an isolated sandbox pod |
+| `sandbox_destroy_session` | Destroy session and clean up |
+| `sandbox_exec` | Run a command in a specific session |
+| `sandbox_exec_stream` | Run a command, get streaming output |
+| `sandbox_write_file` | Write a file into `/workspace` |
+| `sandbox_read_file` | Read a file from `/workspace` |
+| `sandbox_list_files` | List files modified since a timestamp |
+| `sandbox_pip_install` | Install Python packages via pip |
+| `sandbox_run_subagent` | Spawn a child sandbox (depth ≤ 1) |
+| `sandbox_confirm_action` | Gate irreversible actions on user approval |
+
+### Configuration Overrides
+
+The MCP server auto-discovers the local cluster. Override when needed:
+
+```bash
+K8E_SANDBOX_ENDPOINT=10.0.0.1:50051 k8e sandbox-mcp          # remote cluster
+K8E_SANDBOX_CERT=/path/to/ca.crt k8e sandbox-mcp              # custom TLS cert
+k8e sandbox-mcp --endpoint 10.0.0.1:50051 --tls-cert /path/to/ca.crt
+```
+
+Auto-discovery probe order:
+1. `K8E_SANDBOX_ENDPOINT` env var
+2. `K8E_SANDBOX_CERT` / `K8E_SANDBOX_KEY` env vars
+3. `/var/lib/k8e/server/tls/serving-kube-apiserver.crt` (server node, root)
+4. `/etc/k8e/k8e.yaml` kubeconfig CA (agent node / non-root)
+5. `127.0.0.1:50051` with system CA pool
+
+---
+
+## 🖥️ Advanced Installation
+
+### Add a Worker Node
+
+```bash
+# Get token from server node
 cat /var/lib/k8e/server/node-token
 
 # On worker machine
@@ -273,110 +349,18 @@ curl -sfL https://k8e.sh/install.sh | \
   sh -
 ```
 
----
-
-## 🔒 Sandbox Runtime Setup (Optional)
-
-The Sandbox Matrix starts automatically, but sandbox pods require a container runtime shim on each node. K8E auto-detects available runtimes and configures containerd accordingly.
-
-### gVisor — Default (no KVM required)
+### Disable Sandbox Matrix
 
 ```bash
-# Install runsc
-curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
-  https://storage.googleapis.com/gvisor/releases release main" \
-  > /etc/apt/sources.list.d/gvisor.list
-apt-get update && apt-get install -y runsc
-runsc install   # registers containerd shim
+curl -sfL https://k8e.sh/install.sh | INSTALL_K8E_EXEC="server --disable-sandbox-matrix" sh -
 ```
 
-### Firecracker — Strongest isolation (requires `/dev/kvm`)
+### Key Environment Variables
 
 ```bash
-# Verify KVM
-ls /dev/kvm
-
-# Install firecracker-containerd shim + devmapper snapshotter
-# See: https://github.com/firecracker-microvm/firecracker-containerd
-
-# Prepare microVM kernel and rootfs
-mkdir -p /var/lib/firecracker-containerd/runtime
-# Place hello-vmlinux.bin and default-rootfs.img here
-```
-
-### Kata Containers — VM-backed fallback
-
-```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/kata-containers/kata-containers/main/utils/kata-manager.sh) install-packages"
-kata-runtime check
-```
-
-After installing any runtime, restart k8e to regenerate containerd config:
-
-```bash
-systemctl restart k8e
-kubectl get runtimeclass   # gvisor / firecracker / kata
-```
-
----
-
-## 🖥️ Installation Guide
-
-### 🐧 Linux
-
-```bash
-# Server
-curl -sfL https://k8e.sh/install.sh | sh -
-
-# Agent
-curl -sfL https://k8e.sh/install.sh | \
-  K8E_TOKEN=ilovek8e \
-  K8E_URL=https://<SERVER_IP>:6443 \
-  INSTALL_K8E_EXEC="agent" \
-  sh -
-```
-
-### 🐳 Docker / Dev Mode
-
-```bash
-docker run -d --privileged \
-  -p 6443:6443 \
-  --name k8e-dev \
-  xiaods/k8e:latest server --cluster-init
-```
-
-### ✅ Verify
-
-```bash
-kubectl get nodes -o wide
-kubectl get pods -n kube-system
-cilium status
-```
-
----
-
-## 🔧 Configuration
-
-### Environment Variables
-
-```bash
-# Server
-K8E_TOKEN=<secret>
-K8E_KUBECONFIG_OUTPUT=<path>
-K8E_KUBECONFIG_MODE=644
-
-# Agent
-K8E_URL=https://<server>:6443
-K8E_TOKEN=<secret>
-```
-
-### Systemd
-
-```bash
-systemctl status k8e
-journalctl -u k8e -f
-systemctl restart k8e
+K8E_TOKEN=<secret>              # cluster join token
+K8E_URL=https://<server>:6443   # server URL (agent nodes)
+K8E_KUBECONFIG_OUTPUT=<path>    # kubeconfig output path
 ```
 
 ---
@@ -391,7 +375,7 @@ systemctl restart k8e
 | Binary size | **<100MB** | ~70MB | ~1GB+ | ~200MB |
 | Agentic Sandbox | ✅ Native | ❌ No | ⚠️ Manual | ❌ No |
 | eBPF networking | ✅ Cilium | ⚠️ Optional | ⚠️ Optional | ❌ No |
-| Enterprise hardened | ✅ Yes | ⚠️ Partial | ✅ Yes | ⚠️ Partial |
+| MCP skill built-in | ✅ Yes | ❌ No | ❌ No | ❌ No |
 | HA embedded etcd | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited |
 | CNCF conformant | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | Multi-arch | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
@@ -405,8 +389,7 @@ systemctl restart k8e
 ```bash
 git clone https://github.com/<your-username>/k8e.git && cd k8e
 git checkout -b feat/my-feature
-make
-make test
+make && make test
 git push origin feat/my-feature
 ```
 
@@ -436,7 +419,7 @@ Apache License 2.0 — see [LICENSE](https://github.com/xiaods/k8e/blob/main/LIC
 |---|---|
 | 🐄 [**K3s**](https://github.com/k3s-io/k3s) | Lightweight Kubernetes foundation that inspired K8E |
 | ☸️ [**Kubernetes**](https://github.com/kubernetes/kubernetes) | The orchestration engine everything is built on |
-| 🔷 [**Cilium**](https://github.com/cilium/cilium) | eBPF-powered networking and security |
+| 🔷 [**Cilium**](https://github.com/cilium/cilium) | eBPF-powered networking and per-session egress control |
 | 🤖 [**agent-sandbox**](https://github.com/kubernetes-sigs/agent-sandbox) | Kubernetes-native agent sandboxing primitives |
 | 🌐 [**CNCF**](https://cncf.io) | Fostering the open-source cloud native ecosystem |
 
