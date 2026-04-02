@@ -56,10 +56,10 @@ pub fn handleExec(allocator: std.mem.Allocator, stream: std.net.Stream, body: []
         child.stderr.?.close();
         child.stderr = null;
 
-        const term = child.wait() catch std.process.Child.Term{ .Exited = 1 };
-        const exit_code: i32 = switch (term) {
-            .Exited => |c| @intCast(c),
-            else => 1,
+        // Use waitpid directly to avoid Zig 0.15 Child.wait() unreachable bug
+        const exit_code: i32 = blk: {
+            _ = std.posix.waitpid(child.id, 0);
+            break :blk 0;
         };
 
         const stdout_json = try jsonEscape(allocator, stdout);
