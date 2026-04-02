@@ -22,6 +22,21 @@ func NewSandboxMCPCommand(action func(*cli.Context) error) cli.Command {
 	}
 }
 
+func NewSandboxInstallSkillCommand() cli.Command {
+	return cli.Command{
+		Name:      "sandbox-install-skill",
+		Usage:     "Install the k8e-sandbox MCP skill into an AI agent config",
+		ArgsUsage: "[claude|kiro|gemini|all]",
+		Action: func(ctx *cli.Context) error {
+			target := ctx.Args().First()
+			if target == "" {
+				target = "all"
+			}
+			return sandboxmcp.InstallSkill(target)
+		},
+	}
+}
+
 func SandboxMCP(ctx *cli.Context) error {
 	if ep := ctx.String("endpoint"); ep != "" {
 		os.Setenv("K8E_SANDBOX_ENDPOINT", ep)

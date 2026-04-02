@@ -88,6 +88,7 @@ func main() {
 		),
 		cmds.NewCompletionCommand(internalCLIAction(version.Program+"-completion", dataDir, os.Args)),
 		cmds.NewSandboxMCPCommand(cmds.SandboxMCP),
+		cmds.NewSandboxInstallSkillCommand(),
 		cmds.NewSandboxGatewayCommand(cmds.SandboxGateway),
 	}
 
