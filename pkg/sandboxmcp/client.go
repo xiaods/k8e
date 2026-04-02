@@ -4,12 +4,14 @@ package sandboxmcp
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"os"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 const defaultEndpoint = "127.0.0.1:50051"
@@ -17,6 +19,11 @@ const defaultEndpoint = "127.0.0.1:50051"
 var tlsCandidates = []string{
 	"/var/lib/k8e/server/tls/serving-kube-apiserver.crt",
 	"/etc/k8e/tls/serving-kube-apiserver.crt",
+}
+
+var kubeconfigCandidates = []string{
+	"/etc/k8e/k8e.yaml",
+	"/var/lib/k8e/server/cred/admin.kubeconfig",
 }
 
 // Client wraps a gRPC SandboxServiceClient with its underlying connection.
@@ -58,10 +65,46 @@ func resolveCreds() (credentials.TransportCredentials, error) {
 			return credentials.NewClientTLSFromFile(path, "")
 		}
 	}
+	// probe kubeconfig CA
+	for _, kc := range kubeconfigCandidates {
+		if creds, err := credsFromKubeconfig(kc); err == nil {
+			return creds, nil
+		}
+	}
 	// fallback: system CA pool (remote cluster / insecure-skip not set)
 	pool, err := x509.SystemCertPool()
 	if err != nil {
 		pool = x509.NewCertPool()
 	}
 	return credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), nil
+}
+
+func credsFromKubeconfig(path string) (credentials.TransportCredentials, error) {
+	cfg, err := clientcmd.LoadFromFile(path)
+	if err != nil {
+		return nil, err
+	}
+	for _, cluster := range cfg.Clusters {
+		var caData []byte
+		if len(cluster.CertificateAuthorityData) > 0 {
+			caData = cluster.CertificateAuthorityData
+		} else if cluster.CertificateAuthority != "" {
+			caData, err = os.ReadFile(cluster.CertificateAuthority)
+			if err != nil {
+				continue
+			}
+		}
+		if len(caData) == 0 {
+			continue
+		}
+		// caData may be base64-encoded in some kubeconfig formats
+		if decoded, err := base64.StdEncoding.DecodeString(string(caData)); err == nil {
+			caData = decoded
+		}
+		pool := x509.NewCertPool()
+		if pool.AppendCertsFromPEM(caData) {
+			return credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), nil
+		}
+	}
+	return nil, fmt.Errorf("no valid CA found in %s", path)
 }

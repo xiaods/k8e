@@ -55,7 +55,9 @@ func (s *Server) Run(ctx context.Context) error {
 			continue
 		}
 		resp := s.dispatch(ctx, &req)
-		enc.Encode(resp)
+		if resp.JSONRPC != "" { // skip notifications (no response)
+			enc.Encode(resp)
+		}
 	}
 }
 
@@ -68,8 +70,7 @@ func (s *Server) dispatch(ctx context.Context, req *rpcRequest) rpcResponse {
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 		}}
 	case "notifications/initialized":
-		return rpcResponse{} // no response needed for notifications
-	case "tools/list":
+		return rpcResponse{} // no response needed for notifications	case "tools/list":
 		tools := make([]map[string]any, len(allTools))
 		for i, t := range allTools {
 			tools[i] = map[string]any{
