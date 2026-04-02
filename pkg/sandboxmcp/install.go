@@ -8,6 +8,11 @@ import (
 	"runtime"
 )
 
+const (
+	mcpServerName = "k8e-sandbox"
+	settingsFile  = "settings.json"
+)
+
 // mcpEntry is the JSON snippet added to agent config files.
 var mcpEntry = map[string]any{
 	"command": "k8e",
@@ -44,22 +49,22 @@ func InstallSkill(target string) error {
 func installClaude() error {
 	// claude code stores MCP servers in ~/.claude.json under mcpServers
 	path := filepath.Join(homeDir(), ".claude.json")
-	return mergeJSON(path, []string{"mcpServers", "k8e-sandbox"}, mcpEntry, "claude code")
+	return mergeJSON(path, []string{"mcpServers", mcpServerName}, mcpEntry, "claude code")
 }
 
 func installKiro() error {
 	// kiro-cli: workspace .kiro/settings.json takes precedence; fall back to global
-	local := filepath.Join(".kiro", "settings.json")
+	local := filepath.Join(".kiro", settingsFile)
 	if _, err := os.Stat(filepath.Dir(local)); err == nil {
-		return mergeJSON(local, []string{"mcpServers", "k8e-sandbox"}, mcpEntry, "kiro-cli (workspace)")
+		return mergeJSON(local, []string{"mcpServers", mcpServerName}, mcpEntry, "kiro-cli (workspace)")
 	}
-	global := filepath.Join(homeDir(), ".kiro", "settings.json")
-	return mergeJSON(global, []string{"mcpServers", "k8e-sandbox"}, mcpEntry, "kiro-cli (global)")
+	global := filepath.Join(homeDir(), ".kiro", settingsFile)
+	return mergeJSON(global, []string{"mcpServers", mcpServerName}, mcpEntry, "kiro-cli (global)")
 }
 
 func installGemini() error {
-	path := filepath.Join(homeDir(), ".gemini", "settings.json")
-	return mergeJSON(path, []string{"mcpServers", "k8e-sandbox"}, mcpEntry, "gemini cli")
+	path := filepath.Join(homeDir(), ".gemini", settingsFile)
+	return mergeJSON(path, []string{"mcpServers", mcpServerName}, mcpEntry, "gemini cli")
 }
 
 // mergeJSON reads path (creating if absent), sets obj[keys[0]][keys[1]] = value, writes back.

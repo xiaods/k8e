@@ -17,6 +17,11 @@ type Tool struct {
 	Handler     func(ctx context.Context, s *Server, args map[string]any) (string, error)
 }
 
+const (
+	descSessionID = "Sandbox session ID"
+	descTimeout   = "Timeout in seconds (default 30)"
+)
+
 // sentinel values shared with server.go
 var createReqDefault = pb.CreateSessionRequest{RuntimeClass: "gvisor"}
 
@@ -35,7 +40,7 @@ var allTools = []Tool{
 		InputSchema: schema(props{
 			"code":     {"type": "string", "description": "Code or shell command to execute"},
 			"language": {"type": "string", "description": "Language hint: python, bash (default), node"},
-			"timeout":  {"type": "integer", "description": "Timeout in seconds (default 30)"},
+			"timeout":  {"type": "integer", "description": descTimeout},
 		}, []string{"code"}),
 		Handler: func(ctx context.Context, s *Server, args map[string]any) (string, error) {
 			sid, err := s.defaultSession(ctx)
@@ -132,9 +137,9 @@ var allTools = []Tool{
 		Name:        "sandbox_exec",
 		Description: "Execute a shell command in a specific sandbox session. Returns stdout, stderr, exit_code.",
 		InputSchema: schema(props{
-			"session_id": {"type": "string", "description": "Sandbox session ID"},
+			"session_id": {"type": "string", "description": descSessionID},
 			"command":    {"type": "string", "description": "Shell command to execute"},
-			"timeout":    {"type": "integer", "description": "Timeout in seconds (default 30)"},
+			"timeout":    {"type": "integer", "description": descTimeout},
 			"workdir":    {"type": "string", "description": "Working directory (default /workspace)"},
 		}, []string{"session_id", "command"}),
 		Handler: func(ctx context.Context, s *Server, args map[string]any) (string, error) {
@@ -154,9 +159,9 @@ var allTools = []Tool{
 		Name:        "sandbox_exec_stream",
 		Description: "Execute a command and return accumulated streaming output.",
 		InputSchema: schema(props{
-			"session_id": {"type": "string", "description": "Sandbox session ID"},
+			"session_id": {"type": "string", "description": descSessionID},
 			"command":    {"type": "string", "description": "Shell command to execute"},
-			"timeout":    {"type": "integer", "description": "Timeout in seconds (default 30)"},
+			"timeout":    {"type": "integer", "description": descTimeout},
 			"workdir":    {"type": "string", "description": "Working directory (default /workspace)"},
 		}, []string{"session_id", "command"}),
 		Handler: func(ctx context.Context, s *Server, args map[string]any) (string, error) {
@@ -184,7 +189,7 @@ var allTools = []Tool{
 		Name:        "sandbox_write_file",
 		Description: "Write a file into the sandbox /workspace.",
 		InputSchema: schema(props{
-			"session_id": {"type": "string", "description": "Sandbox session ID"},
+			"session_id": {"type": "string", "description": descSessionID},
 			"path":       {"type": "string", "description": "File path inside sandbox"},
 			"content":    {"type": "string", "description": "File content"},
 			"mode":       {"type": "string", "description": "w (overwrite, default) or a (append)"},
@@ -206,7 +211,7 @@ var allTools = []Tool{
 		Name:        "sandbox_read_file",
 		Description: "Read a file from the sandbox /workspace.",
 		InputSchema: schema(props{
-			"session_id": {"type": "string", "description": "Sandbox session ID"},
+			"session_id": {"type": "string", "description": descSessionID},
 			"path":       {"type": "string", "description": "File path inside sandbox"},
 		}, []string{"session_id", "path"}),
 		Handler: func(ctx context.Context, s *Server, args map[string]any) (string, error) {
@@ -224,7 +229,7 @@ var allTools = []Tool{
 		Name:        "sandbox_list_files",
 		Description: "List files in the sandbox /workspace modified since a Unix timestamp.",
 		InputSchema: schema(props{
-			"session_id": {"type": "string", "description": "Sandbox session ID"},
+			"session_id": {"type": "string", "description": descSessionID},
 			"since":      {"type": "integer", "description": "Unix timestamp; 0 = all files"},
 		}, []string{"session_id"}),
 		Handler: func(ctx context.Context, s *Server, args map[string]any) (string, error) {
@@ -246,7 +251,7 @@ var allTools = []Tool{
 		Name:        "sandbox_pip_install",
 		Description: "Install Python packages inside the sandbox using pip.",
 		InputSchema: schema(props{
-			"session_id": {"type": "string", "description": "Sandbox session ID"},
+			"session_id": {"type": "string", "description": descSessionID},
 			"packages":   {"type": "array", "items": map[string]any{"type": "string"}, "description": "Package names"},
 		}, []string{"session_id", "packages"}),
 		Handler: func(ctx context.Context, s *Server, args map[string]any) (string, error) {
@@ -284,7 +289,7 @@ var allTools = []Tool{
 		Name:        "sandbox_confirm_action",
 		Description: "Gate an irreversible action on user approval. Omit approval_id to register; provide it to poll result.",
 		InputSchema: schema(props{
-			"session_id":  {"type": "string", "description": "Sandbox session ID"},
+			"session_id":  {"type": "string", "description": descSessionID},
 			"action":      {"type": "string", "description": "Description of the action requiring approval"},
 			"approval_id": {"type": "string", "description": "Approval ID from a previous call (to poll)"},
 		}, []string{"session_id"}),
