@@ -80,3 +80,88 @@ test "runCommand: python3 arithmetic" {
     try std.testing.expectEqualStrings("42\n", result.stdout);
     try std.testing.expectEqual(@as(i32, 0), result.exit_code);
 }
+
+// --- PID 1 / SIGCHLD=IGN regression tests ---
+// These tests simulate the SA_NOCLDWAIT environment where waitpid returns
+// ECHILD because the kernel auto-reaps children. runCommand must not panic.
+
+test "runCommand: survives SIGCHLD=IGN (ECHILD race)" {
+    const allocator = std.testing.allocator;
+
+    // Set SIGCHLD to SIG_IGN + SA_NOCLDWAIT, same as sandboxd PID 1 setup
+    const sa = std.os.linux.Sigaction{
+        .handler = .{ .handler = std.os.linux.SIG.IGN },
+        .mask = std.mem.zeroes(std.os.linux.sigset_t),
+        .flags = std.os.linux.SA.NOCLDWAIT,
+    };
+    _ = std.os.linux.sigaction(std.os.linux.SIG.CHLD, &sa, null);
+    defer {
+        // Restore default SIGCHLD after test
+        const sa_default = std.os.linux.Sigaction{
+            .handler = .{ .handler = std.os.linux.SIG.DFL },
+            .mask = std.mem.zeroes(std.os.linux.sigset_t),
+            .flags = 0,
+        };
+        _ = std.os.linux.sigaction(std.os.linux.SIG.CHLD, &sa_default, null);
+    }
+
+    const result = try exec.runCommand(allocator, "echo pid1-safe", "/tmp");
+    defer result.deinit(allocator);
+    // Must not panic; stdout should still be captured before wait
+    try std.testing.expectEqualStrings("pid1-safe\n", result.stdout);
+}
+
+test "runCommand: exit code under SIGCHLD=IGN" {
+    const allocator = std.testing.allocator;
+
+    const sa = std.os.linux.Sigaction{
+        .handler = .{ .handler = std.os.linux.SIG.IGN },
+        .mask = std.mem.zeroes(std.os.linux.sigset_t),
+        .flags = std.os.linux.SA.NOCLDWAIT,
+    };
+    _ = std.os.linux.sigaction(std.os.linux.SIG.CHLD, &sa, null);
+    defer {
+        const sa_default = std.os.linux.Sigaction{
+            .handler = .{ .handler = std.os.linux.SIG.DFL },
+            .mask = std.mem.zeroes(std.os.linux.sigset_t),
+            .flags = 0,
+        };
+        _ = std.os.linux.sigaction(std.os.linux.SIG.CHLD, &sa_default, null);
+    }
+
+    // exit code may be 0 (ECHILD path) but must not panic
+    const result = try exec.runCommand(allocator, "exit 7", "/tmp");
+    defer result.deinit(allocator);
+    // No panic is the primary assertion; exit_code is best-effort under NOCLDWAIT
+    _ = result.exit_code;
+}
+
+test "runCommand: concurrent execs under SIGCHLD=IGN" {
+    const allocator = std.testing.allocator;
+
+    const sa = std.os.linux.Sigaction{
+        .handler = .{ .handler = std.os.linux.SIG.IGN },
+        .mask = std.mem.zeroes(std.os.linux.sigset_t),
+        .flags = std.os.linux.SA.NOCLDWAIT,
+    };
+    _ = std.os.linux.sigaction(std.os.linux.SIG.CHLD, &sa, null);
+    defer {
+        const sa_default = std.os.linux.Sigaction{
+            .handler = .{ .handler = std.os.linux.SIG.DFL },
+            .mask = std.mem.zeroes(std.os.linux.sigset_t),
+            .flags = 0,
+        };
+        _ = std.os.linux.sigaction(std.os.linux.SIG.CHLD, &sa_default, null);
+    }
+
+    // Run 3 commands back-to-back to stress the ECHILD race
+    for (0..3) |i| {
+        const cmd = try std.fmt.allocPrint(allocator, "echo run{d}", .{i});
+        defer allocator.free(cmd);
+        const result = try exec.runCommand(allocator, cmd, "/tmp");
+        defer result.deinit(allocator);
+        const expected = try std.fmt.allocPrint(allocator, "run{d}\n", .{i});
+        defer allocator.free(expected);
+        try std.testing.expectEqualStrings(expected, result.stdout);
+    }
+}
