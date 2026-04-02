@@ -51,6 +51,11 @@ pub fn handleExec(allocator: std.mem.Allocator, stream: std.net.Stream, body: []
         const stderr = child.stderr.?.readToEndAlloc(allocator, 1 * 1024 * 1024) catch try allocator.dupe(u8, "");
         defer allocator.free(stderr);
 
+        child.stdout.?.close();
+        child.stdout = null;
+        child.stderr.?.close();
+        child.stderr = null;
+
         const term = child.wait() catch std.process.Child.Term{ .Exited = 1 };
         const exit_code: i32 = switch (term) {
             .Exited => |c| @intCast(c),
