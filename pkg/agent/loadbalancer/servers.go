@@ -83,6 +83,7 @@ func (lb *LoadBalancer) setServers(serverAddresses []string) bool {
 			address:     addedServer,
 			connections: make(map[net.Conn]struct{}),
 			healthCheck: func() bool { return true },
+			wasHealthy:  true,
 		}
 	}
 
@@ -228,6 +229,7 @@ func (lb *LoadBalancer) SetDefault(serverAddress string) {
 		lb.servers[serverAddress] = &server{
 			address:     serverAddress,
 			healthCheck: func() bool { return false },
+			wasHealthy:  false,
 			connections: make(map[net.Conn]struct{}),
 		}
 	}
@@ -237,6 +239,8 @@ func (lb *LoadBalancer) SetDefault(serverAddress string) {
 }
 
 // SetHealthCheck adds a health-check callback to an address, replacing the default no-op function.
+// The server is assumed healthy until the first check runs, so connections are only closed on
+// the first transition from healthy → unhealthy.
 func (lb *LoadBalancer) SetHealthCheck(address string, healthCheck func() bool) {
 	lb.mutex.Lock()
 	defer lb.mutex.Unlock()
@@ -244,6 +248,7 @@ func (lb *LoadBalancer) SetHealthCheck(address string, healthCheck func() bool) 
 	if server := lb.servers[address]; server != nil {
 		logrus.Debugf("Added health check for load balancer %s: %s", lb.serviceName, address)
 		server.healthCheck = healthCheck
+		server.wasHealthy = true // treat as healthy so first failure triggers closeAll
 	} else {
 		logrus.Errorf("Failed to add health check for load balancer %s: no server found for %s", lb.serviceName, address)
 	}
@@ -252,7 +257,6 @@ func (lb *LoadBalancer) SetHealthCheck(address string, healthCheck func() bool) 
 // runHealthChecks periodically health-checks all servers. Any servers that fail the health-check will have their
 // connections closed, to force clients to switch over to a healthy server.
 func (lb *LoadBalancer) runHealthChecks(ctx context.Context) {
-	previousStatus := map[string]bool{}
 	wait.Until(func() {
 		lb.mutex.RLock()
 		defer lb.mutex.RUnlock()
@@ -260,13 +264,14 @@ func (lb *LoadBalancer) runHealthChecks(ctx context.Context) {
 		for address, server := range lb.servers {
 			status := server.healthCheck()
 			healthyServerExists = healthyServerExists || status
-			if status == false && previousStatus[address] == true {
+			if !status && server.wasHealthy {
 				// Only close connections when the server transitions from healthy to unhealthy;
 				// we don't want to re-close all the connections every time as we might be ignoring
 				// health checks due to all servers being marked unhealthy.
 				defer server.closeAll()
 			}
-			previousStatus[address] = status
+			server.wasHealthy = status
+			_ = address
 		}
 
 		// If there is at least one healthy server, and the default server is not in the server list,

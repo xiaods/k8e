@@ -21,6 +21,7 @@ type server struct {
 	mutex       sync.Mutex
 	address     string
 	healthCheck func() bool
+	wasHealthy  bool // tracks previous health state to detect healthy→unhealthy transitions
 	connections map[net.Conn]struct{}
 }
 
