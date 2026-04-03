@@ -310,12 +310,14 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 			if pod.Status.Phase != corev1.PodRunning {
 				continue
 			}
+			// atomic claim: use resourceVersion for optimistic locking
 			pod.Labels[labelState] = stateActive
 			pod.Labels[labelSessionID] = sessionID
 			updated, err := o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{})
 			if err == nil {
 				return updated, nil
 			}
+			// conflict means another request claimed it first — try next warm pod
 		}
 	}
 	pod := &corev1.Pod{

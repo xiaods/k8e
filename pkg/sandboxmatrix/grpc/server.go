@@ -28,6 +28,9 @@ const sandboxdPort = 2024
 // SandboxdPort is exported for use by the controller.
 const SandboxdPort = sandboxdPort
 
+// sandboxdClient is a dedicated HTTP client for sandboxd calls with a base timeout.
+var sandboxdClient = &http.Client{Timeout: 5 * time.Minute}
+
 // Server implements the SandboxService gRPC interface.
 type Server struct {
 	pb.UnimplementedSandboxServiceServer
@@ -111,7 +114,7 @@ func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecRespons
 		fmt.Sprintf("http://%s:%d/exec", podIP, sandboxdPort), bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := sandboxdClient.Do(httpReq)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd exec: %v", err)
 	}
@@ -132,10 +135,10 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 		return err
 	}
 	body, _ := json.Marshal(map[string]any{"command": req.Command})
-	httpReq, _ := http.NewRequestWithContext(stream.Context(), http.MethodGet,
+	httpReq, _ := http.NewRequestWithContext(stream.Context(), http.MethodPost,
 		fmt.Sprintf("http://%s:%d/exec/stream", podIP, sandboxdPort), bytes.NewReader(body))
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := sandboxdClient.Do(httpReq)
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "sandboxd stream: %v", err)
 	}
@@ -171,7 +174,7 @@ func (s *Server) WriteFile(ctx context.Context, req *pb.WriteFileRequest) (*pb.W
 	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost,
 		fmt.Sprintf("http://%s:%d/files/write", podIP, sandboxdPort), bytes.NewReader(body))
 	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := sandboxdClient.Do(httpReq)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd write: %v", err)
 	}
@@ -186,7 +189,7 @@ func (s *Server) ReadFile(ctx context.Context, req *pb.ReadFileRequest) (*pb.Rea
 	}
 	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodGet,
 		fmt.Sprintf("http://%s:%d/files/read?path=%s", podIP, sandboxdPort, req.Path), http.NoBody)
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := sandboxdClient.Do(httpReq)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd read: %v", err)
 	}
@@ -203,7 +206,7 @@ func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.L
 	}
 	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodGet,
 		fmt.Sprintf("http://%s:%d/files/list?since=%d", podIP, sandboxdPort, req.Since), http.NoBody)
-	resp, err := http.DefaultClient.Do(httpReq)
+	resp, err := sandboxdClient.Do(httpReq)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd list: %v", err)
 	}
@@ -230,7 +233,7 @@ func (s *Server) PipInstall(ctx context.Context, req *pb.PipInstallRequest) (*pb
 		}
 		pkgList += p
 	}
-	execResp, err := s.Exec(ctx, &pb.ExecRequest{SessionId: req.SessionId, Command: "pip install " + pkgList, Timeout: 120})
+	execResp, err := s.Exec(ctx, &pb.ExecRequest{SessionId: req.SessionId, Command: "pip install --no-cache-dir " + pkgList, Timeout: 120})
 	if err != nil {
 		return nil, err
 	}
@@ -254,16 +257,23 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 	if podIP != "" {
 		return podIP, nil
 	}
-	// fallback: look up pod directly by session label
-	pods, err := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSessionID + "=" + sessionID,
-	})
-	if err == nil {
-		for _, pod := range pods.Items {
-			if pod.Status.PodIP != "" {
-				return pod.Status.PodIP, nil
+	// pod just created — poll until IP is assigned (up to 60s)
+	for i := 0; i < 12; i++ {
+		select {
+		case <-ctx.Done():
+			return "", status.Errorf(codes.Canceled, "context cancelled waiting for pod IP")
+		case <-time.After(5 * time.Second):
+		}
+		pods, err := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSessionID + "=" + sessionID,
+		})
+		if err == nil {
+			for _, pod := range pods.Items {
+				if pod.Status.PodIP != "" {
+					return pod.Status.PodIP, nil
+				}
 			}
 		}
 	}
-	return "", status.Errorf(codes.Unavailable, "session %s has no pod IP yet", sessionID)
+	return "", status.Errorf(codes.Unavailable, "session %s has no pod IP after 60s", sessionID)
 }

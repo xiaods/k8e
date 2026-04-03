@@ -23,9 +23,6 @@ const (
 	descTimeout   = "Timeout in seconds (default 30)"
 )
 
-// sentinel values shared with server.go
-var createReqDefault = pb.CreateSessionRequest{RuntimeClass: "gvisor"}
-
 // newCreateReq constructs a CreateSessionRequest without copying the proto value (avoids Mutex copy).
 func newCreateReq(tenantID string) *pb.CreateSessionRequest {
 	return &pb.CreateSessionRequest{RuntimeClass: "gvisor", TenantId: tenantID}
@@ -88,7 +85,7 @@ var allTools = []Tool{
 					return "", err
 				}
 			}
-			return formatExecResult(resp.Stdout, resp.Stderr, resp.ExitCode), nil
+			return formatExecResult(resp.Stdout, resp.Stderr, resp.ExitCode, sid), nil
 		},
 	},
 	{
@@ -334,13 +331,14 @@ var allTools = []Tool{
 // waitTick returns a channel that fires after 5 seconds (pod startup backoff).
 func waitTick() <-chan time.Time { return time.After(5 * time.Second) }
 
-// buildCommand wraps code in the appropriate interpreter based on language hint.// Multi-line code is written to a temp file and executed to avoid shell quoting issues.
+// buildCommand wraps code in the appropriate interpreter based on language hint.
+// Multi-line code is written to a temp file and executed to avoid shell quoting issues.
+// Code longer than 4KB is always written to a file to avoid ARG_MAX limits.
 func buildCommand(code, lang string) string {
-	multiline := strings.Contains(code, "\n")
+	multiline := strings.Contains(code, "\n") || len(code) > 4096
 	switch strings.ToLower(lang) {
 	case "python", "python3", "py":
 		if multiline {
-			// write to temp file and run — avoids python3 -c multiline limitations
 			escaped := strings.ReplaceAll(code, "'", "'\\''")
 			return fmt.Sprintf("printf '%%s' '%s' > /tmp/_k8e_run.py && python3 /tmp/_k8e_run.py", escaped)
 		}
@@ -360,12 +358,13 @@ func buildCommand(code, lang string) string {
 	}
 }
 
-// formatExecResult returns a human-readable execution result.
-func formatExecResult(stdout, stderr string, exitCode int32) string {
+// formatExecResult returns a human-readable execution result, always including session_id.
+func formatExecResult(stdout, stderr string, exitCode int32, sessionID string) string {
 	if exitCode == 0 && stderr == "" {
-		return stdout
+		// clean success: return stdout + session_id for follow-up tool calls
+		return jsonStr(map[string]any{"stdout": stdout, "exit_code": 0, "session_id": sessionID})
 	}
-	return jsonStr(map[string]any{"stdout": stdout, "stderr": stderr, "exit_code": exitCode})
+	return jsonStr(map[string]any{"stdout": stdout, "stderr": stderr, "exit_code": exitCode, "session_id": sessionID})
 }
 
 type props = map[string]map[string]any
