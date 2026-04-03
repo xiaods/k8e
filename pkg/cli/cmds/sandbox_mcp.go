@@ -17,7 +17,9 @@ func NewSandboxMCPCommand(action func(*cli.Context) error) cli.Command {
 		Action: action,
 		Flags: []cli.Flag{
 			cli.StringFlag{Name: "endpoint", Value: "", Usage: "gRPC endpoint override", EnvVar: "K8E_SANDBOX_ENDPOINT"},
-			cli.StringFlag{Name: "tls-cert", Value: "", Usage: "TLS CA cert override", EnvVar: "K8E_SANDBOX_CERT"},
+			cli.StringFlag{Name: "tls-cert", Value: "", Usage: "TLS CA cert file", EnvVar: "K8E_SANDBOX_CERT"},
+			cli.StringFlag{Name: "tls-key", Value: "", Usage: "TLS client key file (for mTLS)", EnvVar: "K8E_SANDBOX_KEY"},
+			cli.StringFlag{Name: "tenant-id", Value: "", Usage: "Tenant ID for cross-process session reuse", EnvVar: "K8E_SANDBOX_TENANT"},
 		},
 	}
 }
@@ -44,6 +46,9 @@ func SandboxMCP(ctx *cli.Context) error {
 	if cert := ctx.String("tls-cert"); cert != "" {
 		os.Setenv("K8E_SANDBOX_CERT", cert)
 	}
+	if key := ctx.String("tls-key"); key != "" {
+		os.Setenv("K8E_SANDBOX_KEY", key)
+	}
 
 	client, err := sandboxmcp.NewClient()
 	if err != nil {
@@ -58,5 +63,5 @@ func SandboxMCP(ctx *cli.Context) error {
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	go func() { <-sig; cancel() }()
 
-	return sandboxmcp.NewServer(client).Run(c)
+	return sandboxmcp.NewServerWithTenant(client, ctx.String("tenant-id")).Run(c)
 }

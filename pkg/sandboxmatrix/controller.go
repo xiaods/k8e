@@ -58,6 +58,9 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 
 	go runWarmPoolReconciler(ctx, k8s, dyn, cfg)
 
+	orch := sandboxgrpc.NewOrchestrator(k8s, dyn)
+	go runGCLoop(ctx, orch, cfg.Namespace)
+
 	srv := sandboxgrpc.NewServer(k8s, dyn,
 		tlsDir+"/serving-kube-apiserver.crt",
 		tlsDir+"/serving-kube-apiserver.key",
@@ -125,6 +128,34 @@ func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynam
 			k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 		}
 	}
+	updateSandboxMatrixStatus(ctx, k8s, dyn, cfg)
+}
+
+func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig) {
+	matrixGVR := schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxmatrices"}
+	matrices, err := dyn.Resource(matrixGVR).Namespace(cfg.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil || len(matrices.Items) == 0 {
+		return
+	}
+
+	warmPods, _ := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox.k8e.io/state=warm"})
+	activePods, _ := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox.k8e.io/state=active"})
+
+	readyWarm := 0
+	for _, p := range warmPods.Items {
+		if p.Status.Phase == corev1.PodRunning {
+			readyWarm++
+		}
+	}
+
+	matrix := matrices.Items[0].DeepCopy()
+	if matrix.Object["status"] == nil {
+		matrix.Object["status"] = map[string]interface{}{}
+	}
+	status := matrix.Object["status"].(map[string]interface{})
+	status["readyWarmCount"] = int64(readyWarm)
+	status["activeSessions"] = int64(len(activePods.Items))
+	dyn.Resource(matrixGVR).Namespace(cfg.Namespace).UpdateStatus(ctx, matrix, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
 func warmPodSpec(runtimeClass string, cfg config.SandboxConfig) corev1.PodSpec {
@@ -151,4 +182,33 @@ func warmPodSpec(runtimeClass string, cfg config.SandboxConfig) corev1.PodSpec {
 // sandboxdPortAddr returns the gRPC listen address for the given port.
 func sandboxdPortAddr(port int) string {
 	return fmt.Sprintf("127.0.0.1:%d", port)
+}
+
+func runGCLoop(ctx context.Context, orch *sandboxgrpc.Orchestrator, namespace string) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			gcExpiredSessions(ctx, orch, namespace)
+		}
+	}
+}
+
+func gcExpiredSessions(ctx context.Context, orch *sandboxgrpc.Orchestrator, namespace string) {
+	sessions, err := orch.ListActiveSessions(ctx, namespace)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, s := range sessions {
+		if s.Status.ExpiresAt != nil && s.Status.ExpiresAt.Time.Before(now) {
+			logrus.Infof("sandbox-matrix: GC session %s (expired at %s)", s.Name, s.Status.ExpiresAt.Time)
+			if err := orch.DestroySession(ctx, s.Name); err != nil {
+				logrus.Warnf("sandbox-matrix: GC destroy %s: %v", s.Name, err)
+			}
+		}
+	}
 }

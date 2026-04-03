@@ -15,9 +15,14 @@ type Server struct {
 	client        *Client
 	mu            sync.Mutex
 	defaultSessID string // reused across the conversation
+	tenantID      string // if set, enables cross-process session reuse
 }
 
 func NewServer(client *Client) *Server { return &Server{client: client} }
+
+func NewServerWithTenant(client *Client, tenantID string) *Server {
+	return &Server{client: client, tenantID: tenantID}
+}
 
 type rpcRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -42,12 +47,14 @@ type rpcError struct {
 func (s *Server) Run(ctx context.Context) error {
 	enc := json.NewEncoder(os.Stdout)
 	scanner := bufio.NewScanner(os.Stdin)
-	// destroy default session on exit
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB — handles large file content in requests
+	// destroy default session on exit — skip if tenant reuse is enabled
 	defer func() {
 		s.mu.Lock()
 		sid := s.defaultSessID
+		tenant := s.tenantID
 		s.mu.Unlock()
-		if sid != "" {
+		if sid != "" && tenant == "" {
 			s.client.SandboxServiceClient.DestroySession(context.Background(), destroyReq(sid)) //nolint:errcheck
 		}
 	}()
@@ -125,13 +132,23 @@ func (s *Server) callTool(ctx context.Context, name string, args map[string]any)
 }
 
 // defaultSession returns the reused session ID, creating one lazily if needed.
+// If tenantID is set, first tries to find an existing Active session for that tenant.
 func (s *Server) defaultSession(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.defaultSessID != "" {
 		return s.defaultSessID, nil
 	}
-	resp, err := s.client.SandboxServiceClient.CreateSession(ctx, &createReqDefault)
+	// cross-process reuse: look for existing tenant session
+	if s.tenantID != "" {
+		if sid, err := FindActiveSession(s.tenantID); err == nil && sid != "" {
+			s.defaultSessID = sid
+			return sid, nil
+		}
+	}
+	req := createReqDefault
+	req.TenantId = s.tenantID
+	resp, err := s.client.SandboxServiceClient.CreateSession(ctx, &req)
 	if err != nil {
 		return "", fmt.Errorf("sandbox not available: %w", err)
 	}
