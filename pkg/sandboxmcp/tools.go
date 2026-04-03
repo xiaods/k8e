@@ -26,6 +26,11 @@ const (
 // sentinel values shared with server.go
 var createReqDefault = pb.CreateSessionRequest{RuntimeClass: "gvisor"}
 
+// newCreateReq constructs a CreateSessionRequest without copying the proto value (avoids Mutex copy).
+func newCreateReq(tenantID string) *pb.CreateSessionRequest {
+	return &pb.CreateSessionRequest{RuntimeClass: "gvisor", TenantId: tenantID}
+}
+
 func destroyReq(id string) *pb.DestroySessionRequest {
 	return &pb.DestroySessionRequest{SessionId: id}
 }

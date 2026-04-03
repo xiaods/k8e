@@ -142,8 +142,8 @@ func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dy
 	activePods, _ := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "sandbox.k8e.io/state=active"})
 
 	readyWarm := 0
-	for _, p := range warmPods.Items {
-		if p.Status.Phase == corev1.PodRunning {
+	for i := range warmPods.Items {
+		if warmPods.Items[i].Status.Phase == corev1.PodRunning {
 			readyWarm++
 		}
 	}

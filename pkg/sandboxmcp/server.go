@@ -146,9 +146,7 @@ func (s *Server) defaultSession(ctx context.Context) (string, error) {
 			return sid, nil
 		}
 	}
-	req := createReqDefault
-	req.TenantId = s.tenantID
-	resp, err := s.client.SandboxServiceClient.CreateSession(ctx, &req)
+	resp, err := s.client.SandboxServiceClient.CreateSession(ctx, newCreateReq(s.tenantID))
 	if err != nil {
 		return "", fmt.Errorf("sandbox not available: %w", err)
 	}

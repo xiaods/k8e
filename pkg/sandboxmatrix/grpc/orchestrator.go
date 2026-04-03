@@ -88,11 +88,6 @@ func (o *Orchestrator) getMatrixConfig(ctx context.Context) (allowedHosts []stri
 	return raw, ttl, cpu, memory
 }
 
-func (o *Orchestrator) getSessionTTL(ctx context.Context) int {
-	_, ttl, _, _ := o.getMatrixConfig(ctx)
-	return ttl
-}
-
 func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateSessionRequest, ttl int, matrixDefaultHosts []string, matrixCPU, matrixMemory string) (*sandboxv1.SandboxSession, error) {
 	sessionID := req.SessionId
 	if sessionID == "" {
