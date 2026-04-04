@@ -80,21 +80,7 @@ func FindActiveSession(tenantID string) (string, error) {
 	if tenantID == "" {
 		return "", nil
 	}
-	var kubeconfigPath string
-	for _, kc := range resolvedKubeconfigCandidates() {
-		if _, err := os.Stat(kc); err == nil {
-			kubeconfigPath = kc
-			break
-		}
-	}
-	if kubeconfigPath == "" {
-		return "", nil
-	}
-	restCfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
-	if err != nil {
-		return "", nil
-	}
-	dyn, err := dynamic.NewForConfig(restCfg)
+	dyn, err := newDynamicClient()
 	if err != nil {
 		return "", nil
 	}
@@ -115,6 +101,20 @@ func FindActiveSession(tenantID string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+func newDynamicClient() (dynamic.Interface, error) {
+	for _, kc := range resolvedKubeconfigCandidates() {
+		if _, err := os.Stat(kc); err != nil {
+			continue
+		}
+		restCfg, err := clientcmd.BuildConfigFromFlags("", kc)
+		if err != nil {
+			continue
+		}
+		return dynamic.NewForConfig(restCfg)
+	}
+	return nil, fmt.Errorf("no kubeconfig found")
 }
 
 func resolveCreds() (credentials.TransportCredentials, error) {

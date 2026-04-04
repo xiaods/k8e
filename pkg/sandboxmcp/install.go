@@ -13,6 +13,7 @@ const (
 	settingsFile  = "settings.json"
 	skillDirName  = "k8e-sandbox-skill"
 	skillFileName = "SKILL.md"
+	toolExec      = "`sandbox_exec`"
 )
 
 // mcpEntry is the JSON snippet added to agent config files.
@@ -40,11 +41,11 @@ args: { "code": "<your code>", "language": "python|bash|node" }
 
 **Install packages then run:**
 1. ` + "`sandbox_pip_install`" + ` — install packages into the session
-2. ` + "`sandbox_exec`" + ` — run commands in the same session
+2. ` + toolExec + ` — run commands in the same session
 
 **Write and execute a file:**
 1. ` + "`sandbox_write_file`" + ` — write to ` + "`/workspace/<file>`" + `
-2. ` + "`sandbox_exec`" + ` — run it
+2. ` + toolExec + ` — run it
 
 **Before irreversible actions** (delete, send, deploy):
 ` + "```" + `
@@ -62,7 +63,7 @@ args: { "session_id": "<id>", "action": "describe what you are about to do" }
 | ` + "`sandbox_read_file`" + ` | Read a file from ` + "`/workspace`" + ` |
 | ` + "`sandbox_list_files`" + ` | List recently changed files |
 | ` + "`sandbox_pip_install`" + ` | Install Python packages |
-| ` + "`sandbox_exec`" + ` | Run command in an explicit session |
+| ` + toolExec + ` | Run command in an explicit session |
 | ` + "`sandbox_exec_stream`" + ` | Run command with streaming output |
 | ` + "`sandbox_create_session`" + ` | Create session with custom options (runtime, egress) |
 | ` + "`sandbox_destroy_session`" + ` | Explicitly destroy a session |

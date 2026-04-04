@@ -17,27 +17,35 @@ import (
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
+const (
+	testGroupK8e    = "k8e.cattle.io"
+	testGroupCilium = "cilium.io"
+	testAPIVer      = "k8e.cattle.io/v1alpha1"
+	msgUnexpected   = "unexpected error: %v"
+	msgCreate       = "create: %v"
+)
+
 func newTestOrchestrator() *Orchestrator {
 	scheme := runtime.NewScheme()
 	for _, gvk := range []schema.GroupVersionKind{
-		{Group: "k8e.cattle.io", Version: "v1alpha1", Kind: "SandboxSession"},
-		{Group: "k8e.cattle.io", Version: "v1alpha1", Kind: "SandboxMatrix"},
-		{Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicy"},
+		{Group: testGroupK8e, Version: "v1alpha1", Kind: "SandboxSession"},
+		{Group: testGroupK8e, Version: "v1alpha1", Kind: "SandboxMatrix"},
+		{Group: testGroupCilium, Version: "v2", Kind: "CiliumNetworkPolicy"},
 	} {
 		scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 	}
 	for _, gvk := range []schema.GroupVersionKind{
-		{Group: "k8e.cattle.io", Version: "v1alpha1", Kind: "SandboxSessionList"},
-		{Group: "k8e.cattle.io", Version: "v1alpha1", Kind: "SandboxMatrixList"},
-		{Group: "cilium.io", Version: "v2", Kind: "CiliumNetworkPolicyList"},
+		{Group: testGroupK8e, Version: "v1alpha1", Kind: "SandboxSessionList"},
+		{Group: testGroupK8e, Version: "v1alpha1", Kind: "SandboxMatrixList"},
+		{Group: testGroupCilium, Version: "v2", Kind: "CiliumNetworkPolicyList"},
 	} {
 		scheme.AddKnownTypeWithName(gvk, &unstructured.UnstructuredList{})
 	}
 	// explicit resource→listKind mapping to avoid fake client pluralisation bugs
 	listKinds := map[schema.GroupVersionResource]string{
-		{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxsessions"}:  "SandboxSessionList",
-		{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxmatrices"}:  "SandboxMatrixList",
-		{Group: "cilium.io", Version: "v2", Resource: "ciliumnetworkpolicies"}:       "CiliumNetworkPolicyList",
+		{Group: testGroupK8e, Version: "v1alpha1", Resource: "sandboxsessions"}: "SandboxSessionList",
+		{Group: testGroupK8e, Version: "v1alpha1", Resource: "sandboxmatrices"}: "SandboxMatrixList",
+		{Group: testGroupCilium, Version: "v2", Resource: "ciliumnetworkpolicies"}: "CiliumNetworkPolicyList",
 	}
 	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
 	k8s := kubefake.NewSimpleClientset()
@@ -48,7 +56,7 @@ func TestCreateSession_GeneratesID(t *testing.T) {
 	o := newTestOrchestrator()
 	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if sess.Name == "" {
 		t.Fatal("expected non-empty session ID")
@@ -59,7 +67,7 @@ func TestCreateSession_DefaultRuntime(t *testing.T) {
 	o := newTestOrchestrator()
 	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{SessionId: "test-rt"})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if sess.Spec.RuntimeClass != "gvisor" {
 		t.Fatalf("expected default runtime gvisor, got %s", sess.Spec.RuntimeClass)
@@ -72,7 +80,7 @@ func TestRunSubAgent_MaxDepthEnforced(t *testing.T) {
 
 	parent := &unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": "k8e.cattle.io/v1alpha1",
+			"apiVersion": testAPIVer,
 			"kind":       "SandboxSession",
 			"metadata":   map[string]interface{}{"name": "parent-deep", "namespace": sandboxNS},
 			"spec":       map[string]interface{}{"depth": int64(1), "runtimeClass": "gvisor"},
@@ -101,7 +109,7 @@ func TestCreateSession_CustomSessionID(t *testing.T) {
 	o := newTestOrchestrator()
 	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{SessionId: "my-session"})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if sess.Name != "my-session" {
 		t.Fatalf("expected session ID my-session, got %s", sess.Name)
@@ -115,7 +123,7 @@ func TestCreateSession_AllowedHosts(t *testing.T) {
 		AllowedHosts: []string{"example.com", "api.example.com"},
 	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if len(sess.Spec.AllowedHosts) != 2 || sess.Spec.AllowedHosts[0] != "example.com" {
 		t.Fatalf("unexpected allowed_hosts: %v", sess.Spec.AllowedHosts)
@@ -126,7 +134,7 @@ func TestCreateSession_ExpiresAt_WithTTL(t *testing.T) {
 	o := newTestOrchestrator()
 	// seed a SandboxMatrix with sessionTTL=3600
 	matrix := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "k8e.cattle.io/v1alpha1",
+		"apiVersion": testAPIVer,
 		"kind":       "SandboxMatrix",
 		"metadata":   map[string]interface{}{"name": "default", "namespace": sandboxNS},
 		"spec":       map[string]interface{}{"sessionTTL": int64(3600)},
@@ -135,7 +143,7 @@ func TestCreateSession_ExpiresAt_WithTTL(t *testing.T) {
 
 	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{SessionId: "ttl-test"})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if sess.Status.ExpiresAt == nil {
 		t.Fatal("expected ExpiresAt to be set when sessionTTL > 0")
@@ -146,7 +154,7 @@ func TestCreateSession_ExpiresAt_NoTTL(t *testing.T) {
 	o := newTestOrchestrator()
 	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{SessionId: "no-ttl"})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if sess.Status.ExpiresAt != nil {
 		t.Fatal("expected ExpiresAt to be nil when no TTL configured")
@@ -157,7 +165,7 @@ func TestCreateSession_CreatesPVC(t *testing.T) {
 	o := newTestOrchestrator()
 	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{SessionId: "pvc-test"})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if sess.Status.WorkspacePVC == "" {
 		t.Fatal("expected WorkspacePVC to be set")
@@ -178,7 +186,7 @@ func TestDestroySession_DeletesPodAndPVC(t *testing.T) {
 
 	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "destroy-test"})
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatalf(msgCreate, err)
 	}
 	podName := sess.Status.PodName
 	pvcName := sess.Status.WorkspacePVC
@@ -208,7 +216,7 @@ func TestDestroySession_DeletesCNP(t *testing.T) {
 
 	_, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "cnp-test"})
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatalf(msgCreate, err)
 	}
 	// CNP should exist
 	cnpName := "sandbox-session-cnp-test"
@@ -236,7 +244,7 @@ func TestListActiveSessions_FiltersPhase(t *testing.T) {
 	}
 	// manually insert a terminating session
 	term := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "k8e.cattle.io/v1alpha1",
+		"apiVersion": testAPIVer,
 		"kind":       "SandboxSession",
 		"metadata":   map[string]interface{}{"name": "term-1", "namespace": sandboxNS},
 		"spec":       map[string]interface{}{},
@@ -246,7 +254,7 @@ func TestListActiveSessions_FiltersPhase(t *testing.T) {
 
 	sessions, err := o.ListActiveSessions(ctx, sandboxNS)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if len(sessions) != 2 {
 		t.Fatalf("expected 2 active sessions, got %d", len(sessions))
@@ -259,7 +267,7 @@ func TestRunSubAgent_Success(t *testing.T) {
 
 	// create parent at depth 0
 	parent := &unstructured.Unstructured{Object: map[string]interface{}{
-		"apiVersion": "k8e.cattle.io/v1alpha1",
+		"apiVersion": testAPIVer,
 		"kind":       "SandboxSession",
 		"metadata":   map[string]interface{}{"name": "parent-ok", "namespace": sandboxNS},
 		"spec":       map[string]interface{}{"depth": int64(0), "runtimeClass": "gvisor", "allowedHosts": []interface{}{"pypi.org"}},
@@ -268,7 +276,7 @@ func TestRunSubAgent_Success(t *testing.T) {
 
 	resp, err := o.RunSubAgent(ctx, &pb.RunSubAgentRequest{ParentSessionId: "parent-ok", AgentType: "coding"})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf(msgUnexpected, err)
 	}
 	if resp.SessionId == "" {
 		t.Fatal("expected non-empty child session ID")
@@ -325,7 +333,7 @@ func TestGCExpiredSessions_DestroysExpired(t *testing.T) {
 	// create a session then manually set ExpiresAt to the past
 	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "gc-expired"})
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatalf(msgCreate, err)
 	}
 	// backdate ExpiresAt
 	u, _ := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sess.Name, metav1.GetOptions{})
@@ -358,7 +366,7 @@ func TestGCExpiredSessions_KeepsNonExpired(t *testing.T) {
 
 	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "gc-keep"})
 	if err != nil {
-		t.Fatalf("create: %v", err)
+		t.Fatalf(msgCreate, err)
 	}
 	// set ExpiresAt to the future
 	u, _ := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sess.Name, metav1.GetOptions{})
