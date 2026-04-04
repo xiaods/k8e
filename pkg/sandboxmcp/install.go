@@ -14,10 +14,21 @@ const (
 	skillFileName = "SKILL.md"
 )
 
-// mcpEntry is the JSON snippet added to agent config files.
-var mcpEntry = map[string]any{
-	"command": "k8e",
-	"args":    []string{"sandbox-mcp"},
+// mcpEntry returns the JSON snippet added to agent config files.
+// If K8E_SANDBOX_MCP_ADDR is set, uses HTTP/SSE transport (url-based);
+// otherwise falls back to stdio (command-based).
+func mcpEntryFor() map[string]any {
+	if addr := os.Getenv("K8E_SANDBOX_MCP_ADDR"); addr != "" {
+		url := addr
+		if len(url) > 0 && url[0] == ':' {
+			url = "http://127.0.0.1" + url
+		}
+		return map[string]any{"url": url + "/mcp"}
+	}
+	return map[string]any{
+		"command": "k8e",
+		"args":    []string{"sandbox-mcp"},
+	}
 }
 
 // skillsDataDir returns the staged skills directory.
@@ -64,7 +75,7 @@ func InstallSkill(target string) error {
 }
 
 func installClaude() error {
-	if err := mergeJSON(filepath.Join(homeDir(), ".claude.json"), []string{"mcpServers", mcpServerName}, mcpEntry, "claude code"); err != nil {
+	if err := mergeJSON(filepath.Join(homeDir(), ".claude.json"), []string{"mcpServers", mcpServerName}, mcpEntryFor(), "claude code"); err != nil {
 		return err
 	}
 	return installAllSkills(filepath.Join(homeDir(), ".claude", "skills"), "claude code")
@@ -73,19 +84,19 @@ func installClaude() error {
 func installKiro() error {
 	local := filepath.Join(".kiro", settingsFile)
 	if _, err := os.Stat(filepath.Dir(local)); err == nil {
-		if err := mergeJSON(local, []string{"mcpServers", mcpServerName}, mcpEntry, "kiro-cli (workspace)"); err != nil {
+		if err := mergeJSON(local, []string{"mcpServers", mcpServerName}, mcpEntryFor(), "kiro-cli (workspace)"); err != nil {
 			return err
 		}
 		return installAllSkills(filepath.Join(".kiro", "skills"), "kiro-cli (workspace)")
 	}
-	if err := mergeJSON(filepath.Join(homeDir(), ".kiro", settingsFile), []string{"mcpServers", mcpServerName}, mcpEntry, "kiro-cli (global)"); err != nil {
+	if err := mergeJSON(filepath.Join(homeDir(), ".kiro", settingsFile), []string{"mcpServers", mcpServerName}, mcpEntryFor(), "kiro-cli (global)"); err != nil {
 		return err
 	}
 	return installAllSkills(filepath.Join(homeDir(), ".kiro", "skills"), "kiro-cli (global)")
 }
 
 func installGemini() error {
-	if err := mergeJSON(filepath.Join(homeDir(), ".gemini", settingsFile), []string{"mcpServers", mcpServerName}, mcpEntry, "gemini cli"); err != nil {
+	if err := mergeJSON(filepath.Join(homeDir(), ".gemini", settingsFile), []string{"mcpServers", mcpServerName}, mcpEntryFor(), "gemini cli"); err != nil {
 		return err
 	}
 	return installAllSkills(filepath.Join(homeDir(), ".gemini", "skills"), "gemini cli")

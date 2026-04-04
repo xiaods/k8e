@@ -3,11 +3,15 @@ package sandboxmcp
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sync"
+	"time"
 )
 
 // Server is the MCP stdio server.
@@ -44,6 +48,7 @@ type rpcError struct {
 }
 
 // Run reads JSON-RPC requests from stdin and writes responses to stdout until ctx is done or EOF.
+// This is the legacy stdio transport — use RunSSE for long-lived connections.
 func (s *Server) Run(ctx context.Context) error {
 	enc := json.NewEncoder(os.Stdout)
 	scanner := bufio.NewScanner(os.Stdin)
@@ -230,3 +235,161 @@ var _ io.Writer = (*discardWriter)(nil)
 type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+// ── SSE / HTTP transport (MCP Streamable HTTP, spec 2025-03-26) ────────────
+//
+// Architecture:
+//
+//	GET  /mcp          → open SSE stream (server → client push)
+//	POST /mcp          → send JSON-RPC request, get JSON response
+//	                     header Mcp-Session-Id ties requests to an SSE stream
+//
+// One HTTP server is shared across all agent connections — no per-request
+// process spawn, no initialize handshake per call.
+
+// sseSession holds the SSE event channel for one connected agent.
+type sseSession struct {
+	ch     chan string
+	cancel context.CancelFunc
+}
+
+// SSEServer is the HTTP/SSE MCP server. Create via NewSSEServer.
+type SSEServer struct {
+	*Server
+	mu       sync.Mutex
+	sessions map[string]*sseSession
+}
+
+func NewSSEServer(client *Client, tenantID string) *SSEServer {
+	return &SSEServer{
+		Server:   NewServerWithTenant(client, tenantID),
+		sessions: make(map[string]*sseSession),
+	}
+}
+
+// RunSSE starts the HTTP server on addr (e.g. ":8811").
+// GET /mcp  → SSE stream
+// POST /mcp → JSON-RPC, response in HTTP body + optional SSE push
+func (s *SSEServer) RunSSE(ctx context.Context, addr string) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mcp", s.handler)
+
+	srv := &http.Server{Addr: addr, Handler: mux}
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		srv.Shutdown(shutCtx) //nolint:errcheck
+	}()
+
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+func (s *SSEServer) handler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleSSE(w, r)
+	case http.MethodPost:
+		s.handlePost(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleSSE opens a long-lived SSE stream for one agent session.
+// The client receives the assigned session ID as the first SSE event,
+// then uses it in Mcp-Session-Id on subsequent POST requests.
+func (s *SSEServer) handleSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	sid := newSessionToken()
+	ch := make(chan string, 32)
+	sessCtx, cancel := context.WithCancel(r.Context())
+
+	s.mu.Lock()
+	s.sessions[sid] = &sseSession{ch: ch, cancel: cancel}
+	s.mu.Unlock()
+
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		delete(s.sessions, sid)
+		s.mu.Unlock()
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+
+	// send session ID so client knows which header to use
+	fmt.Fprintf(w, "event: session\ndata: %s\n\n", sid)
+	flusher.Flush()
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-sessCtx.Done():
+			return
+		case msg := <-ch:
+			fmt.Fprintf(w, "data: %s\n\n", msg)
+			flusher.Flush()
+		case <-ticker.C:
+			fmt.Fprintf(w, ": ping\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+// handlePost processes a JSON-RPC request and returns the response in the HTTP body.
+// If the client has an open SSE stream (Mcp-Session-Id header), the response is
+// also pushed over SSE so the agent can receive it without polling.
+func (s *SSEServer) handlePost(w http.ResponseWriter, r *http.Request) {
+	var req rpcRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, errResp(nil, -32700, "parse error"))
+		return
+	}
+
+	resp := s.dispatch(r.Context(), &req)
+
+	// push to SSE stream if session is open
+	if sid := r.Header.Get("Mcp-Session-Id"); sid != "" {
+		if data, err := json.Marshal(resp); err == nil {
+			s.mu.Lock()
+			sess, ok := s.sessions[sid]
+			s.mu.Unlock()
+			if ok {
+				select {
+				case sess.ch <- string(data):
+				default: // drop if buffer full — client will read from HTTP body
+				}
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v) //nolint:errcheck
+}
+
+func newSessionToken() string {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
+}

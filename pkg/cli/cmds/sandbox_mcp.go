@@ -13,13 +13,15 @@ import (
 func NewSandboxMCPCommand(action func(*cli.Context) error) cli.Command {
 	return cli.Command{
 		Name:   "sandbox-mcp",
-		Usage:  "Run the sandbox MCP skill server (stdio, JSON-RPC 2.0)",
+		Usage:  "Run the sandbox MCP skill server (stdio by default; --http for SSE mode)",
 		Action: action,
 		Flags: []cli.Flag{
 			cli.StringFlag{Name: "endpoint", Value: "", Usage: "gRPC endpoint override", EnvVar: "K8E_SANDBOX_ENDPOINT"},
 			cli.StringFlag{Name: "tls-cert", Value: "", Usage: "TLS CA cert file", EnvVar: "K8E_SANDBOX_CERT"},
 			cli.StringFlag{Name: "tls-key", Value: "", Usage: "TLS client key file (for mTLS)", EnvVar: "K8E_SANDBOX_KEY"},
 			cli.StringFlag{Name: "tenant-id", Value: "", Usage: "Tenant ID for cross-process session reuse", EnvVar: "K8E_SANDBOX_TENANT"},
+			cli.BoolFlag{Name: "http", Usage: "Run in HTTP/SSE mode instead of stdio"},
+			cli.StringFlag{Name: "http-addr", Value: ":8811", Usage: "Listen address for HTTP/SSE mode", EnvVar: "K8E_SANDBOX_MCP_ADDR"},
 		},
 	}
 }
@@ -63,5 +65,9 @@ func SandboxMCP(ctx *cli.Context) error {
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	go func() { <-sig; cancel() }()
 
+	if ctx.Bool("http") {
+		addr := ctx.String("http-addr")
+		return sandboxmcp.NewSSEServer(client, ctx.String("tenant-id")).RunSSE(c, addr)
+	}
 	return sandboxmcp.NewServerWithTenant(client, ctx.String("tenant-id")).Run(c)
 }
