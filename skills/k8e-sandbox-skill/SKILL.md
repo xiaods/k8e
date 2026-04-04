@@ -7,7 +7,53 @@ description: Provides sandbox tools for safely running code, scripts, and shell 
 
 **Always run code and shell commands in the sandbox, never directly on the host.** Each session runs in a gVisor/Kata/Firecracker-isolated pod with kernel-level egress enforcement — mistakes can't damage the host, and network access is restricted to an explicit allowlist.
 
-## Tool reference
+## MCP transport modes
+
+`k8e sandbox-mcp` supports two transports. The agent config is set automatically by `k8e sandbox-install-skill`.
+
+| Mode | How to start | When to use |
+|---|---|---|
+| **stdio** (default) | `k8e sandbox-mcp` | kiro / claude desktop — agent manages the process |
+| **HTTP/SSE** | `k8e sandbox-mcp --http --http-addr :8811` | shared server, multiple agents, lowest latency |
+
+### HTTP/SSE mode
+
+One server process serves all agent connections — no per-request spawn, no initialize handshake per call.
+
+```
+GET  /mcp   → open SSE stream (long-lived, server → agent push)
+POST /mcp   → send JSON-RPC request, response in HTTP body + SSE push
+              header: Mcp-Session-Id: <token>   ← ties POST to SSE stream
+```
+
+**Start the server:**
+```bash
+k8e sandbox-mcp --http --http-addr :8811
+```
+
+**Agent config (manual):**
+```json
+{
+  "mcpServers": {
+    "k8e-sandbox": { "url": "http://127.0.0.1:8811/mcp" }
+  }
+}
+```
+
+**Auto-install with SSE:**
+```bash
+K8E_SANDBOX_MCP_ADDR=:8811 k8e sandbox-install-skill all
+# writes "url" instead of "command" into agent configs
+```
+
+**SSE session lifecycle:**
+1. Agent opens `GET /mcp` → receives `event: session\ndata: <token>` as first event
+2. Agent sends `POST /mcp` with `Mcp-Session-Id: <token>` header
+3. Response arrives in HTTP body; also pushed over the SSE stream
+4. Server sends `: ping` every 15s to keep the connection alive
+5. On disconnect, the SSE session is cleaned up automatically
+
+
 
 | Situation | Tool |
 |---|---|
