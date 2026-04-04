@@ -15,6 +15,7 @@ import (
 	kubefake "k8s.io/client-go/kubernetes/fake"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
+	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 )
 
 const (
@@ -50,6 +51,30 @@ func newTestOrchestrator() *Orchestrator {
 	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
 	k8s := kubefake.NewSimpleClientset()
 	return NewOrchestrator(k8s, dyn)
+}
+
+// mustCreateSession creates a session and fails the test on error.
+func mustCreateSession(t *testing.T, o *Orchestrator, id string) *sandboxv1.SandboxSession {
+	t.Helper()
+	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{SessionId: id})
+	if err != nil {
+		t.Fatalf(msgCreate, err)
+	}
+	return sess
+}
+
+// setSessionExpiry backdates or future-dates a session's expiresAt via UpdateStatus.
+func setSessionExpiry(t *testing.T, o *Orchestrator, sessName, expiresAt string) {
+	t.Helper()
+	ctx := context.Background()
+	u, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get session for expiry update: %v", err)
+	}
+	st := u.Object["status"].(map[string]interface{})
+	st["expiresAt"] = expiresAt
+	st["phase"] = "Active"
+	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
 func TestCreateSession_GeneratesID(t *testing.T) {
@@ -163,14 +188,10 @@ func TestCreateSession_ExpiresAt_NoTTL(t *testing.T) {
 
 func TestCreateSession_CreatesPVC(t *testing.T) {
 	o := newTestOrchestrator()
-	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{SessionId: "pvc-test"})
-	if err != nil {
-		t.Fatalf(msgUnexpected, err)
-	}
+	sess := mustCreateSession(t, o, "pvc-test")
 	if sess.Status.WorkspacePVC == "" {
 		t.Fatal("expected WorkspacePVC to be set")
 	}
-	// verify PVC exists in fake k8s
 	pvc, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(context.Background(), sess.Status.WorkspacePVC, metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("PVC not found: %v", err)
@@ -183,28 +204,19 @@ func TestCreateSession_CreatesPVC(t *testing.T) {
 func TestDestroySession_DeletesPodAndPVC(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()
-
-	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "destroy-test"})
-	if err != nil {
-		t.Fatalf(msgCreate, err)
-	}
-	podName := sess.Status.PodName
-	pvcName := sess.Status.WorkspacePVC
+	sess := mustCreateSession(t, o, "destroy-test")
+	podName, pvcName := sess.Status.PodName, sess.Status.WorkspacePVC
 
 	if err := o.DestroySession(ctx, "destroy-test"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
-	// pod should be gone
 	if podName != "" {
-		_, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
-		if err == nil {
+		if _, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{}); err == nil {
 			t.Error("expected pod to be deleted")
 		}
 	}
-	// PVC should be gone
 	if pvcName != "" {
-		_, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{})
-		if err == nil {
+		if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{}); err == nil {
 			t.Error("expected PVC to be deleted")
 		}
 	}
@@ -213,23 +225,16 @@ func TestDestroySession_DeletesPodAndPVC(t *testing.T) {
 func TestDestroySession_DeletesCNP(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()
+	mustCreateSession(t, o, "cnp-test")
 
-	_, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "cnp-test"})
-	if err != nil {
-		t.Fatalf(msgCreate, err)
-	}
-	// CNP should exist
 	cnpName := "sandbox-session-cnp-test"
-	_, err = o.dynamic.Resource(cnpGVR).Namespace(sandboxNS).Get(ctx, cnpName, metav1.GetOptions{})
-	if err != nil {
+	if _, err := o.dynamic.Resource(cnpGVR).Namespace(sandboxNS).Get(ctx, cnpName, metav1.GetOptions{}); err != nil {
 		t.Fatalf("CNP not found after create: %v", err)
 	}
-
 	if err := o.DestroySession(ctx, "cnp-test"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
-	_, err = o.dynamic.Resource(cnpGVR).Namespace(sandboxNS).Get(ctx, cnpName, metav1.GetOptions{})
-	if err == nil {
+	if _, err := o.dynamic.Resource(cnpGVR).Namespace(sandboxNS).Get(ctx, cnpName, metav1.GetOptions{}); err == nil {
 		t.Error("expected CNP to be deleted after destroy")
 	}
 }
@@ -329,18 +334,8 @@ func TestConfirmAction_RegisterAndApprove(t *testing.T) {
 func TestGCExpiredSessions_DestroysExpired(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()
-
-	// create a session then manually set ExpiresAt to the past
-	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "gc-expired"})
-	if err != nil {
-		t.Fatalf(msgCreate, err)
-	}
-	// backdate ExpiresAt
-	u, _ := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sess.Name, metav1.GetOptions{})
-	status := u.Object["status"].(map[string]interface{})
-	status["expiresAt"] = "2000-01-01T00:00:00Z"
-	status["phase"] = "Active"
-	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}) //nolint:errcheck
+	sess := mustCreateSession(t, o, "gc-expired")
+	setSessionExpiry(t, o, sess.Name, "2000-01-01T00:00:00Z")
 
 	sessions, _ := o.ListActiveSessions(ctx, sandboxNS)
 	destroyed := 0
@@ -353,9 +348,7 @@ func TestGCExpiredSessions_DestroysExpired(t *testing.T) {
 	if destroyed != 1 {
 		t.Fatalf("expected 1 session destroyed, got %d", destroyed)
 	}
-	// session should be gone
-	_, err = o.getSession(ctx, "gc-expired")
-	if err == nil {
+	if _, err := o.getSession(ctx, "gc-expired"); err == nil {
 		t.Fatal("expected session to be deleted")
 	}
 }
@@ -363,17 +356,8 @@ func TestGCExpiredSessions_DestroysExpired(t *testing.T) {
 func TestGCExpiredSessions_KeepsNonExpired(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()
-
-	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "gc-keep"})
-	if err != nil {
-		t.Fatalf(msgCreate, err)
-	}
-	// set ExpiresAt to the future
-	u, _ := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sess.Name, metav1.GetOptions{})
-	status := u.Object["status"].(map[string]interface{})
-	status["expiresAt"] = "2099-01-01T00:00:00Z"
-	status["phase"] = "Active"
-	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}) //nolint:errcheck
+	sess := mustCreateSession(t, o, "gc-keep")
+	setSessionExpiry(t, o, sess.Name, "2099-01-01T00:00:00Z")
 
 	sessions, _ := o.ListActiveSessions(ctx, sandboxNS)
 	for _, s := range sessions {
@@ -381,7 +365,6 @@ func TestGCExpiredSessions_KeepsNonExpired(t *testing.T) {
 			t.Fatal("should not destroy future-expiry session")
 		}
 	}
-	// session should still exist
 	if _, err := o.getSession(ctx, "gc-keep"); err != nil {
 		t.Fatalf("session should still exist: %v", err)
 	}
