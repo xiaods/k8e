@@ -22,15 +22,15 @@ var mcpEntry = map[string]any{
 }
 
 // readSkillContent reads SKILL.md from the filesystem.
-// Search order: dataDir/sandbox-skills/ (staged by k8e server), binary dir, working dir (dev).
+// Search order: dataDir/skills/ (staged by k8e server), binary dir, working dir (dev).
 func readSkillContent() ([]byte, error) {
 	candidates := []string{
-		filepath.Join("sandbox-skills", skillDirName, skillFileName), // working dir (dev)
+		filepath.Join("skills", skillDirName, skillFileName), // working dir (dev)
 	}
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		candidates = append(candidates,
-			filepath.Join(dir, "sandbox-skills", skillDirName, skillFileName),
+			filepath.Join(dir, "skills", skillDirName, skillFileName),
 			filepath.Join(dir, skillFileName),
 		)
 	}
@@ -39,7 +39,7 @@ func readSkillContent() ([]byte, error) {
 			return data, nil
 		}
 	}
-	return nil, fmt.Errorf("SKILL.md not found; run 'k8e server' first or place sandbox-skills/ in working directory")
+	return nil, fmt.Errorf("SKILL.md not found; run 'k8e server' first or place skills/ in working directory")
 }
 
 // InstallSkill writes the k8e-sandbox MCP server entry and SKILL.md into the given agent's config.

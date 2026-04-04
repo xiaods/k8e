@@ -257,7 +257,7 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 			logrus.Warnf("sandbox matrix: %v", err)
 		}
 		if err := sandboxmcp.StageSkills(config.ControlConfig.DataDir); err != nil {
-			logrus.Warnf("sandbox-skills stage: %v", err)
+			logrus.Warnf("skills stage: %v", err)
 		}
 	}
 
