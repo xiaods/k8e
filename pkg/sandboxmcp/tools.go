@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
@@ -22,8 +23,10 @@ const (
 	descTimeout   = "Timeout in seconds (default 30)"
 )
 
-// sentinel values shared with server.go
-var createReqDefault = pb.CreateSessionRequest{RuntimeClass: "gvisor"}
+// newCreateReq constructs a CreateSessionRequest without copying the proto value (avoids Mutex copy).
+func newCreateReq(tenantID string) *pb.CreateSessionRequest {
+	return &pb.CreateSessionRequest{RuntimeClass: "gvisor", TenantId: tenantID}
+}
 
 func destroyReq(id string) *pb.DestroySessionRequest {
 	return &pb.DestroySessionRequest{SessionId: id}
@@ -48,16 +51,41 @@ var allTools = []Tool{
 				return "", err
 			}
 			cmd := buildCommand(str(args, "code"), str(args, "language"))
-			resp, err := s.client.SandboxServiceClient.Exec(ctx, &pb.ExecRequest{
+			execReq := &pb.ExecRequest{
 				SessionId: sid,
 				Command:   cmd,
 				Timeout:   int32val(args, "timeout", 30),
 				Workdir:   "/workspace",
-			})
-			if err != nil {
-				return "", err
 			}
-			return formatExecResult(resp.Stdout, resp.Stderr, resp.ExitCode), nil
+			resp, err := s.client.SandboxServiceClient.Exec(ctx, execReq)
+			if err != nil {
+				// session expired or destroyed — clear and retry once
+				if containsStr(err.Error(), "not found") || containsStr(err.Error(), "no pod IP") {
+					s.mu.Lock()
+					s.defaultSessID = ""
+					s.mu.Unlock()
+					if sid, err = s.defaultSession(ctx); err != nil {
+						return "", err
+					}
+					execReq.SessionId = sid
+					// pod may still be starting — retry with backoff
+					for i := 0; i < 12; i++ {
+						resp, err = s.client.SandboxServiceClient.Exec(ctx, execReq)
+						if err == nil || !containsStr(err.Error(), "no pod IP") {
+							break
+						}
+						select {
+						case <-ctx.Done():
+							return "", ctx.Err()
+						case <-waitTick():
+						}
+					}
+				}
+				if err != nil {
+					return "", err
+				}
+			}
+			return formatExecResult(resp.Stdout, resp.Stderr, resp.ExitCode, sid), nil
 		},
 	},
 	{
@@ -65,27 +93,17 @@ var allTools = []Tool{
 		Description: "Check whether the K8E sandbox service is available and return the active session ID if one exists.",
 		InputSchema: schema(props{}, nil),
 		Handler: func(ctx context.Context, s *Server, args map[string]any) (string, error) {
-			// probe by attempting a lightweight CreateSession with a dry-run session id
-			_, err := s.client.SandboxServiceClient.CreateSession(ctx, &pb.CreateSessionRequest{
-				SessionId:    "healthcheck-probe",
-				RuntimeClass: "gvisor",
-			})
-			// destroy probe session regardless of error (best-effort)
-			s.client.SandboxServiceClient.DestroySession(ctx, destroyReq("healthcheck-probe")) //nolint:errcheck
+			// lightweight probe: DestroySession with a nonexistent ID
+			// "not found" means the service is up; connection errors mean it's down
+			_, err := s.client.SandboxServiceClient.DestroySession(ctx, &pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
+			available := err == nil || containsStr(err.Error(), "not found")
 
 			s.mu.Lock()
 			sid := s.defaultSessID
 			s.mu.Unlock()
 
-			if err != nil {
-				return jsonStr(map[string]any{
-					"available":  false,
-					"session_id": sid,
-					"error":      friendlyError(err),
-				}), nil
-			}
 			return jsonStr(map[string]any{
-				"available":  true,
+				"available":  available,
 				"session_id": sid,
 			}), nil
 		},
@@ -178,7 +196,10 @@ var allTools = []Tool{
 			for {
 				chunk, err := stream.Recv()
 				if err != nil {
-					break
+					if err.Error() == "EOF" || containsStr(err.Error(), "EOF") {
+						break
+					}
+					return sb.String(), fmt.Errorf("stream error: %w", err)
 				}
 				sb.WriteString(chunk.Chunk)
 			}
@@ -287,11 +308,11 @@ var allTools = []Tool{
 	},
 	{
 		Name:        "sandbox_confirm_action",
-		Description: "Gate an irreversible action on user approval. Omit approval_id to register; provide it to poll result.",
+		Description: "Gate an irreversible action on user approval. First call: provide session_id + action to register (returns approval_id). Second call: provide approval_id to poll for result.",
 		InputSchema: schema(props{
 			"session_id":  {"type": "string", "description": descSessionID},
-			"action":      {"type": "string", "description": "Description of the action requiring approval"},
-			"approval_id": {"type": "string", "description": "Approval ID from a previous call (to poll)"},
+			"action":      {"type": "string", "description": "Description of the action requiring approval (first call only)"},
+			"approval_id": {"type": "string", "description": "Approval ID returned by first call (poll call only)"},
 		}, []string{"session_id"}),
 		Handler: func(ctx context.Context, s *Server, args map[string]any) (string, error) {
 			resp, err := s.client.SandboxServiceClient.ConfirmAction(ctx, &pb.ConfirmActionRequest{
@@ -307,24 +328,43 @@ var allTools = []Tool{
 	},
 }
 
+// waitTick returns a channel that fires after 5 seconds (pod startup backoff).
+func waitTick() <-chan time.Time { return time.After(5 * time.Second) }
+
 // buildCommand wraps code in the appropriate interpreter based on language hint.
+// Multi-line code is written to a temp file and executed to avoid shell quoting issues.
+// Code longer than 4KB is always written to a file to avoid ARG_MAX limits.
 func buildCommand(code, lang string) string {
+	multiline := strings.Contains(code, "\n") || len(code) > 4096
 	switch strings.ToLower(lang) {
 	case "python", "python3", "py":
+		if multiline {
+			escaped := strings.ReplaceAll(code, "'", "'\\''")
+			return fmt.Sprintf("printf '%%s' '%s' > /tmp/_k8e_run.py && python3 /tmp/_k8e_run.py", escaped)
+		}
 		return fmt.Sprintf("python3 -c %q", code)
 	case "node", "nodejs", "js", "javascript":
+		if multiline {
+			escaped := strings.ReplaceAll(code, "'", "'\\''")
+			return fmt.Sprintf("printf '%%s' '%s' > /tmp/_k8e_run.js && node /tmp/_k8e_run.js", escaped)
+		}
 		return fmt.Sprintf("node -e %q", code)
-	default:
-		return code // bash / sh
+	default: // bash / sh
+		if multiline {
+			escaped := strings.ReplaceAll(code, "'", "'\\''")
+			return fmt.Sprintf("printf '%%s' '%s' | bash", escaped)
+		}
+		return code
 	}
 }
 
-// formatExecResult returns a human-readable execution result.
-func formatExecResult(stdout, stderr string, exitCode int32) string {
+// formatExecResult returns a human-readable execution result, always including session_id.
+func formatExecResult(stdout, stderr string, exitCode int32, sessionID string) string {
 	if exitCode == 0 && stderr == "" {
-		return stdout
+		// clean success: return stdout + session_id for follow-up tool calls
+		return jsonStr(map[string]any{"stdout": stdout, "exit_code": 0, "session_id": sessionID})
 	}
-	return jsonStr(map[string]any{"stdout": stdout, "stderr": stderr, "exit_code": exitCode})
+	return jsonStr(map[string]any{"stdout": stdout, "stderr": stderr, "exit_code": exitCode, "session_id": sessionID})
 }
 
 type props = map[string]map[string]any

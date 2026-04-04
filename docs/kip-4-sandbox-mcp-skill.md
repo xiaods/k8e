@@ -116,6 +116,76 @@ pkg/cli/cmds/
 cmd/k8e/main.go  — register sandbox-mcp subcommand
 ```
 
+### Session 复用机制
+
+MCP server 进程与 sandbox pod 的生命周期默认绑定：进程退出时 `defer` 销毁 session。但在实际使用中，agent 频繁重启（IDE 重载、网络断开）会导致 pod 反复冷启动，`/workspace` 文件丢失。复用机制分三层：
+
+#### 层 1：进程内复用（已实现）
+
+`defaultSession()` 在整个 MCP server 进程生命周期内只创建一次 session，同一进程内所有 `sandbox_run` 调用共享同一个 pod。
+
+#### 层 2：跨进程复用（tenant 级）
+
+通过 `tenant_id` 实现跨进程 session 持久化。MCP server 启动时，先查询是否存在该 tenant 的 Active session，有则直接接管，不创建新 pod，`/workspace` 文件保留。
+
+`tenant_id` 当前无默认值（proto3 空字符串，CRD `omitempty` 不写入）。跨进程复用需显式设置 `K8E_SANDBOX_TENANT`，否则每次启动均新建 session。
+
+```
+MCP server 启动
+    │
+    ├── 读取 tenant_id（K8E_SANDBOX_TENANT env，默认为空）
+    ├── tenant_id 非空 → 查询 SandboxSession CRD: phase=Active, tenantID=<tenant>
+    │       有 → defaultSessID = 已有 session（复用 pod，/workspace 保留）
+    └── 没有 / tenant_id 为空 → CreateSession（新建）
+```
+
+配置方式（在 agent MCP config 中传入 env）：
+
+```json
+{
+  "mcpServers": {
+    "k8e-sandbox": {
+      "command": "k8e",
+      "args": ["sandbox-mcp"],
+      "env": { "K8E_SANDBOX_TENANT": "my-project" }
+    }
+  }
+}
+```
+
+#### 层 3：session 失效自动重建
+
+当 TTL GC（见 KIP-3 Task TTL GC）销毁了 session 后，下次 `sandbox_run` 的 `Exec` 调用会返回 `session not found`。MCP server 自动清空 `defaultSessID` 并重建，对 agent 透明：
+
+```
+sandbox_run 调用
+    │
+    ├── Exec(defaultSessID) → 成功 → 返回结果
+    └── Exec(defaultSessID) → session not found
+            │
+            ├── 清空 defaultSessID
+            ├── defaultSession() → CreateSession（新建）
+            └── Exec(newSessID) → 返回结果（重试一次）
+```
+
+#### 复用策略汇总
+
+| 场景 | 行为 | /workspace |
+|---|---|---|
+| 同一进程内多次 `sandbox_run` | 复用（层 1，已实现） | 保留 |
+| agent 重启，设置了 `K8E_SANDBOX_TENANT` | 复用（层 2） | 保留 |
+| agent 重启，未设置 tenant | 新建 session | 清空 |
+| session 被 TTL GC 销毁 | 自动重建（层 3） | 清空 |
+| 不同 tenant_id | 不复用 | 隔离 |
+
+#### 涉及改动
+
+| 文件 | 改动 |
+|---|---|
+| `pkg/sandboxmcp/client.go` | 新增 `FindActiveSession(ctx, tenantID) (string, error)`，直接查 `SandboxSession` CRD（kubeconfig 路径复用 auto-discovery 逻辑） |
+| `pkg/sandboxmcp/server.go` | `defaultSession()` 启动时先调 `FindActiveSession`；`sandbox_run` handler 捕获 `session not found` 后清空重建 |
+| `pkg/cli/cmds/sandbox_mcp.go` | 新增 `--tenant-id` / `K8E_SANDBOX_TENANT` flag（默认空字符串），传入 `Server` |
+
 ### MCP Server State Machine
 
 ```
@@ -214,6 +284,23 @@ Implement `Server.Run(ctx)` that:
 
 **Demo:** `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{...}}' | k8e sandbox-mcp` returns valid MCP capabilities JSON.
 
+### Task 2b — Session 复用与自动重建
+
+在 `pkg/sandboxmcp/client.go` 实现 `FindActiveSession(ctx, tenantID string) (string, error)`：
+- 通过 kubeconfig（复用 auto-discovery 路径）构建 dynamic client
+- List `SandboxSession` CRD，过滤 `spec.tenantID == tenantID && status.phase == Active`
+- 返回第一个匹配的 session ID，无匹配返回 `"", nil`
+
+在 `pkg/sandboxmcp/server.go` 更新 `defaultSession()`：
+- 若 `tenantID` 非空，先调 `FindActiveSession`，找到则直接复用
+- `sandbox_run` handler 在 `Exec` 返回 `session not found` 时，清空 `defaultSessID` 并重试一次
+
+在 `pkg/cli/cmds/sandbox_mcp.go` 新增 `--tenant-id` / `K8E_SANDBOX_TENANT` flag（默认空字符串），传入 `Server`。
+
+**Test:** 单元测试：mock `FindActiveSession` 返回已有 session ID → `defaultSession` 不调用 `CreateSession`。
+
+**Demo:** 设置 `K8E_SANDBOX_TENANT=my-project`，重启 `k8e sandbox-mcp`，`sandbox_run` 复用同一 pod，`/workspace` 文件保留。
+
 ### Task 3 — 10 MCP Tool Definitions (`pkg/sandboxmcp/tools.go`)
 
 Implement `AllTools() []Tool` and per-tool handler functions. Each handler: unmarshal args → call gRPC → marshal result to MCP content text.
@@ -288,4 +375,4 @@ Agent                  k8e sandbox-mcp          sandbox-grpc-gateway
 1. Should `sandbox_exec_stream` accumulate chunks or use SSE transport?
    (Recommendation: accumulate chunks, return as single text block for stdio transport)
 2. Should the MCP server auto-create a default session if `session_id` is omitted on `sandbox_exec`?
-   (Recommendation: yes, with auto-cleanup on server exit via defer)
+   (Resolved: yes — `sandbox_run` uses `defaultSession()` for lazy creation and auto-cleanup on exit via defer. Cross-process reuse is opt-in via `K8E_SANDBOX_TENANT`. See [Session 复用机制](#session-复用机制).)

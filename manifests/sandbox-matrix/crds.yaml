@@ -89,6 +89,8 @@ spec:
               podName: {type: string}
               podIP: {type: string}
               workspacePVC: {type: string}
+              createdAt: {type: string, format: date-time}
+              expiresAt: {type: string, format: date-time}
     subresources:
       status: {}
     additionalPrinterColumns:
