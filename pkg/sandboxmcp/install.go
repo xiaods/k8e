@@ -11,7 +11,6 @@ import (
 const (
 	mcpServerName = "k8e-sandbox"
 	settingsFile  = "settings.json"
-	skillDirName  = "k8e-sandbox-skill"
 	skillFileName = "SKILL.md"
 )
 
@@ -21,28 +20,24 @@ var mcpEntry = map[string]any{
 	"args":    []string{"sandbox-mcp"},
 }
 
-// readSkillContent reads SKILL.md from the filesystem.
-// Search order: dataDir/skills/ (staged by k8e server), binary dir, working dir (dev).
-func readSkillContent() ([]byte, error) {
+// skillsDataDir returns the staged skills directory.
+// Search order: dataDir/skills/ (production), binary dir/skills/, working dir/skills/ (dev).
+func skillsDataDir() (string, error) {
 	candidates := []string{
-		filepath.Join("skills", skillDirName, skillFileName), // working dir (dev)
+		filepath.Join("skills"), // working dir (dev/go run)
 	}
 	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(dir, "skills", skillDirName, skillFileName),
-			filepath.Join(dir, skillFileName),
-		)
+		candidates = append([]string{filepath.Join(filepath.Dir(exe), "skills")}, candidates...)
 	}
-	for _, path := range candidates {
-		if data, err := os.ReadFile(path); err == nil {
-			return data, nil
+	for _, dir := range candidates {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir, nil
 		}
 	}
-	return nil, fmt.Errorf("SKILL.md not found; run 'k8e server' first or place skills/ in working directory")
+	return "", fmt.Errorf("skills/ directory not found; run 'k8e server' first")
 }
 
-// InstallSkill writes the k8e-sandbox MCP server entry and SKILL.md into the given agent's config.
+// InstallSkill installs MCP config and all skills from dataDir/skills/ into the given agent.
 // target: "claude", "kiro", "gemini", or "all"
 func InstallSkill(target string) error {
 	switch target {
@@ -69,11 +64,10 @@ func InstallSkill(target string) error {
 }
 
 func installClaude() error {
-	path := filepath.Join(homeDir(), ".claude.json")
-	if err := mergeJSON(path, []string{"mcpServers", mcpServerName}, mcpEntry, "claude code"); err != nil {
+	if err := mergeJSON(filepath.Join(homeDir(), ".claude.json"), []string{"mcpServers", mcpServerName}, mcpEntry, "claude code"); err != nil {
 		return err
 	}
-	return installSkillDoc(filepath.Join(homeDir(), ".claude", "skills", skillDirName, skillFileName), "claude code")
+	return installAllSkills(filepath.Join(homeDir(), ".claude", "skills"), "claude code")
 }
 
 func installKiro() error {
@@ -82,40 +76,58 @@ func installKiro() error {
 		if err := mergeJSON(local, []string{"mcpServers", mcpServerName}, mcpEntry, "kiro-cli (workspace)"); err != nil {
 			return err
 		}
-		return installSkillDoc(filepath.Join(".kiro", "skills", skillDirName, skillFileName), "kiro-cli (workspace)")
+		return installAllSkills(filepath.Join(".kiro", "skills"), "kiro-cli (workspace)")
 	}
-	global := filepath.Join(homeDir(), ".kiro", settingsFile)
-	if err := mergeJSON(global, []string{"mcpServers", mcpServerName}, mcpEntry, "kiro-cli (global)"); err != nil {
+	if err := mergeJSON(filepath.Join(homeDir(), ".kiro", settingsFile), []string{"mcpServers", mcpServerName}, mcpEntry, "kiro-cli (global)"); err != nil {
 		return err
 	}
-	return installSkillDoc(filepath.Join(homeDir(), ".kiro", "skills", skillDirName, skillFileName), "kiro-cli (global)")
+	return installAllSkills(filepath.Join(homeDir(), ".kiro", "skills"), "kiro-cli (global)")
 }
 
 func installGemini() error {
-	path := filepath.Join(homeDir(), ".gemini", settingsFile)
-	if err := mergeJSON(path, []string{"mcpServers", mcpServerName}, mcpEntry, "gemini cli"); err != nil {
+	if err := mergeJSON(filepath.Join(homeDir(), ".gemini", settingsFile), []string{"mcpServers", mcpServerName}, mcpEntry, "gemini cli"); err != nil {
 		return err
 	}
-	return installSkillDoc(filepath.Join(homeDir(), ".gemini", "skills", skillDirName, skillFileName), "gemini cli")
+	return installAllSkills(filepath.Join(homeDir(), ".gemini", "skills"), "gemini cli")
 }
 
-// installSkillDoc copies SKILL.md to path if not already present. Idempotent.
-func installSkillDoc(path, label string) error {
-	if _, err := os.Stat(path); err == nil {
-		fmt.Printf("✓ %s: skill doc already exists → %s\n", label, path)
-		return nil
-	}
-	content, err := readSkillContent()
+// installAllSkills copies every skill directory from dataDir/skills/ into agentSkillsDir.
+// Each skill must contain a SKILL.md. Idempotent.
+func installAllSkills(agentSkillsDir, label string) error {
+	src, err := skillsDataDir()
 	if err != nil {
 		return fmt.Errorf("%s: %w", label, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("%s: mkdir %s: %w", label, filepath.Dir(path), err)
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return fmt.Errorf("%s: read skills dir: %w", label, err)
 	}
-	if err := os.WriteFile(path, content, 0644); err != nil {
-		return fmt.Errorf("%s: write skill doc %s: %w", label, path, err)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		skillName := entry.Name()
+		skillMD := filepath.Join(src, skillName, skillFileName)
+		if _, err := os.Stat(skillMD); err != nil {
+			continue // skip dirs without SKILL.md
+		}
+		dest := filepath.Join(agentSkillsDir, skillName, skillFileName)
+		if _, err := os.Stat(dest); err == nil {
+			fmt.Printf("✓ %s: skill %s already exists\n", label, skillName)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			return fmt.Errorf("%s: mkdir %s: %w", label, filepath.Dir(dest), err)
+		}
+		data, err := os.ReadFile(skillMD)
+		if err != nil {
+			return fmt.Errorf("%s: read %s: %w", label, skillMD, err)
+		}
+		if err := os.WriteFile(dest, data, 0644); err != nil {
+			return fmt.Errorf("%s: write %s: %w", label, dest, err)
+		}
+		fmt.Printf("✓ %s: skill %s installed → %s\n", label, skillName, dest)
 	}
-	fmt.Printf("✓ %s: skill doc installed → %s\n", label, path)
 	return nil
 }
 
