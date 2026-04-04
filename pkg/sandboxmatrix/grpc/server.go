@@ -268,9 +268,9 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 			LabelSelector: labelSessionID + "=" + sessionID,
 		})
 		if err == nil {
-			for _, pod := range pods.Items {
-				if pod.Status.PodIP != "" {
-					return pod.Status.PodIP, nil
+			for i := range pods.Items {
+				if pods.Items[i].Status.PodIP != "" {
+					return pods.Items[i].Status.PodIP, nil
 				}
 			}
 		}
