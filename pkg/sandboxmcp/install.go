@@ -13,7 +13,6 @@ const (
 	settingsFile  = "settings.json"
 	skillDirName  = "k8e-sandbox-skill"
 	skillFileName = "SKILL.md"
-	toolExec      = "`sandbox_exec`"
 )
 
 // mcpEntry is the JSON snippet added to agent config files.
@@ -22,54 +21,20 @@ var mcpEntry = map[string]any{
 	"args":    []string{"sandbox-mcp"},
 }
 
-// skillContent is the SKILL.md content embedded into agent steering directories.
-// Agents read this to understand when and how to use the sandbox tools.
-const skillContent = `# K8E Sandbox Skill
-
-**Always use the sandbox to run code, scripts, or shell commands** instead of executing directly on the host.
-
-## How to Run Code
-
-Use ` + "`sandbox_run`" + ` for all code execution — session is created and reused automatically:
-
-` + "```" + `
-tool: sandbox_run
-args: { "code": "<your code>", "language": "python|bash|node" }
-` + "```" + `
-
-## Common Patterns
-
-**Install packages then run:**
-1. ` + "`sandbox_pip_install`" + ` — install packages into the session
-2. ` + toolExec + ` — run commands in the same session
-
-**Write and execute a file:**
-1. ` + "`sandbox_write_file`" + ` — write to ` + "`/workspace/<file>`" + `
-2. ` + toolExec + ` — run it
-
-**Before irreversible actions** (delete, send, deploy):
-` + "```" + `
-tool: sandbox_confirm_action
-args: { "session_id": "<id>", "action": "describe what you are about to do" }
-` + "```" + `
-
-## All Available Tools
-
-| Tool | When to use |
-|---|---|
-| ` + "`sandbox_run`" + ` | ✅ Default — run any code or command |
-| ` + "`sandbox_status`" + ` | Check if sandbox service is reachable |
-| ` + "`sandbox_write_file`" + ` | Write a file to ` + "`/workspace`" + ` |
-| ` + "`sandbox_read_file`" + ` | Read a file from ` + "`/workspace`" + ` |
-| ` + "`sandbox_list_files`" + ` | List recently changed files |
-| ` + "`sandbox_pip_install`" + ` | Install Python packages |
-| ` + toolExec + ` | Run command in an explicit session |
-| ` + "`sandbox_exec_stream`" + ` | Run command with streaming output |
-| ` + "`sandbox_create_session`" + ` | Create session with custom options (runtime, egress) |
-| ` + "`sandbox_destroy_session`" + ` | Explicitly destroy a session |
-| ` + "`sandbox_run_subagent`" + ` | Spawn a child sandbox for parallel tasks (depth ≤ 1) |
-| ` + "`sandbox_confirm_action`" + ` | Require human approval before irreversible operations |
-`
+// readSkillContent reads SKILL.md from the filesystem.
+// Search order: next to the k8e binary (production), then working directory (dev/go run).
+func readSkillContent() ([]byte, error) {
+	candidates := []string{skillFileName} // working directory first (dev)
+	if exe, err := os.Executable(); err == nil {
+		candidates = append([]string{filepath.Join(filepath.Dir(exe), skillFileName)}, candidates...)
+	}
+	for _, path := range candidates {
+		if data, err := os.ReadFile(path); err == nil {
+			return data, nil
+		}
+	}
+	return nil, fmt.Errorf("SKILL.md not found; place it next to the k8e binary or in the working directory")
+}
 
 // InstallSkill writes the k8e-sandbox MCP server entry and SKILL.md into the given agent's config.
 // target: "claude", "kiro", "gemini", or "all"
@@ -97,7 +62,6 @@ func InstallSkill(target string) error {
 	}
 }
 
-// installClaude runs `claude mcp add` if available, otherwise writes ~/.claude.json.
 func installClaude() error {
 	path := filepath.Join(homeDir(), ".claude.json")
 	if err := mergeJSON(path, []string{"mcpServers", mcpServerName}, mcpEntry, "claude code"); err != nil {
@@ -112,7 +76,6 @@ func installKiro() error {
 		if err := mergeJSON(local, []string{"mcpServers", mcpServerName}, mcpEntry, "kiro-cli (workspace)"); err != nil {
 			return err
 		}
-		// skill goes to workspace .kiro/skills/ so it's project-scoped
 		return installSkillDoc(filepath.Join(".kiro", "skills", skillDirName, skillFileName), "kiro-cli (workspace)")
 	}
 	global := filepath.Join(homeDir(), ".kiro", settingsFile)
@@ -130,16 +93,20 @@ func installGemini() error {
 	return installSkillDoc(filepath.Join(homeDir(), ".gemini", "skills", skillDirName, skillFileName), "gemini cli")
 }
 
-// installSkillDoc writes SKILL.md to path if not already present. Idempotent.
+// installSkillDoc copies SKILL.md to path if not already present. Idempotent.
 func installSkillDoc(path, label string) error {
 	if _, err := os.Stat(path); err == nil {
 		fmt.Printf("✓ %s: skill doc already exists → %s\n", label, path)
 		return nil
 	}
+	content, err := readSkillContent()
+	if err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("%s: mkdir %s: %w", label, filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, []byte(skillContent), 0644); err != nil {
+	if err := os.WriteFile(path, content, 0644); err != nil {
 		return fmt.Errorf("%s: write skill doc %s: %w", label, path, err)
 	}
 	fmt.Printf("✓ %s: skill doc installed → %s\n", label, path)
@@ -148,14 +115,13 @@ func installSkillDoc(path, label string) error {
 
 // mergeJSON reads path (creating if absent), sets obj[keys[0]][keys[1]] = value, writes back.
 func mergeJSON(path string, keys []string, value any, label string) error {
-	os.MkdirAll(filepath.Dir(path), 0755)
+	os.MkdirAll(filepath.Dir(path), 0755) //nolint:errcheck
 
 	root := map[string]any{}
 	if data, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(data, &root) //nolint:errcheck — best effort, start fresh on corrupt
+		json.Unmarshal(data, &root) //nolint:errcheck
 	}
 
-	// navigate/create nested key
 	parent := root
 	for _, k := range keys[:len(keys)-1] {
 		if _, ok := parent[k]; !ok {
