@@ -41,8 +41,10 @@ curl -sfL https://k8e.sh/install.sh | sh -
 | 4 | [🚀 Quick Start](#-quick-start) |
 | 5 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup) |
 | 6 | [🤖 Sandbox MCP Skill](#-sandbox-mcp-skill) |
-| 7 | [🖥️ Advanced Installation](#️-advanced-installation) |
-| 8 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
+| 7 | [🐍 Python Client SDK](#-python-client-sdk) |
+| 8 | [🟦 TypeScript Client SDK](#-typescript-client-sdk) |
+| 9 | [🖥️ Advanced Installation](#️-advanced-installation) |
+| 9 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
 | 9 | [🤝 Contributing](#-contributing) |
 | 10 | [🙏 Acknowledgments](#-acknowledgments) |
 
@@ -330,6 +332,152 @@ Auto-discovery probe order:
 3. `/var/lib/k8e/server/tls/serving-kube-apiserver.crt` (server node, root)
 4. `/etc/k8e/k8e.yaml` kubeconfig CA (agent node / non-root)
 5. `127.0.0.1:50051` with system CA pool
+
+---
+
+## 🐍 Python Client SDK
+
+The Python SDK talks directly to the sandbox gRPC gateway — no MCP process spawn, no stdio handshake (~1–5 ms vs ~500 ms for MCP stdio).
+
+### Install
+
+```bash
+python3 -m pip install grpcio grpcio-tools protobuf
+```
+
+### Generate gRPC Stubs (once)
+
+```bash
+python3 -m grpc_tools.protoc -I proto \
+  --python_out=sdk/python \
+  --grpc_python_out=sdk/python \
+  proto/sandbox/v1/sandbox.proto
+
+# make the generated package importable
+touch sdk/python/sandbox/__init__.py sdk/python/sandbox/v1/__init__.py
+```
+
+### Usage
+
+**Run code (session auto-managed):**
+
+```python
+from sandbox_client import SandboxClient
+
+with SandboxClient() as client:
+    result = client.run("print('hello')", language="python")
+    print(result.stdout)   # hello
+    print(result.exit_code)  # 0
+```
+
+**Generate 10 random numbers and compute the average:**
+
+```python
+from sandbox_client import SandboxClient
+
+code = (
+    "import random; nums = [random.randint(1,100) for _ in range(10)]; "
+    "print('numbers:', nums); print('average:', sum(nums)/len(nums))"
+)
+
+with SandboxClient() as client:
+    result = client.run(code, language="python")
+    print(result.stdout)
+# numbers: [39, 60, 50, 24, 53, 32, 85, 10, 81, 3]
+# average: 43.7
+```
+
+**Multi-step workflow (shared session):**
+
+```python
+with SandboxClient() as client:
+    client.run("pip install pandas", "bash")   # session created
+    result = client.run("python3 analyze.py", "bash")  # same session reused
+```
+
+**Explicit session with custom options:**
+
+```python
+from sandbox_client import sandbox_session
+
+with sandbox_session(runtime_class="kata", allowed_hosts=["github.com"]) as (client, sid):
+    client.write_file(sid, "/workspace/main.py", code)
+    result = client.exec(sid, "python3 /workspace/main.py")
+```
+
+> SDK source: `sdk/python/sandbox_client.py`
+
+---
+
+## 🟦 TypeScript Client SDK
+
+The TypeScript SDK talks directly to the sandbox gRPC gateway — no MCP process spawn, no stdio handshake (~1–5 ms vs ~500 ms for MCP stdio).
+
+### Install
+
+```bash
+npm install @grpc/grpc-js @grpc/proto-loader
+```
+
+### Usage
+
+**Run code (session auto-managed):**
+
+```typescript
+import { SandboxClient } from "./sandbox_client";
+
+const client = new SandboxClient();
+const result = await client.run("print('hello')", "python");
+console.log(result.stdout);   // hello
+await client.close();
+```
+
+**Generate 10 random numbers and compute the average:**
+
+```typescript
+const client = new SandboxClient();
+const code = "import random; nums=[random.randint(1,100) for _ in range(10)]; print('numbers:',nums); print('average:',sum(nums)/len(nums))";
+const result = await client.run(code, "python");
+console.log(result.stdout);
+// numbers: [39, 60, 50, 24, 53, 32, 85, 10, 81, 3]
+// average: 43.7
+await client.close();
+```
+
+**Multi-step workflow (shared session):**
+
+```typescript
+const client = new SandboxClient();
+await client.run("pip install pandas", "bash");   // session created
+const result = await client.run("python3 analyze.py", "bash");  // same session reused
+await client.close();
+```
+
+**Explicit session with custom options:**
+
+```typescript
+const sid = await client.createSession({ runtimeClass: "kata", allowedHosts: ["github.com"] });
+await client.writeFile(sid, "/workspace/main.py", code);
+const result = await client.exec(sid, "python3 /workspace/main.py");
+await client.destroySession(sid);
+```
+
+**Streaming output:**
+
+```typescript
+for await (const chunk of client.execStream(sid, "python3 train.py")) {
+  process.stdout.write(chunk);
+}
+```
+
+**One-shot helper:**
+
+```typescript
+import { sandboxRun } from "./sandbox_client";
+const { stdout } = await sandboxRun("echo hello");
+```
+
+> SDK source: `sdk/typescript/sandbox_client.ts`
 
 ---
 
