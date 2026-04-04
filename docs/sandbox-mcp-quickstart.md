@@ -83,6 +83,59 @@ The agent will use `sandbox_run` automatically — no session management needed.
 | `sandbox_run_subagent` | Spawn a child sandbox (depth ≤ 1) |
 | `sandbox_confirm_action` | Gate irreversible actions on user approval |
 
+## Python SDK Usage
+
+Direct gRPC — no MCP overhead (~1–5 ms vs ~500 ms for MCP stdio).
+
+### Install
+
+```bash
+python3 -m pip install grpcio grpcio-tools protobuf
+```
+
+### Generate stubs (once)
+
+```bash
+python3 -m grpc_tools.protoc -I proto \
+  --python_out=sdk/python \
+  --grpc_python_out=sdk/python \
+  proto/sandbox/v1/sandbox.proto
+
+touch sdk/python/sandbox/__init__.py sdk/python/sandbox/v1/__init__.py
+```
+
+### Run code
+
+```python
+from sandbox_client import SandboxClient
+
+with SandboxClient() as client:
+    result = client.run("print('hello')", language="python")
+    print(result.stdout)   # hello
+```
+
+### Multi-step workflow
+
+```python
+with SandboxClient() as client:
+    client.run("pip install pandas", "bash")
+    result = client.run("python3 analyze.py", "bash")
+```
+
+### Custom session (runtime / egress)
+
+```python
+from sandbox_client import sandbox_session
+
+with sandbox_session(runtime_class="kata", allowed_hosts=["github.com"]) as (client, sid):
+    client.write_file(sid, "/workspace/main.py", code)
+    result = client.exec(sid, "python3 /workspace/main.py")
+```
+
+> SDK source: `sdk/python/sandbox_client.py`
+
+---
+
 ## Configuration Overrides
 
 ```bash
