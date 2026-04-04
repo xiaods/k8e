@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-04-02 | Draft |
+| @xiaods | 2026-04-04 | Draft |
 
 ## Summary
 
@@ -354,6 +354,161 @@ Agent                  k8e sandbox-mcp          sandbox-grpc-gateway
   │◀─ {ok: true} ──────────── │                          │
 ```
 
+## HTTP/SSE Transport (MCP Streamable HTTP)
+
+### Motivation
+
+stdio transport requires the agent to spawn `k8e sandbox-mcp` as a child process. For agents that restart frequently (IDE reload, network drop), this means repeated process spawn + `initialize` handshake overhead (~500ms each). The HTTP/SSE transport runs one shared server process that all agent connections reuse.
+
+### Architecture
+
+```
+k8e sandbox-mcp --http --http-addr :8811
+        │
+        ├── GET  /mcp  ──▶  SSE stream (long-lived, server → agent push)
+        └── POST /mcp  ──▶  JSON-RPC request → response in HTTP body + SSE push
+                             header: Mcp-Session-Id: <token>
+```
+
+One HTTP server, one gRPC connection — shared across all agent sessions. No per-request spawn, no initialize handshake per call.
+
+### SSE Session Lifecycle
+
+```
+1. Agent opens GET /mcp
+        └── server sends: event: session\ndata: <24-hex-token>
+
+2. Agent sends POST /mcp
+        header: Mcp-Session-Id: <token>
+        body:   {"jsonrpc":"2.0","id":1,"method":"tools/call",...}
+        └── response in HTTP body (synchronous)
+            response also pushed to SSE stream (async)
+
+3. Server sends ": ping" every 15s to keep connection alive
+
+4. On disconnect: SSE session cleaned up, channel closed
+```
+
+### Package Layout (additions)
+
+```
+pkg/sandboxmcp/
+  server.go      — added SSEServer, RunSSE(), handleSSE(), handlePost()
+pkg/cli/cmds/
+  sandbox_mcp.go — added --http / --http-addr flags
+```
+
+### Configuration
+
+**Start in SSE mode:**
+```bash
+k8e sandbox-mcp --http --http-addr :8811
+```
+
+**Agent config (url-based, no process spawn):**
+```json
+{
+  "mcpServers": {
+    "k8e-sandbox": { "url": "http://127.0.0.1:8811/mcp" }
+  }
+}
+```
+
+**Auto-install with SSE:**
+```bash
+K8E_SANDBOX_MCP_ADDR=:8811 k8e sandbox-install-skill all
+```
+`install.go` detects `K8E_SANDBOX_MCP_ADDR` and writes `url` instead of `command` into agent configs.
+
+### Transport Comparison
+
+| | stdio | HTTP/SSE |
+|---|---|---|
+| Process model | one process per agent | one shared process |
+| Connection setup | spawn + initialize (~500ms) | HTTP connect (~5ms) |
+| Server push | not supported | SSE stream |
+| Multi-agent | no | yes |
+| Agent config | `command` + `args` | `url` |
+
+---
+
+## Python & TypeScript Client SDKs
+
+### Motivation
+
+Agent-generated code (Python scripts, TypeScript services) that needs to call the sandbox should not spawn `k8e sandbox-mcp` — that reintroduces the stdio overhead. The SDKs provide a direct gRPC client with long-lived connection and session reuse.
+
+```
+Agent-generated code → SDK → gRPC (long-lived) → sandbox   ~5ms/call
+vs.
+Agent-generated code → spawn k8e sandbox-mcp → gRPC        ~500ms/call
+```
+
+### Package Layout
+
+```
+sdk/
+  python/sandbox_client.py      — Python gRPC SDK
+  typescript/sandbox_client.ts  — TypeScript gRPC SDK
+```
+
+### Design Principles
+
+- `SandboxClient` holds one gRPC channel for its lifetime — create once, reuse across calls
+- `run(code, language)` is the default entry point — session lazily created and reused automatically
+- TLS auto-discovery mirrors Go client logic: `K8E_SANDBOX_CERT` env → well-known paths → system CA
+- `close()` destroys the default session (unless tenant reuse is enabled) and closes the channel
+
+### Python API
+
+```python
+from sandbox_client import SandboxClient, sandbox_session
+
+# simple usage — session auto-managed
+with SandboxClient() as client:
+    result = client.run("print(sum(range(1,101)))", language="python")
+    # result.stdout, result.stderr, result.exit_code
+
+# explicit session with custom options
+with sandbox_session(runtime_class="kata", allowed_hosts=["github.com"]) as (client, sid):
+    client.write_file(sid, "/workspace/main.py", code)
+    result = client.exec(sid, "python3 /workspace/main.py")
+
+# streaming
+for chunk in client.exec_stream(sid, "python3 train.py"):
+    print(chunk, end="", flush=True)
+```
+
+### TypeScript API
+
+```typescript
+import { SandboxClient, sandboxRun } from "./sandbox_client";
+
+// simple usage
+const client = new SandboxClient();
+const result = await client.run("print('hello')", "python");
+await client.close();
+
+// one-shot
+const { stdout } = await sandboxRun("echo hello");
+
+// streaming
+for await (const chunk of client.execStream(sid, "python3 train.py")) {
+  process.stdout.write(chunk);
+}
+```
+
+### When to Use SDK vs MCP Tools
+
+| Scenario | Use |
+|---|---|
+| Agent executing user requests interactively | MCP tools (`sandbox_run` etc.) |
+| Agent-generated Python/TS code calling sandbox | SDK |
+| CI/CD scripts, backend services | SDK |
+| Non-Go, non-Python, non-TS agent | MCP tools |
+
+---
+
 ## Alternatives Considered
 
 | Option | Rejected Reason |
@@ -362,8 +517,9 @@ Agent                  k8e sandbox-mcp          sandbox-grpc-gateway
 | HTTP REST adapter | Extra network hop, no streaming support |
 | Python MCP SDK | Requires Python runtime on every agent machine |
 | Separate binary `k8e-sandbox-mcp` | Breaks single-binary promise of K8E |
+| SDK only, no MCP | Agents (kiro/claude) only speak MCP — SDK alone is insufficient |
 
-## Security Considerations
+
 
 - MCP server runs as the invoking user; gRPC TLS cert access requires appropriate file permissions
 - Session IDs are opaque strings; agents cannot enumerate other tenants' sessions
