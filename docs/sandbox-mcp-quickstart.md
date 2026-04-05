@@ -4,6 +4,15 @@ Install the K8E sandbox skill into your AI agent in one step.
 
 ## Prerequisites
 
+- `runsc` (gVisor) installed **before** starting K8E:
+  ```bash
+  curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
+    https://storage.googleapis.com/gvisor/releases release main" \
+    > /etc/apt/sources.list.d/gvisor.list
+  apt-get update && apt-get install -y runsc
+  ```
+  > Do **not** run `runsc install`. K8E detects `runsc` at startup and auto-injects the gVisor stanza into its own containerd config (`/var/lib/k8e/agent/etc/containerd/config.toml`).
 - K8E cluster running (`systemctl status k8e`)
 - `k8e` binary in `$PATH`
 
