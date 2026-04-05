@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-mcp-sse
+  namespace: sandbox-matrix
+  labels:
+    app: sandbox-mcp-sse
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-mcp-sse
+  template:
+    metadata:
+      labels:
+        app: sandbox-mcp-sse
+    spec:
+      volumes:
+      - name: k8e-bin
+        hostPath:
+          path: /var/lib/k8e/data/current/bin/k8e
+          type: File
+      - name: k8e-tls
+        hostPath:
+          path: /var/lib/k8e/server/tls
+          type: Directory
+      containers:
+      - name: mcp-sse
+        image: busybox:musl
+        command: ["/k8e", "sandbox-mcp", "--http", "--http-addr", ":8811"]
+        ports:
+        - containerPort: 8811
+          hostPort: 8811
+          name: http
+        env:
+        - name: K8E_SANDBOX_ENDPOINT
+          value: "sandbox-grpc-gateway.sandbox-matrix.svc:50051"
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: k8e-bin
+          mountPath: /k8e
+        - name: k8e-tls
+          mountPath: /var/lib/k8e/server/tls
+          readOnly: true
