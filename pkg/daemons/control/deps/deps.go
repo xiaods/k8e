@@ -392,7 +392,10 @@ func genServerCerts(config *config.Control) error {
 	}
 
 	altNames := &certutil.AltNames{
-		DNSNames: []string{"kubernetes", "kubernetes.default", "kubernetes.default.svc", "kubernetes.default.svc." + config.ClusterDomain},
+		DNSNames: []string{
+			"kubernetes", "kubernetes.default", "kubernetes.default.svc", "kubernetes.default.svc." + config.ClusterDomain,
+			"sandbox-grpc-gateway", "sandbox-grpc-gateway.sandbox-matrix", "sandbox-grpc-gateway.sandbox-matrix.svc", "sandbox-grpc-gateway.sandbox-matrix.svc." + config.ClusterDomain,
+		},
 	}
 
 	addSANs(altNames, config.SANs)
