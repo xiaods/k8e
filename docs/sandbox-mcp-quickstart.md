@@ -18,24 +18,30 @@ Install the K8E sandbox skill into your AI agent in one step.
 
 ## One-Command Install
 
+`sandbox-install-skill` does two things in one command:
+1. Writes the `k8e-sandbox` MCP server entry into the agent's config file
+2. Copies the sandbox skill files from `/var/lib/k8e/server/skills/` into the agent's skills directory
+
+> **Prerequisite:** K8E server must have started at least once. On first boot it stages the skill files to `/var/lib/k8e/server/skills/`. If that directory is missing, start K8E first: `systemctl start k8e`
+
 ```bash
 # Install into all supported agents at once
 k8e sandbox-install-skill all
 
 # Or install into a specific agent
-k8e sandbox-install-skill claude
-k8e sandbox-install-skill kiro
-k8e sandbox-install-skill gemini
+k8e sandbox-install-skill kiro      # MCP config → .kiro/settings.json (workspace)
+                                    # Skills     → .kiro/skills/k8e-sandbox-skill/
+k8e sandbox-install-skill claude    # MCP config → ~/.claude.json
+                                    # Skills     → ~/.claude/skills/k8e-sandbox-skill/
+k8e sandbox-install-skill gemini    # MCP config → ~/.gemini/settings.json
+                                    # Skills     → ~/.gemini/skills/k8e-sandbox-skill/
 ```
 
-This automatically writes the MCP server entry into each agent's config file,
-merging with any existing configuration.
-
-| Agent | Config file modified |
-|---|---|
-| claude code | `~/.claude.json` |
-| kiro-cli | `.kiro/settings.json` (workspace) or `~/.kiro/settings.json` (global) |
-| gemini cli | `~/.gemini/settings.json` |
+| Agent | MCP config | Skills directory |
+|---|---|---|
+| claude code | `~/.claude.json` | `~/.claude/skills/k8e-sandbox-skill/` |
+| kiro-cli | `.kiro/settings.json` (workspace) or `~/.kiro/settings.json` (global) | `.kiro/skills/k8e-sandbox-skill/` |
+| gemini cli | `~/.gemini/settings.json` | `~/.gemini/skills/k8e-sandbox-skill/` |
 
 ## Manual Setup (alternative)
 

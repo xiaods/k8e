@@ -177,6 +177,12 @@ kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
 
 ### Step 4 — Connect Your AI Agent
 
+`sandbox-install-skill` does two things at once:
+1. Writes the `k8e-sandbox` MCP server entry into the agent's config file
+2. Copies the sandbox skill files from `/var/lib/k8e/server/skills/` into the agent's skills directory
+
+K8E server must have started at least once before running this command (it stages the skill files on first boot).
+
 ```bash
 k8e sandbox-install-skill all   # installs into kiro, claude, gemini at once
 ```
@@ -264,14 +270,23 @@ Isolated Pod (gVisor / Kata / Firecracker)
 
 ### Install the Skill
 
+`sandbox-install-skill` does two things in one command:
+1. Writes the `k8e-sandbox` MCP server entry into the agent's config file
+2. Copies skill files from `/var/lib/k8e/server/skills/` into the agent's skills directory
+
+> K8E server must have started at least once before running this — it stages the skill files to `/var/lib/k8e/server/skills/` on first boot.
+
 ```bash
 # All supported agents at once
 k8e sandbox-install-skill all
 
 # Or per agent
-k8e sandbox-install-skill kiro      # → .kiro/settings.json (workspace)
-k8e sandbox-install-skill claude    # → ~/.claude.json
-k8e sandbox-install-skill gemini    # → ~/.gemini/settings.json
+k8e sandbox-install-skill kiro      # MCP config → .kiro/settings.json (workspace)
+                                    # Skills     → .kiro/skills/k8e-sandbox-skill/
+k8e sandbox-install-skill claude    # MCP config → ~/.claude.json
+                                    # Skills     → ~/.claude/skills/k8e-sandbox-skill/
+k8e sandbox-install-skill gemini    # MCP config → ~/.gemini/settings.json
+                                    # Skills     → ~/.gemini/skills/k8e-sandbox-skill/
 ```
 
 **Manual setup** — add to your agent's MCP config:
