@@ -48,10 +48,11 @@ func mcpEntryFor() map[string]any {
 }
 
 // skillsDataDir returns the staged skills directory.
-// Search order: dataDir/skills/ (production), binary dir/skills/, working dir/skills/ (dev).
+// Search order: /var/lib/k8e/server/skills/ (production), binary dir/skills/, working dir/skills/ (dev).
 func skillsDataDir() (string, error) {
 	candidates := []string{
-		filepath.Join("skills"), // working dir (dev/go run)
+		"/var/lib/k8e/server/skills", // production: k8e server data dir
+		filepath.Join("skills"),      // working dir (dev/go run)
 	}
 	if exe, err := os.Executable(); err == nil {
 		candidates = append([]string{filepath.Join(filepath.Dir(exe), "skills")}, candidates...)
@@ -61,7 +62,7 @@ func skillsDataDir() (string, error) {
 			return dir, nil
 		}
 	}
-	return "", fmt.Errorf("skills/ directory not found; run 'k8e server' first")
+	return "", fmt.Errorf("skills/ directory not found; run 'k8e server' first or check /var/lib/k8e/server/skills/")
 }
 
 // InstallSkill installs MCP config and all skills from dataDir/skills/ into the given agent.

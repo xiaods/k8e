@@ -144,41 +144,44 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 
 ## 🚀 Quick Start
 
-### Step 1 — Install K8E
+### Step 1 — Install a Sandbox Runtime (recommended: before K8E)
+
+Install the runtime shim **before** K8E so it is auto-detected on first startup. **gVisor is recommended** — no KVM required.
 
 ```bash
-curl -sfL https://k8e.sh/install.sh | sh -
-```
-
-### Step 2 — Verify Cluster
-
-```bash
-export KUBECONFIG=/etc/k8e/k8e.yaml
-kubectl get nodes
-kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
-```
-
-### Step 3 — Install a Sandbox Runtime
-
-The Sandbox Matrix starts automatically, but sandbox pods need at least one runtime shim. **gVisor is recommended** — no KVM required.
-
-```bash
-# Add gVisor apt repository
 curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
   https://storage.googleapis.com/gvisor/releases release main" \
   > /etc/apt/sources.list.d/gvisor.list
 apt-get update && apt-get install -y runsc
-runsc install
-
-# Restart k8e to register the RuntimeClass
-systemctl restart k8e
-kubectl get runtimeclass   # should show: gvisor
 ```
+
+> K8E detects `runsc` at startup and automatically injects the gVisor stanza into its containerd config (`/var/lib/k8e/agent/etc/containerd/config.toml`). Do **not** run `runsc install` — K8E manages its own containerd configuration.
 
 > Need stronger isolation? See [Sandbox Runtime Setup](#-sandbox-runtime-setup) for Kata Containers and Firecracker.
 
+### Step 2 — Install K8E
+
+```bash
+curl -sfL https://k8e.sh/install.sh | sh -
+```
+
+### Step 3 — Verify Cluster
+
+```bash
+export KUBECONFIG=/etc/k8e/k8e.yaml
+kubectl get nodes
+kubectl get runtimeclass              # should show: gvisor
+kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
+```
+
 ### Step 4 — Connect Your AI Agent
+
+`sandbox-install-skill` does two things at once:
+1. Writes the `k8e-sandbox` MCP server entry into the agent's config file
+2. Copies the sandbox skill files from `/var/lib/k8e/server/skills/` into the agent's skills directory
+
+K8E server must have started at least once before running this command (it stages the skill files on first boot).
 
 ```bash
 k8e sandbox-install-skill all   # installs into kiro, claude, gemini at once
@@ -210,7 +213,9 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gviso
   https://storage.googleapis.com/gvisor/releases release main" \
   > /etc/apt/sources.list.d/gvisor.list
 apt-get update && apt-get install -y runsc
-runsc install
+```
+
+> Do **not** run `runsc install` — K8E manages its own containerd config at `/var/lib/k8e/agent/etc/containerd/config.toml` and auto-injects the gVisor stanza on startup.
 ```
 
 ### Kata Containers
@@ -232,6 +237,8 @@ mkdir -p /var/lib/firecracker-containerd/runtime
 ```
 
 ### Apply Changes
+
+Install runtimes **before** starting K8E for zero-restart setup. If K8E is already running, restart it after installing a new runtime shim:
 
 ```bash
 systemctl restart k8e
@@ -263,14 +270,23 @@ Isolated Pod (gVisor / Kata / Firecracker)
 
 ### Install the Skill
 
+`sandbox-install-skill` does two things in one command:
+1. Writes the `k8e-sandbox` MCP server entry into the agent's config file
+2. Copies skill files from `/var/lib/k8e/server/skills/` into the agent's skills directory
+
+> K8E server must have started at least once before running this — it stages the skill files to `/var/lib/k8e/server/skills/` on first boot.
+
 ```bash
 # All supported agents at once
 k8e sandbox-install-skill all
 
 # Or per agent
-k8e sandbox-install-skill kiro      # → .kiro/settings.json (workspace)
-k8e sandbox-install-skill claude    # → ~/.claude.json
-k8e sandbox-install-skill gemini    # → ~/.gemini/settings.json
+k8e sandbox-install-skill kiro      # MCP config → .kiro/settings.json (workspace)
+                                    # Skills     → .kiro/skills/k8e-sandbox-skill/
+k8e sandbox-install-skill claude    # MCP config → ~/.claude.json
+                                    # Skills     → ~/.claude/skills/k8e-sandbox-skill/
+k8e sandbox-install-skill gemini    # MCP config → ~/.gemini/settings.json
+                                    # Skills     → ~/.gemini/skills/k8e-sandbox-skill/
 ```
 
 **Manual setup** — add to your agent's MCP config:
