@@ -46,7 +46,7 @@ spec:
       volumes:
       - name: k8e-bin
         hostPath:
-          path: /var/lib/k8e/data/current/bin/k8e
+          path: /usr/local/bin/k8e
           type: File
       - name: k8e-tls
         hostPath:
