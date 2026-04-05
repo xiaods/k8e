@@ -99,14 +99,14 @@ func installClaude() error {
 }
 
 func installKiro() error {
-	local := filepath.Join(".kiro", settingsFile)
-	if _, err := os.Stat(filepath.Dir(local)); err == nil {
+	local := filepath.Join(".kiro", "settings", "mcp.json")
+	if _, err := os.Stat(filepath.Join(".kiro")); err == nil {
 		if err := mergeJSON(local, []string{"mcpServers", mcpServerName}, mcpEntryFor(), "kiro-cli (workspace)"); err != nil {
 			return err
 		}
 		return installAllSkills(filepath.Join(".kiro", "skills"), "kiro-cli (workspace)")
 	}
-	if err := mergeJSON(filepath.Join(homeDir(), ".kiro", settingsFile), []string{"mcpServers", mcpServerName}, mcpEntryFor(), "kiro-cli (global)"); err != nil {
+	if err := mergeJSON(filepath.Join(homeDir(), ".kiro", "settings", "mcp.json"), []string{"mcpServers", mcpServerName}, mcpEntryFor(), "kiro-cli (global)"); err != nil {
 		return err
 	}
 	return installAllSkills(filepath.Join(homeDir(), ".kiro", "skills"), "kiro-cli (global)")
