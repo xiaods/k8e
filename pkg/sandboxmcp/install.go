@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -14,21 +16,35 @@ const (
 	skillFileName = "SKILL.md"
 )
 
-// mcpEntry returns the JSON snippet added to agent config files.
-// If K8E_SANDBOX_MCP_ADDR is set, uses HTTP/SSE transport (url-based);
-// otherwise falls back to stdio (command-based).
-func mcpEntryFor() map[string]any {
+// readSandboxMCPAddr resolves the SSE server address.
+// Priority: K8E_SANDBOX_MCP_ADDR env → /etc/k8e/sandbox-mcp.yaml → default :8811.
+func readSandboxMCPAddr() string {
 	if addr := os.Getenv("K8E_SANDBOX_MCP_ADDR"); addr != "" {
-		url := addr
-		if len(url) > 0 && url[0] == ':' {
-			url = "http://127.0.0.1" + url
-		}
-		return map[string]any{"url": url + "/mcp"}
+		return addr
 	}
-	return map[string]any{
-		"command": "k8e",
-		"args":    []string{"sandbox-mcp"},
+	data, err := os.ReadFile("/etc/k8e/sandbox-mcp.yaml")
+	if err != nil {
+		return ":8811"
 	}
+	var cfg struct {
+		Addr string `yaml:"addr"`
+	}
+	yaml.Unmarshal(data, &cfg) //nolint:errcheck
+	if cfg.Addr != "" {
+		return cfg.Addr
+	}
+	return ":8811"
+}
+
+// mcpEntryFor returns the JSON snippet added to agent config files.
+// Always uses HTTP/SSE transport (url-based); address resolved from config.
+func mcpEntryFor() map[string]any {
+	addr := readSandboxMCPAddr()
+	url := addr
+	if len(url) > 0 && url[0] == ':' {
+		url = "http://127.0.0.1" + url
+	}
+	return map[string]any{"url": url + "/mcp"}
 }
 
 // skillsDataDir returns the staged skills directory.

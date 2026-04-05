@@ -532,3 +532,154 @@ for await (const chunk of client.execStream(sid, "python3 train.py")) {
    (Recommendation: accumulate chunks, return as single text block for stdio transport)
 2. Should the MCP server auto-create a default session if `session_id` is omitted on `sandbox_exec`?
    (Resolved: yes — `sandbox_run` uses `defaultSession()` for lazy creation and auto-cleanup on exit via defer. Cross-process reuse is opt-in via `K8E_SANDBOX_TENANT`. See [Session 复用机制](#session-复用机制).)
+
+---
+
+## SSE Server Auto-Start (KIP-4 Addendum)
+
+### Background
+
+Currently the SSE server requires manual invocation (`k8e sandbox-mcp --http`), which conflicts with K8E's zero-configuration install goal. This section describes the automatic startup design.
+
+### Design Principles
+
+- **Separate process**: SSE server holds connection state (session map, SSE streams); k8e server is stateless. They must not be mixed.
+- **Architectural symmetry**: Mirrors `sandbox-gateway` exactly — a Kubernetes Deployment running `k8e` via hostPath mount.
+- **Separate config file**: sandbox-mcp uses `/etc/k8e/sandbox-mcp.yaml`, not `/etc/k8e/config.yaml`. The latter is reserved for k8e server/agent flags parsed by `configfilearg`, which silently drops unknown keys via `stripInvalidFlags`.
+- **Zero-config default**: Works out of the box after install, listening on `:8811`.
+
+### Configuration
+
+`/etc/k8e/sandbox-mcp.yaml` — written by the install script:
+
+```yaml
+# /etc/k8e/sandbox-mcp.yaml
+addr: ":8811"
+```
+
+Resolution order (highest to lowest priority):
+1. `K8E_SANDBOX_MCP_ADDR` env var
+2. `addr` field in `/etc/k8e/sandbox-mcp.yaml`
+3. Hardcoded default `:8811`
+
+**Why not `/etc/k8e/config.yaml`:**
+`configfilearg` parses that file and its `stripInvalidFlags` only allows keys that map to registered `server`/`agent` flags. Unknown keys are silently dropped with a warning, making it unreliable for sandbox-mcp configuration.
+
+### Network Exposure
+
+**HostPort** — Pod binds directly to the host port, consistent with the existing `sandbox-gateway` pattern:
+
+```
+Agent (host) → http://127.0.0.1:8811/mcp
+                        │
+                   HostPort :8811
+                        │
+            Pod: k8e sandbox-mcp --http
+                        │
+              gRPC → sandbox-grpc-gateway:50051
+```
+
+### New Manifest: `manifests/sandbox-matrix/mcp-sse-server.yaml`
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-mcp-sse
+  namespace: sandbox-matrix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-mcp-sse
+  template:
+    metadata:
+      labels:
+        app: sandbox-mcp-sse
+    spec:
+      volumes:
+      - name: k8e-bin
+        hostPath:
+          path: /var/lib/k8e/data/current/bin/k8e
+          type: File
+      - name: k8e-tls
+        hostPath:
+          path: /var/lib/k8e/server/tls
+          type: Directory
+      containers:
+      - name: mcp-sse
+        image: busybox:musl
+        command: ["/k8e", "sandbox-mcp", "--http", "--http-addr", ":8811"]
+        ports:
+        - containerPort: 8811
+          hostPort: 8811
+          name: http
+        env:
+        - name: K8E_SANDBOX_ENDPOINT
+          value: "sandbox-grpc-gateway.sandbox-matrix.svc:50051"
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: k8e-bin
+          mountPath: /k8e
+        - name: k8e-tls
+          mountPath: /var/lib/k8e/server/tls
+          readOnly: true
+```
+
+### Code Changes
+
+| File | Change |
+|---|---|
+| `manifests/sandbox-matrix/mcp-sse-server.yaml` | New — Deployment with HostPort :8811 |
+| `pkg/sandboxmcp/install.go` | `mcpEntryFor()` reads `/etc/k8e/sandbox-mcp.yaml`; always writes `url` mode by default |
+| `install.sh` | Write `/etc/k8e/sandbox-mcp.yaml` with `addr: ":8811"` on fresh install |
+
+**`install.go` — `mcpEntryFor()` update:**
+
+```go
+func readSandboxMCPAddr() string {
+    if addr := os.Getenv("K8E_SANDBOX_MCP_ADDR"); addr != "" {
+        return addr
+    }
+    data, err := os.ReadFile("/etc/k8e/sandbox-mcp.yaml")
+    if err != nil {
+        return ":8811"
+    }
+    var cfg struct {
+        Addr string `yaml:"addr"`
+    }
+    yaml.Unmarshal(data, &cfg) //nolint:errcheck
+    if cfg.Addr != "" {
+        return cfg.Addr
+    }
+    return ":8811"
+}
+
+func mcpEntryFor() map[string]any {
+    addr := readSandboxMCPAddr()
+    url := addr
+    if url[0] == ':' {
+        url = "http://127.0.0.1" + url
+    }
+    return map[string]any{"url": url + "/mcp"}
+}
+```
+
+### Task 6 — SSE Server Auto-Start
+
+**Objective:** SSE server starts automatically after `k8e` install; `sandbox-install-skill` writes `url` mode by default.
+
+**Implementation:**
+1. Add `manifests/sandbox-matrix/mcp-sse-server.yaml` (Deployment + HostPort :8811)
+2. Update `pkg/sandboxmcp/install.go`: `mcpEntryFor()` reads `/etc/k8e/sandbox-mcp.yaml`, always returns `url` mode
+3. Update `install.sh`: write `/etc/k8e/sandbox-mcp.yaml` on fresh install
+
+**Tests:**
+- `kubectl -n sandbox-matrix get pods` shows `sandbox-mcp-sse-xxx Running`
+- `curl http://127.0.0.1:8811/mcp` returns SSE stream
+- Fresh install + `k8e sandbox-install-skill kiro` writes `{"url": "http://127.0.0.1:8811/mcp"}` with no manual steps
+
+**Demo:** After `curl -sfL https://k8e.sh/install.sh | sh -`, run `k8e sandbox-install-skill all` — agent is connected, no further configuration needed.
