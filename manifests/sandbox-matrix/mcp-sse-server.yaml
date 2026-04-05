@@ -1,3 +1,29 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sandbox-mcp-sse
+  namespace: sandbox-matrix
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sandbox-mcp-sse
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sandbox-mcp-sse
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sandbox-mcp-sse
+subjects:
+- kind: ServiceAccount
+  name: sandbox-mcp-sse
+  namespace: sandbox-matrix
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,6 +41,8 @@ spec:
       labels:
         app: sandbox-mcp-sse
     spec:
+      serviceAccountName: sandbox-mcp-sse
+      automountServiceAccountToken: false
       volumes:
       - name: k8e-bin
         hostPath:
@@ -36,9 +64,14 @@ spec:
         - name: K8E_SANDBOX_ENDPOINT
           value: "sandbox-grpc-gateway.sandbox-matrix.svc:50051"
         resources:
+          requests:
+            cpu: "100m"
+            memory: "64Mi"
+            ephemeral-storage: "64Mi"
           limits:
-            memory: "128Mi"
             cpu: "200m"
+            memory: "128Mi"
+            ephemeral-storage: "128Mi"
         volumeMounts:
         - name: k8e-bin
           mountPath: /k8e
