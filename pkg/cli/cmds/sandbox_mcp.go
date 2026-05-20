@@ -30,7 +30,7 @@ func NewSandboxInstallSkillCommand() cli.Command {
 	return cli.Command{
 		Name:      "sandbox-install-skill",
 		Usage:     "Install the k8e-sandbox MCP skill into an AI agent config",
-		ArgsUsage: "[claude|kiro|gemini|all]",
+		ArgsUsage: "[claude|kiro|gemini|openclaw|all]",
 		Action: func(ctx *cli.Context) error {
 			target := ctx.Args().First()
 			if target == "" {

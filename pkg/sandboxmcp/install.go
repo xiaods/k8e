@@ -75,9 +75,11 @@ func InstallSkill(target string) error {
 		return installKiro()
 	case "gemini":
 		return installGemini()
+	case "openclaw":
+		return installOpenclaw()
 	case "all":
 		var errs []error
-		for _, fn := range []func() error{installClaude, installKiro, installGemini} {
+		for _, fn := range []func() error{installClaude, installKiro, installGemini, installOpenclaw} {
 			if err := fn(); err != nil {
 				errs = append(errs, err)
 			}
@@ -87,7 +89,7 @@ func InstallSkill(target string) error {
 		}
 		return nil
 	default:
-		return fmt.Errorf("unknown target %q — use: claude, kiro, gemini, all", target)
+		return fmt.Errorf("unknown target %q — use: claude, kiro, gemini, openclaw, all", target)
 	}
 }
 
@@ -110,6 +112,15 @@ func installKiro() error {
 		return err
 	}
 	return installAllSkills(filepath.Join(homeDir(), ".kiro", "skills"), "kiro-cli (global)")
+}
+
+func installOpenclaw() error {
+	// write MCP config into openclaw.json
+	mcpConfigPath := filepath.Join(homeDir(), ".openclaw", "openclaw.json")
+	if err := mergeJSON(mcpConfigPath, []string{"mcp", "servers", mcpServerName}, mcpEntryFor(), "openclaw"); err != nil {
+		return err
+	}
+	return installAllSkills(filepath.Join(homeDir(), ".openclaw", "skills"), "openclaw")
 }
 
 func installGemini() error {
