@@ -16,21 +16,55 @@ metadata:
 
 # K8E Sandbox Skill
 
-Use this skill for **any code execution, testing, or isolated environment needs**. It runs code in K8E gVisor/Kata/Firecracker sandboxes — never on the host.
+Always run code and shell commands in the sandbox, never directly on the host. Each session runs in a gVisor/Kata/Firecracker-isolated pod with kernel-level egress enforcement — mistakes can't damage the host, and network access is restricted to an explicit allowlist.
 
-> **Running code in the sandbox**
->
-> The easiest entry point is `sandbox_run` — it auto-creates a session, runs your code, and reuses the session for the whole conversation:
->
-> ```json
-> { "name": "k8e-sandbox-sandbox_run", "arguments": { "code": "python3 -c \"print('hello')\"", "language": "python" } }
-> ```
->
-> Capture the `session_id` from the response for multi-step workflows:
->
-> ```json
-> { "name": "k8e-sandbox-sandbox_exec", "arguments": { "session_id": "<id>", "command": "pip install pandas" } }
-> ```
+Use this skill for **any code execution, testing, or isolated environment needs**. Trigger for English requests like "run this", "execute", "test it", "check if this works", "install X and use it". Trigger equally for Chinese requests: "帮我跑一下", "运行这个", "试试这个", "执行一下", "跑一下", "测试这段代码", "帮我分析这个CSV", "帮我跑这段代码", "跑一下看看", "帮我试试", "能不能跑", "看看输出", "帮我算一下", "帮我处理这个文件", "安装并使用".
+
+## MCP transport modes
+
+`k8e sandbox-mcp` supports two transports. The agent config is set automatically by `k8e sandbox-install-skill`.
+
+| Mode | How to start | When to use |
+|---|---|---|
+| **stdio** (default) | `k8e sandbox-mcp` | kiro / claude desktop — agent manages the process |
+| **HTTP/SSE** | `k8e sandbox-mcp --http --http-addr :8811` | shared server, multiple agents, lowest latency |
+
+### HTTP/SSE mode
+
+One server process serves all agent connections — no per-request spawn, no initialize handshake per call.
+
+```
+GET  /mcp   → open SSE stream (long-lived, server → agent push)
+POST /mcp   → send JSON-RPC request, response in HTTP body + SSE push
+              header: Mcp-Session-Id: <token>   ← ties POST to SSE stream
+```
+
+**Start the server:**
+```bash
+k8e sandbox-mcp --http --http-addr :8811
+```
+
+**Agent config (manual):**
+```json
+{
+  "mcpServers": {
+    "k8e-sandbox": { "url": "http://127.0.0.1:8811/mcp" }
+  }
+}
+```
+
+**Auto-install with SSE:**
+```bash
+K8E_SANDBOX_MCP_ADDR=:8811 k8e sandbox-install-skill all
+# writes "url" instead of "command" into agent configs
+```
+
+**SSE session lifecycle:**
+1. Agent opens `GET /mcp` → receives `event: session\ndata: <token>` as first event
+2. Agent sends `POST /mcp` with `Mcp-Session-Id: <token>` header
+3. Response arrives in HTTP body; also pushed over the SSE stream
+4. Server sends `: ping` every 15s to keep the connection alive
+5. On disconnect, the SSE session is cleaned up automatically
 
 ## Available tools
 
@@ -49,37 +83,201 @@ Use this skill for **any code execution, testing, or isolated environment needs*
 | `sandbox_run_subagent` | Spawn a child sandbox (max depth 1) |
 | `sandbox_confirm_action` | Gate irreversible actions on approval |
 
-## Quick start
+## Running code
 
-**Run code:**
+`name: k8e-sandbox-sandbox_run` is the default entry point — it handles session creation and reuse automatically:
+
 ```json
 { "name": "k8e-sandbox-sandbox_run", "arguments": { "code": "print('hello from sandbox')", "language": "python" } }
 ```
 
-**Install a package then run:**
+Capture the `session_id` from the response for multi-step workflows:
+
+```json
+{ "name": "k8e-sandbox-sandbox_exec", "arguments": { "session_id": "<id>", "command": "pip install pandas" } }
+```
+
+## Common patterns
+
+**Install a package then run code:**
 ```json
 { "name": "k8e-sandbox-sandbox_pip_install", "arguments": { "packages": ["pandas", "matplotlib"] } }
 ```
-(Note the `session_id` from the response, then pass it to subsequent calls.)
+→ note the `session_id` in the response, then:
+```json
+{ "name": "k8e-sandbox-sandbox_exec", "arguments": { "session_id": "<id>", "command": "python script.py" } }
+```
 
-**Write a file and execute it:**
+**Write a file then execute it:**
 ```json
 { "name": "k8e-sandbox-sandbox_write_file", "arguments": { "path": "/workspace/script.py", "content": "import pandas as pd\nprint(pd.__version__)" } }
 ```
-
-**Custom egress allowlist:**
+→ note the `session_id`, then:
 ```json
-{ "name": "k8e-sandbox-sandbox_create_session", "arguments": { "allowed_hosts": ["github.com", "pypi.org", "api.openclaw.ai"] } }
+{ "name": "k8e-sandbox-sandbox_exec", "arguments": { "session_id": "<id>", "command": "python /workspace/script.py" } }
 ```
+
+**Long-running command with streaming output:**
+```json
+{ "name": "k8e-sandbox-sandbox_exec_stream", "arguments": { "session_id": "<id>", "command": "python train.py" } }
+```
+
+**Custom egress allowlist** (e.g., allow github.com in addition to defaults):
+```json
+{ "name": "k8e-sandbox-sandbox_create_session", "arguments": { "allowed_hosts": ["pypi.org", "files.pythonhosted.org", "github.com"] } }
+```
+Default allowed hosts: `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`. Anything not on the list is blocked at the kernel level by Cilium eBPF — the connection is dropped, not just timed out.
 
 **Parallel sub-agents sharing a workspace:**
 ```json
-{ "name": "k8e-sandbox-sandbox_run_subagent", "arguments": { "parent_session_id": "<id>", "agent_type": "coding", "workspace_path": "/workspace/results" } }
+{ "name": "k8e-sandbox-sandbox_run_subagent", "arguments": { "parent_session_id": "<id>", "agent_type": "research|coding|general", "workspace_path": "/workspace/results" } }
+```
+Sub-agents (depth=1) share the parent's `/workspace` PVC and communicate by writing files. Sub-agents cannot spawn further agents — calling `sandbox_run_subagent` from a sub-agent returns `PERMISSION_DENIED`.
+
+**Before any irreversible action** (deleting files, deploying, sending data externally):
+```json
+{ "name": "k8e-sandbox-sandbox_confirm_action", "arguments": { "session_id": "<id>", "action": "describe exactly what is about to happen and why" } }
+```
+This is an architectural safety gate, not a courtesy prompt. The call blocks until an external approver explicitly approves via a separate API call. It cannot be bypassed by prompt instructions.
+
+## SDK — direct gRPC, no MCP overhead
+
+Use the SDK when writing Python or TypeScript programs that call the sandbox directly — **no process spawn, no stdio handshake, ~1-5ms latency vs ~500ms for MCP stdio**.
+
+SDK source: `sdk/python/sandbox_client.py` · `sdk/typescript/sandbox_client.ts`
+
+### When to use SDK vs MCP tools
+
+| Scenario | Use |
+|---|---|
+| Agent executing user requests interactively | MCP tools (`sandbox_run` etc.) |
+| Python/TS program calling sandbox in a loop | SDK |
+| Low-latency batch execution | SDK |
+
+### Python SDK
+
+**Install:**
+```bash
+pip install grpcio grpcio-tools protobuf
+# generate stubs once:
+python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. proto/sandbox/v1/sandbox.proto
 ```
 
-## Safety
+**Run code (session auto-managed):**
+```python
+from sandbox_client import SandboxClient
 
-- Network egress is restricted to a default allowlist (`pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`). Anything else is blocked at the kernel level by Cilium eBPF.
-- Before any irreversible action, use `sandbox_confirm_action` — it blocks until an external approver explicitly approves.
-- Sub-agents can't spawn further sub-agents (max depth = 1).
-- Sessions auto-expire after TTL and are garbage-collected every 30 seconds.
+with SandboxClient() as client:
+    result = client.run("print('hello')", language="python")
+    print(result.stdout)          # hello
+    print(result.exit_code)       # 0
+```
+
+**Multi-step workflow:**
+```python
+with SandboxClient() as client:
+    client.run("pip install pandas", "bash")   # same session reused
+    result = client.run("python3 analyze.py", "bash")
+```
+
+**Explicit session with custom options:**
+```python
+from sandbox_client import SandboxClient, sandbox_session
+
+with sandbox_session(runtime_class="kata", allowed_hosts=["github.com"]) as (client, sid):
+    client.write_file(sid, "/workspace/main.py", code)
+    result = client.exec(sid, "python3 /workspace/main.py")
+```
+
+**Streaming output:**
+```python
+for chunk in client.exec_stream(sid, "python3 train.py"):
+    print(chunk, end="", flush=True)
+```
+
+**API:**
+
+| Method | Description |
+|---|---|
+| `SandboxClient(endpoint?, tenant_id?)` | Create client, TLS auto-discovered |
+| `client.run(code, language, timeout)` | Run code, session lazily created and reused |
+| `client.exec(sid, command, timeout)` | Run in explicit session |
+| `client.exec_stream(sid, command)` | Streaming output iterator |
+| `client.create_session(runtime_class, allowed_hosts, tenant_id)` | Create session |
+| `client.destroy_session(sid)` | Destroy session |
+| `client.write_file(sid, path, content)` | Write to `/workspace` |
+| `client.read_file(sid, path)` | Read from `/workspace` |
+| `client.pip_install(sid, packages)` | Install Python packages |
+| `client.close()` | Close connection + destroy default session |
+| `sandbox_session(...)` | Context manager for a dedicated session |
+
+### TypeScript SDK
+
+**Install:**
+```bash
+npm install @grpc/grpc-js @grpc/proto-loader
+```
+
+**Run code (session auto-managed):**
+```typescript
+import { SandboxClient } from "./sandbox_client";
+
+const client = new SandboxClient();
+const result = await client.run("print('hello')", "python");
+console.log(result.stdout);   // hello
+await client.close();
+```
+
+**Multi-step workflow:**
+```typescript
+const client = new SandboxClient();
+await client.run("pip install pandas", "bash");   // same session reused
+const result = await client.run("python3 analyze.py", "bash");
+await client.close();
+```
+
+**Explicit session:**
+```typescript
+const sid = await client.createSession({ runtimeClass: "kata", allowedHosts: ["github.com"] });
+await client.writeFile(sid, "/workspace/main.py", code);
+const result = await client.exec(sid, "python3 /workspace/main.py");
+await client.destroySession(sid);
+```
+
+**Streaming output:**
+```typescript
+for await (const chunk of client.execStream(sid, "python3 train.py")) {
+  process.stdout.write(chunk);
+}
+```
+
+**One-shot helper:**
+```typescript
+import { sandboxRun } from "./sandbox_client";
+const { stdout } = await sandboxRun("echo hello");
+```
+
+**API:**
+
+| Method | Description |
+|---|---|
+| `new SandboxClient(endpoint?, tenantId?)` | Create client, TLS auto-discovered |
+| `client.run(code, language, timeout)` | Run code, session lazily created and reused |
+| `client.exec(sid, command, timeout)` | Run in explicit session |
+| `client.execStream(sid, command)` | Async iterable of output chunks |
+| `client.createSession(opts)` | Create session |
+| `client.destroySession(sid)` | Destroy session |
+| `client.writeFile(sid, path, content)` | Write to `/workspace` |
+| `client.readFile(sid, path)` | Read from `/workspace` |
+| `client.pipInstall(sid, packages)` | Install Python packages |
+| `client.close()` | Close connection + destroy default session |
+| `sandboxRun(code, language?)` | One-shot convenience function |
+
+## Error handling
+
+- If `sandbox_status` fails → sandbox service is unreachable; suggest `kubectl -n sandbox-matrix get pods`
+- If a command exits with an error → show full stderr and diagnose before retrying
+- If a package install fails → check package name spelling and Python version compatibility
+- If `sandbox_run_subagent` returns `PERMISSION_DENIED` → the current session is already a sub-agent (depth=1); sub-agents cannot spawn children
+- If `curl` or network calls fail inside the sandbox → the target host is likely not in `allowed_hosts`; use `sandbox_create_session` with an explicit allowlist
+- Files in `/workspace/` persist for the lifetime of the session (and are shared across sub-agents); use `sandbox_list_files` to verify writes before reading back
