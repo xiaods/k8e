@@ -4,7 +4,7 @@ How the engineering skills should consume this repo's domain documentation.
 
 ## Before exploring, read these
 
-- **`docs/adr/`** — Architectural Decision Records (KIP-1 through KIP-5). Read the ADR that touches the area you're working in.
+- **`docs/`** — Architectural Decision Records (KIP-1 through KIP-5). Read the ADR that touches the area you're working in.
 - **`CLAUDE.md`** at the repo root — project overview, architecture, build/test instructions.
 - **`CONTEXT.md`** — if it exists in the future, read it for domain language and glossary.
 
@@ -15,13 +15,16 @@ This is a single-context repo:
 ```
 /
 ├── CLAUDE.md                    # Project overview + architecture
-├── docs/adr/                    # KIP-1 … KIP-5 (architectural decisions)
+├── docs/                    # KIP-1 … KIP-6 (architectural decisions)
 │   ├── kip-1-native-etcd-storage-client.md
 │   ├── kip-2-upgrade-dependencies-to-kubernetes-1.35.md
 │   ├── kip-3-agentic-ai-sandbox-matrix.md
 │   ├── kip-4-sandbox-mcp-skill.md
 │   ├── kip-5-openclaw-sandbox-management.md
+│   ├── kip-6-embedded-etcd-remove-kine-sqlite.md
 │   └── sandbox-mcp-quickstart.md
+├── docs/kip-6-embedded-etcd-design.md      # Embedded etcd 设计方案
+├── docs/kip-7-embedded-etcd-fuse.md        # Embedded etcd 融合方案（集成官方 embed 包）
 ├── pkg/                         # Main source code
 │   ├── sandboxmcp/              # MCP server bridging AI agents → sandbox
 │   ├── sandboxmatrix/           # Core sandbox orchestration (warm pools, sessions)
