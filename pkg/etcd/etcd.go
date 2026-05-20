@@ -32,6 +32,7 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control/deps"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
+	"github.com/xiaods/k8e/pkg/embedw"
 	"github.com/xiaods/k8e/pkg/etcd/s3"
 	"github.com/xiaods/k8e/pkg/etcd/snapshot"
 	"github.com/xiaods/k8e/pkg/server/auth"
@@ -44,6 +45,7 @@ import (
 	"go.etcd.io/etcd/client/v3/credentials"
 	snapshotv3 "go.etcd.io/etcd/etcdutl/v3/snapshot"
 	etcderrors "go.etcd.io/etcd/server/v3/etcdserver/errors"
+	"go.etcd.io/etcd/server/v3/etcdserver/api/rafthttp"
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -107,14 +109,17 @@ var _ managed.Driver = &ETCD{}
 type MemberStatus string
 
 type ETCD struct {
-	client     *clientv3.Client
-	config     *config.Control
-	name       string
-	address    string
-	cron       *cron.Cron
-	cancel     context.CancelFunc
-	s3         *s3.Controller
-	snapshotMu *sync.Mutex
+	client      *clientv3.Client
+	config      *config.Control
+	name        string
+	address     string
+	cron        *cron.Cron
+	cancel      context.CancelFunc
+	s3          *s3.Controller
+	snapshotMu  *sync.Mutex
+	embedCtx    context.Context
+	embedCancel context.CancelFunc
+	etcdEmbed   *embedw.EmbeddedEtcd
 }
 
 type learnerProgress struct {
@@ -917,40 +922,85 @@ func (e *ETCD) listenClientHTTPURLs() string {
 	return fmt.Sprintf("https://%s:2382", e.config.Loopback(true))
 }
 
-// cluster calls the executor to start etcd running with the provided configuration.
+// cluster starts an embedded etcd server using the official etcd embed package.
 func (e *ETCD) cluster(ctx context.Context, reset bool, options executor.InitialOptions) error {
-	ctx, e.cancel = context.WithCancel(ctx)
-	return executor.ETCD(ctx, executor.ETCDConfig{
-		Name:                e.name,
-		InitialOptions:      options,
-		ForceNewCluster:     reset,
-		ListenClientURLs:    e.listenClientURLs(reset),
-		ListenMetricsURLs:   e.listenMetricsURLs(reset),
-		ListenPeerURLs:      e.listenPeerURLs(reset),
-		AdvertiseClientURLs: e.advertiseClientURLs(reset),
-		DataDir:             dbDir(e.config),
-		ServerTrust: executor.ServerTrust{
-			CertFile:       e.config.Runtime.ServerETCDCert,
-			KeyFile:        e.config.Runtime.ServerETCDKey,
-			ClientCertAuth: true,
-			TrustedCAFile:  e.config.Runtime.ETCDServerCA,
-		},
-		PeerTrust: executor.PeerTrust{
-			CertFile:       e.config.Runtime.PeerServerClientETCDCert,
-			KeyFile:        e.config.Runtime.PeerServerClientETCDKey,
-			ClientCertAuth: true,
-			TrustedCAFile:  e.config.Runtime.ETCDPeerCA,
-		},
-		SnapshotCount:        10000,
-		ElectionTimeout:      5000,
-		HeartbeatInterval:    500,
-		Logger:               "zap",
-		LogOutputs:           []string{"stderr"},
-		ListenClientHTTPURLs: e.listenClientHTTPURLs(),
+	e.embedCtx, e.embedCancel = context.WithCancel(ctx)
+	e.cancel = e.embedCancel
 
-		ExperimentalInitialCorruptCheck:         true,
-		ExperimentalWatchProgressNotifyInterval: e.config.Datastore.NotifyInterval,
-	}, e.config.ExtraEtcdArgs)
+	ec := embedw.Config{
+		Name:                 e.name,
+		DataDir:              dbDir(e.config),
+		WALDir:               walDir(e.config),
+		AdvertisePeerURLs:    parseURLs(e.peerURL()),
+		AdvertiseClientURLs:  parseURLs(e.clientURL()),
+		ListenPeerURLs:       parseURLs(e.listenPeerURLs(reset)),
+		ListenClientURLs:     parseURLs(e.listenClientURLs(reset)),
+		ListenClientHTTPURLs: parseURLs(e.listenClientHTTPURLs()),
+		ListenMetricsURLs:    parseURLs(e.listenMetricsURLs(reset)),
+		InitialCluster:       options.Cluster,
+		ClusterState:         options.State,
+		ForceNewCluster:      reset,
+		StrictReconfigCheck:  true,
+		SnapshotCount:        10000,
+		TickMs:               100,
+		ElectionTimeout:      5000,
+		MaxRequestBytes:      10 * 1024 * 1024, // 10MB
+		MaxConcurrentStreams: 1000,
+		QuotaSize:            2 * 1024 * 1024 * 1024, // 2GB
+		AutoCompactionMode:   "periodic",
+		AutoCompactionTTL:    "1h",
+		// TLS — client (API server → etcd)
+		ServerCertFile:   e.config.Runtime.ServerETCDCert,
+		ServerKeyFile:    e.config.Runtime.ServerETCDKey,
+		ServerCAFile:     e.config.Runtime.ETCDServerCA,
+		ClientCertAuth:   true,
+		// TLS — peer (etcd member ↔ etcd member)
+		PeerCertFile:       e.config.Runtime.PeerServerClientETCDCert,
+		PeerKeyFile:        e.config.Runtime.PeerServerClientETCDKey,
+		PeerCAFile:         e.config.Runtime.ETCDPeerCA,
+		PeerClientCertAuth: true,
+		// Logging
+		Logger:      "zap",
+		LogOutputs:  []string{"stderr"},
+		EnablePprof: false,
+		// Experimental
+		InitialCorruptCheck:         true,
+		WatchProgressNotifyInterval: e.config.Datastore.NotifyInterval,
+		// Extra CLI args (if set via --etcd-extra-args)
+		ExtraLines: parseExtraArgs(e.config.ExtraEtcdArgs),
+	}
+
+	embeddedEtcd, err := embedw.Start(ec)
+	if err != nil {
+		return fmt.Errorf("failed to start embedded etcd: %w", err)
+	}
+
+	e.etcdEmbed = embeddedEtcd
+
+	go func() {
+		select {
+		case err := <-embeddedEtcd.Server.ErrNotify():
+			if errors.Is(err, rafthttp.ErrMemberRemoved) {
+				tombstoneFile := filepath.Join(dbDir(e.config), "tombstone")
+				if err := os.WriteFile(tombstoneFile, []byte{}, 0600); err != nil {
+					logrus.Fatalf("Failed to write tombstone file to %s: %v", tombstoneFile, err)
+				}
+				embeddedEtcd.Close()
+				logrus.Infof("This node has been removed from the cluster - please restart %s to rejoin the cluster", version.Program)
+				return
+			}
+			logrus.Errorf("etcd error: %v", err)
+		case <-e.embedCtx.Done():
+			logrus.Infof("stopping etcd")
+			embeddedEtcd.Close()
+		case <-embeddedEtcd.Server.StopNotify():
+			logrus.Fatalf("etcd stopped")
+		case err := <-embeddedEtcd.Err():
+			logrus.Fatalf("etcd exited: %v", err)
+		}
+	}()
+
+	return nil
 }
 
 func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
@@ -998,26 +1048,69 @@ func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
 		return err
 	}
 
-	embedded := executor.Embedded{}
-	ctx, e.cancel = context.WithCancel(ctx)
-	return embedded.ETCD(ctx, executor.ETCDConfig{
-		InitialOptions:       executor.InitialOptions{AdvertisePeerURL: peerURL},
-		DataDir:              tmpDataDir,
-		ForceNewCluster:      true,
-		AdvertiseClientURLs:  clientURL,
-		ListenClientURLs:     clientURL,
-		ListenClientHTTPURLs: clientHTTPURL,
-		ListenPeerURLs:       peerURL,
-		Logger:               "zap",
-		HeartbeatInterval:    500,
-		ElectionTimeout:      5000,
-		SnapshotCount:        10000,
-		Name:                 e.name,
-		LogOutputs:           []string{"stderr"},
+	extraLines := parseExtraArgs(e.config.ExtraEtcdArgs)
+	if extraLines == nil {
+		extraLines = make(map[string]interface{})
+	}
+	extraLines["max-snapshots"] = 0
+	extraLines["max-wals"] = 0
 
-		ExperimentalInitialCorruptCheck:         true,
-		ExperimentalWatchProgressNotifyInterval: e.config.Datastore.NotifyInterval,
-	}, append(e.config.ExtraEtcdArgs, "--max-snapshots=0", "--max-wals=0"))
+	e.embedCtx, e.embedCancel = context.WithCancel(ctx)
+	e.cancel = e.embedCancel
+
+	embeddedEtcd, err := embedw.Start(embedw.Config{
+		Name:                       e.name,
+		DataDir:                    tmpDataDir,
+		AdvertisePeerURLs:          parseURLs(peerURL),
+		AdvertiseClientURLs:        parseURLs(clientURL),
+		ListenPeerURLs:             parseURLs(peerURL),
+		ListenClientURLs:           parseURLs(clientURL),
+		ListenClientHTTPURLs:       parseURLs(clientHTTPURL),
+		ListenMetricsURLs:          parseURLs(fmt.Sprintf("http://%s:2381", e.config.Loopback(true))),
+		InitialCluster:             fmt.Sprintf("%s=%s", e.name, peerURL),
+		ClusterState:               "new",
+		ForceNewCluster:            true,
+		StrictReconfigCheck:        true,
+		SnapshotCount:              10000,
+		TickMs:                     500,
+		ElectionTimeout:            5000,
+		// TLS — client (API server → etcd)
+		ServerCertFile:   e.config.Runtime.ServerETCDCert,
+		ServerKeyFile:    e.config.Runtime.ServerETCDKey,
+		ServerCAFile:     e.config.Runtime.ETCDServerCA,
+		ClientCertAuth:   true,
+		// TLS — peer (etcd member ↔ etcd member)
+		PeerCertFile:       e.config.Runtime.PeerServerClientETCDCert,
+		PeerKeyFile:        e.config.Runtime.PeerServerClientETCDKey,
+		PeerCAFile:         e.config.Runtime.ETCDPeerCA,
+		PeerClientCertAuth: true,
+		// Logging
+		Logger:                     "zap",
+		LogOutputs:                 []string{"stderr"},
+		InitialCorruptCheck:        true,
+		WatchProgressNotifyInterval: e.config.Datastore.NotifyInterval,
+		ExtraLines:                 extraLines,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to start temporary embedded etcd: %w", err)
+	}
+
+	e.etcdEmbed = embeddedEtcd
+	go func() {
+		select {
+		case err := <-embeddedEtcd.Server.ErrNotify():
+			logrus.Errorf("temporary etcd error: %v", err)
+		case <-e.embedCtx.Done():
+			logrus.Infof("stopping temporary etcd")
+			embeddedEtcd.Close()
+		case <-embeddedEtcd.Server.StopNotify():
+			logrus.Fatalf("temporary etcd stopped")
+		case err := <-embeddedEtcd.Err():
+			logrus.Fatalf("temporary etcd exited: %v", err)
+		}
+	}()
+
+	return nil
 }
 
 func addPort(address string, offset int) (string, error) {
@@ -1031,6 +1124,58 @@ func addPort(address string, offset int) (string, error) {
 	}
 	port += offset
 	return fmt.Sprintf("%s://%s:%d", u.Scheme, u.Hostname(), port), nil
+}
+
+// parseExtraArgs converts --key=value style etcd extra args into a map for YAML embedding.
+func parseExtraArgs(args []string) map[string]interface{} {
+	if len(args) == 0 {
+		return nil
+	}
+	m := make(map[string]interface{})
+	for _, arg := range args {
+		kv := strings.SplitN(strings.TrimLeft(arg, "-"), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := kv[0]
+		val := kv[1]
+		if i, err := strconv.Atoi(val); err == nil {
+			m[key] = i
+		} else if d, err := time.ParseDuration(val); err == nil {
+			m[key] = d
+		} else {
+			switch strings.ToLower(val) {
+			case "true":
+				m[key] = true
+			case "false":
+				m[key] = false
+			default:
+				m[key] = val
+			}
+		}
+	}
+	return m
+}
+
+// parseURLs splits a comma-separated URL string into []url.URL.
+func parseURLs(s string) []url.URL {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	urls := make([]url.URL, 0, len(parts))
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		u, err := url.Parse(p)
+		if err != nil {
+			logrus.Warnf("Skipping invalid etcd URL %q: %v", p, err)
+			continue
+		}
+		urls = append(urls, *u)
+	}
+	return urls
 }
 
 // RemovePeer removes a peer from the cluster. The peer name and IP address must both match.

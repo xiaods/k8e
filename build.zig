@@ -95,10 +95,9 @@ pub fn build(b: *std.Build) !void {
             "; do [ -f \"$i\" ] && echo \"Removing $i\" && rm -f \"$i\" || true; done",
     });
 
-    // Build k8e (aligned with k3s: system gcc, SQLite CGO flags)
+    // Build k8e (aligned with k3s: system gcc)
     const k8e_build = b.addSystemCommand(&.{ "go", "build" });
     k8e_build.setEnvironmentVariable("CGO_ENABLED", "1");
-    k8e_build.setEnvironmentVariable("CGO_CFLAGS", "-DSQLITE_ENABLE_DBSTAT_VTAB=1 -DSQLITE_USE_ALLOCA=1");
     k8e_build.addArgs(&.{ "-tags", tags, "-buildvcs=false", "-ldflags", ldflags });
     k8e_build.addArgs(&.{ "-o", "bin/k8e", "./cmd/server" });
     k8e_build.step.dependOn(&mkdir_bin.step);
