@@ -177,7 +177,7 @@ type etcdYAMLConfig struct {
 	QuotaBackendBytes    int64             `yaml:"quota-backend-bytes"`
 	BackendFreelistType  string            `yaml:"backend-bbolt-freelist-type"`
 	BackendBatchLimit    int               `yaml:"backend-batch-limit"`
-	BackendBatchInterval time.Duration     `yaml:"backend-batch-interval"`
+	BackendBatchInterval time.Duration     `yaml:"backend-batch-interval,omitempty"`
 	MaxLearners          int               `yaml:"max-learners"`
 	// TLS — client
 	CertFile             string            `yaml:"cert-file"`
@@ -192,15 +192,15 @@ type etcdYAMLConfig struct {
 	// TLS general
 	TlsMinVersion        string            `yaml:"tls-min-version"`
 	TlsMaxVersion        string            `yaml:"tls-max-version"`
-	CipherSuites         string            `yaml:"cipher-suites"`
+	CipherSuites         string            `yaml:"cipher-suites,omitempty"`
 	PeerSkipSANVerify    bool              `yaml:"peer-skip-client-san-verification"`
 	// Auth
-	AuthToken            string            `yaml:"auth-token"`
-	BcryptCost           uint              `yaml:"bcrypt-cost"`
-	AuthTokenTTL         uint              `yaml:"auth-token-ttl"`
+	AuthToken            string            `yaml:"auth-token,omitempty"`
+	BcryptCost           uint              `yaml:"bcrypt-cost,omitempty"`
+	AuthTokenTTL         uint              `yaml:"auth-token-ttl,omitempty"`
 	// CORS / host
-	CORS                 string            `yaml:"cors"`
-	HostWhitelist        string            `yaml:"host-whitelist"`
+	CORS                 string            `yaml:"cors,omitempty"`
+	HostWhitelist        string            `yaml:"host-whitelist,omitempty"`
 	// Logging
 	Logger               string            `yaml:"logger"`
 	LogOutputs           []string          `yaml:"log-outputs"`
@@ -214,7 +214,7 @@ type etcdYAMLConfig struct {
 	GRPCKeepAliveTimeout time.Duration     `yaml:"grpc-keepalive-timeout"`
 	// Feature gates
 	InitialCorruptCheck bool                `yaml:"experimental-initial-corrupt-check"`
-	WatchProgressNotifyInterval time.Duration `yaml:"experimental-watch-progress-notify-interval"`
+	WatchProgressNotifyInterval time.Duration `yaml:"experimental-watch-progress-notify-interval,omitempty"`
 
 	Extra map[string]interface{} `yaml:",inline"`
 }
