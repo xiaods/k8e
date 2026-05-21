@@ -146,6 +146,14 @@ func buildEmbedConfig(cfg Config) (*embed.Config, error) {
 	return ec, nil
 }
 
+// yamlSecurityConfig matches etcd's securityConfig for client/server-transport-security YAML sections.
+type yamlSecurityConfig struct {
+	CertFile       string `yaml:"cert-file"`
+	KeyFile        string `yaml:"key-file"`
+	TrustedCAFile  string `yaml:"trusted-ca-file"`
+	ClientCertAuth bool   `yaml:"client-cert-auth"`
+}
+
 // etcdYAMLConfig mirrors the format expected by embed.ConfigFromFile.
 type etcdYAMLConfig struct {
 	Name                 string            `yaml:"name"`
@@ -179,21 +187,14 @@ type etcdYAMLConfig struct {
 	BackendBatchLimit    int               `yaml:"backend-batch-limit"`
 	BackendBatchInterval time.Duration     `yaml:"backend-batch-interval,omitempty"`
 	MaxLearners          int               `yaml:"max-learners"`
-	// TLS — client
-	CertFile             string            `yaml:"cert-file"`
-	KeyFile              string            `yaml:"key-file"`
-	TrustedCAFile        string            `yaml:"trusted-ca-file"`
-	ClientCertAuth       bool              `yaml:"client-cert-auth"`
-	// TLS — peer
-	PeerCertFile         string            `yaml:"peer-cert-file"`
-	PeerKeyFile          string            `yaml:"peer-key-file"`
-	PeerTrustedCAFile    string            `yaml:"peer-trusted-ca-file"`
-	PeerClientCertAuth   bool              `yaml:"peer-client-cert-auth"`
-	// TLS general
+	// TLS — client (nested section)
+	ClientTransportSecurity yamlSecurityConfig `yaml:"client-transport-security"`
+	// TLS — peer (nested section)
+	PeerTransportSecurity yamlSecurityConfig `yaml:"peer-transport-security"`
+	// TLS general (top-level fields)
 	TlsMinVersion        string            `yaml:"tls-min-version"`
 	TlsMaxVersion        string            `yaml:"tls-max-version"`
 	CipherSuites         []string          `yaml:"cipher-suites"`
-	PeerSkipSANVerify    bool              `yaml:"peer-skip-client-san-verification"`
 	// Auth
 	AuthToken            string            `yaml:"auth-token,omitempty"`
 	BcryptCost           uint              `yaml:"bcrypt-cost,omitempty"`
@@ -244,15 +245,19 @@ func writeConfigFile(path string, cfg Config) error {
 		ForceNewCluster:      cfg.ForceNewCluster,
 		StrictReconfigCheck:  cfg.StrictReconfigCheck,
 		// TLS — client
-		CertFile:       cfg.ServerCertFile,
-		KeyFile:        cfg.ServerKeyFile,
-		TrustedCAFile:  cfg.ServerCAFile,
-		ClientCertAuth: cfg.ClientCertAuth,
+		ClientTransportSecurity: yamlSecurityConfig{
+			CertFile:       cfg.ServerCertFile,
+			KeyFile:        cfg.ServerKeyFile,
+			TrustedCAFile:  cfg.ServerCAFile,
+			ClientCertAuth: cfg.ClientCertAuth,
+		},
 		// TLS — peer
-		PeerCertFile:       cfg.PeerCertFile,
-		PeerKeyFile:        cfg.PeerKeyFile,
-		PeerTrustedCAFile:  cfg.PeerCAFile,
-		PeerClientCertAuth: cfg.PeerClientCertAuth,
+		PeerTransportSecurity: yamlSecurityConfig{
+			CertFile:       cfg.PeerCertFile,
+			KeyFile:        cfg.PeerKeyFile,
+			TrustedCAFile:  cfg.PeerCAFile,
+			ClientCertAuth: cfg.PeerClientCertAuth,
+		},
 		// Logging
 		Logger:      cfg.Logger,
 		LogOutputs:  cfg.LogOutputs,
