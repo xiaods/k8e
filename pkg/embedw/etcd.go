@@ -177,7 +177,7 @@ type etcdYAMLConfig struct {
 	QuotaBackendBytes    int64             `yaml:"quota-backend-bytes"`
 	BackendFreelistType  string            `yaml:"backend-bbolt-freelist-type"`
 	BackendBatchLimit    int               `yaml:"backend-batch-limit"`
-	BackendBatchInterval time.Duration     `yaml:"backend-batch-interval"`
+	BackendBatchInterval time.Duration     `yaml:"backend-batch-interval,omitempty"`
 	MaxLearners          int               `yaml:"max-learners"`
 	// TLS — client
 	CertFile             string            `yaml:"cert-file"`
@@ -214,7 +214,7 @@ type etcdYAMLConfig struct {
 	GRPCKeepAliveTimeout time.Duration     `yaml:"grpc-keepalive-timeout"`
 	// Feature gates
 	InitialCorruptCheck bool                `yaml:"experimental-initial-corrupt-check"`
-	WatchProgressNotifyInterval time.Duration `yaml:"experimental-watch-progress-notify-interval"`
+	WatchProgressNotifyInterval time.Duration `yaml:"experimental-watch-progress-notify-interval,omitempty"`
 
 	Extra map[string]interface{} `yaml:",inline"`
 }
