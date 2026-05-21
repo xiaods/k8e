@@ -133,3 +133,11 @@ Integration tests require a running K8E cluster and are invoked via `make test`.
 - **gRPC-first**: The sandbox API is gRPC; the MCP server and Python/TypeScript SDKs are thin wrappers around it
 - **Warm pools**: Pre-booted sandbox pods reduce session startup latency; the `SandboxWarmPool` CRD lets users configure pool size and runtime per namespace
 - **Cross-process session reuse**: The `tenantID` field on sessions allows multiple MCP client calls to share the same sandbox session via `FindActiveSession()`
+
+## Agent skills
+
+See `docs/agents/` for the configuration files that engineering skills consume:
+
+- **Issue tracker**: [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) — issues live in GitHub Issues, managed via `gh` CLI
+- **Triage labels**: [docs/agents/triage-labels.md](docs/agents/triage-labels.md) — standard five-role label vocabulary
+- **Domain docs**: [docs/agents/domain.md](docs/agents/domain.md) — how skills should consume `docs/adr/`, key terms, and repo structure
