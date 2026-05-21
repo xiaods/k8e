@@ -467,67 +467,71 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 	go e.getS3Client(ctx)
 
 	if isInitialized {
-		// check etcd dir permission
-		etcdDir := dbDir(e.config)
-		info, err := os.Stat(etcdDir)
-		if err != nil {
-			return err
-		}
-		if info.Mode() != 0700 {
-			if err := os.Chmod(etcdDir, 0700); err != nil {
-				return err
-			}
-		}
-		opt, err := executor.CurrentETCDOptions()
-		if err != nil {
-			return err
-		}
-		if opt.Cluster == "" {
-			opt.Cluster = fmt.Sprintf("%s=%s", e.name, e.peerURL())
-		}
-		if opt.State == "" {
-			opt.State = "new"
-		}
-		logrus.Infof("Starting etcd for existing cluster member")
-		return e.cluster(ctx, false, opt)
+		return e.startExistingCluster(ctx)
 	}
 
 	if clientAccessInfo == nil {
 		return e.newCluster(ctx, false)
 	}
 
-	go func() {
-		for {
-			select {
-			case <-time.After(30 * time.Second):
-				logrus.Infof("Waiting for container runtime to become ready before joining etcd cluster")
-			case <-e.config.Runtime.ContainerRuntimeReady:
-				if err := wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
-					if err := e.join(ctx, clientAccessInfo); err != nil {
-						// Retry the join if waiting for another member to be promoted, or waiting for peers to connect after promotion
-						if errors.Is(err, rpctypes.ErrTooManyLearners) || errors.Is(err, rpctypes.ErrUnhealthy) {
-							logrus.Infof("Waiting for other members to finish joining etcd cluster: %v", err)
-							return false, nil
-						}
-						// Retry the join if waiting to retrieve the member list from the server
-						if errors.Is(err, ErrMemberListFailed) {
-							logrus.Infof("Waiting to retrieve etcd cluster member list: %v", err)
-							return false, nil
-						}
-						return false, err
-					}
-					return true, nil
-				}); err != nil {
-					logrus.Fatalf("etcd cluster join failed: %v", err)
-				}
-				return
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-
+	go e.startJoinLoop(ctx, clientAccessInfo)
 	return nil
+}
+
+// startExistingCluster starts etcd for an already-initialized cluster member.
+func (e *ETCD) startExistingCluster(ctx context.Context) error {
+	etcdDir := dbDir(e.config)
+	info, err := os.Stat(etcdDir)
+	if err != nil {
+		return err
+	}
+	if info.Mode() != 0700 {
+		if err := os.Chmod(etcdDir, 0700); err != nil {
+			return err
+		}
+	}
+	opt, err := executor.CurrentETCDOptions()
+	if err != nil {
+		return err
+	}
+	if opt.Cluster == "" {
+		opt.Cluster = fmt.Sprintf("%s=%s", e.name, e.peerURL())
+	}
+	if opt.State == "" {
+		opt.State = "new"
+	}
+	logrus.Infof("Starting etcd for existing cluster member")
+	return e.cluster(ctx, false, opt)
+}
+
+// startJoinLoop waits for the container runtime to become ready, then joins the etcd cluster.
+func (e *ETCD) startJoinLoop(ctx context.Context, clientAccessInfo *clientaccess.Info) {
+	for {
+		select {
+		case <-time.After(30 * time.Second):
+			logrus.Infof("Waiting for container runtime to become ready before joining etcd cluster")
+		case <-e.config.Runtime.ContainerRuntimeReady:
+			if err := wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
+				if err := e.join(ctx, clientAccessInfo); err != nil {
+					if errors.Is(err, rpctypes.ErrTooManyLearners) || errors.Is(err, rpctypes.ErrUnhealthy) {
+						logrus.Infof("Waiting for other members to finish joining etcd cluster: %v", err)
+						return false, nil
+					}
+					if errors.Is(err, ErrMemberListFailed) {
+						logrus.Infof("Waiting to retrieve etcd cluster member list: %v", err)
+						return false, nil
+					}
+					return false, err
+				}
+				return true, nil
+			}); err != nil {
+				logrus.Fatalf("etcd cluster join failed: %v", err)
+			}
+			return
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // startClient sets up the config's datastore endpoints, and starts an etcd client connected to the server endpoint.
@@ -888,16 +892,6 @@ func (e *ETCD) listenPeerURLs(reset bool) string {
 // clientURL returns the external client access address for the local node.
 func (e *ETCD) clientURL() string {
 	return fmt.Sprintf("https://%s", net.JoinHostPort(e.address, "2379"))
-}
-
-// advertiseClientURLs returns the advertised addresses for the local node.
-// During cluster reset/restore we only listen on loopback to avoid having apiservers
-// on other nodes connect mid-process.
-func (e *ETCD) advertiseClientURLs(reset bool) string {
-	if reset {
-		return fmt.Sprintf("https://%s:2379", e.config.Loopback(true))
-	}
-	return e.clientURL()
 }
 
 // listenClientURLs returns a list of URLs to bind to for client connections.
