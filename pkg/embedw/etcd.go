@@ -209,9 +209,9 @@ type etcdYAMLConfig struct {
 	EnablePprof          bool              `yaml:"enable-pprof"`
 	EnableLogRotation    bool              `yaml:"enable-log-rotation"`
 	// GRPC
-	GRPCKeepAliveMinTime time.Duration     `yaml:"grpc-keepalive-min-time"`
-	GRPCKeepAliveInterval time.Duration    `yaml:"grpc-keepalive-interval"`
-	GRPCKeepAliveTimeout time.Duration     `yaml:"grpc-keepalive-timeout"`
+	GRPCKeepAliveMinTime time.Duration     `yaml:"grpc-keepalive-min-time,omitempty"`
+	GRPCKeepAliveInterval time.Duration    `yaml:"grpc-keepalive-interval,omitempty"`
+	GRPCKeepAliveTimeout time.Duration     `yaml:"grpc-keepalive-timeout,omitempty"`
 	// Feature gates
 	InitialCorruptCheck bool                `yaml:"experimental-initial-corrupt-check"`
 	WatchProgressNotifyInterval time.Duration `yaml:"experimental-watch-progress-notify-interval,omitempty"`
@@ -261,10 +261,6 @@ func writeConfigFile(path string, cfg Config) error {
 		// Feature gates
 		InitialCorruptCheck:         cfg.InitialCorruptCheck,
 		WatchProgressNotifyInterval: cfg.WatchProgressNotifyInterval,
-		// Keepalive
-		GRPCKeepAliveMinTime:  5 * time.Second,
-		GRPCKeepAliveInterval: 2 * time.Hour,
-		GRPCKeepAliveTimeout:  20 * time.Second,
 		// Extra args merged via yaml:",inline"
 		Extra: cfg.ExtraLines,
 	}
