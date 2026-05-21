@@ -192,7 +192,7 @@ type etcdYAMLConfig struct {
 	// TLS general
 	TlsMinVersion        string            `yaml:"tls-min-version"`
 	TlsMaxVersion        string            `yaml:"tls-max-version"`
-	CipherSuites         string            `yaml:"cipher-suites,omitempty"`
+	CipherSuites         []string          `yaml:"cipher-suites"`
 	PeerSkipSANVerify    bool              `yaml:"peer-skip-client-san-verification"`
 	// Auth
 	AuthToken            string            `yaml:"auth-token,omitempty"`
