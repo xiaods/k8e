@@ -485,8 +485,8 @@ func (e *ETCD) startExistingCluster(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if info.Mode() != 0700 {
-		if err := os.Chmod(etcdDir, 0700); err != nil {
+	if info.Mode().Perm() != 0700 {
+		if err := os.Chmod(etcdDir, 0700); err != nil { //nolint:gosec // 0700 is the minimal permission for a readable directory
 			return err
 		}
 	}
@@ -691,7 +691,7 @@ func (e *ETCD) setName(force bool) error {
 			return errors.New("server node name not set")
 		}
 		e.name = e.config.ServerNodeName + "-" + uuid.New().String()[:8]
-		if err := os.MkdirAll(filepath.Dir(fileName), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fileName), 0700); err != nil { //nolint:gosec // 0700 is the minimal permission for a readable directory
 			return err
 		}
 		return os.WriteFile(fileName, []byte(e.name), 0600)
