@@ -482,6 +482,12 @@ func (e *ETCD) Start(ctx context.Context, clientAccessInfo *clientaccess.Info) e
 		if err != nil {
 			return err
 		}
+		if opt.Cluster == "" {
+			opt.Cluster = fmt.Sprintf("%s=%s", e.name, e.peerURL())
+		}
+		if opt.State == "" {
+			opt.State = "new"
+		}
 		logrus.Infof("Starting etcd for existing cluster member")
 		return e.cluster(ctx, false, opt)
 	}
