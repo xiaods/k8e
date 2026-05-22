@@ -11,7 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/erikdubbelboer/gspt"
+	"github.com/xiaods/k8e/pkg/proctitle"
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
@@ -171,7 +171,7 @@ func Rotate(app *cli.Context) error {
 
 func serverAccess(cfg *cmds.Token) (*clientaccess.Info, error) {
 	// hide process arguments from ps output, since they likely contain tokens.
-	gspt.SetProcTitle(os.Args[0] + " token")
+	proctitle.SetProcTitle(os.Args[0] + " token")
 
 	dataDir, err := server.ResolveDataDir("")
 	if err != nil {

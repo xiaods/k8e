@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/erikdubbelboer/gspt"
+	"github.com/xiaods/k8e/pkg/proctitle"
 	"github.com/rancher/wrangler/v3/pkg/signals"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
@@ -21,7 +21,7 @@ import (
 func Run(ctx *cli.Context) error {
 	// hide process arguments from ps output, since they may contain
 	// database credentials or other secrets.
-	gspt.SetProcTitle(os.Args[0] + " agent")
+	proctitle.SetProcTitle(os.Args[0] + " agent")
 
 	// Evacuate cgroup v2 before doing anything else that may fork.
 	if err := cmds.EvacuateCgroup2(); err != nil {
