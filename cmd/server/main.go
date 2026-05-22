@@ -77,6 +77,8 @@ func main() {
 			cert.RotateCA,
 		),
 		cmds.NewCompletionCommand(completion.Run),
+		cmds.NewSandboxMCPCommand(cmds.SandboxMCP),
+		cmds.NewSandboxInstallSkillCommand(),
 		cmds.NewSandboxGatewayCommand(cmds.SandboxGateway),
 	}
 

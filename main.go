@@ -18,10 +18,12 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/cli/completion"
 	"github.com/xiaods/k8e/pkg/cli/crictl"
+	"github.com/xiaods/k8e/pkg/cli/ctr"
 	"github.com/xiaods/k8e/pkg/cli/etcdsnapshot"
 	"github.com/xiaods/k8e/pkg/cli/kubectl"
 	"github.com/xiaods/k8e/pkg/cli/secretsencrypt"
 	"github.com/xiaods/k8e/pkg/cli/server"
+	"github.com/xiaods/k8e/pkg/cli/token"
 	"github.com/xiaods/k8e/pkg/configfilearg"
 )
 
@@ -32,6 +34,14 @@ func main() {
 		cmds.NewAgentCommand(agent.Run),
 		cmds.NewKubectlCommand(kubectl.Run),
 		cmds.NewCRICTL(crictl.Run),
+		cmds.NewCtrCommand(ctr.Run),
+		cmds.NewTokenCommands(
+			token.Create,
+			token.Delete,
+			token.Generate,
+			token.List,
+			token.Rotate,
+		),
 		cmds.NewEtcdSnapshotCommands(
 			etcdsnapshot.Delete,
 			etcdsnapshot.List,
@@ -53,6 +63,8 @@ func main() {
 			cert.RotateCA,
 		),
 		cmds.NewCompletionCommand(completion.Run),
+		cmds.NewSandboxMCPCommand(cmds.SandboxMCP),
+		cmds.NewSandboxInstallSkillCommand(),
 		cmds.NewSandboxGatewayCommand(cmds.SandboxGateway),
 	}
 
