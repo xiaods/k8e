@@ -27,7 +27,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	bootstrapapi "k8s.io/cluster-bootstrap/token/api"
 	bootstraputil "k8s.io/cluster-bootstrap/token/util"
-	"k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 func Create(app *cli.Context) error {
@@ -96,10 +96,10 @@ func Delete(app *cli.Context) error {
 	if err := cmds.InitLogging(); err != nil {
 		return err
 	}
-	return delete(app, &cmds.TokenConfig)
+	return tokenDelete(app, &cmds.TokenConfig)
 }
 
-func delete(app *cli.Context, cfg *cmds.Token) error {
+func tokenDelete(app *cli.Context, cfg *cmds.Token) error {
 	args := app.Args()
 	if len(args) < 1 {
 		return errors.New("missing argument; 'token delete' is missing token")
@@ -155,7 +155,7 @@ func Rotate(app *cli.Context) error {
 		return err
 	}
 	b, err := json.Marshal(server.TokenRotateRequest{
-		NewToken: pointer.String(cmds.TokenConfig.NewToken),
+		NewToken: ptr.To(cmds.TokenConfig.NewToken),
 	})
 	if err != nil {
 		return err
