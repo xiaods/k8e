@@ -12,7 +12,6 @@ import (
 	"os"
 
 	"github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/cli/agent"
 	"github.com/xiaods/k8e/pkg/cli/cert"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
@@ -29,44 +28,31 @@ import (
 
 func main() {
 	app := cmds.NewApp()
-	app.Commands = []cli.Command{
-		cmds.NewServerCommand(server.Run),
-		cmds.NewAgentCommand(agent.Run),
-		cmds.NewKubectlCommand(kubectl.Run),
-		cmds.NewCRICTL(crictl.Run),
-		cmds.NewCtrCommand(ctr.Run),
-		cmds.NewTokenCommands(
-			token.Create,
-			token.Delete,
-			token.Generate,
-			token.List,
-			token.Rotate,
-		),
-		cmds.NewEtcdSnapshotCommands(
-			etcdsnapshot.Delete,
-			etcdsnapshot.List,
-			etcdsnapshot.Prune,
-			etcdsnapshot.Save,
-		),
-		cmds.NewSecretsEncryptCommands(
-			secretsencrypt.Status,
-			secretsencrypt.Enable,
-			secretsencrypt.Disable,
-			secretsencrypt.Prepare,
-			secretsencrypt.Rotate,
-			secretsencrypt.Reencrypt,
-			secretsencrypt.RotateKeys,
-		),
-		cmds.NewCertCommands(
-			cert.Check,
-			cert.Rotate,
-			cert.RotateCA,
-		),
-		cmds.NewCompletionCommand(completion.Run),
-		cmds.NewSandboxMCPCommand(cmds.SandboxMCP),
-		cmds.NewSandboxInstallSkillCommand(),
-		cmds.NewSandboxGatewayCommand(cmds.SandboxGateway),
-	}
+	app.Commands = cmds.NewAppCommands(cmds.AppCommandFuncs{
+		Server:  server.Run,
+		Agent:   agent.Run,
+		Kubectl: kubectl.Run,
+		CRICTL:  crictl.Run,
+		Ctr:     ctr.Run,
+		Token: cmds.TokenCommandFuncs{
+			Create: token.Create, Delete: token.Delete,
+			Generate: token.Generate, List: token.List, Rotate: token.Rotate,
+		},
+		EtcdSnapshot: cmds.EtcdSnapshotCommandFuncs{
+			Delete: etcdsnapshot.Delete, List: etcdsnapshot.List,
+			Prune: etcdsnapshot.Prune, Save: etcdsnapshot.Save,
+		},
+		SecretsEncrypt: cmds.SecretsEncryptCommandFuncs{
+			Status: secretsencrypt.Status, Enable: secretsencrypt.Enable,
+			Disable: secretsencrypt.Disable, Prepare: secretsencrypt.Prepare,
+			Rotate: secretsencrypt.Rotate, Reencrypt: secretsencrypt.Reencrypt,
+			RotateKeys: secretsencrypt.RotateKeys,
+		},
+		Cert: cmds.CertCommandFuncs{
+			Check: cert.Check, Rotate: cert.Rotate, RotateCA: cert.RotateCA,
+		},
+		Completion: completion.Run,
+	})
 
 	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil && !errors.Is(err, context.Canceled) {
 		logrus.Fatal(err)
