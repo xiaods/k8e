@@ -19,7 +19,7 @@ replace (
 	github.com/open-policy-agent/opa => github.com/open-policy-agent/opa v0.59.0 // github.com/Microsoft/hcsshim using bad version v0.42.2
 	github.com/opencontainers/cgroups => github.com/opencontainers/cgroups v0.0.4
 	github.com/opencontainers/runc => github.com/opencontainers/runc v1.4.2
-	github.com/opencontainers/runtime-spec => github.com/opencontainers/runtime-spec v1.2.1
+
 	github.com/opencontainers/selinux => github.com/opencontainers/selinux v1.13.0
 	github.com/prometheus/client_golang => github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/common => github.com/prometheus/common v0.66.1
