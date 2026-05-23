@@ -8,18 +8,8 @@ import (
 
 	"github.com/docker/docker/pkg/reexec"
 	"github.com/sirupsen/logrus"
-	"github.com/urfave/cli"
-	"github.com/xiaods/k8e/pkg/cli/agent"
-	"github.com/xiaods/k8e/pkg/cli/cert"
 	"github.com/xiaods/k8e/pkg/cli/cmds"
-	"github.com/xiaods/k8e/pkg/cli/completion"
-	"github.com/xiaods/k8e/pkg/cli/crictl"
-	"github.com/xiaods/k8e/pkg/cli/ctr"
-	"github.com/xiaods/k8e/pkg/cli/etcdsnapshot"
-	"github.com/xiaods/k8e/pkg/cli/kubectl"
-	"github.com/xiaods/k8e/pkg/cli/secretsencrypt"
-	"github.com/xiaods/k8e/pkg/cli/server"
-	"github.com/xiaods/k8e/pkg/cli/token"
+	"github.com/xiaods/k8e/pkg/cli/commands"
 	"github.com/xiaods/k8e/pkg/configfilearg"
 	"github.com/xiaods/k8e/pkg/containerd"
 	ctr2 "github.com/xiaods/k8e/pkg/ctr"
@@ -43,42 +33,7 @@ func main() {
 	os.Args[0] = cmd
 
 	app := cmds.NewApp()
-	app.Commands = []cli.Command{
-		cmds.NewServerCommand(server.Run),
-		cmds.NewAgentCommand(agent.Run),
-		cmds.NewKubectlCommand(kubectl.Run),
-		cmds.NewCRICTL(crictl.Run),
-		cmds.NewCtrCommand(ctr.Run),
-		cmds.NewTokenCommands(
-			token.Create,
-			token.Delete,
-			token.Generate,
-			token.List,
-			token.Rotate,
-		),
-		cmds.NewEtcdSnapshotCommands(
-			etcdsnapshot.Delete,
-			etcdsnapshot.List,
-			etcdsnapshot.Prune,
-			etcdsnapshot.Save,
-		),
-		cmds.NewSecretsEncryptCommands(
-			secretsencrypt.Status,
-			secretsencrypt.Enable,
-			secretsencrypt.Disable,
-			secretsencrypt.Prepare,
-			secretsencrypt.Rotate,
-			secretsencrypt.Reencrypt,
-			secretsencrypt.RotateKeys,
-		),
-		cmds.NewCertCommands(
-			cert.Check,
-			cert.Rotate,
-			cert.RotateCA,
-		),
-		cmds.NewCompletionCommand(completion.Run),
-		cmds.NewSandboxGatewayCommand(cmds.SandboxGateway),
-	}
+	app.Commands = cmds.NewAppCommands(commands.Funcs())
 
 	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil && !errors.Is(err, context.Canceled) {
 		logrus.Fatal(err)

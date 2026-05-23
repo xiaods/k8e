@@ -1,4 +1,5 @@
-//go:build !windows
+//go:build linux
+// +build linux
 
 package containerd
 
