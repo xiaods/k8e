@@ -19,6 +19,8 @@ import (
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
 )
 
+const podManifestPathKey = "pod-manifest-path"
+
 func Agent(ctx context.Context, nodeConfig *daemonconfig.Node, proxy proxy.Proxy) error {
 	rand.Seed(time.Now().UTC().UnixNano())
 
@@ -67,11 +69,11 @@ func commonKubeletArgs(cfg *daemonconfig.Agent) map[string]string {
 		"anonymous-auth":               "false",
 		"authorization-mode":           modes.ModeWebhook,
 	}
-	if cfg.PodManifests != "" && argsMap["pod-manifest-path"] == "" {
-		argsMap["pod-manifest-path"] = cfg.PodManifests
+	if cfg.PodManifests != "" && argsMap[podManifestPathKey] == "" {
+		argsMap[podManifestPathKey] = cfg.PodManifests
 	}
-	if err := os.MkdirAll(argsMap["pod-manifest-path"], 0755); err != nil {
-		logrus.Errorf("Failed to mkdir %s: %v", argsMap["pod-manifest-path"], err)
+	if err := os.MkdirAll(argsMap[podManifestPathKey], 0755); err != nil {
+		logrus.Errorf("Failed to mkdir %s: %v", argsMap[podManifestPathKey], err)
 	}
 	if cfg.RootDir != "" {
 		argsMap["root-dir"] = cfg.RootDir
