@@ -69,6 +69,26 @@ func commonKubeletArgs(cfg *daemonconfig.Agent) map[string]string {
 		"anonymous-auth":               "false",
 		"authorization-mode":           modes.ModeWebhook,
 	}
+	applyCommonPathArgs(argsMap, cfg)
+	applyCommonConnectivityArgs(argsMap, cfg)
+	if cfg.NodeName != "" {
+		argsMap["hostname-override"] = cfg.NodeName
+	}
+	argsMap["node-labels"] = strings.Join(cfg.NodeLabels, ",")
+	if len(cfg.NodeTaints) > 0 {
+		argsMap["register-with-taints"] = strings.Join(cfg.NodeTaints, ",")
+	}
+	if !cfg.DisableCCM {
+		argsMap["cloud-provider"] = "external"
+	}
+	applyImageCredentialArgs(argsMap, cfg)
+	if cfg.ProtectKernelDefaults {
+		argsMap["protect-kernel-defaults"] = "true"
+	}
+	return argsMap
+}
+
+func applyCommonPathArgs(argsMap map[string]string, cfg *daemonconfig.Agent) {
 	if cfg.PodManifests != "" && argsMap[podManifestPathKey] == "" {
 		argsMap[podManifestPathKey] = cfg.PodManifests
 	}
@@ -79,6 +99,9 @@ func commonKubeletArgs(cfg *daemonconfig.Agent) map[string]string {
 		argsMap["root-dir"] = cfg.RootDir
 		argsMap["cert-dir"] = filepath.Join(cfg.RootDir, "pki")
 	}
+}
+
+func applyCommonConnectivityArgs(argsMap map[string]string, cfg *daemonconfig.Agent) {
 	if len(cfg.ClusterDNS) > 0 {
 		argsMap["cluster-dns"] = util.JoinIPs(cfg.ClusterDNSs)
 	}
@@ -96,24 +119,14 @@ func commonKubeletArgs(cfg *daemonconfig.Agent) map[string]string {
 		argsMap["tls-cert-file"] = cfg.ServingKubeletCert
 		argsMap["tls-private-key-file"] = cfg.ServingKubeletKey
 	}
-	if cfg.NodeName != "" {
-		argsMap["hostname-override"] = cfg.NodeName
+}
+
+func applyImageCredentialArgs(argsMap map[string]string, cfg *daemonconfig.Agent) {
+	if !ImageCredProvAvailable(cfg) {
+		return
 	}
-	argsMap["node-labels"] = strings.Join(cfg.NodeLabels, ",")
-	if len(cfg.NodeTaints) > 0 {
-		argsMap["register-with-taints"] = strings.Join(cfg.NodeTaints, ",")
-	}
-	if !cfg.DisableCCM {
-		argsMap["cloud-provider"] = "external"
-	}
-	if ImageCredProvAvailable(cfg) {
-		logrus.Infof("Kubelet image credential provider bin dir and configuration file found.")
-		argsMap["feature-gates"] = util.AddFeatureGate(argsMap["feature-gates"], "KubeletCredentialProviders=true")
-		argsMap["image-credential-provider-bin-dir"] = cfg.ImageCredProvBinDir
-		argsMap["image-credential-provider-config"] = cfg.ImageCredProvConfig
-	}
-	if cfg.ProtectKernelDefaults {
-		argsMap["protect-kernel-defaults"] = "true"
-	}
-	return argsMap
+	logrus.Infof("Kubelet image credential provider bin dir and configuration file found.")
+	argsMap["feature-gates"] = util.AddFeatureGate(argsMap["feature-gates"], "KubeletCredentialProviders=true")
+	argsMap["image-credential-provider-bin-dir"] = cfg.ImageCredProvBinDir
+	argsMap["image-credential-provider-config"] = cfg.ImageCredProvConfig
 }
