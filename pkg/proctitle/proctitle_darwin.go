@@ -3,5 +3,6 @@
 
 package proctitle
 
-// No-op on darwin: macOS does not expose process title via /proc.
-func SetProcTitle(cmd string) {}
+func SetProcTitle(cmd string) {
+	// No-op on darwin: macOS does not expose /proc for process title manipulation.
+}
