@@ -1142,7 +1142,7 @@ func parseExtraArgs(args []string) map[string]interface{} {
 		if i, err := strconv.Atoi(val); err == nil {
 			m[key] = i
 		} else if d, err := time.ParseDuration(val); err == nil {
-			m[key] = d
+			m[key] = int64(d) // int64 (nanoseconds) — yaml.v2 marshals time.Duration as string, which sigs.k8s.io/yaml+json cannot unmarshal
 		} else {
 			switch strings.ToLower(val) {
 			case "true":
