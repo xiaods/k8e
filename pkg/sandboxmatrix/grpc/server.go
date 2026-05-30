@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -16,12 +17,16 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
+
+const apiKeySecretNS = "sandbox-matrix"
+const apiKeySecretName = "sandbox-api-keys"
 
 const sandboxdPort = 2024
 
@@ -40,6 +45,7 @@ type Server struct {
 	lisAddr  string
 	certFile string
 	keyFile  string
+	apiKeys  map[string]string // name → key for validation
 }
 
 func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFile string, grpcPort int) *Server {
@@ -57,17 +63,46 @@ func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFil
 	return s
 }
 
+// loadAPIKeys reads API keys from the sandbox-api-keys Secret.
+func (s *Server) loadAPIKeys(ctx context.Context) {
+	secret, err := s.k8s.CoreV1().Secrets(apiKeySecretNS).Get(ctx, apiKeySecretName, metav1.GetOptions{})
+	if err != nil {
+		logrus.Debugf("sandbox gRPC: no api-key secret found, all requests allowed")
+		return
+	}
+	data, ok := secret.Data["keys.json"]
+	if !ok {
+		return
+	}
+	var store map[string]string
+	if err := json.Unmarshal(data, &store); err != nil {
+		logrus.Warnf("sandbox gRPC: api-key secret corrupted: %v", err)
+		return
+	}
+	s.apiKeys = store
+	logrus.Infof("sandbox gRPC: loaded %d API key(s)", len(store))
+}
+
 // Start registers the gRPC server and begins listening on lisAddr (default 0.0.0.0:50051).
 func (s *Server) Start(ctx context.Context) error {
 	lis, err := net.Listen("tcp", s.lisAddr)
 	if err != nil {
 		return fmt.Errorf("grpc listen: %w", err)
 	}
+
+	// Load API keys from Secret for remote client authentication
+	s.loadAPIKeys(ctx)
+
 	creds, err := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 	if err != nil {
 		return fmt.Errorf("grpc tls credentials: %w", err)
 	}
-	gs := grpc.NewServer(grpc.Creds(creds))
+
+	opts := []grpc.ServerOption{grpc.Creds(creds)}
+	if len(s.apiKeys) > 0 {
+		opts = append(opts, grpc.UnaryInterceptor(s.apiKeyInterceptor))
+	}
+	gs := grpc.NewServer(opts...)
 	pb.RegisterSandboxServiceServer(gs, s)
 	logrus.Infof("sandbox gRPC gateway listening on %s", s.lisAddr)
 	go func() {
@@ -280,4 +315,26 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 		}
 	}
 	return "", status.Errorf(codes.Unavailable, "session %s has no pod IP after 60s", sessionID)
+}
+
+// apiKeyInterceptor validates the authorization header against known API keys.
+func (s *Server) apiKeyInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "missing metadata")
+	}
+	auth := md.Get("authorization")
+	if len(auth) == 0 {
+		return nil, status.Error(codes.Unauthenticated, "missing authorization header")
+	}
+	token := strings.TrimPrefix(auth[0], "Bearer ")
+	if token == auth[0] {
+		return nil, status.Error(codes.Unauthenticated, "invalid authorization format, expected 'Bearer <key>'")
+	}
+	for _, key := range s.apiKeys {
+		if key == token {
+			return handler(ctx, req)
+		}
+	}
+	return nil, status.Error(codes.Unauthenticated, "invalid api key")
 }

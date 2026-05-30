@@ -26,6 +26,7 @@ func NewSandboxCommand() cli.Command {
 			sandboxcli.ConfirmCommand(),
 			sandboxcli.ApproveCommand(),
 			sandboxcli.SnapshotCommand(),
+			sandboxcli.ApiKeyCommand(),
 			sandboxcli.InstallSkillCommand(),
 		},
 	}
