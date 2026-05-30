@@ -185,7 +185,7 @@ type etcdYAMLConfig struct {
 	QuotaBackendBytes    int64             `yaml:"quota-backend-bytes"`
 	BackendFreelistType  string            `yaml:"backend-bbolt-freelist-type"`
 	BackendBatchLimit    int               `yaml:"backend-batch-limit"`
-	BackendBatchInterval time.Duration     `yaml:"backend-batch-interval,omitempty"`
+	BackendBatchInterval int64              `yaml:"backend-batch-interval,omitempty"`
 	MaxLearners          int               `yaml:"max-learners"`
 	// TLS — client (nested section)
 	ClientTransportSecurity yamlSecurityConfig `yaml:"client-transport-security"`
@@ -210,12 +210,12 @@ type etcdYAMLConfig struct {
 	EnablePprof          bool              `yaml:"enable-pprof"`
 	EnableLogRotation    bool              `yaml:"enable-log-rotation"`
 	// GRPC
-	GRPCKeepAliveMinTime time.Duration     `yaml:"grpc-keepalive-min-time,omitempty"`
-	GRPCKeepAliveInterval time.Duration    `yaml:"grpc-keepalive-interval,omitempty"`
-	GRPCKeepAliveTimeout time.Duration     `yaml:"grpc-keepalive-timeout,omitempty"`
+	GRPCKeepAliveMinTime  int64            `yaml:"grpc-keepalive-min-time,omitempty"`
+	GRPCKeepAliveInterval int64            `yaml:"grpc-keepalive-interval,omitempty"`
+	GRPCKeepAliveTimeout  int64            `yaml:"grpc-keepalive-timeout,omitempty"`
 	// Feature gates
 	InitialCorruptCheck bool                `yaml:"experimental-initial-corrupt-check"`
-	WatchProgressNotifyInterval time.Duration `yaml:"experimental-watch-progress-notify-interval,omitempty"`
+	WatchProgressNotifyInterval int64         `yaml:"experimental-watch-progress-notify-interval,omitempty"`
 
 	Extra map[string]interface{} `yaml:",inline"`
 }
@@ -265,7 +265,7 @@ func writeConfigFile(path string, cfg Config) error {
 		EnablePprof: cfg.EnablePprof,
 		// Feature gates
 		InitialCorruptCheck:         cfg.InitialCorruptCheck,
-		WatchProgressNotifyInterval: cfg.WatchProgressNotifyInterval,
+		WatchProgressNotifyInterval: int64(cfg.WatchProgressNotifyInterval),
 		// Extra args merged via yaml:",inline"
 		Extra: cfg.ExtraLines,
 	}
