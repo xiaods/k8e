@@ -48,15 +48,15 @@ jobs:
         run: make package-airgap
       - name: Rename artifacts
         run: |
-          BIN_SUFFIX=""
-          if [ "${{ matrix.arch }}" = "arm64" ]; then BIN_SUFFIX="-arm64"; fi
           mkdir -p release-artifacts
-          cp dist/artifacts/k8e${BIN_SUFFIX} release-artifacts/k8e${BIN_SUFFIX}
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            cp dist/artifacts/k8e-arm64 release-artifacts/k8e-arm64
+          else
+            cp dist/artifacts/k8e release-artifacts/k8e
+          fi
           if [ -f dist/artifacts/k8e-airgap-images.tar.gz ]; then
             cp dist/artifacts/k8e-airgap-images.tar.gz release-artifacts/
           fi
-      - name: sha256sum
-        run: cd release-artifacts && sha256sum * > k8e-hashes.txt
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
@@ -101,18 +101,11 @@ jobs:
           EXT=""
           if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
           go build -ldflags="-s -w" -o "k8e-${{ matrix.target }}${EXT}" ./cmd/sandbox-cli/
-      - name: sha256sum
-        run: |
-          EXT=""
-          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
-          sha256sum "k8e-${{ matrix.target }}${EXT}" > "k8e-${{ matrix.target }}-hashes.txt"
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
           name: sandbox-cli-${{ matrix.target }}
-          path: |
-            k8e-${{ matrix.target }}*
-            k8e-${{ matrix.target }}-hashes.txt
+          path: k8e-${{ matrix.target }}*
 
   # ── Sandbox container image ───────────────────────────────────────────
   build-sandbox-image:
@@ -165,6 +158,12 @@ jobs:
         with:
           path: release-artifacts
           merge-multiple: true
+      - name: Generate unified SHA256SUMS
+        run: |
+          cd release-artifacts
+          sha256sum * 2>/dev/null | sort > SHA256SUMS
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
       - name: List artifacts
         run: ls -la release-artifacts/
       - name: Upload to release
@@ -179,5 +178,5 @@ jobs:
             release-artifacts/k8e-darwin-amd64
             release-artifacts/k8e-darwin-arm64
             release-artifacts/k8e-windows-amd64.exe
-            release-artifacts/*hashes*.txt
+            release-artifacts/SHA256SUMS
           fail_on_unmatched_files: false
