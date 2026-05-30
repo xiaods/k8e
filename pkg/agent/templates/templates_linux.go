@@ -106,9 +106,9 @@ enable_keychain = true
 {{end}}
 
 {{- if .SandboxRuntimes.Firecracker }}
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."aws.firecracker"]
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."firecracker"]
   runtime_type = "aws.firecracker"
-[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."aws.firecracker".options]
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes."firecracker".options]
   kernel_image_path = "/var/lib/firecracker-containerd/runtime/hello-vmlinux.bin"
   root_drive = "/var/lib/firecracker-containerd/runtime/default-rootfs.img"
 
