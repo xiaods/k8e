@@ -2,41 +2,30 @@
 set -e
 set -o noglob
 
-# Example:
-#   Installing a server with only etcd:
-#     curl ... | INSTALL_K8E_EXEC="--disable-apiserver --disable-controller-manager --disable-scheduler" sh -
-#   Installing an agent to point at a server:
-#     curl ... | K8E_TOKEN=xxx K8E_URL=https://server-url:6443 sh -
-
+# K8E Install Script — https://k8e.sh
+#
+# Usage:
+#   curl -sfL https://k8e.sh/install.sh | sh -
+#   curl -sfL https://k8e.sh/install.sh | K8E_TOKEN=xxx K8E_URL=https://... sh -
+#
 # Environment variables:
-#   - K8E_*
-#     Environment variables which begin with K8E_ will be preserved for the
-#     systemd service to use. Setting K8E_URL without explicitly setting
-#     a systemd exec command will default the command to "agent", and we
-#     enforce that K8E_TOKEN or K8E_CLUSTER_SECRET is also set.
-#
-#   - INSTALL_K8E_EXEC or script arguments
-#     Command with flags to use for launching k8e in the systemd service, if
-#     the command is not specified will default to "agent" if K8E_URL is set
-#     or "server" if not. The final systemd command resolves to a combination
-#     of EXEC and script args ($@).
-#
-#     The following commands result in the same behavior:
-#       curl ... | INSTALL_K8E_EXEC="server --disable-etcd" sh -s -
-#       curl ... | INSTALL_K8E_EXEC="server" sh -s - --disable-etcd
+#   K8E_*              All K8E_ prefixed vars are passed to the systemd service
+#   K8E_URL            Server URL (agent mode when set)
+#   K8E_TOKEN          Cluster join token (required for agent)
+#   INSTALL_K8E_EXEC   Override exec command (server/agent)
+#   INSTALL_K8E_VERSION Specific version to install (default: latest)
+#   INSTALL_K8E_BIN_DIR Binary install path (default: /usr/local/bin)
+#   INSTALL_K8E_SKIP_DOWNLOAD  Skip binary download
+#   INSTALL_K8E_SKIP_START     Don't start service after install
 
-
-#########################
-# Repo specific content #
-#########################
+# ── Configuration ────────────────────────────────────────────────────────────
 OWNER="xiaods"
 REPO="k8e"
-############################
-# Systemd specific content #
-############################
-TMP_DIR=/tmp
-BIN_DIR=/usr/local/bin
-PROFILE=~/.bashrc
+GITHUB_API="https://api.github.com/repos/${OWNER}/${REPO}"
+GITHUB_DL="https://github.com/${OWNER}/${REPO}/releases/download"
+
+TMP_DIR=${TMP_DIR:-/tmp}
+BIN_DIR=${BIN_DIR:-/usr/local/bin}
 SYSTEM_NAME=k8e
 SYSTEMD_DIR=/etc/systemd/system
 SERVICE_K8E=${SYSTEM_NAME}.service
@@ -44,32 +33,19 @@ UNINSTALL_K8E_SH=${UNINSTALL_K8E_SH:-${BIN_DIR}/${SYSTEM_NAME}-uninstall.sh}
 KILLALL_K8E_SH=${KILLALL_K8E_SH:-${BIN_DIR}/${SYSTEM_NAME}-killall.sh}
 FILE_K8E_SERVICE=${SYSTEMD_DIR}/${SERVICE_K8E}
 FILE_K8E_ENV=${SYSTEMD_DIR}/${SERVICE_K8E}.env
-SYSTEMD_TYPE=notify
 
+# ── Logging ──────────────────────────────────────────────────────────────────
+info()  { echo "[INFO]  $*"; }
+warn()  { echo "[WARN]  $*" >&2; }
+fatal() { echo "[ERROR] $*" >&2; exit 1; }
 
-# --- helper functions for logs ---
-info()
-{
-    echo '[INFO] ' "$@"
-}
-warn()
-{
-    echo '[WARN] ' "$@" >&2
-}
-fatal()
-{
-    echo '[ERROR] ' "$@" >&2
-    exit 1
-}
-
-# --- add quotes to command arguments ---
+# ── Helpers ──────────────────────────────────────────────────────────────────
 quote() {
     for arg in "$@"; do
         printf '%s\n' "$arg" | sed "s/'/'\\\\''/g;1s/^/'/;\$s/\$/'/"
     done
 }
 
-# --- add indentation and trailing slash to quoted args ---
 quote_indent() {
     printf ' \\\n'
     for arg in "$@"; do
@@ -77,219 +53,228 @@ quote_indent() {
     done
 }
 
-# --- escape most punctuation characters, except quotes, forward slash, and space ---
 escape() {
     printf '%s' "$@" | sed -e 's/\([][!#$%&()*;<=>?\_`{|}]\)/\\\1/g;'
 }
 
-# --- escape double quotes ---
-escape_dq() {
-    printf '%s' "$@" | sed -e 's/"/\\"/g'
+# ── Prerequisites ────────────────────────────────────────────────────────────
+verify_system() {
+    if [ -x /bin/systemctl ] || command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    fatal "systemd not found — K8E requires systemd"
 }
 
-# --- ensures $K8E_URL is empty or begins with https://, exiting fatally otherwise ---
 verify_k8e_url() {
     case "${K8E_URL}" in
-        "")
-            ;;
-        https://*)
-            ;;
-        *)
-            fatal "Only https:// URLs are supported for K8E_URL (have ${K8E_URL})"
-            ;;
+        ""|https://*) ;;
+        *) fatal "Only https:// URLs are supported for K8E_URL (got: ${K8E_URL})" ;;
     esac
 }
 
-# --- fatal if no systemd or openrc ---
-verify_system() {
-    if [ -x /bin/systemctl ] || type systemctl > /dev/null 2>&1; then
-        HAS_SYSTEMD=true
-        return
-    fi
-    fatal 'Can not find systemd or openrc to use as a process supervisor for k8e'
-}
-
-# --- define needed environment variables ---
-setup_env() {
-    # --- use command args if passed or create default ---
-    case "$1" in
-        # --- if we only have flags discover if command should be server or agent ---
-        (-*|"")
-            if [ -z "${K8E_URL}" ]; then
-                CMD_K8E=server
-            else
-                if [ -z "${K8E_TOKEN}" ] && [ -z "${K8E_TOKEN_FILE}" ] && [ -z "${K8E_CLUSTER_SECRET}" ]; then
-                    fatal "Defaulted k8e exec command to 'agent' because K8E_URL is defined, but K8E_TOKEN, K8E_TOKEN_FILE or K8E_CLUSTER_SECRET is not defined."
-                fi
-                CMD_K8E=agent
-            fi
-        ;;
-        # --- command is provided ---
-        (*)
-            CMD_K8E=$1
-            shift
-        ;;
-    esac
-
-    verify_k8e_url
-
-    CMD_K8E_EXEC="${CMD_K8E}$(quote_indent "$@")"
-
-    # --- use sudo if we are not already root ---
-    SUDO=sudo
-    if [ $(id -u) -eq 0 ]; then
-        SUDO=
-    fi
-
-    # --- use systemd type if defined or create default ---
-    if [ -n "${INSTALL_K8E_TYPE}" ]; then
-        SYSTEMD_TYPE=${INSTALL_K8E_TYPE}
-    else
-        if [ "${CMD_K8E}" = server ]; then
-            SYSTEMD_TYPE=notify
-        else
-            SYSTEMD_TYPE=exec
-        fi
-    fi
-
-    # --- use binary install directory if defined or create default ---
-    if [ -n "${INSTALL_K8E_BIN_DIR}" ]; then
-        BIN_DIR=${INSTALL_K8E_BIN_DIR}
-    else
-        # --- use /usr/local/bin if root can write to it, otherwise use /opt/bin if it exists
-        BIN_DIR=/usr/local/bin
-        if ! $SUDO sh -c "touch ${BIN_DIR}/k8e-ro-test && rm -rf ${BIN_DIR}/k8e-ro-test"; then
-            if [ -d /opt/bin ]; then
-                BIN_DIR=/opt/bin
-            fi
-        fi
-    fi
-
-    # --- use systemd directory if defined or create default ---
-    if [ -n "${INSTALL_K8E_SYSTEMD_DIR}" ]; then
-        SYSTEMD_DIR="${INSTALL_K8E_SYSTEMD_DIR}"
-    else
-        SYSTEMD_DIR=/etc/systemd/system
-    fi
-
-    # --- set related files from system name ---
-    SERVICE_K8E=${SYSTEM_NAME}.service
-    UNINSTALL_K8E_SH=${UNINSTALL_K8E_SH:-${BIN_DIR}/${SYSTEM_NAME}-uninstall.sh}
-    KILLALL_K8E_SH=${KILLALL_K8E_SH:-${BIN_DIR}/k8e-killall.sh}
-
-    # --- if bin directory is read only skip download ---
-    if [ "${INSTALL_K8E_BIN_DIR_READ_ONLY}" = true ]; then
-        INSTALL_K8E_SKIP_DOWNLOAD=true
-    fi
-}
-
-# --- check if skip download environment variable set ---
-can_skip_download_binary() {
-    if [ "${INSTALL_K8E_SKIP_DOWNLOAD}" != true ] && [ "${INSTALL_K8E_SKIP_DOWNLOAD}" != binary ]; then
-        return 1
-    fi
-}
-
-# --- verify an executable k8e binary is installed ---
-verify_k8e_is_executable() {
-    if [ ! -x ${BIN_DIR}/k8e ]; then
-        fatal "Executable k8e binary not found at ${BIN_DIR}/k8e"
-    fi
-}
-
-# --- set arch and suffix, fatal if architecture not supported ---
 setup_verify_arch() {
     if [ -z "$ARCH" ]; then
         ARCH=$(uname -m)
     fi
     case $ARCH in
-        amd64)
-            ARCH=amd64
-            SUFFIX=
-            ;;
-        x86_64)
-            ARCH=amd64
-            SUFFIX=
-            ;;
-        arm64)
-            ARCH=arm64
-            SUFFIX=-${ARCH}
-            ;;
-        aarch64)
-            ARCH=arm64
-            SUFFIX=-${ARCH}
-            ;;
-        *)
-            fatal "Unsupported architecture $ARCH"
+        amd64|x86_64) ARCH=amd64; SUFFIX="" ;;
+        arm64|aarch64) ARCH=arm64; SUFFIX="-${ARCH}" ;;
+        *) fatal "Unsupported architecture: $ARCH" ;;
     esac
 }
 
-# --- verify existence of network downloader executable ---
 verify_downloader() {
-    # Return failure if it doesn't exist or is no executable
-    [ -x "$(command -v $1)" ] || return 1
-
-    # Set verified executable as our downloader program and return success
+    [ -x "$(command -v "$1")" ] || return 1
     DOWNLOADER=$1
     return 0
 }
 
-# --- add additional utility links ---
+# ── Environment ──────────────────────────────────────────────────────────────
+setup_env() {
+    case "$1" in
+        -*|"")
+            if [ -z "${K8E_URL}" ]; then
+                CMD_K8E=server
+            else
+                if [ -z "${K8E_TOKEN}" ] && [ -z "${K8E_TOKEN_FILE}" ] && [ -z "${K8E_CLUSTER_SECRET}" ]; then
+                    fatal "K8E_URL is set but K8E_TOKEN/K8E_TOKEN_FILE/K8E_CLUSTER_SECRET is not defined"
+                fi
+                CMD_K8E=agent
+            fi
+            ;;
+        *)
+            CMD_K8E=$1
+            shift
+            ;;
+    esac
+
+    verify_k8e_url
+    CMD_K8E_EXEC="${CMD_K8E}$(quote_indent "$@")"
+
+    # SUDO detection
+    SUDO=sudo
+    if [ "$(id -u)" -eq 0 ]; then
+        SUDO=
+    fi
+
+    # systemd type: notify for server, exec for agent
+    if [ -n "${INSTALL_K8E_TYPE}" ]; then
+        SYSTEMD_TYPE=${INSTALL_K8E_TYPE}
+    elif [ "${CMD_K8E}" = server ]; then
+        SYSTEMD_TYPE=notify
+    else
+        SYSTEMD_TYPE=exec
+    fi
+
+    # Binary directory
+    if [ -n "${INSTALL_K8E_BIN_DIR}" ]; then
+        BIN_DIR=${INSTALL_K8E_BIN_DIR}
+    elif ! $SUDO sh -c "touch ${BIN_DIR}/k8e-ro-test && rm -f ${BIN_DIR}/k8e-ro-test"; then
+        if [ -d /opt/bin ]; then
+            BIN_DIR=/opt/bin
+        fi
+    fi
+
+    # Derived paths
+    UNINSTALL_K8E_SH=${UNINSTALL_K8E_SH:-${BIN_DIR}/${SYSTEM_NAME}-uninstall.sh}
+    KILLALL_K8E_SH=${KILLALL_K8E_SH:-${BIN_DIR}/${SYSTEM_NAME}-killall.sh}
+
+    if [ "${INSTALL_K8E_BIN_DIR_READ_ONLY}" = true ]; then
+        INSTALL_K8E_SKIP_DOWNLOAD=true
+    fi
+}
+
+can_skip_download() {
+    [ "${INSTALL_K8E_SKIP_DOWNLOAD}" = true ] || [ "${INSTALL_K8E_SKIP_DOWNLOAD}" = binary ]
+}
+
+verify_k8e_executable() {
+    if [ ! -x "${BIN_DIR}/k8e" ]; then
+        fatal "Executable k8e binary not found at ${BIN_DIR}/k8e"
+    fi
+}
+
+# ── Download ─────────────────────────────────────────────────────────────────
+get_latest_version() {
+    if [ -n "${INSTALL_K8E_VERSION}" ]; then
+        echo "${INSTALL_K8E_VERSION}"
+        return
+    fi
+    info "Resolving latest version..."
+    local tag=""
+    # Use GitHub API with fallback to redirect method
+    if command -v curl >/dev/null 2>&1; then
+        tag=$(curl -sfL --retry 3 --retry-delay 2 \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API}/releases/latest" 2>/dev/null \
+            | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+    fi
+    if [ -z "$tag" ]; then
+        fatal "Failed to resolve latest version. Set INSTALL_K8E_VERSION manually."
+    fi
+    echo "$tag"
+}
+
+download_and_verify() {
+    if can_skip_download; then
+        info "Skipping download (INSTALL_K8E_SKIP_DOWNLOAD)"
+        verify_k8e_executable
+        return
+    fi
+
+    setup_verify_arch
+    verify_downloader curl || verify_downloader wget || fatal "curl or wget required for download"
+
+    local version
+    version=$(get_latest_version)
+    info "Installing K8E ${version} (${ARCH})"
+
+    local bin_name="k8e${SUFFIX}"
+    local download_url="${GITHUB_DL}/${version}/${bin_name}"
+    local target="${TMP_DIR}/${bin_name}"
+
+    info "Downloading ${download_url}"
+    if [ "${DOWNLOADER}" = curl ]; then
+        curl -sfL --retry 3 --retry-delay 2 -o "${target}" "${download_url}"
+    else
+        wget -q -O "${target}" "${download_url}"
+    fi
+
+    [ -s "${target}" ] || fatal "Downloaded binary is empty: ${download_url}"
+
+    # Verify checksum if available
+    local checksum_url="${GITHUB_DL}/${version}/sha256sum-${ARCH}.txt"
+    if curl -sfL --head "${checksum_url}" >/dev/null 2>&1; then
+        info "Verifying checksum..."
+        local expected=$(curl -sfL "${checksum_url}" | grep "${bin_name}" | awk '{print $1}')
+        local actual=$(sha256sum "${target}" | awk '{print $1}')
+        if [ "${expected}" != "${actual}" ] && [ -n "${expected}" ]; then
+            rm -f "${target}"
+            fatal "Checksum mismatch for ${bin_name}"
+        fi
+    fi
+
+    $SUDO chmod 755 "${target}"
+    $SUDO chown root:root "${target}"
+    $SUDO mv -f "${target}" "${BIN_DIR}/${bin_name}"
+
+    # Create symlink without suffix for convenience
+    if [ -n "${SUFFIX}" ]; then
+        $SUDO ln -sf "${BIN_DIR}/${bin_name}" "${BIN_DIR}/k8e"
+    fi
+    info "k8e installed to ${BIN_DIR}/k8e"
+}
+
+# ── Symlinks ─────────────────────────────────────────────────────────────────
 create_symlinks() {
     for cmd in kubectl crictl ctr; do
-        if [ ! -e ${BIN_DIR}/${cmd} ]; then
-            which_cmd=$(which ${cmd} 2>/dev/null || true)
-            if [ -z "${which_cmd}" ]; then
-                info "Creating ${BIN_DIR}/${cmd} symlink to k8e"
-                $SUDO ln -sf ${BIN_DIR}/k8e ${BIN_DIR}/${cmd}
+        if [ ! -e "${BIN_DIR}/${cmd}" ]; then
+            if ! command -v "${cmd}" >/dev/null 2>&1; then
+                info "Creating ${BIN_DIR}/${cmd} → k8e"
+                $SUDO ln -sf "${BIN_DIR}/k8e" "${BIN_DIR}/${cmd}"
             else
-                info "Skipping ${BIN_DIR}/${cmd} symlink to k8e, command exists in PATH at ${which_cmd}"
+                info "Skipping ${cmd} symlink (found in PATH)"
             fi
-        else
-            info "Skipping ${BIN_DIR}/${cmd} symlink to k8e, already exists"
         fi
     done
-    info "Create nerdctl symlink for k8e"
-    $SUDO ln -sf /var/lib/k8e/data/current/bin/nerdctl ${BIN_DIR}/nerdctl
 }
 
-# --- seutp profile ---
-source_profile() {
-    if ! grep -s 'containerd\.sock' "$PROFILE"; then
-        $SUDO echo 'export CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock' >> $PROFILE
+# ── Profile ──────────────────────────────────────────────────────────────────
+setup_profile() {
+    local profile="${HOME}/.bashrc"
+    local kubeconfig="/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml"
+
+    # Use tee to properly handle sudo redirection
+    if ! grep -qs "CONTAINERD_ADDRESS" "${profile}" 2>/dev/null; then
+        echo "export CONTAINERD_ADDRESS=/run/k8e/containerd/containerd.sock" | $SUDO tee -a "${profile}" >/dev/null
     fi
-    if ! grep -s '/usr/local/bin' "$PROFILE"; then
-        $SUDO echo 'export PATH=$PATH:/usr/local/bin' >> $PROFILE
+    if ! grep -qs "KUBECONFIG=" "${profile}" 2>/dev/null; then
+        echo "export KUBECONFIG=${kubeconfig}" | $SUDO tee -a "${profile}" >/dev/null
     fi
-    if ! grep -s 'KUBECONFIG=' "$PROFILE"; then
-        $SUDO echo "export KUBECONFIG=/etc/${SYSTEM_NAME}/${SYSTEM_NAME}.yaml" >> $PROFILE
-    fi
+    # PATH already includes /usr/local/bin on most distros, skip duplicate
 }
 
-# --- disable current service if loaded --
+# ── systemd ──────────────────────────────────────────────────────────────────
 systemd_disable() {
     $SUDO systemctl disable ${SYSTEM_NAME} >/dev/null 2>&1 || true
-    $SUDO rm -f /etc/systemd/system/${SERVICE_K8E} || true
-    $SUDO rm -f /etc/systemd/system/${SERVICE_K8E}.env || true
+    $SUDO rm -f "${FILE_K8E_SERVICE}" "${FILE_K8E_ENV}"
 }
 
-# --- capture current env and create file containing k8e_ variables ---
 create_env_file() {
-    info "env: Creating environment file ${FILE_K8E_ENV}"
-    $SUDO touch ${FILE_K8E_ENV}
-    $SUDO chmod 0600 ${FILE_K8E_ENV}
-    env | grep '^K8E_' | $SUDO tee ${FILE_K8E_ENV} >/dev/null
-    env | grep '^CONTAINERD_' | $SUDO tee -a ${FILE_K8E_ENV} >/dev/null
-    env | grep -Ei '^(NO|HTTP|HTTPS)_PROXY' | $SUDO tee -a ${FILE_K8E_ENV} >/dev/null
+    info "Creating environment file ${FILE_K8E_ENV}"
+    $SUDO touch "${FILE_K8E_ENV}"
+    $SUDO chmod 0600 "${FILE_K8E_ENV}"
+    env | grep '^K8E_' | $SUDO tee "${FILE_K8E_ENV}" >/dev/null
+    env | grep '^CONTAINERD_' | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
+    env | grep -Ei '^(NO|HTTP|HTTPS)_PROXY' | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
 }
 
-# --- write systemd service file ---
 create_systemd_service_file() {
-    info "systemd: Creating service file ${FILE_K8E_SERVICE}"
-    $SUDO tee ${FILE_K8E_SERVICE} >/dev/null << EOF
+    info "Creating systemd service ${FILE_K8E_SERVICE}"
+    $SUDO tee "${FILE_K8E_SERVICE}" >/dev/null << EOF
 [Unit]
-Description=K8E - Kubernetes Easy Engine
-Documentation=https://getk8e.com
+Description=K8E — Kubernetes Easy Engine
+Documentation=https://k8e.sh
 After=network-online.target
 Wants=network-online.target
 
@@ -303,8 +288,6 @@ EnvironmentFile=-/etc/sysconfig/%N
 EnvironmentFile=-${FILE_K8E_ENV}
 KillMode=process
 Delegate=yes
-# Having non-zero Limit*s causes performance problems due to accounting overhead
-# in the kernel. We recommend using cgroups to do container-local accounting.
 LimitNOFILE=1048576
 LimitNPROC=infinity
 LimitCORE=infinity
@@ -320,16 +303,29 @@ ExecStart=${BIN_DIR}/k8e \\
 EOF
 }
 
-# --- write systemd or openrc service file ---
-create_service_file() {
-    [ "${HAS_SYSTEMD}" = true ] && create_systemd_service_file
-    return 0
+systemd_enable() {
+    info "Enabling ${SYSTEM_NAME} service"
+    $SUDO systemctl enable "${FILE_K8E_SERVICE}" >/dev/null
+    $SUDO systemctl daemon-reload >/dev/null
 }
 
-# --- create killall script ---
+systemd_start() {
+    info "Starting ${SYSTEM_NAME}"
+    $SUDO systemctl restart ${SYSTEM_NAME}
+}
+
+service_enable_and_start() {
+    [ "${INSTALL_K8E_SKIP_ENABLE}" = true ] && return
+    systemd_enable
+
+    [ "${INSTALL_K8E_SKIP_START}" = true ] && return
+    systemd_start
+}
+
+# ── Killall / Uninstall ──────────────────────────────────────────────────────
 create_killall() {
     info "Creating killall script ${KILLALL_K8E_SH}"
-    $SUDO tee ${KILLALL_K8E_SH} >/dev/null << \EOF
+    $SUDO tee "${KILLALL_K8E_SH}" >/dev/null << \EOF
 #!/bin/sh
 set -x
 for service in /etc/systemd/system/k8e*.service; do
@@ -372,18 +368,16 @@ do_unmount_and_remove '/var/lib/k8e'
 do_unmount_and_remove '/var/lib/kubelet/pods'
 do_unmount_and_remove '/var/lib/kubelet/plugins'
 do_unmount_and_remove '/run/netns/cni-'
-# Remove CNI namespaces
 ip netns show 2>/dev/null | grep cni- | xargs -r -t -n 1 ip netns delete
 rm -rf /var/lib/cni/
 EOF
-    $SUDO chmod 755 ${KILLALL_K8E_SH}
-    $SUDO chown root:root ${KILLALL_K8E_SH}
+    $SUDO chmod 755 "${KILLALL_K8E_SH}"
+    $SUDO chown root:root "${KILLALL_K8E_SH}"
 }
 
-# --- create uninstall script ---
 create_uninstall() {
     info "Creating uninstall script ${UNINSTALL_K8E_SH}"
-    $SUDO tee ${UNINSTALL_K8E_SH} >/dev/null << EOF
+    $SUDO tee "${UNINSTALL_K8E_SH}" >/dev/null << EOF
 #!/bin/sh
 set -x
 [ \$(id -u) -eq 0 ] || exec sudo \$0 \$@
@@ -393,16 +387,13 @@ if command -v systemctl; then
     systemctl reset-failed ${SYSTEM_NAME}
     systemctl daemon-reload
 fi
-if command -v rc-update; then
-    rc-update delete ${SYSTEM_NAME} default
-fi
 rm -f ${FILE_K8E_SERVICE}
 rm -f ${FILE_K8E_ENV}
 remove_uninstall() {
     rm -f ${UNINSTALL_K8E_SH}
 }
 trap remove_uninstall EXIT
-if (ls ${SYSTEMD_DIR}/k8e*.service || ls /etc/init.d/k8e*) >/dev/null 2>&1; then
+if (ls ${SYSTEMD_DIR}/k8e*.service) >/dev/null 2>&1; then
     set +x; echo 'Additional k8e services installed, skipping uninstall of k8e'; set -x
     exit
 fi
@@ -418,118 +409,58 @@ rm -rf /var/lib/kubelet
 rm -f ${BIN_DIR}/k8e
 rm -f ${KILLALL_K8E_SH}
 EOF
-    $SUDO chmod 755 ${UNINSTALL_K8E_SH}
-    $SUDO chown root:root ${UNINSTALL_K8E_SH}
+    $SUDO chmod 755 "${UNINSTALL_K8E_SH}"
+    $SUDO chown root:root "${UNINSTALL_K8E_SH}"
 }
 
-
-# --- enable and start systemd service ---
-systemd_enable() {
-    info "systemd: Enabling ${SYSTEM_NAME} unit"
-    $SUDO systemctl enable ${FILE_K8E_SERVICE} >/dev/null
-    $SUDO systemctl daemon-reload >/dev/null
-}
-
-systemd_start() {
-    info "systemd: Starting ${SYSTEM_NAME}"
-    $SUDO systemctl restart ${SYSTEM_NAME}
-}
-
-
-# --- startup systemd or openrc service ---
-service_enable_and_start() {
-    [ "${INSTALL_K8E_SKIP_ENABLE}" = true ] && return
-    [ "${HAS_SYSTEMD}" = true ] && systemd_enable
-    [ "${INSTALL_K8E_SKIP_START}" = true ] && return
-
-    [ "${HAS_SYSTEMD}" = true ] && systemd_start
-    return 0
-}
-
-# --- download and verify k8e ---
-download_and_verify() {
-    if can_skip_download_binary; then
-       info 'Skipping k8e download and verify'
-       verify_k8e_is_executable
-       return
-    fi
-
-    setup_verify_arch
-    verify_downloader curl || verify_downloader wget || fatal 'Can not find curl or wget for downloading files'
-
-    version=""
-    echo "Finding latest version from GitHub"
-    version=$(curl -sI https://github.com/$OWNER/$REPO/releases/latest | grep -i "location:" | awk -F"/" '{ printf "%s", $NF }' | tr -d '\r')
-    echo $version
-
-    if [ ! $version ]; then
-        echo "Failed while attempting to install $REPO. Please manually install:"
-        echo ""
-        echo "1. Open your web browser and go to https://github.com/$OWNER/$REPO/releases"
-        echo "2. Download the latest release for your platform. Call it '$REPO'."
-        echo "3. chmod +x ./$REPO"
-        echo "4. mv ./$REPO $BIN_DIR"
-        exit 1
-    fi
-
-    uname=$(uname)
-    userid=$(id -u)
-
-    targetFile="/tmp/$REPO"
-    if [ "$userid" != "0" ]; then
-        targetFile="$(pwd)/$REPO"
-    fi
-
-    if [ -e "$targetFile" ]; then
-        rm "$targetFile"
-    fi
-
-    url=https://github.com/$OWNER/$REPO/releases/download/$version/$REPO
-    echo "Downloading package $url as $targetFile"
-    $SUDO curl -sSL $url --output "$targetFile"
-    $SUDO chmod +x "$targetFile"
-    $SUDO chown root:root "$targetFile"
-    echo "Download complete."
-    $SUDO mv -f "$targetFile" $BIN_DIR/$REPO
-
-}
-
-# --- check-config  ---
+# ── Check config ─────────────────────────────────────────────────────────────
 check_config() {
-    info "init OS config && Checking k8e config"
-    $SUDO $BIN_DIR/k8e init-os-config
-    $SUDO $BIN_DIR/k8e check-config
+    info "Initializing OS configuration..."
+    if [ -x "${BIN_DIR}/k8e" ]; then
+        $SUDO "${BIN_DIR}/k8e" init-os-config
+        $SUDO "${BIN_DIR}/k8e" check-config
+    else
+        warn "k8e binary not yet available, skipping init-os-config"
+    fi
 }
 
-# --- smart defaults for one-click install ---
-# K8E_URL is only set for agent nodes. Server nodes must NOT have K8E_URL set.
-if [ -z "${INSTALL_K8E_EXEC}" ] && [ -z "${K8E_URL}" ] && [ "$#" -eq 0 ]; then
-    info "Auto-configuring K8e Server for one-click install"
-    export K8E_TOKEN=${K8E_TOKEN:-ilovek8e}
+# ── Auto-configure one-click install ─────────────────────────────────────────
+auto_configure() {
+    if [ -n "${INSTALL_K8E_EXEC}" ] || [ -n "${K8E_URL}" ] || [ "$#" -gt 0 ]; then
+        return
+    fi
+
+    info "Auto-configuring K8E server for one-click install"
+
+    # Generate random token if not set
+    if [ -z "${K8E_TOKEN}" ]; then
+        K8E_TOKEN=$(head -c 32 /dev/urandom 2>/dev/null | base64 | tr -d '/+=' | head -c 32)
+    fi
+    export K8E_TOKEN
 
     if command -v docker >/dev/null 2>&1; then
         export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666 --docker"
     else
         export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666"
     fi
-fi
+}
 
-# --- re-evaluate args to include env command ---
+# ── Main ─────────────────────────────────────────────────────────────────────
+auto_configure "$@"
 eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
 
-# --- run the install process --
 {
     verify_system
     setup_env "$@"
     download_and_verify
     create_symlinks
-    source_profile
+    setup_profile
     create_killall
     create_uninstall
     systemd_disable
     create_env_file
-    create_service_file
+    create_systemd_service_file
     service_enable_and_start
     check_config
-    info "Done! K8E - Kubernetes Easy Engine, Happy deployment."
+    info "K8E installation complete!"
 }
