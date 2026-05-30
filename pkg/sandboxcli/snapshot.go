@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -260,11 +259,15 @@ func snapshotRestoreCommand() cli.Command {
 				return nil
 			}
 
-			// 6. Write state
-			_ = finalizeState(ctx.String("tenant"), sid)
+			// 6. Write state (inherit tenant from snapshot if not overridden)
+			tenant := ctx.String("tenant")
+			if tenant == "" {
+				tenant = meta.TenantID
+			}
+			_ = finalizeState(tenant, sid)
 
 			printJSON(map[string]any{
-				"session_id": sid, "pod_ip": resp.PodIp, "restored_from": name,
+				"session_id": sid, "pod_ip": resp.PodIp, "tenant_id": tenant, "restored_from": name,
 			})
 			return nil
 		},
@@ -293,6 +296,3 @@ func snapshotDeleteCommand() cli.Command {
 		},
 	}
 }
-
-// suppress unused import warnings
-var _ = io.Discard
