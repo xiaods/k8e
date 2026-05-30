@@ -82,15 +82,10 @@ func clearState(tenant string) error {
 }
 
 // resolveSession returns an active session ID using the three-tier strategy plus flock locking.
-// It takes a context for cancellation support.
-// sessionIDOverride: if non-empty, skips state management entirely (caller manages lifecycle).
 func resolveSession(ctx context.Context, tenant string, sessionIDOverride string) (string, error) {
-	// Tier 0: explicit session ID — no state file, no auto-create
 	if sessionIDOverride != "" {
 		return sessionIDOverride, nil
 	}
-
-	// Tier 0.5: K8E_SANDBOX_SESSION_ID env var
 	if sid := os.Getenv("K8E_SANDBOX_SESSION_ID"); sid != "" {
 		return sid, nil
 	}
@@ -98,11 +93,8 @@ func resolveSession(ctx context.Context, tenant string, sessionIDOverride string
 	if tenant == "" {
 		tenant = "default"
 	}
+	os.MkdirAll(stateDir(tenant), 0755) //nolint:errcheck
 
-	dir := stateDir(tenant)
-	os.MkdirAll(dir, 0755) //nolint:errcheck
-
-	// Open lock file for the state directory
 	lf, err := os.Create(lockPath(tenant))
 	if err != nil {
 		return "", fmt.Errorf("create lock file: %w", err)
@@ -111,19 +103,12 @@ func resolveSession(ctx context.Context, tenant string, sessionIDOverride string
 	defer unlockFile(lf)
 
 	for {
-		if err := lockFile(lf); err != nil {
-			return "", fmt.Errorf("lock: %w", err)
+		if sid, done := tryClaimSession(lf, tenant); done {
+			return sid, nil
 		}
 
 		state, _ := loadState(tenant)
-		unlockFile(lf)
-
-		if state != nil && state.Phase == "active" && state.SessionID != "" {
-			return state.SessionID, nil
-		}
-
 		if state != nil && state.Phase == "creating" {
-			// another process is creating — wait and retry
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
@@ -132,34 +117,51 @@ func resolveSession(ctx context.Context, tenant string, sessionIDOverride string
 			continue
 		}
 
-		// no valid session — claim creator role
-		if err := lockFile(lf); err != nil {
-			return "", err
+		// no valid session — claim creator role and return empty (caller creates)
+		sid, claimed := claimCreatorRole(lf, tenant)
+		if claimed {
+			return sid, nil
 		}
-		// Re-read after lock to avoid TOCTOU
-		state, _ = loadState(tenant)
-		if state != nil && state.Phase == "active" {
-			unlockFile(lf)
-			return state.SessionID, nil
-		}
-
-		placeholder := &SessionState{
-			Phase:    "creating",
-			TenantID: tenant,
-			LockedAt: time.Now().UTC().Format(time.RFC3339),
-			PID:      os.Getpid(),
-		}
-		if err := saveState(tenant, placeholder); err != nil {
-			unlockFile(lf)
-			return "", fmt.Errorf("save placeholder state: %w", err)
-		}
-		unlockFile(lf)
-
-		// Phase 2: create session (no lock held)
-		// This is called from commands.go which has the gRPC client.
-		// For now, we return an empty string and let the caller handle creation.
-		return "", nil
 	}
+}
+
+// tryClaimSession checks under lock whether an active session exists and returns it.
+func tryClaimSession(lf *os.File, tenant string) (sid string, found bool) {
+	if err := lockFile(lf); err != nil {
+		return "", false
+	}
+	state, _ := loadState(tenant)
+	unlockFile(lf)
+	if state != nil && state.Phase == "active" && state.SessionID != "" {
+		return state.SessionID, true
+	}
+	return "", false
+}
+
+// claimCreatorRole writes a "creating" placeholder under lock.
+// Returns the existing session ID if another process finished creating first, or ("", true) to signal caller to create.
+func claimCreatorRole(lf *os.File, tenant string) (sid string, claimed bool) {
+	if err := lockFile(lf); err != nil {
+		return "", false
+	}
+	defer unlockFile(lf)
+
+	// Re-read after lock to avoid TOCTOU
+	state, _ := loadState(tenant)
+	if state != nil && state.Phase == "active" && state.SessionID != "" {
+		return state.SessionID, true
+	}
+
+	placeholder := &SessionState{
+		Phase:    "creating",
+		TenantID: tenant,
+		LockedAt: time.Now().UTC().Format(time.RFC3339),
+		PID:      os.Getpid(),
+	}
+	if err := saveState(tenant, placeholder); err != nil {
+		return "", false
+	}
+	return "", true
 }
 
 // finalizeState writes the active state after session creation.

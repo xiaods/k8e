@@ -52,7 +52,7 @@ func buildCommand(lang, code string) string {
 	switch strings.ToLower(lang) {
 	case "python", "python3", "py":
 		if isMultiLine(code) {
-			return fmt.Sprintf("python3 /tmp/_k8e_run.py")
+			return "python3 /tmp/_k8e_run.py"
 		}
 		return fmt.Sprintf("python3 -c %q", code)
 	case "node", "nodejs", "js", "javascript":
