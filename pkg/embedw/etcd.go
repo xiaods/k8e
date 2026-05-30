@@ -196,15 +196,15 @@ type etcdYAMLConfig struct {
 	DataDir              string            `yaml:"data-dir"`
 	WalDir               string            `yaml:"wal-dir"`
 	SnapshotCount        int               `yaml:"snapshot-count"`
-	SnapshotCatchUpEntries uint64          `yaml:"snapshot-catchup-entries"`
+	SnapshotCatchUpEntries uint64          `yaml:"snapshot-catchup-entries,omitempty"`
 	MaxSnapFiles         uint              `yaml:"max-snapshots"`
 	MaxWALFiles          uint              `yaml:"max-wals"`
 	TickMs               int               `yaml:"heartbeat-interval"`
 	ElectionMs           int               `yaml:"election-timeout"`
-	InitialElectionTickAdvance bool         `yaml:"initial-election-tick-advance"`
+	InitialElectionTickAdvance bool         `yaml:"initial-election-tick-advance,omitempty"`
 	MaxRequestBytes      uint              `yaml:"max-request-bytes"`
 	MaxConcurrentStreams uint32            `yaml:"max-concurrent-streams"`
-	MaxTxnOps            uint              `yaml:"max-txn-ops"`
+	MaxTxnOps            uint              `yaml:"max-txn-ops,omitempty"`
 	ListenPeerUrls       string            `yaml:"listen-peer-urls"`
 	ListenClientUrls     string            `yaml:"listen-client-urls"`
 	ListenClientHTTPUrls string            `yaml:"listen-client-http-urls"`
