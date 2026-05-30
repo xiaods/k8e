@@ -46,6 +46,48 @@ func isMultiLine(code string) bool {
 	return strings.Contains(code, "\n")
 }
 
+// ensureSession resolves session ID, auto-creating one with manifest if needed.
+// Returns (sessionID, needsFinalize, error).
+func ensureSession(client *sandboxmcp.Client, ctx *cli.Context) (string, bool, error) {
+	sid, err := resolveSession(context.Background(), ctx.String("tenant"), ctx.String("session-id"))
+	if err != nil {
+		return "", false, err
+	}
+	if sid != "" {
+		return sid, false, nil
+	}
+
+	resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+		TenantId: ctx.String("tenant"), RuntimeClass: "gvisor",
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("create session: %w", err)
+	}
+	sid = resp.SessionId
+
+	manifest, mErr := resolveManifest(ctx)
+	if mErr != nil {
+		client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+		return "", false, fmt.Errorf("manifest: %w", mErr)
+	}
+	if manifest != nil {
+		if err := materializeManifest(client, sid, manifest); err != nil {
+			client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+			return "", false, fmt.Errorf("manifest materialization: %w", err)
+		}
+	}
+	return sid, true, nil
+}
+
+// isInterpretedLang returns true for languages that need shell wrapping.
+func isInterpretedLang(lang string) bool {
+	switch strings.ToLower(lang) {
+	case "python", "python3", "py", "node", "nodejs", "js", "javascript":
+		return true
+	}
+	return false
+}
+
 // buildCommand wraps code for a given language.
 // bash: pass through as-is. python/node: single-line uses -c, multi-line uses temp file.
 func buildCommand(lang, code string) string {
@@ -108,47 +150,14 @@ func RunCommand() cli.Command {
 			client := newClient()
 			defer client.Close()
 
-			sid, err := resolveSession(context.Background(), ctx.String("tenant"), ctx.String("session-id"))
+			sid, needsFinalize, err := ensureSession(client, ctx)
 			if err != nil {
 				printErrorExit(err.Error(), 2)
 				return nil
 			}
 
-			// auto-create session if none exists
-			needsFinalize := false
-			if sid == "" {
-				resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
-					TenantId:     ctx.String("tenant"),
-					RuntimeClass: "gvisor",
-				})
-				if err != nil {
-					printErrorExit("create session: "+err.Error(), 2)
-					return nil
-				}
-				sid = resp.SessionId
-				needsFinalize = true
-
-				// materialize manifest for auto-created sessions
-				manifest, mErr := resolveManifest(ctx)
-				if mErr != nil {
-					client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
-					printErrorExit("manifest: "+mErr.Error(), 1)
-					return nil
-				}
-				if manifest != nil {
-					if err := materializeManifest(client, sid, manifest); err != nil {
-						client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
-						printErrorExit("manifest materialization: "+err.Error(), 1)
-						return nil
-					}
-				}
-			}
-
 			// python/node multi-line: write file first, then execute
-			lowLang := strings.ToLower(lang)
-			if (lowLang == "python" || lowLang == "python3" || lowLang == "py" ||
-				lowLang == "node" || lowLang == "nodejs" || lowLang == "js" || lowLang == "javascript") &&
-				isMultiLine(code) {
+			if isInterpretedLang(lang) && isMultiLine(code) {
 				if err := writeCodeFile(client, sid, lang, code); err != nil {
 					printErrorExit("write code: "+err.Error(), 1)
 					return nil
