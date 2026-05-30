@@ -91,6 +91,10 @@ func RunCommand() cli.Command {
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},
 			cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
+			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest (only when auto-creating session)"},
+			cli.StringFlag{Name: "git-repo", Usage: "Git repo to clone (only when auto-creating session)"},
+			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
+			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
 		},
 		Action: func(ctx *cli.Context) error {
 			code, err := readCode(ctx)
@@ -123,6 +127,21 @@ func RunCommand() cli.Command {
 				}
 				sid = resp.SessionId
 				needsFinalize = true
+
+				// materialize manifest for auto-created sessions
+				manifest, mErr := resolveManifest(ctx)
+				if mErr != nil {
+					client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+					printErrorExit("manifest: "+mErr.Error(), 1)
+					return nil
+				}
+				if manifest != nil {
+					if err := materializeManifest(client, sid, manifest); err != nil {
+						client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+						printErrorExit("manifest materialization: "+err.Error(), 1)
+						return nil
+					}
+				}
 			}
 
 			// python/node multi-line: write file first, then execute
@@ -232,6 +251,10 @@ func CreateCommand() cli.Command {
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant identifier"},
 			cli.StringFlag{Name: "allowed-hosts", Usage: "Comma-separated FQDN egress allowlist"},
 			cli.StringFlag{Name: "session-id", Usage: "Custom session ID"},
+			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest YAML file"},
+			cli.StringFlag{Name: "git-repo", Usage: "Git repository URL to clone (shortcut)"},
+			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
+			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
 		},
 		Action: func(ctx *cli.Context) error {
 			client := newClient()
@@ -253,15 +276,53 @@ func CreateCommand() cli.Command {
 				return nil
 			}
 
+			sid := resp.SessionId
+
+			// materialize manifest if provided
+			manifest, mErr := resolveManifest(ctx)
+			if mErr != nil {
+				client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+				printErrorExit("manifest: "+mErr.Error(), 1)
+				return nil
+			}
+			if manifest != nil {
+				if err := materializeManifest(client, sid, manifest); err != nil {
+					client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+					printErrorExit("manifest materialization failed: "+err.Error(), 1)
+					return nil
+				}
+			}
+
 			// always write state file (unless explicit session-id)
 			if ctx.String("session-id") == "" {
 				_ = finalizeState(ctx.String("tenant"), resp.SessionId)
 			}
 
-			printJSON(map[string]any{"session_id": resp.SessionId, "pod_ip": resp.PodIp})
+			count := 0
+			if manifest != nil {
+				count = len(manifest.Entries)
+			}
+			printJSON(map[string]any{"session_id": resp.SessionId, "pod_ip": resp.PodIp, "entries_materialized": count})
 			return nil
 		},
 	}
+}
+
+// resolveManifest builds a Manifest from --manifest, --git-repo flags, or returns nil.
+func resolveManifest(ctx *cli.Context) (*Manifest, error) {
+	if path := ctx.String("manifest"); path != "" {
+		return parseManifest(path)
+	}
+	if repo := ctx.String("git-repo"); repo != "" {
+		return &Manifest{Entries: []ManifestEntry{
+			{GitRepo: &GitRepoEntry{
+				Path: ctx.String("git-path"),
+				Repo: repo,
+				Ref:  ctx.String("git-ref"),
+			}},
+		}}, nil
+	}
+	return nil, nil
 }
 
 // ── DestroyCommand ──────────────────────────────────────────────────────────
