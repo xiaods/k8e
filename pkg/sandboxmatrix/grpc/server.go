@@ -248,6 +248,10 @@ func (s *Server) ConfirmAction(ctx context.Context, req *pb.ConfirmActionRequest
 	return s.orch.ConfirmAction(ctx, req)
 }
 
+func (s *Server) ApproveAction(ctx context.Context, req *pb.ApproveActionRequest) (*pb.ApproveActionResponse, error) {
+	return s.orch.ApproveAction(ctx, req)
+}
+
 func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error) {
 	u, err := s.dyn.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessionID, metav1.GetOptions{})
 	if err != nil {

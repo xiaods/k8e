@@ -273,6 +273,14 @@ func (o *Orchestrator) Approve(approvalID string, approved bool) error {
 	return nil
 }
 
+// ApproveAction resolves a pending approval (external approval via gRPC).
+func (o *Orchestrator) ApproveAction(ctx context.Context, req *pb.ApproveActionRequest) (*pb.ApproveActionResponse, error) {
+	if err := o.Approve(req.ApprovalId, req.Approved); err != nil {
+		return nil, status.Errorf(codes.NotFound, "approval %s: %v", req.ApprovalId, err)
+	}
+	return &pb.ApproveActionResponse{Ok: true}, nil
+}
+
 // --- internal helpers ---
 
 func (o *Orchestrator) getSession(ctx context.Context, sessionID string) (*sandboxv1.SandboxSession, error) {

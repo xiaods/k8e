@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-04-04 | Draft |
+| @xiaods | 2026-04-04 | deprecated |
 
 ## Summary
 
