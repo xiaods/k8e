@@ -4,7 +4,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Project Overview
 
-K8E is a CNCF-conformant Kubernetes distribution packaged as a single binary under 100MB, purpose-built for secure, isolated AI agent execution at scale. It provides built-in sandbox orchestration (warm pools, session management), a gRPC gateway for sandbox operations, an MCP server bridging AI agents to sandbox infrastructure, and client SDKs in Python and TypeScript.
+K8E is a CNCF-conformant Kubernetes distribution packaged as a single binary under 100MB, purpose-built for secure, isolated AI agent execution at scale. It provides built-in sandbox orchestration (warm pools, session management), a gRPC gateway for sandbox operations, a CLI command group (`k8e sandbox`) bridging AI agents to sandbox infrastructure, and client SDKs in Python and TypeScript.
 
 ## Architecture (Big Picture)
 
@@ -18,14 +18,13 @@ The repository is organized as a **Zig-based Go project**:
 │   ├── server/                    # Control plane + optional agent
 │   ├── agent/                     # Agent-only (kubelet + containerd)
 │   ├── kubectl/                   # kubectl wrapper
-│   ├── sandbox-mcp.go             # MCP stdio/HTTP bridge (cli/cmds)
 │   └── sandbox-gateway.go         # Sandbox gRPC gateway (cli/cmds)
 ├── pkg/
 │   ├── cli/cmds/                  # CLI flag definitions + command wiring
 │   │   ├── root.go                # App setup, global flags
 │   │   ├── server.go              # Server struct + all server flags
 │   │   ├── agent.go               # Agent struct + all agent flags
-│   │   ├── sandbox_mcp.go         # sandbox-mcp + sandbox-install-skill commands
+│   │   ├── sandbox.go             # sandbox CLI command group
 │   │   └── sandbox_gateway.go     # sandbox-gateway command
 │   ├── server/                    # Server daemon orchestration
 │   ├── agent/                     # Agent daemon orchestration
@@ -37,11 +36,14 @@ The repository is organized as a **Zig-based Go project**:
 │   │       ├── server.go          # gRPC SandboxService (create/destroy/exec sessions)
 │   │       ├── orchestrator.go    # Orchestration logic (sub-agents, confirm actions)
 │   │       └── pb/                # Generated protobuf Go code
-│   ├── sandboxmcp/                # MCP server bridging AI agents to sandbox
-│   │   ├── server.go              # JSON-RPC MCP server (stdio + SSE modes)
-│   │   ├── tools.go               # All 12 MCP tool implementations
+│   ├── sandboxmcp/                # gRPC client + skill installation
 │   │   ├── client.go              # gRPC client with TLS auto-discovery
-│   │   └── install.go             # Skill installation for Codex/kiro/gemini
+│   │   └── install.go             # Skill installation for codex/claude/pi/openclaw
+│   ├── sandboxcli/                # CLI command handlers for k8e sandbox
+│   │   ├── commands.go            # 10 sandbox command handlers
+│   │   ├── session.go             # Session state persistence + flock locking
+│   │   ├── snapshot.go            # Workspace snapshot save/restore
+│   │   └── manifest.go            # Declarative workspace manifest
 │   ├── sandboxmatrix/grpc/        # gRPC gateway — proxies exec/file ops to sandboxd pods
 │   ├── configfilearg/             # Config file argument parsing
 │   ├── deploy/                    # Kubernetes manifests and Helm charts
@@ -54,21 +56,20 @@ The repository is organized as a **Zig-based Go project**:
 ├── sandboxd/                      # Runtime daemon in Zig (exec, files, networking)
 ├── sdk/python/                    # Python gRPC client SDK
 ├── sdk/typescript/                # TypeScript gRPC client SDK
-├── skills/k8e-sandbox-skill/      # MCP skill files for agent installation
+│── skills/k8e-sandbox/            # SKILL.md for agent CLI integration
 └── tests/unit.go                  # Test helper utilities
 ```
 
 ### Key Architectural Flows
 
-**Agent submitting work via MCP:**
+**Agent submitting work via CLI:**
 ```
-AI Agent (stdin/stdout)
-  → k8e sandbox-mcp (MCP JSON-RPC, stdio or SSE)
-    → sandboxmcp.Client (gRPC with TLS)
-      → sandbox-grpc-gateway:50051 (TLS gRPC)
-        → Orchestrator (K8s API: create/destroy pods)
-        → sandboxd HTTP proxy (port 2024 inside sandbox pods)
-          → Isolated container (gVisor/Kata/Firecracker)
+AI Agent (shell command)
+  → k8e sandbox run "code" (direct gRPC with TLS)
+    → sandbox-grpc-gateway:50051 (TLS gRPC)
+      → Orchestrator (K8s API: create/destroy pods)
+      → sandboxd HTTP proxy (port 2024 inside sandbox pods)
+        → Isolated container (gVisor/Kata/Firecracker)
 ```
 
 **Direct SDK usage:**
@@ -130,9 +131,9 @@ Integration tests require a running K8E cluster and are invoked via `make test`.
 - **Single binary**: All components (server, agent, CLI tools) compile into one `k8e` binary; behavior is determined by subcommand
 - **No separate config files for most things**: Configuration is passed via CLI flags and environment variables; a config file loader (`pkg/configfilearg`) bridges the two
 - **Sandbox sessions are Kubernetes pods**: Each agent workload runs in an isolated pod with a pluggable RuntimeClass (gVisor, Kata, Firecracker)
-- **gRPC-first**: The sandbox API is gRPC; the MCP server and Python/TypeScript SDKs are thin wrappers around it
+- **gRPC-first**: The sandbox API is gRPC; the CLI commands and Python/TypeScript SDKs are thin wrappers around it
 - **Warm pools**: Pre-booted sandbox pods reduce session startup latency; the `SandboxWarmPool` CRD lets users configure pool size and runtime per namespace
-- **Cross-process session reuse**: The `tenantID` field on sessions allows multiple MCP client calls to share the same sandbox session via `FindActiveSession()`
+- **Cross-process session reuse**: The `tenantID` field on sessions allows multiple CLI calls to share the same sandbox session via state files and `FindActiveSession()`
 
 ## Agent skills
 
