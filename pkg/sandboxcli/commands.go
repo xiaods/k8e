@@ -82,14 +82,14 @@ func ensureSession(client *sandboxmcp.Client, ctx *cli.Context) (string, bool, e
 // isInterpretedLang returns true for languages that need shell wrapping.
 func isInterpretedLang(lang string) bool {
 	switch strings.ToLower(lang) {
-	case "python", "python3", "py", "node", "nodejs", "js", "javascript":
+	case "python", "python3", "py", "node", "nodejs", "js", "javascript", "ts", "typescript":
 		return true
 	}
 	return false
 }
 
 // buildCommand wraps code for a given language.
-// bash: pass through as-is. python/node: single-line uses -c, multi-line uses temp file.
+// bash: pass through as-is. python/node/ts: single-line uses -c/-e, multi-line uses temp file.
 func buildCommand(lang, code string) string {
 	switch strings.ToLower(lang) {
 	case "python", "python3", "py":
@@ -102,6 +102,11 @@ func buildCommand(lang, code string) string {
 			return "node /tmp/_k8e_run.js"
 		}
 		return fmt.Sprintf("node -e %q", code)
+	case "ts", "typescript":
+		if isMultiLine(code) {
+			return "tsx /tmp/_k8e_run.ts"
+		}
+		return fmt.Sprintf("tsx -e %q", code)
 	default: // bash / sh
 		return code
 	}
@@ -113,6 +118,8 @@ func writeCodeFile(client *sandboxmcp.Client, sid, lang, code string) error {
 	switch strings.ToLower(lang) {
 	case "node", "nodejs", "js", "javascript":
 		path = "/tmp/_k8e_run.js"
+	case "ts", "typescript":
+		path = "/tmp/_k8e_run.ts"
 	}
 	_, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
 		SessionId: sid, Path: path, Content: code, Mode: "w",
@@ -128,7 +135,7 @@ func RunCommand() cli.Command {
 		Usage:     "Run code or a shell command in a sandbox. Auto-creates session if needed.",
 		ArgsUsage: "<code>",
 		Flags: []cli.Flag{
-			cli.StringFlag{Name: "lang", Value: "bash", Usage: "Language hint: python, bash (default), node"},
+			cli.StringFlag{Name: "lang", Value: "bash", Usage: "Language hint: python, bash (default), node, ts"},
 			cli.IntFlag{Name: "timeout", Value: 30, Usage: "Timeout in seconds"},
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},

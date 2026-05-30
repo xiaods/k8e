@@ -43,7 +43,7 @@ k8e sandbox status
 
 ```bash
 k8e sandbox run <code>
-  [--lang python|bash|node]   # default: bash
+  [--lang python|bash|node|ts]   # default: bash
   [--session-id <id>]         # specify session explicitly (skips auto-creation)
   [--tenant <id>]             # tenant for cross-process session reuse
   [--timeout 30]              # timeout in seconds

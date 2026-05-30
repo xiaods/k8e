@@ -25,6 +25,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# TypeScript runtime: tsx for direct execution, typescript for tsc compilation
+RUN npm install -g tsx typescript
+
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip
 
