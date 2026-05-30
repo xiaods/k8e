@@ -20,6 +20,7 @@ func NewSandboxCommand() cli.Command {
 			sandboxcli.SubagentCommand(),
 			sandboxcli.ConfirmCommand(),
 			sandboxcli.ApproveCommand(),
+			sandboxcli.SnapshotCommand(),
 		},
 	}
 }

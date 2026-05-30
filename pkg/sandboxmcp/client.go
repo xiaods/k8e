@@ -1,4 +1,4 @@
-// Package sandboxmcp implements the K8E Sandbox MCP server.
+// Package sandboxmcp provides the gRPC client for K8E sandbox operations.
 package sandboxmcp
 
 import (

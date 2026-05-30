@@ -40,7 +40,7 @@ curl -sfL https://k8e.sh/install.sh | sh -
 | 3 | [⚙️ Components](#️-components) |
 | 4 | [🚀 Quick Start](#-quick-start) |
 | 5 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup) |
-| 6 | [🤖 Sandbox MCP Skill](#-sandbox-mcp-skill) |
+| 6 | [🤖 Sandbox CLI Skill](#-sandbox-cli-skill) |
 | 7 | [🐍 Python Client SDK](#-python-client-sdk) |
 | 8 | [🟦 TypeScript Client SDK](#-typescript-client-sdk) |
 | 9 | [🖥️ Advanced Installation](#️-advanced-installation) |
@@ -68,7 +68,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | 🗑️ **Ephemeral Workspaces** | Auto-cleanup after agent session ends |
 | 🧠 **Warm Pool** | Pre-booted sandbox pods for sub-500ms session claim latency |
 | 🤝 **agent-sandbox compatible** | Works with [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) |
-| 🔄 **MCP / A2A ready** | Any MCP-compatible agent (kiro, claude, gemini) connects via `k8e sandbox-mcp` |
+| 🔄 **SKILL + CLI** | AI agents (codex, claude, pi, openclaw) connect via `k8e sandbox` CLI commands |
 
 ---
 
@@ -109,11 +109,11 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
          ▲
          │  gRPC (TLS)
 ┌────────┴────────┐
-│  k8e sandbox-mcp│  ← MCP stdio bridge
+│  k8e sandbox    │  ← CLI commands
 └────────┬────────┘
-         │  stdin/stdout
-┌────────┴────────┐
-│  AI Agent       │  (kiro / claude / gemini / any MCP client)
+         │  gRPC (TLS)
+         ▼
+│  AI Agent       │  (codex / claude / pi / openclaw)
 └─────────────────┘
 ```
 
@@ -136,7 +136,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | 📈 **Metrics Server** | v0.7.x | Resource metrics |
 | 💾 **Local Path Provisioner** | v0.0.30 | Persistent storage |
 | 🛡️ **gVisor / Kata / Firecracker** | — | Pluggable sandbox isolation runtimes |
-| 🤖 **Sandbox MCP Server** | built-in | `k8e sandbox-mcp` — agent tool bridge |
+| 🤖 **Sandbox CLI** | built-in | `k8e sandbox` — agent tool commands |
 
 </div>
 
@@ -177,21 +177,19 @@ kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
 
 ### Step 4 — Connect Your AI Agent
 
-`sandbox-install-skill` does two things at once:
-1. Writes the `k8e-sandbox` MCP server entry into the agent's config file
-2. Copies the sandbox skill files from `/var/lib/k8e/server/skills/` into the agent's skills directory
-
-K8E server must have started at least once before running this command (it stages the skill files on first boot).
+Install the K8E sandbox skill into your AI agent:
 
 ```bash
-k8e sandbox-install-skill all   # installs into kiro, claude, gemini at once
+k8e sandbox-install-skill all   # installs skill files for all supported agents
 ```
 
 Then ask your agent naturally:
 
 > "Run this Python snippet in a sandbox"
 
-That's it. The agent calls `sandbox_run` automatically — no session management needed.
+The agent executes `k8e sandbox run` automatically — no session management needed.
+
+Supported agents: **codex**, **claude**, **pi**, **openclaw**.
 
 ---
 
@@ -251,15 +249,15 @@ kubectl get runtimeclass
 
 ---
 
-## 🤖 Sandbox MCP Skill
+## 🤖 Sandbox CLI Skill
 
-`k8e sandbox-mcp` is a built-in MCP server that bridges any MCP-compatible AI agent to K8E's sandbox infrastructure over gRPC — no extra binaries, no manual endpoint config.
+`k8e sandbox` is a built-in CLI command group that gives AI agents direct access to K8E's sandbox infrastructure — no MCP server, no extra processes, no manual endpoint config.
 
 ```
-AI Agent (kiro / claude / gemini)
-    │  stdin/stdout
+AI Agent (codex / claude / pi / openclaw)
+    │  shell command
     ▼
-k8e sandbox-mcp
+k8e sandbox run "print('hello')" --lang python
     │  gRPC (TLS, auto-discovered)
     ▼
 sandbox-grpc-gateway:50051
@@ -270,90 +268,86 @@ Isolated Pod (gVisor / Kata / Firecracker)
 
 ### Install the Skill
 
-`sandbox-install-skill` does two things in one command:
-1. Writes the `k8e-sandbox` MCP server entry into the agent's config file
-2. Copies skill files from `/var/lib/k8e/server/skills/` into the agent's skills directory
-
-> K8E server must have started at least once before running this — it stages the skill files to `/var/lib/k8e/server/skills/` on first boot.
+`sandbox-install-skill` copies skill files to the agent's skills directory:
 
 ```bash
 # All supported agents at once
 k8e sandbox-install-skill all
 
 # Or per agent
-k8e sandbox-install-skill kiro      # MCP config → .kiro/settings.json (workspace)
-                                    # Skills     → .kiro/skills/k8e-sandbox-skill/
-k8e sandbox-install-skill claude    # MCP config → ~/.claude.json
-                                    # Skills     → ~/.claude/skills/k8e-sandbox-skill/
-k8e sandbox-install-skill gemini    # MCP config → ~/.gemini/settings.json
-                                    # Skills     → ~/.gemini/skills/k8e-sandbox-skill/
+k8e sandbox-install-skill claude    # Skills → ~/.claude/skills/k8e-sandbox/
+k8e sandbox-install-skill openclaw  # Skills → ~/.openclaw/skills/k8e-sandbox/
+k8e sandbox-install-skill kiro      # Skills → .kiro/skills/k8e-sandbox/
+k8e sandbox-install-skill gemini    # Skills → ~/.gemini/skills/k8e-sandbox/
 ```
 
-**Manual setup** — add to your agent's MCP config:
+### Available Commands
 
-```json
-{
-  "mcpServers": {
-    "k8e-sandbox": {
-      "command": "k8e",
-      "args": ["sandbox-mcp"]
-    }
-  }
-}
-```
-
-For claude code:
-
-```bash
-claude mcp add k8e-sandbox -- k8e sandbox-mcp
-```
-
-### Verify
-
-```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test","version":"1.0"},"capabilities":{}}}' \
-  | k8e sandbox-mcp
-```
-
-### Available Tools
-
-| Tool | Description |
+| Command | Description |
 |---|---|
-| `sandbox_run` | Run code/commands — auto-manages full session lifecycle |
-| `sandbox_status` | Check if sandbox service is available |
-| `sandbox_create_session` | Create an isolated sandbox pod |
-| `sandbox_destroy_session` | Destroy session and clean up |
-| `sandbox_exec` | Run a command in a specific session |
-| `sandbox_exec_stream` | Run a command, get streaming output |
-| `sandbox_write_file` | Write a file into `/workspace` |
-| `sandbox_read_file` | Read a file from `/workspace` |
-| `sandbox_list_files` | List files modified since a timestamp |
-| `sandbox_pip_install` | Install Python packages via pip |
-| `sandbox_run_subagent` | Spawn a child sandbox (depth ≤ 1) |
-| `sandbox_confirm_action` | Gate irreversible actions on user approval |
+| `k8e sandbox run <code>` | Run code or shell command (auto-manages session) |
+| `k8e sandbox status` | Check sandbox service and current session |
+| `k8e sandbox create` | Create a new session (custom runtime, egress) |
+| `k8e sandbox destroy <sid>` | Destroy a session |
+| `k8e sandbox write <sid> <path>` | Write file to /workspace (content via stdin) |
+| `k8e sandbox read <sid> <path>` | Read file from /workspace |
+| `k8e sandbox list <sid>` | List files in /workspace |
+| `k8e sandbox subagent <parent-sid>` | Spawn child sandbox (max depth 1) |
+| `k8e sandbox confirm <sid> <action>` | Gate irreversible action on human approval |
+| `k8e sandbox snapshot save <sid> <name>` | Save workspace as named snapshot |
+| `k8e sandbox snapshot restore <name>` | Create new session from saved snapshot |
+| `k8e sandbox snapshot list` | List saved snapshots |
+
+See [skills/k8e-sandbox/SKILL.md](skills/k8e-sandbox/SKILL.md) for full usage examples.
+
+### Quick Examples
+
+```bash
+# Run Python code
+k8e sandbox run "print('hello')" --lang python
+
+# Multi-line code via stdin
+k8e sandbox run --lang python <<'EOF'
+for i in range(10):
+    print(i)
+EOF
+
+# Write a script then execute
+k8e sandbox write $SID /workspace/script.py <<'EOF'
+import pandas as pd
+print(pd.__version__)
+EOF
+k8e sandbox run "python3 /workspace/script.py" --session-id $SID
+
+# Create session with custom runtime and egress
+k8e sandbox create --runtime firecracker --allowed-hosts pypi.org,github.com
+
+# Stream long-running output
+k8e sandbox run "python3 train.py" --session-id $SID --raw
+
+# Workspace manifest
+k8e sandbox create --manifest workspace.yaml
+
+# Workspace snapshots
+k8e sandbox snapshot save $SID my-checkpoint
+k8e sandbox snapshot restore my-checkpoint
+```
 
 ### Configuration Overrides
 
-The MCP server auto-discovers the local cluster. Override when needed:
+The CLI auto-discovers the local cluster via TLS. Override when needed:
 
 ```bash
-K8E_SANDBOX_ENDPOINT=10.0.0.1:50051 k8e sandbox-mcp          # remote cluster
-K8E_SANDBOX_CERT=/path/to/ca.crt k8e sandbox-mcp              # custom TLS cert
-k8e sandbox-mcp --endpoint 10.0.0.1:50051 --tls-cert /path/to/ca.crt
+K8E_SANDBOX_ENDPOINT=10.0.0.1:50051 k8e sandbox run "echo hello"
+K8E_SANDBOX_CERT=/path/to/ca.crt k8e sandbox run "echo hello"
+k8e sandbox run "echo hello" --tenant my-project
 ```
-
-Auto-discovery probe order:
-1. `K8E_SANDBOX_ENDPOINT` env var
-2. `K8E_SANDBOX_CERT` / `K8E_SANDBOX_KEY` env vars
-3. `/var/lib/k8e/server/tls/serving-kube-apiserver.crt` (server node, root)
-4. `/etc/k8e/k8e.yaml` kubeconfig CA (agent node / non-root)
-5. `127.0.0.1:50051` with system CA pool
 
 ---
 
 ## 🐍 Python Client SDK
 
-The Python SDK talks directly to the sandbox gRPC gateway — no MCP process spawn, no stdio handshake (~1–5 ms vs ~500 ms for MCP stdio).
+The Python SDK talks directly to the sandbox gRPC gateway — no process spawn, no stdio handshake (~1–5 ms vs ~500 ms for CLI).
 
 ### Install
 
@@ -427,7 +421,7 @@ with sandbox_session(runtime_class="kata", allowed_hosts=["github.com"]) as (cli
 
 ## 🟦 TypeScript Client SDK
 
-The TypeScript SDK talks directly to the sandbox gRPC gateway — no MCP process spawn, no stdio handshake (~1–5 ms vs ~500 ms for MCP stdio).
+The TypeScript SDK talks directly to the sandbox gRPC gateway — no process spawn, no stdio handshake (~1–5 ms vs ~500 ms for CLI).
 
 ### Install
 
@@ -539,7 +533,7 @@ K8E_KUBECONFIG_OUTPUT=<path>    # kubeconfig output path
 | Binary size | **<100MB** | ~70MB | ~1GB+ | ~200MB |
 | Agentic Sandbox | ✅ Native | ❌ No | ⚠️ Manual | ❌ No |
 | eBPF networking | ✅ Cilium | ⚠️ Optional | ⚠️ Optional | ❌ No |
-| MCP skill built-in | ✅ Yes | ❌ No | ❌ No | ❌ No |
+| Sandbox CLI skill built-in | ✅ Yes | ❌ No | ❌ No | ❌ No |
 | HA embedded etcd | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited |
 | CNCF conformant | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | Multi-arch | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |

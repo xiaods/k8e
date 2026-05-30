@@ -46,6 +46,48 @@ func isMultiLine(code string) bool {
 	return strings.Contains(code, "\n")
 }
 
+// ensureSession resolves session ID, auto-creating one with manifest if needed.
+// Returns (sessionID, needsFinalize, error).
+func ensureSession(client *sandboxmcp.Client, ctx *cli.Context) (string, bool, error) {
+	sid, err := resolveSession(context.Background(), ctx.String("tenant"), ctx.String("session-id"))
+	if err != nil {
+		return "", false, err
+	}
+	if sid != "" {
+		return sid, false, nil
+	}
+
+	resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+		TenantId: ctx.String("tenant"), RuntimeClass: "gvisor",
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("create session: %w", err)
+	}
+	sid = resp.SessionId
+
+	manifest, mErr := resolveManifest(ctx)
+	if mErr != nil {
+		client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+		return "", false, fmt.Errorf("manifest: %w", mErr)
+	}
+	if manifest != nil {
+		if err := materializeManifest(client, sid, manifest); err != nil {
+			client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+			return "", false, fmt.Errorf("manifest materialization: %w", err)
+		}
+	}
+	return sid, true, nil
+}
+
+// isInterpretedLang returns true for languages that need shell wrapping.
+func isInterpretedLang(lang string) bool {
+	switch strings.ToLower(lang) {
+	case "python", "python3", "py", "node", "nodejs", "js", "javascript":
+		return true
+	}
+	return false
+}
+
 // buildCommand wraps code for a given language.
 // bash: pass through as-is. python/node: single-line uses -c, multi-line uses temp file.
 func buildCommand(lang, code string) string {
@@ -91,6 +133,10 @@ func RunCommand() cli.Command {
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},
 			cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
+			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest (only when auto-creating session)"},
+			cli.StringFlag{Name: "git-repo", Usage: "Git repo to clone (only when auto-creating session)"},
+			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
+			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
 		},
 		Action: func(ctx *cli.Context) error {
 			code, err := readCode(ctx)
@@ -104,32 +150,14 @@ func RunCommand() cli.Command {
 			client := newClient()
 			defer client.Close()
 
-			sid, err := resolveSession(context.Background(), ctx.String("tenant"), ctx.String("session-id"))
+			sid, needsFinalize, err := ensureSession(client, ctx)
 			if err != nil {
 				printErrorExit(err.Error(), 2)
 				return nil
 			}
 
-			// auto-create session if none exists
-			needsFinalize := false
-			if sid == "" {
-				resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
-					TenantId:     ctx.String("tenant"),
-					RuntimeClass: "gvisor",
-				})
-				if err != nil {
-					printErrorExit("create session: "+err.Error(), 2)
-					return nil
-				}
-				sid = resp.SessionId
-				needsFinalize = true
-			}
-
 			// python/node multi-line: write file first, then execute
-			lowLang := strings.ToLower(lang)
-			if (lowLang == "python" || lowLang == "python3" || lowLang == "py" ||
-				lowLang == "node" || lowLang == "nodejs" || lowLang == "js" || lowLang == "javascript") &&
-				isMultiLine(code) {
+			if isInterpretedLang(lang) && isMultiLine(code) {
 				if err := writeCodeFile(client, sid, lang, code); err != nil {
 					printErrorExit("write code: "+err.Error(), 1)
 					return nil
@@ -232,6 +260,10 @@ func CreateCommand() cli.Command {
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant identifier"},
 			cli.StringFlag{Name: "allowed-hosts", Usage: "Comma-separated FQDN egress allowlist"},
 			cli.StringFlag{Name: "session-id", Usage: "Custom session ID"},
+			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest YAML file"},
+			cli.StringFlag{Name: "git-repo", Usage: "Git repository URL to clone (shortcut)"},
+			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
+			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
 		},
 		Action: func(ctx *cli.Context) error {
 			client := newClient()
@@ -253,15 +285,53 @@ func CreateCommand() cli.Command {
 				return nil
 			}
 
+			sid := resp.SessionId
+
+			// materialize manifest if provided
+			manifest, mErr := resolveManifest(ctx)
+			if mErr != nil {
+				client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+				printErrorExit("manifest: "+mErr.Error(), 1)
+				return nil
+			}
+			if manifest != nil {
+				if err := materializeManifest(client, sid, manifest); err != nil {
+					client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+					printErrorExit("manifest materialization failed: "+err.Error(), 1)
+					return nil
+				}
+			}
+
 			// always write state file (unless explicit session-id)
 			if ctx.String("session-id") == "" {
 				_ = finalizeState(ctx.String("tenant"), resp.SessionId)
 			}
 
-			printJSON(map[string]any{"session_id": resp.SessionId, "pod_ip": resp.PodIp})
+			count := 0
+			if manifest != nil {
+				count = len(manifest.Entries)
+			}
+			printJSON(map[string]any{"session_id": resp.SessionId, "pod_ip": resp.PodIp, "entries_materialized": count})
 			return nil
 		},
 	}
+}
+
+// resolveManifest builds a Manifest from --manifest, --git-repo flags, or returns nil.
+func resolveManifest(ctx *cli.Context) (*Manifest, error) {
+	if path := ctx.String("manifest"); path != "" {
+		return parseManifest(path)
+	}
+	if repo := ctx.String("git-repo"); repo != "" {
+		return &Manifest{Entries: []ManifestEntry{
+			{GitRepo: &GitRepoEntry{
+				Path: ctx.String("git-path"),
+				Repo: repo,
+				Ref:  ctx.String("git-ref"),
+			}},
+		}}, nil
+	}
+	return nil, nil
 }
 
 // ── DestroyCommand ──────────────────────────────────────────────────────────
