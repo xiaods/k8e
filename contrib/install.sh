@@ -39,6 +39,35 @@ info()  { echo "[INFO]  $*"; }
 warn()  { echo "[WARN]  $*" >&2; }
 fatal() { echo "[ERROR] $*" >&2; exit 1; }
 
+# ── gVisor runtime ────────────────────────────────────────────────────────────
+install_gvisor() {
+    if command -v runsc >/dev/null 2>&1; then
+        info "gVisor already installed: $(runsc version 2>/dev/null | head -1)"
+        return
+    fi
+
+    if ! command -v apt-get >/dev/null 2>&1; then
+        warn "apt-get not found, skipping gVisor install"
+        return
+    fi
+
+    info "Installing gVisor (runsc)..."
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq curl gpg 2>/dev/null
+
+    curl -fsSL https://gvisor.dev/archive.key \
+        | gpg --dearmor \
+        | $SUDO tee /usr/share/keyrings/gvisor-archive-keyring.gpg >/dev/null
+
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
+  https://storage.googleapis.com/gvisor/releases release main" \
+        | $SUDO tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+
+    $SUDO apt-get update -qq
+    $SUDO apt-get install -y -qq runsc
+    info "gVisor installed: $(runsc version 2>/dev/null | head -1)"
+}
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 quote() {
     for arg in "$@"; do
@@ -454,6 +483,7 @@ eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
     setup_env "$@"
     download_and_verify
     create_symlinks
+    install_gvisor
     setup_profile
     create_killall
     create_uninstall
