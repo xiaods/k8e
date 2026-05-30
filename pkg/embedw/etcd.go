@@ -202,8 +202,8 @@ type etcdYAMLConfig struct {
 	TickMs               int               `yaml:"heartbeat-interval"`
 	ElectionMs           int               `yaml:"election-timeout"`
 	InitialElectionTickAdvance bool         `yaml:"initial-election-tick-advance,omitempty"`
-	MaxRequestBytes      uint              `yaml:"max-request-bytes"`
-	MaxConcurrentStreams uint32            `yaml:"max-concurrent-streams"`
+	MaxRequestBytes      uint              `yaml:"max-request-bytes,omitempty"`
+	MaxConcurrentStreams uint32            `yaml:"max-concurrent-streams,omitempty"`
 	MaxTxnOps            uint              `yaml:"max-txn-ops,omitempty"`
 	ListenPeerUrls       string            `yaml:"listen-peer-urls"`
 	ListenClientUrls     string            `yaml:"listen-client-urls"`
@@ -220,9 +220,9 @@ type etcdYAMLConfig struct {
 	AutoCompactionRetention string           `yaml:"auto-compaction-retention,omitempty"`
 	QuotaBackendBytes    int64             `yaml:"quota-backend-bytes"`
 	BackendFreelistType  string            `yaml:"backend-bbolt-freelist-type,omitempty"`
-	BackendBatchLimit    int               `yaml:"backend-batch-limit"`
+	BackendBatchLimit    int               `yaml:"backend-batch-limit,omitempty"`
 	BackendBatchInterval int64              `yaml:"backend-batch-interval,omitempty"`
-	MaxLearners          int               `yaml:"max-learners"`
+	MaxLearners          int               `yaml:"max-learners,omitempty"`
 	// TLS — client (nested section)
 	ClientTransportSecurity yamlSecurityConfig `yaml:"client-transport-security"`
 	// TLS — peer (nested section)
