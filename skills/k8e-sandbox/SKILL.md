@@ -1,17 +1,9 @@
 ---
 name: k8e-sandbox-skill
-description: "Manage K8E Sandbox Matrix clusters — create/destroy sessions, run code in isolated sandboxes, manage runtime policies and warm pools."
+description: "Manage K8E Sandbox — run code in isolated environments via CLI. Supports codex, claude, pi, and openclaw."
 metadata:
-  {
-    "openclaw":
-      {
-        "emoji": "🏗️",
-        "requires":
-          {
-            "config": ["mcpServers.k8e-sandbox"],
-          },
-      },
-  }
+  openclaw:
+    emoji: "🏗️"
 ---
 
 # K8E Sandbox Skill
@@ -20,264 +12,225 @@ Always run code and shell commands in the sandbox, never directly on the host. E
 
 Use this skill for **any code execution, testing, or isolated environment needs**. Trigger for English requests like "run this", "execute", "test it", "check if this works", "install X and use it". Trigger equally for Chinese requests: "帮我跑一下", "运行这个", "试试这个", "执行一下", "跑一下", "测试这段代码", "帮我分析这个CSV", "帮我跑这段代码", "跑一下看看", "帮我试试", "能不能跑", "看看输出", "帮我算一下", "帮我处理这个文件", "安装并使用".
 
-## MCP transport modes
+## Quick Start
 
-`k8e sandbox-mcp` supports two transports. The agent config is set automatically by `k8e sandbox-install-skill`.
-
-| Mode | How to start | When to use |
-|---|---|---|
-| **stdio** (default) | `k8e sandbox-mcp` | kiro / claude desktop — agent manages the process |
-| **HTTP/SSE** | `k8e sandbox-mcp --http --http-addr :8811` | shared server, multiple agents, lowest latency |
-
-### HTTP/SSE mode
-
-One server process serves all agent connections — no per-request spawn, no initialize handshake per call.
-
-```
-GET  /mcp   → open SSE stream (long-lived, server → agent push)
-POST /mcp   → send JSON-RPC request, response in HTTP body + SSE push
-              header: Mcp-Session-Id: <token>   ← ties POST to SSE stream
-```
-
-**Start the server:**
 ```bash
-k8e sandbox-mcp --http --http-addr :8811
+# Run code (auto-creates session)
+k8e sandbox run "print('hello')" --lang python
+
+# Run shell command
+k8e sandbox run "ls -la /workspace"
+
+# Check status
+k8e sandbox status
 ```
 
-**Agent config (manual):**
-```json
-{
-  "mcpServers": {
-    "k8e-sandbox": { "url": "http://127.0.0.1:8811/mcp" }
-  }
-}
-```
+## All Commands
 
-**Auto-install with SSE:**
+| Command | Description |
+|---------|-------------|
+| `k8e sandbox run <code>` | Run code or shell command (auto-manages session, auto-creates if none) |
+| `k8e sandbox status` | Check sandbox service availability and current session |
+| `k8e sandbox create` | Create a new session (custom runtime, egress allowlist) |
+| `k8e sandbox destroy <sid>` | Destroy a session and free resources |
+| `k8e sandbox write <sid> <path>` | Write file to `/workspace` (content via stdin) |
+| `k8e sandbox read <sid> <path>` | Read file from `/workspace` |
+| `k8e sandbox list <sid>` | List files in `/workspace` (filter by --since timestamp) |
+| `k8e sandbox subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
+| `k8e sandbox confirm <sid> <action>` | Gate irreversible action on human approval |
+
+## `k8e sandbox run` — Detailed Usage
+
 ```bash
-K8E_SANDBOX_MCP_ADDR=:8811 k8e sandbox-install-skill all
-# writes "url" instead of "command" into agent configs
+k8e sandbox run <code>
+  [--lang python|bash|node]   # default: bash
+  [--session-id <id>]         # specify session explicitly (skips auto-creation)
+  [--tenant <id>]             # tenant for cross-process session reuse
+  [--timeout 30]              # timeout in seconds
+  [--raw]                     # streaming raw output (no JSON wrapper)
 ```
 
-**SSE session lifecycle:**
-1. Agent opens `GET /mcp` → receives `event: session\ndata: <token>` as first event
-2. Agent sends `POST /mcp` with `Mcp-Session-Id: <token>` header
-3. Response arrives in HTTP body; also pushed over the SSE stream
-4. Server sends `: ping` every 15s to keep the connection alive
-5. On disconnect, the SSE session is cleaned up automatically
+**Code source priority**: argument > stdin (pipe/heredoc).
 
-## Available tools
+### Single-line code
 
-| Tool | Description |
-|------|-------------|
-| `sandbox_run` | Run code or a shell command (auto-manages session) |
-| `sandbox_status` | Check sandbox service availability |
-| `sandbox_create_session` | Create a new session (custom runtime, egress allowlist) |
-| `sandbox_destroy_session` | Tear down a session and free resources |
-| `sandbox_exec` | Execute a command in a specific session |
-| `sandbox_exec_stream` | Execute with streaming output |
-| `sandbox_write_file` | Write a file to `/workspace` |
-| `sandbox_read_file` | Read a file from `/workspace` |
-| `sandbox_list_files` | List recently changed files |
-| `sandbox_pip_install` | Install Python packages |
-| `sandbox_run_subagent` | Spawn a child sandbox (max depth 1) |
-| `sandbox_confirm_action` | Gate irreversible actions on approval |
-
-## Running code
-
-`name: k8e-sandbox-sandbox_run` is the default entry point — it handles session creation and reuse automatically:
-
-```json
-{ "name": "k8e-sandbox-sandbox_run", "arguments": { "code": "print('hello from sandbox')", "language": "python" } }
-```
-
-Capture the `session_id` from the response for multi-step workflows:
-
-```json
-{ "name": "k8e-sandbox-sandbox_exec", "arguments": { "session_id": "<id>", "command": "pip install pandas" } }
-```
-
-## Common patterns
-
-**Install a package then run code:**
-```json
-{ "name": "k8e-sandbox-sandbox_pip_install", "arguments": { "packages": ["pandas", "matplotlib"] } }
-```
-→ note the `session_id` in the response, then:
-```json
-{ "name": "k8e-sandbox-sandbox_exec", "arguments": { "session_id": "<id>", "command": "python script.py" } }
-```
-
-**Write a file then execute it:**
-```json
-{ "name": "k8e-sandbox-sandbox_write_file", "arguments": { "path": "/workspace/script.py", "content": "import pandas as pd\nprint(pd.__version__)" } }
-```
-→ note the `session_id`, then:
-```json
-{ "name": "k8e-sandbox-sandbox_exec", "arguments": { "session_id": "<id>", "command": "python /workspace/script.py" } }
-```
-
-**Long-running command with streaming output:**
-```json
-{ "name": "k8e-sandbox-sandbox_exec_stream", "arguments": { "session_id": "<id>", "command": "python train.py" } }
-```
-
-**Custom egress allowlist** (e.g., allow github.com in addition to defaults):
-```json
-{ "name": "k8e-sandbox-sandbox_create_session", "arguments": { "allowed_hosts": ["pypi.org", "files.pythonhosted.org", "github.com"] } }
-```
-Default allowed hosts: `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`. Anything not on the list is blocked at the kernel level by Cilium eBPF — the connection is dropped, not just timed out.
-
-**Parallel sub-agents sharing a workspace:**
-```json
-{ "name": "k8e-sandbox-sandbox_run_subagent", "arguments": { "parent_session_id": "<id>", "agent_type": "research|coding|general", "workspace_path": "/workspace/results" } }
-```
-Sub-agents (depth=1) share the parent's `/workspace` PVC and communicate by writing files. Sub-agents cannot spawn further agents — calling `sandbox_run_subagent` from a sub-agent returns `PERMISSION_DENIED`.
-
-**Before any irreversible action** (deleting files, deploying, sending data externally):
-```json
-{ "name": "k8e-sandbox-sandbox_confirm_action", "arguments": { "session_id": "<id>", "action": "describe exactly what is about to happen and why" } }
-```
-This is an architectural safety gate, not a courtesy prompt. The call blocks until an external approver explicitly approves via a separate API call. It cannot be bypassed by prompt instructions.
-
-## SDK — direct gRPC, no MCP overhead
-
-Use the SDK when writing Python or TypeScript programs that call the sandbox directly — **no process spawn, no stdio handshake, ~1-5ms latency vs ~500ms for MCP stdio**.
-
-SDK source: `sdk/python/sandbox_client.py` · `sdk/typescript/sandbox_client.ts`
-
-### When to use SDK vs MCP tools
-
-| Scenario | Use |
-|---|---|
-| Agent executing user requests interactively | MCP tools (`sandbox_run` etc.) |
-| Python/TS program calling sandbox in a loop | SDK |
-| Low-latency batch execution | SDK |
-
-### Python SDK
-
-**Install:**
 ```bash
-pip install grpcio grpcio-tools protobuf
-# generate stubs once:
-python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. proto/sandbox/v1/sandbox.proto
+k8e sandbox run "print('hello')" --lang python
+
+k8e sandbox run "node -e 'console.log(42)'"
+
+k8e sandbox run "ls -la /workspace"              # default --lang bash
 ```
 
-**Run code (session auto-managed):**
-```python
-from sandbox_client import SandboxClient
+### Multi-line code via stdin
 
-with SandboxClient() as client:
-    result = client.run("print('hello')", language="python")
-    print(result.stdout)          # hello
-    print(result.exit_code)       # 0
-```
-
-**Multi-step workflow:**
-```python
-with SandboxClient() as client:
-    client.run("pip install pandas", "bash")   # same session reused
-    result = client.run("python3 analyze.py", "bash")
-```
-
-**Explicit session with custom options:**
-```python
-from sandbox_client import SandboxClient, sandbox_session
-
-with sandbox_session(runtime_class="kata", allowed_hosts=["github.com"]) as (client, sid):
-    client.write_file(sid, "/workspace/main.py", code)
-    result = client.exec(sid, "python3 /workspace/main.py")
-```
-
-**Streaming output:**
-```python
-for chunk in client.exec_stream(sid, "python3 train.py"):
-    print(chunk, end="", flush=True)
-```
-
-**API:**
-
-| Method | Description |
-|---|---|
-| `SandboxClient(endpoint?, tenant_id?)` | Create client, TLS auto-discovered |
-| `client.run(code, language, timeout)` | Run code, session lazily created and reused |
-| `client.exec(sid, command, timeout)` | Run in explicit session |
-| `client.exec_stream(sid, command)` | Streaming output iterator |
-| `client.create_session(runtime_class, allowed_hosts, tenant_id)` | Create session |
-| `client.destroy_session(sid)` | Destroy session |
-| `client.write_file(sid, path, content)` | Write to `/workspace` |
-| `client.read_file(sid, path)` | Read from `/workspace` |
-| `client.pip_install(sid, packages)` | Install Python packages |
-| `client.close()` | Close connection + destroy default session |
-| `sandbox_session(...)` | Context manager for a dedicated session |
-
-### TypeScript SDK
-
-**Install:**
 ```bash
-npm install @grpc/grpc-js @grpc/proto-loader
+k8e sandbox run --lang python <<'PYEOF'
+import json
+data = {"key": "value"}
+print(json.dumps(data))
+PYEOF
 ```
 
-**Run code (session auto-managed):**
-```typescript
-import { SandboxClient } from "./sandbox_client";
+### Streaming output (long-running tasks)
 
-const client = new SandboxClient();
-const result = await client.run("print('hello')", "python");
-console.log(result.stdout);   // hello
-await client.close();
+```bash
+k8e sandbox run "python3 train.py" --session-id sess-abc --raw
+# Real-time output, exit code = command exit code
 ```
 
-**Multi-step workflow:**
-```typescript
-const client = new SandboxClient();
-await client.run("pip install pandas", "bash");   // same session reused
-const result = await client.run("python3 analyze.py", "bash");
-await client.close();
+### Specify session explicitly
+
+```bash
+k8e sandbox run "pip install pandas" --session-id sess-abc
 ```
 
-**Explicit session:**
-```typescript
-const sid = await client.createSession({ runtimeClass: "kata", allowedHosts: ["github.com"] });
-await client.writeFile(sid, "/workspace/main.py", code);
-const result = await client.exec(sid, "python3 /workspace/main.py");
-await client.destroySession(sid);
+When `--session-id` is set, the CLI does NOT use state files. If the session is expired, it returns an error — the Agent should create a new session.
+
+## Output Format
+
+### Default: JSON (parse with jq)
+
+```bash
+$ k8e sandbox run "print('hello')" --lang python
+{"stdout":"hello\n","stderr":"","exit_code":0,"session_id":"sess-abc123"}
+
+$ k8e sandbox run "print('hello')" --lang python | jq -r .stdout
+hello
 ```
 
-**Streaming output:**
-```typescript
-for await (const chunk of client.execStream(sid, "python3 train.py")) {
-  process.stdout.write(chunk);
-}
+### --raw mode: plain text
+
+```bash
+$ k8e sandbox run "print('hello')" --lang python --raw
+hello
+
+$ k8e sandbox read sess-abc /workspace/data.json --raw | jq .key
+42
 ```
 
-**One-shot helper:**
-```typescript
-import { sandboxRun } from "./sandbox_client";
-const { stdout } = await sandboxRun("echo hello");
+### Error format
+
+```bash
+# Service unreachable → exit 2
+$ k8e sandbox run "echo hello"
+{"error":"sandbox not reachable","detail":"connection refused"}
+exit 2
+
+# Session not found → exit 1
+$ k8e sandbox destroy no-exist
+{"ok":false,"error":"session not found"}
+exit 1
 ```
 
-**API:**
+## Session Management
 
-| Method | Description |
-|---|---|
-| `new SandboxClient(endpoint?, tenantId?)` | Create client, TLS auto-discovered |
-| `client.run(code, language, timeout)` | Run code, session lazily created and reused |
-| `client.exec(sid, command, timeout)` | Run in explicit session |
-| `client.execStream(sid, command)` | Async iterable of output chunks |
-| `client.createSession(opts)` | Create session |
-| `client.destroySession(sid)` | Destroy session |
-| `client.writeFile(sid, path, content)` | Write to `/workspace` |
-| `client.readFile(sid, path)` | Read from `/workspace` |
-| `client.pipInstall(sid, packages)` | Install Python packages |
-| `client.close()` | Close connection + destroy default session |
-| `sandboxRun(code, language?)` | One-shot convenience function |
+### Auto-managed session (default)
 
-## Error handling
+```bash
+k8e sandbox run "echo hello"
+# Creates a session automatically if none exists
+# Saves session ID to ~/.k8e/sandbox/default/state.json
+# Subsequent calls reuse the same session
+```
 
-- If `sandbox_status` fails → sandbox service is unreachable; suggest `kubectl -n sandbox-matrix get pods`
-- If a command exits with an error → show full stderr and diagnose before retrying
-- If a package install fails → check package name spelling and Python version compatibility
-- If `sandbox_run_subagent` returns `PERMISSION_DENIED` → the current session is already a sub-agent (depth=1); sub-agents cannot spawn children
-- If `curl` or network calls fail inside the sandbox → the target host is likely not in `allowed_hosts`; use `sandbox_create_session` with an explicit allowlist
-- Files in `/workspace/` persist for the lifetime of the session (and are shared across sub-agents); use `sandbox_list_files` to verify writes before reading back
+### Tenant-based persistence
+
+```bash
+k8e sandbox run "echo hello" --tenant my-project
+# Session saved to ~/.k8e/sandbox/my-project/state.json
+# All calls with same tenant reuse the session across process restarts
+```
+
+### Manual lifecycle
+
+```bash
+SID=$(k8e sandbox create --runtime gvisor --allowed-hosts pypi.org,github.com | jq -r .session_id)
+k8e sandbox run "python3 analyze.py" --session-id $SID
+k8e sandbox destroy $SID
+```
+
+## Common Patterns
+
+### Write a script then execute
+
+```bash
+k8e sandbox write $SESSION_ID /workspace/analyze.py <<'EOF'
+import pandas as pd
+df = pd.read_csv('/workspace/data.csv')
+print(df.describe())
+EOF
+k8e sandbox run "python3 /workspace/analyze.py" --session-id $SESSION_ID
+```
+
+### Write data file then analyze
+
+```bash
+echo "name,value\na,1\nb,2" | k8e sandbox write $SID /workspace/data.csv
+k8e sandbox run "python3 /workspace/analyze.py" --session-id $SID
+k8e sandbox read $SID /workspace/result.json --raw | jq .
+```
+
+### Custom egress allowlist
+
+```bash
+SID=$(k8e sandbox create --runtime gvisor --allowed-hosts pypi.org,github.com | jq -r .session_id)
+k8e sandbox run "curl -s https://api.github.com/repos/kubernetes/kubernetes" --session-id $SID
+k8e sandbox destroy $SID
+```
+
+Default allowed hosts: `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`. Anything not on the list is blocked at the kernel level by Cilium eBPF.
+
+### Parallel sub-agents sharing a workspace
+
+```bash
+SUB1=$(k8e sandbox subagent sess-parent | jq -r .session_id)
+SUB2=$(k8e sandbox subagent sess-parent | jq -r .session_id)
+
+k8e sandbox run "python3 /workspace/code.py" --session-id $SUB1 --raw &
+k8e sandbox run "python3 /workspace/test.py" --session-id $SUB2 --raw &
+wait
+```
+
+Sub-agents (depth=1) share the parent's `/workspace` PVC and communicate by writing files. Sub-agents cannot spawn further agents — calling `subagent` from a sub-agent returns an error.
+
+## Human Approval (ConfirmAction)
+
+Before any irreversible action (deleting files, deploying, sending data externally), call `k8e sandbox confirm`:
+
+```bash
+k8e sandbox confirm $SID "delete /workspace/secret.txt"
+```
+
+This command:
+1. Immediately prints the approval request and ID to stderr
+2. Blocks until a human approves via `k8e sandbox approve <id>` in another terminal
+3. Returns `{"approved":true}` on stdout when approved
+4. Times out after 30s (use `--timeout <seconds>` to extend)
+
+The output on stderr looks like:
+```
+[k8e-sandbox] ⚠ Approval required: delete /workspace/secret.txt
+[k8e-sandbox]    To approve: k8e sandbox approve approval-xxx-12345
+[k8e-sandbox]    Timeout: 30s
+```
+
+**Show this output to the user** when using confirm. The user copies the approve command to another terminal.
+
+### Register only (non-blocking)
+
+```bash
+AID=$(k8e sandbox confirm $SID "delete file" --no-wait | jq -r .approval_id)
+# ... later ...
+k8e sandbox approve $AID
+```
+
+## Tips
+
+- `k8e sandbox run` creates a session automatically and saves it to `~/.k8e/sandbox/{tenant}/state.json`
+- Use `--tenant` for cross-process session persistence across Agent restarts
+- All commands output JSON by default; pipe to `jq` for field extraction
+- Session timeout is controlled by `SandboxMatrix` CRD, not the CLI
+- Use `--raw` on `run` for streaming output of long-running commands
+- Use `--raw` on `read` to pipe file contents directly to `jq` or other tools
+- For pip install, just use `k8e sandbox run "pip install pkg" --session-id $SID`

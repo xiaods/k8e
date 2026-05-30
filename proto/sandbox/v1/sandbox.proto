@@ -13,6 +13,7 @@ service SandboxService {
   rpc PipInstall(PipInstallRequest)         returns (PipInstallResponse);
   rpc RunSubAgent(RunSubAgentRequest)       returns (RunSubAgentResponse);
   rpc ConfirmAction(ConfirmActionRequest)   returns (ConfirmActionResponse);
+  rpc ApproveAction(ApproveActionRequest)   returns (ApproveActionResponse);
 }
 
 message CreateSessionRequest {
@@ -75,4 +76,14 @@ message ConfirmActionRequest {
 message ConfirmActionResponse {
   string approval_id = 1;
   bool   approved    = 2;
+}
+
+message ApproveActionRequest {
+  string approval_id = 1;
+  bool   approved    = 2;
+  string reason      = 3;
+}
+
+message ApproveActionResponse {
+  bool ok = 1;
 }
