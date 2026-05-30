@@ -293,6 +293,7 @@ pub fn build(b: *std.Build) !void {
     all_step.dependOn(runc_step);
     all_step.dependOn(cni_step);
     all_step.dependOn(sandboxd_step);
+    try addSandboxCLIBuild(b, all_step);
     // hcsshim is Windows-only; only include on Windows hosts
     if (builtin.os.tag == .windows) {
         all_step.dependOn(hcsshim_step);
@@ -364,6 +365,35 @@ fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo) ![]const u8 {
         try xflag(allocator, PKG_ETCD ++ "/api/v3/version.GitSHA", "HEAD"),
     };
     return std.mem.join(allocator, " ", &parts);
+}
+
+fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step) !void {
+    const cli_step = b.step("sandbox-cli", "Build cross-platform sandbox CLI binary");
+    const cli_targets = [_]struct { goos: []const u8, goarch: []const u8, ext: []const u8 }{
+        .{ .goos = "linux", .goarch = "amd64", .ext = "" },
+        .{ .goos = "linux", .goarch = "arm64", .ext = "" },
+        .{ .goos = "darwin", .goarch = "amd64", .ext = "" },
+        .{ .goos = "darwin", .goarch = "arm64", .ext = "" },
+        .{ .goos = "windows", .goarch = "amd64", .ext = ".exe" },
+    };
+
+    for (cli_targets) |t| {
+        const out_name = b.fmt("bin/k8e-{s}-{s}{s}", .{ t.goos, t.goarch, t.ext });
+        const out_path = b.getInstallPath(.bin, out_name);
+
+        const go_build = b.addSystemCommand(&[_][]const u8{
+            "go", "build",
+            "-ldflags", "-s -w",
+            "-o", out_path,
+            "./cmd/sandbox-cli/",
+        });
+        go_build.setEnvironmentVariable("GOOS", t.goos);
+        go_build.setEnvironmentVariable("GOARCH", t.goarch);
+        go_build.setEnvironmentVariable("CGO_ENABLED", "0");
+        cli_step.dependOn(&go_build.step);
+    }
+
+    all_step.dependOn(cli_step);
 }
 
 fn findBash() []const u8 {

@@ -32,3 +32,4 @@ __pycache__
 zig-out
 .claude/*
 server
+sandbox-cli
