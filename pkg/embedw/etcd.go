@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 	"go.etcd.io/etcd/server/v3/embed"
 )
@@ -40,6 +41,8 @@ type Config struct {
 
 	// Performance tuning
 	SnapshotCount        int     `yaml:"snapshot-count"`
+	MaxSnapFiles         uint    `yaml:"max-snapshots"`
+	MaxWALFiles          uint    `yaml:"max-wals"`
 	TickMs               int     `yaml:"heartbeat-interval"`
 	ElectionTimeout      int     `yaml:"election-timeout"`
 	MaxRequestBytes      uint    `yaml:"max-request-bytes"`
@@ -154,6 +157,39 @@ type yamlSecurityConfig struct {
 	ClientCertAuth bool   `yaml:"client-cert-auth"`
 }
 
+// etcdReservedYAMLTags lists all YAML keys managed by etcdYAMLConfig struct fields.
+// ExtraLines keys that match any of these are filtered out to prevent inline map conflicts.
+var etcdReservedYAMLTags = map[string]bool{
+	"name": true, "data-dir": true, "wal-dir": true,
+	"snapshot-count": true, "snapshot-catchup-entries": true,
+	"max-snapshots": true, "max-wals": true,
+	"heartbeat-interval": true, "election-timeout": true,
+	"initial-election-tick-advance": true,
+	"max-request-bytes": true, "max-concurrent-streams": true,
+	"max-txn-ops": true, "max-learners": true,
+	"listen-peer-urls": true, "listen-client-urls": true,
+	"listen-client-http-urls": true, "listen-metrics-urls": true,
+	"initial-advertise-peer-urls": true, "advertise-client-urls": true,
+	"initial-cluster": true, "initial-cluster-token": true,
+	"initial-cluster-state": true,
+	"force-new-cluster": true, "strict-reconfig-check": true,
+	"auto-compaction-mode": true, "auto-compaction-retention": true,
+	"quota-backend-bytes": true, "backend-bbolt-freelist-type": true,
+	"backend-batch-limit": true, "backend-batch-interval": true,
+	"client-transport-security": true, "peer-transport-security": true,
+	"tls-min-version": true, "tls-max-version": true,
+	"cipher-suites": true,
+	"auth-token": true, "bcrypt-cost": true, "auth-token-ttl": true,
+	"cors": true, "host-whitelist": true,
+	"logger": true, "log-outputs": true, "log-level": true,
+	"log-rotation-config-json": true,
+	"enable-pprof": true, "enable-log-rotation": true,
+	"grpc-keepalive-min-time": true, "grpc-keepalive-interval": true,
+	"grpc-keepalive-timeout": true,
+	"experimental-initial-corrupt-check": true,
+	"experimental-watch-progress-notify-interval": true,
+}
+
 // etcdYAMLConfig mirrors the format expected by embed.ConfigFromFile.
 type etcdYAMLConfig struct {
 	Name                 string            `yaml:"name"`
@@ -226,6 +262,8 @@ func writeConfigFile(path string, cfg Config) error {
 		DataDir:              cfg.DataDir,
 		WalDir:               cfg.WALDir,
 		SnapshotCount:        cfg.SnapshotCount,
+		MaxSnapFiles:         cfg.MaxSnapFiles,
+		MaxWALFiles:          cfg.MaxWALFiles,
 		TickMs:               cfg.TickMs,
 		ElectionMs:           cfg.ElectionTimeout,
 		MaxRequestBytes:      cfg.MaxRequestBytes,
@@ -263,11 +301,11 @@ func writeConfigFile(path string, cfg Config) error {
 		LogOutputs:  cfg.LogOutputs,
 		LogLevel:    "info",
 		EnablePprof: cfg.EnablePprof,
-		// Feature gates
+	// Feature gates
 		InitialCorruptCheck:         cfg.InitialCorruptCheck,
 		WatchProgressNotifyInterval: int64(cfg.WatchProgressNotifyInterval),
-		// Extra args merged via yaml:",inline"
-		Extra: cfg.ExtraLines,
+		// Extra args merged via yaml:",inline" — filter out reserved keys to prevent conflicts
+		Extra: filterExtraLines(cfg.ExtraLines),
 	}
 
 	data, err := yaml.Marshal(&y)
@@ -281,4 +319,24 @@ func writeConfigFile(path string, cfg Config) error {
 	}
 
 	return nil
+}
+
+// filterExtraLines removes keys that conflict with etcdYAMLConfig struct fields.
+// yaml.v2 panics when inline map keys overlap with struct yaml tags.
+func filterExtraLines(extra map[string]interface{}) map[string]interface{} {
+	if len(extra) == 0 {
+		return nil
+	}
+	filtered := make(map[string]interface{}, len(extra))
+	for k, v := range extra {
+		if etcdReservedYAMLTags[k] {
+			logrus.Warnf("Skipping etcd extra arg %q: conflicts with k8e-managed config field", k)
+			continue
+		}
+		filtered[k] = v
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }

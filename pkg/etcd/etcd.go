@@ -1052,8 +1052,6 @@ func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
 	if extraLines == nil {
 		extraLines = make(map[string]interface{})
 	}
-	extraLines["max-snapshots"] = 0
-	extraLines["max-wals"] = 0
 
 	e.embedCtx, e.embedCancel = context.WithCancel(ctx)
 	e.cancel = e.embedCancel
@@ -1072,6 +1070,8 @@ func (e *ETCD) StartEmbeddedTemporary(ctx context.Context) error {
 		ForceNewCluster:            true,
 		StrictReconfigCheck:        true,
 		SnapshotCount:              10000,
+		MaxSnapFiles:               0,
+		MaxWALFiles:                0,
 		TickMs:                     500,
 		ElectionTimeout:            5000,
 		// TLS — client (API server → etcd)
