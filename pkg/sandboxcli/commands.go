@@ -14,17 +14,6 @@ import (
 	"github.com/xiaods/k8e/pkg/sandboxmcp"
 )
 
-// newClient wraps sandboxmcp.NewClient with fatal error handling.
-// On connection failure, prints JSON error and exits with code 2.
-// Supports --endpoint and --apikey from parent sandbox command for remote clusters.
-func newClient() *sandboxmcp.Client {
-	c, err := sandboxmcp.NewClient()
-	if err != nil {
-		printErrorExit("sandbox not reachable: "+err.Error(), 2)
-	}
-	return c
-}
-
 // newClientFromCtx creates a gRPC client using endpoint/apikey from parent sandbox command flags.
 func newClientFromCtx(ctx *cli.Context) *sandboxmcp.Client {
 	endpoint := ""
