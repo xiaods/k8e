@@ -66,7 +66,7 @@ func snapshotSaveCommand() cli.Command {
 				return nil
 			}
 
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			// 1. Create tar.gz inside sandbox
@@ -216,7 +216,7 @@ func snapshotRestoreCommand() cli.Command {
 			}
 
 			// 3. Create new session
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			var hosts []string

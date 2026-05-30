@@ -16,8 +16,38 @@ import (
 
 // newClient wraps sandboxmcp.NewClient with fatal error handling.
 // On connection failure, prints JSON error and exits with code 2.
+// Supports --endpoint and --apikey from parent sandbox command for remote clusters.
 func newClient() *sandboxmcp.Client {
 	c, err := sandboxmcp.NewClient()
+	if err != nil {
+		printErrorExit("sandbox not reachable: "+err.Error(), 2)
+	}
+	return c
+}
+
+// newClientFromCtx creates a gRPC client using endpoint/apikey from parent sandbox command flags.
+func newClientFromCtx(ctx *cli.Context) *sandboxmcp.Client {
+	endpoint := ""
+	apikey := ""
+	if parent := ctx.Parent(); parent != nil {
+		endpoint = parent.String("endpoint")
+		apikey = parent.String("apikey")
+	}
+	// fallback to env vars if parent not available
+	if endpoint == "" {
+		endpoint = os.Getenv("K8E_SANDBOX_ENDPOINT")
+	}
+	if apikey == "" {
+		apikey = os.Getenv("K8E_SANDBOX_APIKEY")
+	}
+
+	var c *sandboxmcp.Client
+	var err error
+	if endpoint != "" {
+		c, err = sandboxmcp.NewClientWithEndpoint(endpoint, apikey)
+	} else {
+		c, err = sandboxmcp.NewClient()
+	}
 	if err != nil {
 		printErrorExit("sandbox not reachable: "+err.Error(), 2)
 	}
@@ -154,7 +184,7 @@ func RunCommand() cli.Command {
 			lang := ctx.String("lang")
 			raw := ctx.Bool("raw")
 
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			sid, needsFinalize, err := ensureSession(client, ctx)
@@ -230,7 +260,7 @@ func StatusCommand() cli.Command {
 		Name:  "status",
 		Usage: "Check sandbox service availability and current session",
 		Action: func(ctx *cli.Context) error {
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			// lightweight probe
@@ -273,7 +303,7 @@ func CreateCommand() cli.Command {
 			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
 		},
 		Action: func(ctx *cli.Context) error {
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			var hosts []string
@@ -354,7 +384,7 @@ func DestroyCommand() cli.Command {
 				printErrorExit("session-id required", 1)
 				return nil
 			}
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.DestroySession(context.Background(),
@@ -403,7 +433,7 @@ func WriteCommand() cli.Command {
 				return nil
 			}
 
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
@@ -437,7 +467,7 @@ func ReadCommand() cli.Command {
 				return nil
 			}
 
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ReadFile(context.Background(), &pb.ReadFileRequest{
@@ -474,7 +504,7 @@ func ListCommand() cli.Command {
 				return nil
 			}
 
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ListFiles(context.Background(), &pb.ListFilesRequest{
@@ -508,7 +538,7 @@ func SubagentCommand() cli.Command {
 				return nil
 			}
 
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.RunSubAgent(context.Background(), &pb.RunSubAgentRequest{
@@ -543,7 +573,7 @@ func ConfirmCommand() cli.Command {
 				return nil
 			}
 
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			// Phase 1: register
@@ -601,7 +631,7 @@ func ApproveCommand() cli.Command {
 			}
 			approved := !ctx.Bool("reject")
 
-			client := newClient()
+			client := newClientFromCtx(ctx)
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ApproveAction(context.Background(), &pb.ApproveActionRequest{
@@ -620,4 +650,24 @@ func ApproveCommand() cli.Command {
 // timeDuration converts seconds to time.Duration.
 func timeDuration(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
+}
+
+// ── InstallSkillCommand ────────────────────────────────────────────────────
+
+func InstallSkillCommand() cli.Command {
+	return cli.Command{
+		Name:      "install-skill",
+		Usage:     "Install K8E sandbox skill into AI agent config",
+		ArgsUsage: "[claude|kiro|gemini|openclaw|all]",
+		Action: func(ctx *cli.Context) error {
+			target := ctx.Args().First()
+			if target == "" {
+				target = "all"
+			}
+			if err := sandboxmcp.InstallSkill(target); err != nil {
+				printErrorExit(err.Error(), 1)
+			}
+			return nil
+		},
+	}
 }
