@@ -22,6 +22,6 @@ func ValidateGolang() error {
 
 func MustValidateGolang() {
 	if err := ValidateGolang(); err != nil {
-		logrus.Fatalf("Failed to validate golang version: %v", err)
+		logrus.Warnf("Golang version mismatch: %v", err)
 	}
 }
