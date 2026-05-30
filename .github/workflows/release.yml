@@ -31,8 +31,8 @@ jobs:
           version: 0.15.2
       - name: Install dependencies
         run: |
-          sudo apt-get update && sudo apt-get install -y pkg-config build-essential \
-            libc6-dev zlib1g-dev libseccomp-dev gcc-aarch64-linux-gnu
+          sudo apt-get update
+          sudo apt-get install -y pkg-config build-essential libc6-dev zlib1g-dev libseccomp-dev gcc-aarch64-linux-gnu
       - name: Generate resources
         run: |
           mkdir -p build/data build/static
