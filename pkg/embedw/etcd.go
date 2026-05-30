@@ -216,10 +216,10 @@ type etcdYAMLConfig struct {
 	ClusterState         string            `yaml:"initial-cluster-state"`
 	ForceNewCluster      bool              `yaml:"force-new-cluster"`
 	StrictReconfigCheck  bool              `yaml:"strict-reconfig-check"`
-	AutoCompactionMode   string            `yaml:"auto-compaction-mode"`
-	AutoCompactionRetention string           `yaml:"auto-compaction-retention"`
+	AutoCompactionMode   string            `yaml:"auto-compaction-mode,omitempty"`
+	AutoCompactionRetention string           `yaml:"auto-compaction-retention,omitempty"`
 	QuotaBackendBytes    int64             `yaml:"quota-backend-bytes"`
-	BackendFreelistType  string            `yaml:"backend-bbolt-freelist-type"`
+	BackendFreelistType  string            `yaml:"backend-bbolt-freelist-type,omitempty"`
 	BackendBatchLimit    int               `yaml:"backend-batch-limit"`
 	BackendBatchInterval int64              `yaml:"backend-batch-interval,omitempty"`
 	MaxLearners          int               `yaml:"max-learners"`
@@ -228,8 +228,8 @@ type etcdYAMLConfig struct {
 	// TLS — peer (nested section)
 	PeerTransportSecurity yamlSecurityConfig `yaml:"peer-transport-security"`
 	// TLS general (top-level fields)
-	TlsMinVersion        string            `yaml:"tls-min-version"`
-	TlsMaxVersion        string            `yaml:"tls-max-version"`
+	TlsMinVersion        string            `yaml:"tls-min-version,omitempty"`
+	TlsMaxVersion        string            `yaml:"tls-max-version,omitempty"`
 	CipherSuites         []string          `yaml:"cipher-suites"`
 	// Auth
 	AuthToken            string            `yaml:"auth-token,omitempty"`
@@ -242,7 +242,7 @@ type etcdYAMLConfig struct {
 	Logger               string            `yaml:"logger"`
 	LogOutputs           []string          `yaml:"log-outputs"`
 	LogLevel             string            `yaml:"log-level"`
-	LogRotationConfig    string            `yaml:"log-rotation-config-json"`
+	LogRotationConfig    string            `yaml:"log-rotation-config-json,omitempty"`
 	EnablePprof          bool              `yaml:"enable-pprof"`
 	EnableLogRotation    bool              `yaml:"enable-log-rotation"`
 	// GRPC
