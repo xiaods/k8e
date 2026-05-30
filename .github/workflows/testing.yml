@@ -3,6 +3,12 @@ on:
   pull_request:
     branches:
       - main
+      - dev
+  push:
+    branches:
+      - main
+      - dev
+
 permissions:
   checks: write
   pull-requests: write
@@ -13,7 +19,7 @@ env:
 
 jobs:
   build:
-    name: Build & Test
+    name: Build & Test (linux/amd64)
     runs-on: ubuntu-latest
     env:
       GOOS: linux
@@ -37,13 +43,14 @@ jobs:
           make deps
           zig build download
           make generate
+      - name: Go vet
+        run: go vet ./...
       - name: Go test
         id: gotest
         run: |
-          export GOPATH="$HOME/go/"
-          export PATH=$PATH:$GOPATH/bin
           go install github.com/jstemmer/go-junit-report/v2@latest
-          CGO_ENABLED=1 GOLANG_PROTOBUF_REGISTRATION_CONFLICT=warn go test -v ./... 2>&1 | go-junit-report -set-exit-code > report.xml
+          CGO_ENABLED=1 GOLANG_PROTOBUF_REGISTRATION_CONFLICT=warn \
+            go test -v ./... 2>&1 | go-junit-report -set-exit-code > report.xml
       - name: Zig test (sandboxd)
         run: cd sandboxd && zig build test --summary all
       - name: Publish Unit Test Results
@@ -51,3 +58,31 @@ jobs:
         if: always()
         with:
           files: "./report.xml"
+
+  cross-compile:
+    name: Cross-compile check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.sum
+      - name: Verify sandboxcli cross-compiles
+        env:
+          CGO_ENABLED: 0
+        run: |
+          echo "--- linux/amd64 ---"
+          GOOS=linux   GOARCH=amd64   go build ./pkg/sandboxcli/... ./pkg/sandboxmcp/...
+          echo "--- linux/arm64 ---"
+          GOOS=linux   GOARCH=arm64   go build ./pkg/sandboxcli/... ./pkg/sandboxmcp/...
+          echo "--- darwin/amd64 ---"
+          GOOS=darwin  GOARCH=amd64   go build ./pkg/sandboxcli/... ./pkg/sandboxmcp/...
+          echo "--- darwin/arm64 ---"
+          GOOS=darwin  GOARCH=arm64   go build ./pkg/sandboxcli/... ./pkg/sandboxmcp/...
+          echo "--- windows/amd64 ---"
+          GOOS=windows GOARCH=amd64   go build ./pkg/sandboxcli/... ./pkg/sandboxmcp/...
+          echo "--- sandbox-cli binary (linux/amd64) ---"
+          GOOS=linux   GOARCH=amd64   go build -o /dev/null ./cmd/sandbox-cli/
+          echo "All cross-compile targets OK"

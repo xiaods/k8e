@@ -133,8 +133,8 @@ pub fn build(b: *std.Build) !void {
     const generate_cmd = b.addSystemCommand(&.{ bash, "hack/generate" });
     generate_step.dependOn(&generate_cmd.step);
 
-    // Package
-    const package_cmd = b.addSystemCommand(&.{ bash, "hack/package" });
+    // Package (unified: package-cli handles both CLI and full release)
+    const package_cmd = b.addSystemCommand(&.{ bash, "hack/package-cli" });
     package_step.dependOn(&package_cmd.step);
 
     const package_cli_cmd = b.addSystemCommand(&.{ bash, "hack/package-cli" });

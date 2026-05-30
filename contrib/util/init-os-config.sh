@@ -1,82 +1,141 @@
 #!/usr/bin/env bash
+# K8E init-os-config — Ubuntu 24.04 LTS (Noble Numbat)
+# Prepares a fresh Ubuntu server for K8E: kernel modules, sysctl, cgroups v2, containerd prereqs.
+# Idempotent — safe to run multiple times.
+#
+# Usage: sudo bash init-os-config.sh
 
-# bits of this were adapted from initOS.sh for kubekey
-# see also https://github.com/kubesphere/kubekey/blob/b5bb4acbebaa5ef04d9de743274171be1ebad3fd/cmd/kk/pkg/bootstrap/os/templates/init_script.go
+set -euo pipefail
 
+log()  { echo "[$(date '+%H:%M:%S')] $*"; }
+warn() { echo "[$(date '+%H:%M:%S')] ⚠  $*" >&2; }
+
+# ── Preflight ────────────────────────────────────────────────────────────────
+if [[ $EUID -ne 0 ]]; then
+  echo "This script must be run as root (sudo)." >&2
+  exit 1
+fi
+
+UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "0")
+if [[ ! "$UBUNTU_VERSION" =~ ^24\. ]]; then
+  warn "This script is optimized for Ubuntu 24.04. Detected: $(lsb_release -ds 2>/dev/null || echo 'unknown')"
+fi
+
+log "K8E init-os-config — Ubuntu 24.04"
+
+# ── 1. Disable swap ──────────────────────────────────────────────────────────
+log "Disabling swap..."
 swapoff -a
-sed -i /^[^#]*swap*/s/^/\#/g /etc/fstab
-	# See https://github.com/kubernetes/website/issues/14457
-if [ -f /etc/selinux/config ]; then
-	  sed -ri 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
+if grep -q 'swap' /etc/fstab; then
+  sed -i '/swap/ s/^/#/' /etc/fstab
+  log "  swap entries commented in /etc/fstab"
 fi
-# for ubuntu: sudo apt install selinux-utils
-# for centos: yum install selinux-policy
-if command -v setenforce &> /dev/null
-then
-	  setenforce 0
-	    getenforce
-fi
-echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.conf
-echo 'net.bridge.bridge-nf-call-arptables = 1' >> /etc/sysctl.conf
-echo 'net.bridge.bridge-nf-call-ip6tables = 1' >> /etc/sysctl.conf
-echo 'net.bridge.bridge-nf-call-iptables = 1' >> /etc/sysctl.conf
-echo 'net.ipv4.ip_local_reserved_ports = 30000-32767' >> /etc/sysctl.conf
-echo 'vm.max_map_count = 262144' >> /etc/sysctl.conf
-echo 'vm.swappiness = 1' >> /etc/sysctl.conf
-echo 'fs.inotify.max_user_instances = 524288' >> /etc/sysctl.conf
-echo 'kernel.pid_max = 4194304' >> /etc/sysctl.conf
-#See https://imroc.io/posts/kubernetes/troubleshooting-with-kubernetes-network/
-sed -r -i "s@#{0,}?net.ipv4.tcp_tw_recycle ?= ?(0|1)@net.ipv4.tcp_tw_recycle = 0@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?net.ipv4.ip_forward ?= ?(0|1)@net.ipv4.ip_forward = 1@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?net.bridge.bridge-nf-call-arptables ?= ?(0|1)@net.bridge.bridge-nf-call-arptables = 1@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?net.bridge.bridge-nf-call-ip6tables ?= ?(0|1)@net.bridge.bridge-nf-call-ip6tables = 1@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?net.bridge.bridge-nf-call-iptables ?= ?(0|1)@net.bridge.bridge-nf-call-iptables = 1@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?net.ipv4.ip_local_reserved_ports ?= ?([0-9]{1,}-{0,1},{0,1}){1,}@net.ipv4.ip_local_reserved_ports = 30000-32767@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?vm.max_map_count ?= ?([0-9]{1,})@vm.max_map_count = 262144@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?vm.swappiness ?= ?([0-9]{1,})@vm.swappiness = 1@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?fs.inotify.max_user_instances ?= ?([0-9]{1,})@fs.inotify.max_user_instances = 524288@g" /etc/sysctl.conf
-sed -r -i  "s@#{0,}?kernel.pid_max ?= ?([0-9]{1,})@kernel.pid_max = 4194304@g" /etc/sysctl.conf
-tmpfile="$$.tmp"
-awk ' !x[$0]++{print > "'$tmpfile'"}' /etc/sysctl.conf
-mv $tmpfile /etc/sysctl.conf
-systemctl stop firewalld 1>/dev/null 2>/dev/null
-systemctl disable firewalld 1>/dev/null 2>/dev/null
-systemctl stop ufw 1>/dev/null 2>/dev/null
-systemctl disable ufw 1>/dev/null 2>/dev/null
-modinfo br_netfilter > /dev/null 2>&1
-if [ $? -eq 0 ]; then
-	   modprobe br_netfilter
-	      mkdir -p /etc/modules-load.d
-	         echo 'br_netfilter' > /etc/modules-load.d/kubekey-br_netfilter.conf
-fi
-modinfo overlay > /dev/null 2>&1
-if [ $? -eq 0 ]; then
-	   modprobe overlay
-	      echo 'overlay' >> /etc/modules-load.d/kubekey-br_netfilter.conf
-fi
-modprobe ip_vs 2>/dev/null || true
-modprobe ip_vs_rr 2>/dev/null || true
-modprobe ip_vs_wrr 2>/dev/null || true
-modprobe ip_vs_sh 2>/dev/null || true
-cat > /etc/modules-load.d/kube_proxy-ipvs.conf << EOF
-ip_vs
-ip_vs_rr
-ip_vs_wrr
-ip_vs_sh
+
+# ── 2. Kernel modules ────────────────────────────────────────────────────────
+log "Loading kernel modules..."
+MODULES_FILE="/etc/modules-load.d/k8e.conf"
+REQUIRED_MODULES=(br_netfilter overlay)
+
+for mod in "${REQUIRED_MODULES[@]}"; do
+  if modinfo "$mod" &>/dev/null; then
+    modprobe "$mod" 2>/dev/null || warn "  Failed to load $mod"
+  else
+    warn "  Module $mod not available — install linux-modules-extra-$(uname -r)"
+  fi
+done
+
+cat > "$MODULES_FILE" <<'EOF'
+# K8E required kernel modules
+br_netfilter
+overlay
 EOF
-modprobe nf_conntrack_ipv4 1>/dev/null 2>/dev/null
-if [ $? -eq 0 ]; then
-	   echo 'nf_conntrack_ipv4' > /etc/modules-load.d/kube_proxy-ipvs.conf
-   else
-	      modprobe nf_conntrack
-	         echo 'nf_conntrack' > /etc/modules-load.d/kube_proxy-ipvs.conf
+log "  modules written to $MODULES_FILE"
+
+# ── 3. sysctl — network, fs, kernel tuning ───────────────────────────────────
+log "Configuring sysctl..."
+SYSCTL_FILE="/etc/sysctl.d/99-k8e.conf"
+
+cat > "$SYSCTL_FILE" <<'EOF'
+# K8E — Kubernetes + Cilium eBPF networking + sandbox runtimes
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-arptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_local_reserved_ports = 30000-32767
+
+# Cilium eBPF requirements
+net.core.bpf_jit_enable = 1
+net.core.bpf_jit_harden = 0
+net.core.bpf_jit_kallsyms = 1
+
+# Sandbox / container scaling
+vm.max_map_count = 262144
+vm.swappiness = 1
+fs.inotify.max_user_instances = 524288
+fs.inotify.max_user_watches = 1048576
+kernel.pid_max = 4194304
+fs.file-max = 2097152
+EOF
+
+sysctl --system >/dev/null 2>&1
+log "  sysctl applied from $SYSCTL_FILE"
+
+# ── 4. cgroups v2 ────────────────────────────────────────────────────────────
+log "Checking cgroups..."
+if [[ "$(stat -fc %T /sys/fs/cgroup/ 2>/dev/null)" == "cgroup2fs" ]]; then
+  log "  cgroups v2 ✓ (Ubuntu 24 default)"
+else
+  warn "  cgroups v1 detected. K8E works best with cgroups v2."
+  warn "  Ensure systemd.unified_cgroup_hierarchy=1 in kernel cmdline if available."
 fi
-sysctl -p
-echo 3 > /proc/sys/vm/drop_caches
-# Make sure the iptables utility doesn't use the nftables backend.
-update-alternatives --set iptables /usr/sbin/iptables-legacy >/dev/null 2>&1 || true
-update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy >/dev/null 2>&1 || true
-update-alternatives --set arptables /usr/sbin/arptables-legacy >/dev/null 2>&1 || true
-update-alternatives --set ebtables /usr/sbin/ebtables-legacy >/dev/null 2>&1 || true
-ulimit -u 65535
-ulimit -n 65535
+
+# ── 5. Firewall — disable conflicting firewalls (Cilium manages networking) ──
+log "Disabling conflicting firewalls..."
+for svc in ufw firewalld; do
+  if systemctl is-active --quiet "$svc" 2>/dev/null; then
+    systemctl stop "$svc" 2>/dev/null || true
+    systemctl disable "$svc" 2>/dev/null || true
+    log "  $svc stopped and disabled"
+  fi
+done
+
+# ── 6. iptables — use legacy backend (compatible with kube-proxy if enabled) ──
+log "Configuring iptables..."
+for tbl in iptables ip6tables arptables ebtables; do
+  if update-alternatives --list "$tbl" 2>/dev/null | grep -q legacy; then
+    update-alternatives --set "$tbl" "/usr/sbin/${tbl}-legacy" >/dev/null 2>&1 || true
+  fi
+done
+log "  iptables legacy backend configured"
+
+# ── 7. ulimits (persistent) ──────────────────────────────────────────────────
+log "Configuring ulimits..."
+LIMITS_FILE="/etc/security/limits.d/99-k8e.conf"
+cat > "$LIMITS_FILE" <<'EOF'
+# K8E — increased limits for container and sandbox workloads
+*  soft  nofile  65535
+*  hard  nofile  65535
+*  soft  nproc   65535
+*  hard  nproc   65535
+EOF
+
+# Apply immediately for current session
+ulimit -n 65535 2>/dev/null || true
+ulimit -u 65535 2>/dev/null || true
+log "  limits written to $LIMITS_FILE"
+
+# ── 8. Kernel module for KVM (Firecracker/microVM support) ───────────────────
+if [[ -e /dev/kvm ]]; then
+  log "KVM detected ✓ (Firecracker-ready)"
+else
+  if grep -qE 'vmx|svm' /proc/cpuinfo; then
+    warn "CPU supports virtualization but /dev/kvm not found."
+    warn "  Enable VT-x/AMD-V in BIOS, or load kvm module: modprobe kvm && modprobe kvm_intel"
+  else
+    warn "CPU does not support hardware virtualization. Firecracker not available."
+  fi
+fi
+
+# ── 9. Done ──────────────────────────────────────────────────────────────────
+log "✅ OS configuration complete."
+log "   Next: curl -sfL https://k8e.sh/install.sh | sh -"

@@ -14,6 +14,7 @@ done
 
 cp contrib/util/check-config.sh bin/check-config
 cp contrib/util/init-os-config.sh bin/init-os-config
+chmod +x bin/check-config bin/init-os-config
 
 rm -rf build/data
 mkdir -p build/data build/out build/static
