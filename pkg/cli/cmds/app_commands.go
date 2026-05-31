@@ -1,6 +1,9 @@
 package cmds
 
-import "github.com/urfave/cli"
+import (
+	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/sandboxcli"
+)
 
 // AppCommandFuncs holds the handler functions for all CLI commands.
 type AppCommandFuncs struct {
@@ -73,4 +76,11 @@ func NewAppCommands(f AppCommandFuncs) []cli.Command {
 		NewSandboxApiKeyCommand(),
 		NewSandboxGatewayCommand(SandboxGateway),
 	}
+}
+
+// NewSandboxApiKeyCommand returns the api-key command renamed for the server binary.
+func NewSandboxApiKeyCommand() cli.Command {
+	cmd := sandboxcli.ApiKeyCommand()
+	cmd.Name = "sandbox-apikey"
+	return cmd
 }
