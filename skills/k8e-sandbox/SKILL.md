@@ -38,8 +38,8 @@ curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli
 chmod +x k8e-sandbox-cli-linux-amd64
 
 # All commands work the same — just prefix with the binary name
-./k8e-sandbox-cli-linux-amd64 sandbox run "print('hello')" --lang python
-./k8e-sandbox-cli-linux-amd64 sandbox status
+./k8e-sandbox-cli-linux-amd64 run "print('hello')" --lang python
+./k8e-sandbox-cli-linux-amd64 status
 
 # Or symlink for convenience
 ln -sf k8e-sandbox-cli-linux-amd64 /usr/local/bin/k8e-sandbox

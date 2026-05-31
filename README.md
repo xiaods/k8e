@@ -285,10 +285,10 @@ chmod +x k8e-sandbox-cli-linux-amd64
 export K8E_SANDBOX_ENDPOINT=<server-ip>:50051
 
 # 3. Install the skill
-./k8e-sandbox-cli-linux-amd64 sandbox install-skill all
+./k8e-sandbox-cli-linux-amd64 install-skill all
 
 # 4. All sandbox commands work the same
-./k8e-sandbox-cli-linux-amd64 sandbox run "print('hello')" --lang python
+./k8e-sandbox-cli-linux-amd64 run "print('hello')" --lang python
 ```
 
 Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`

@@ -5,30 +5,41 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
-	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/sandboxcli"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
 func main() {
-	app := cmds.NewApp()
-	app.Name = version.Program
-	app.Usage = "K8E sandbox CLI — connect to any K8E cluster"
-	app.Version = version.Version
-	app.HideVersion = false
-
 	// Stage embedded skill files for install-skill command
 	if err := sandboxcli.StageSkills(); err != nil {
 		logrus.Warnf("skills: %v", err)
 	}
 
-	sandboxCmd := cmds.NewSandboxCommand()
-	sandboxCmd.Subcommands = append(sandboxCmd.Subcommands, sandboxcli.InstallSkillCommand())
-
-	app.Commands = []cli.Command{
-		sandboxCmd,
+	app := cli.NewApp()
+	app.Name = version.Program
+	app.Usage = "K8E sandbox CLI — connect to any K8E cluster"
+	app.Version = version.Version
+	app.HideVersion = false
+	app.Flags = []cli.Flag{
+		cli.StringFlag{Name: "endpoint", EnvVar: "K8E_SANDBOX_ENDPOINT", Usage: "gRPC endpoint (default: 127.0.0.1:50051)"},
+		cli.StringFlag{Name: "apikey", EnvVar: "K8E_SANDBOX_APIKEY", Usage: "API key for remote cluster authentication"},
+		cli.BoolFlag{Name: "debug", EnvVar: "K8E_SANDBOX_DEBUG", Usage: "Enable debug logging"},
 	}
-	app.Flags = nil // no data-dir flag needed for sandbox CLI
+	app.Commands = []cli.Command{
+		sandboxcli.RunCommand(),
+		sandboxcli.StatusCommand(),
+		sandboxcli.CreateCommand(),
+		sandboxcli.DestroyCommand(),
+		sandboxcli.WriteCommand(),
+		sandboxcli.ReadCommand(),
+		sandboxcli.ListCommand(),
+		sandboxcli.SubagentCommand(),
+		sandboxcli.ConfirmCommand(),
+		sandboxcli.ApproveCommand(),
+		sandboxcli.SnapshotCommand(),
+		sandboxcli.ApiKeyCommand(),
+		sandboxcli.InstallSkillCommand(),
+	}
 
 	if err := app.Run(os.Args); err != nil {
 		logrus.Fatal(err)
