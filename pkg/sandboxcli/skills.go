@@ -8,8 +8,12 @@ import (
 )
 
 // StageSkills extracts embedded skill files for the install-skill command.
-// Stages to /tmp/k8e-skills which skillsDataDir checks.
+// Stages to ~/.k8e/sandbox/skills/ (user-private, not world-writable).
 func StageSkills() error {
-	dest := filepath.Join(os.TempDir(), "k8e-skills")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	dest := filepath.Join(home, ".k8e", "sandbox", "skills")
 	return client.StageSkills(dest)
 }
