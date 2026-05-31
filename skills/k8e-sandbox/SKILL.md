@@ -33,7 +33,7 @@ chmod +x k8e-sandbox-cli-linux-amd64
 ./k8e-sandbox-cli-linux-amd64 run "echo hello"
 
 # From a remote client, set the gateway endpoint and API key
-# (Get the API key from the server: k8e sandbox-api-key create my-agent)
+# (Get the API key from the server: k8e sandbox-apikey create my-agent)
 export K8E_SANDBOX_ENDPOINT=<server-ip>:50051
 export K8E_SANDBOX_APIKEY=k8e-abc123...
 ./k8e-sandbox-cli-linux-amd64 run "echo hello"

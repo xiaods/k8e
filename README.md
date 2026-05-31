@@ -278,7 +278,7 @@ Isolated Pod (gVisor / Kata / Firecracker)
 **On the server**, create an API key for secure remote access:
 
 ```bash
-k8e sandbox-api-key create my-agent
+k8e sandbox-apikey create my-agent
 # → {"name":"my-agent","key":"k8e-abc123..."}
 ```
 
@@ -320,9 +320,9 @@ The agent executes `k8e-sandbox-cli run` automatically — no session management
 | `k8e-sandbox-cli confirm <sid> <action>` | Gate irreversible action on human approval |
 | `k8e-sandbox-cli approve <approval-id>` | Approve a pending confirm request |
 | `k8e-sandbox-cli install-skill <target>` | Install skill file for AI agent (claude/codex/pi/all) |
-| `k8e sandbox-api-key create <name>` | Create API key for remote sandbox access (server-side) |
-| `k8e sandbox-api-key list` | List API key names (server-side) |
-| `k8e sandbox-api-key delete <name>` | Delete an API key (server-side) |
+| `k8e sandbox-apikey create <name>` | Create API key for remote sandbox access (server-side) |
+| `k8e sandbox-apikey list` | List API key names (server-side) |
+| `k8e sandbox-apikey delete <name>` | Delete an API key (server-side) |
 
 See [skills/k8e-sandbox/SKILL.md](skills/k8e-sandbox/SKILL.md) for full usage examples.
 

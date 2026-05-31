@@ -7,7 +7,7 @@ import (
 
 func NewSandboxApiKeyCommand() cli.Command {
 	cmd := sandboxcli.ApiKeyCommand()
-	cmd.Name = "sandbox-api-key"
+	cmd.Name = "sandbox-apikey"
 	cmd.Usage = "Manage sandbox API keys for remote cluster access"
 	return cmd
 }
