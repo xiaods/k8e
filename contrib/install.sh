@@ -489,5 +489,28 @@ eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
     create_systemd_service_file
     service_enable_and_start
     check_config
-    info "K8E installation complete!"
+
+    # ── Print summary ─────────────────────────────────────────────────────
+    echo ""
+    echo "============================================"
+    echo "  K8E installation complete!"
+    echo "============================================"
+    echo ""
+    echo "  Kubeconfig:   /etc/k8e/k8e.yaml"
+    echo "  Token:        ${K8E_TOKEN:-ilovek8e}"
+    echo "  Sandbox:      ${K8E_SANDBOX_ENDPOINT:-127.0.0.1:50051}"
+    echo ""
+    echo "  Verify:"
+    echo "    export KUBECONFIG=/etc/k8e/k8e.yaml"
+    echo "    kubectl get nodes"
+    echo ""
+    echo "  Join agent:"
+    echo "    curl -sfL https://k8e.sh/install.sh | K8E_URL=https://<server-ip>:6443 K8E_TOKEN=${K8E_TOKEN:-ilovek8e} sh -"
+    echo ""
+    echo "  Download sandbox CLI:"
+    echo "    curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-\$(uname -s | tr A-Z a-z)-\$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+    echo "    chmod +x k8e-sandbox-cli-*"
+    echo "    ./k8e-sandbox-cli-* install-skill all"
+    echo ""
+    echo "============================================"
 }
