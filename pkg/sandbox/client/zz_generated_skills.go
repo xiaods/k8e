@@ -8,7 +8,6 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,7 +91,7 @@ func skillsK8eSandboxSkillMd() (*asset, error) {
 		return nil, err
 	}
 
-	info := bindataFileInfo{name: "skills/k8e-sandbox/SKILL.md", size: 8133, mode: os.FileMode(420), modTime: time.Unix(1780240841, 0)}
+	info := bindataFileInfo{name: "skills/k8e-sandbox/SKILL.md", size: 8133, mode: os.FileMode(0644), modTime: time.Unix(1780240841, 0)}
 	a := &asset{bytes: bytes, info: info}
 	return a, nil
 }
@@ -214,7 +213,7 @@ func RestoreAsset(dir, name string) error {
 	if err != nil {
 		return err
 	}
-	err = ioutil.WriteFile(_filePath(dir, name), data, info.Mode())
+	err = os.WriteFile(_filePath(dir, name), data, info.Mode())
 	if err != nil {
 		return err
 	}
