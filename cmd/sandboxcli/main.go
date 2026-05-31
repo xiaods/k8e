@@ -23,7 +23,6 @@ func main() {
 	app.Flags = []cli.Flag{
 		cli.StringFlag{Name: "endpoint", EnvVar: "K8E_SANDBOX_ENDPOINT", Usage: "gRPC endpoint (default: 127.0.0.1:50051)"},
 		cli.StringFlag{Name: "apikey", EnvVar: "K8E_SANDBOX_APIKEY", Usage: "API key for remote cluster authentication"},
-		cli.BoolFlag{Name: "debug", EnvVar: "K8E_SANDBOX_DEBUG", Usage: "Enable debug logging"},
 	}
 	app.Commands = []cli.Command{
 		sandboxcli.RunCommand(),
