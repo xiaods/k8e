@@ -33,3 +33,4 @@ zig-out
 .claude/*
 server
 sandbox-cli
+sandboxcli
