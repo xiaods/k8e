@@ -12,7 +12,7 @@ import (
 func main() {
 	// Stage embedded skill files for install-skill command
 	if err := sandboxcli.StageSkills(); err != nil {
-		logrus.Warnf("skills: %v", err)
+		logrus.Fatalf("Failed to stage skill files: %v", err)
 	}
 
 	app := cli.NewApp()
