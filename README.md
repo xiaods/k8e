@@ -180,7 +180,7 @@ kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
 Install the K8E sandbox skill into your AI agent:
 
 ```bash
-k8e sandbox-install-skill all   # installs skill files for all supported agents
+k8e sandbox install-skill all   # installs skill files for all supported agents
 ```
 
 Then ask your agent naturally:
@@ -189,7 +189,7 @@ Then ask your agent naturally:
 
 The agent executes `k8e sandbox run` automatically — no session management needed.
 
-Supported agents: **codex**, **claude**, **pi**, **openclaw**.
+Supported agents: **claude**, **kiro**, **gemini**, **openclaw**.
 
 ---
 
@@ -251,10 +251,10 @@ kubectl get runtimeclass
 
 ## 🤖 Sandbox CLI Skill
 
-`k8e sandbox` is a built-in CLI command group that gives AI agents direct access to K8E's sandbox infrastructure — no MCP server, no extra processes, no manual endpoint config.
+`k8e sandbox` is a built-in CLI command group for AI agents to access K8E sandbox infrastructure — no MCP server, no extra processes.
 
 ```
-AI Agent (codex / claude / pi / openclaw)
+AI Agent (claude / kiro / gemini / openclaw)
     │  shell command
     ▼
 k8e sandbox run "print('hello')" --lang python
@@ -268,69 +268,79 @@ Isolated Pod (gVisor / Kata / Firecracker)
 
 ### Install the Skill
 
-`sandbox-install-skill` copies skill files to the agent's skills directory:
+`install-skill` copies skill files to the agent's skills directory:
 
 ```bash
 # All supported agents at once
-k8e sandbox-install-skill all
+k8e sandbox install-skill all
 
 # Or per agent
-k8e sandbox-install-skill claude    # Skills → ~/.claude/skills/k8e-sandbox/
-k8e sandbox-install-skill openclaw  # Skills → ~/.openclaw/skills/k8e-sandbox/
-k8e sandbox-install-skill kiro      # Skills → .kiro/skills/k8e-sandbox/
-k8e sandbox-install-skill gemini    # Skills → ~/.gemini/skills/k8e-sandbox/
+k8e sandbox install-skill claude    # → ~/.claude/skills/k8e-sandbox/
+k8e sandbox install-skill kiro      # → .kiro/skills/ or ~/.kiro/skills/
+k8e sandbox install-skill gemini    # → ~/.gemini/skills/k8e-sandbox/
+k8e sandbox install-skill openclaw  # → ~/.openclaw/skills/k8e-sandbox/
 ```
+
+Then ask your agent naturally:
+
+> "Run this Python snippet in a sandbox"
+
+The agent executes `k8e sandbox run` automatically — no session management needed.
 
 ### Available Commands
 
 | Command | Description |
 |---|---|
-| `k8e sandbox run <code>` | Run code or shell command (auto-manages session) |
-| `k8e sandbox status` | Check sandbox service and current session |
-| `k8e sandbox create` | Create a new session (custom runtime, egress) |
-| `k8e sandbox destroy <sid>` | Destroy a session |
-| `k8e sandbox write <sid> <path>` | Write file to /workspace (content via stdin) |
-| `k8e sandbox read <sid> <path>` | Read file from /workspace |
-| `k8e sandbox list <sid>` | List files in /workspace |
-| `k8e sandbox subagent <parent-sid>` | Spawn child sandbox (max depth 1) |
+| `k8e sandbox run <code>` | Run code or shell command (auto-creates/manages session) |
+| `k8e sandbox status` | Check sandbox service availability and current session |
+| `k8e sandbox create` | Create a new session (custom runtime, egress, manifest, git-repo) |
+| `k8e sandbox destroy <sid>` | Destroy a session and free resources |
+| `k8e sandbox write <sid> <path>` | Write file to `/workspace` (content via stdin) |
+| `k8e sandbox read <sid> <path>` | Read file from `/workspace` |
+| `k8e sandbox list <sid>` | List files in `/workspace` (filter by `--since` timestamp) |
+| `k8e sandbox subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
 | `k8e sandbox confirm <sid> <action>` | Gate irreversible action on human approval |
-| `k8e sandbox snapshot save <sid> <name>` | Save workspace as named snapshot |
-| `k8e sandbox snapshot restore <name>` | Create new session from saved snapshot |
-| `k8e sandbox snapshot list` | List saved snapshots |
+| `k8e sandbox approve <approval-id>` | Approve a pending confirm request |
+| `k8e sandbox install-skill <target>` | Install skill files for AI agent (claude/kiro/gemini/openclaw/all) |
 
 See [skills/k8e-sandbox/SKILL.md](skills/k8e-sandbox/SKILL.md) for full usage examples.
 
 ### Quick Examples
 
 ```bash
-# Run Python code
+# Run Python code (auto-creates session)
 k8e sandbox run "print('hello')" --lang python
 
-# Multi-line code via stdin
+# Shell command (default lang=bash)
+k8e sandbox run "ls -la /workspace"
+
+# TypeScript
+k8e sandbox run "console.log(42)" --lang ts
+
+# Multi-line via stdin
 k8e sandbox run --lang python <<'EOF'
 for i in range(10):
     print(i)
 EOF
 
 # Write a script then execute
-k8e sandbox write $SID /workspace/script.py <<'EOF'
+k8e sandbox write $SID /workspace/script.py <<'PYEOF'
 import pandas as pd
 print(pd.__version__)
-EOF
+PYEOF
 k8e sandbox run "python3 /workspace/script.py" --session-id $SID
 
 # Create session with custom runtime and egress
-k8e sandbox create --runtime firecracker --allowed-hosts pypi.org,github.com
+SID=$(k8e sandbox create --runtime firecracker --allowed-hosts pypi.org,github.com | jq -r .session_id)
+
+# Clone git repo at session creation
+SID=$(k8e sandbox create --git-repo https://github.com/user/repo.git --git-ref main | jq -r .session_id)
 
 # Stream long-running output
 k8e sandbox run "python3 train.py" --session-id $SID --raw
 
-# Workspace manifest
-k8e sandbox create --manifest workspace.yaml
-
-# Workspace snapshots
-k8e sandbox snapshot save $SID my-checkpoint
-k8e sandbox snapshot restore my-checkpoint
+# Tenant-based cross-process session reuse
+k8e sandbox run "echo hello" --tenant my-project
 ```
 
 ### Configuration Overrides
