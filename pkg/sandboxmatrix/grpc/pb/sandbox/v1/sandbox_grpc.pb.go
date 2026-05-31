@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.35.0
-// source: sandbox/v1/sandbox.proto
+// source: proto/sandbox/v1/sandbox.proto
 
 package pb
 
@@ -30,6 +30,7 @@ const (
 	SandboxService_RunSubAgent_FullMethodName    = "/sandbox.v1.SandboxService/RunSubAgent"
 	SandboxService_ConfirmAction_FullMethodName  = "/sandbox.v1.SandboxService/ConfirmAction"
 	SandboxService_ApproveAction_FullMethodName  = "/sandbox.v1.SandboxService/ApproveAction"
+	SandboxService_GetCACert_FullMethodName      = "/sandbox.v1.SandboxService/GetCACert"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -47,6 +48,9 @@ type SandboxServiceClient interface {
 	RunSubAgent(ctx context.Context, in *RunSubAgentRequest, opts ...grpc.CallOption) (*RunSubAgentResponse, error)
 	ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (*ConfirmActionResponse, error)
 	ApproveAction(ctx context.Context, in *ApproveActionRequest, opts ...grpc.CallOption) (*ApproveActionResponse, error)
+	// GetCACert returns the server CA certificate for TLS verification.
+	// No authentication required — the cert is needed to establish trust.
+	GetCACert(ctx context.Context, in *GetCACertRequest, opts ...grpc.CallOption) (*GetCACertResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -176,6 +180,16 @@ func (c *sandboxServiceClient) ApproveAction(ctx context.Context, in *ApproveAct
 	return out, nil
 }
 
+func (c *sandboxServiceClient) GetCACert(ctx context.Context, in *GetCACertRequest, opts ...grpc.CallOption) (*GetCACertResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCACertResponse)
+	err := c.cc.Invoke(ctx, SandboxService_GetCACert_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -191,6 +205,9 @@ type SandboxServiceServer interface {
 	RunSubAgent(context.Context, *RunSubAgentRequest) (*RunSubAgentResponse, error)
 	ConfirmAction(context.Context, *ConfirmActionRequest) (*ConfirmActionResponse, error)
 	ApproveAction(context.Context, *ApproveActionRequest) (*ApproveActionResponse, error)
+	// GetCACert returns the server CA certificate for TLS verification.
+	// No authentication required — the cert is needed to establish trust.
+	GetCACert(context.Context, *GetCACertRequest) (*GetCACertResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -233,6 +250,9 @@ func (UnimplementedSandboxServiceServer) ConfirmAction(context.Context, *Confirm
 }
 func (UnimplementedSandboxServiceServer) ApproveAction(context.Context, *ApproveActionRequest) (*ApproveActionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApproveAction not implemented")
+}
+func (UnimplementedSandboxServiceServer) GetCACert(context.Context, *GetCACertRequest) (*GetCACertResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCACert not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -446,6 +466,24 @@ func _SandboxService_ApproveAction_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_GetCACert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCACertRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).GetCACert(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_GetCACert_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).GetCACert(ctx, req.(*GetCACertRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -493,6 +531,10 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "ApproveAction",
 			Handler:    _SandboxService_ApproveAction_Handler,
 		},
+		{
+			MethodName: "GetCACert",
+			Handler:    _SandboxService_GetCACert_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -501,5 +543,5 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "sandbox/v1/sandbox.proto",
+	Metadata: "proto/sandbox/v1/sandbox.proto",
 }

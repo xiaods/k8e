@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
@@ -72,26 +73,67 @@ func NewClient() (*Client, error) {
 }
 
 // NewClientWithEndpoint connects to a remote K8E cluster at endpoint with optional API key.
-// Uses TLS with API key in metadata for authentication.
+// On first connection, auto-downloads the server CA cert for future verified connections.
 func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
-	var opts []grpc.DialOption
-	if apiKey != "" {
-		// TLS with skip-verify: encryption via TLS, authentication via API key.
-		// Remote clients don't have the self-signed CA cert to verify the server.
-		creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})
-		opts = append(opts, grpc.WithTransportCredentials(creds))
-		opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-			return invoker(ctx, method, req, reply, cc, opts...)
-		}))
-	} else {
+	if apiKey == "" {
 		return NewClient()
 	}
-	conn, err := grpc.NewClient(endpoint, opts...)
+
+	// Try cached CA cert first
+	cacheDir, _ := sandboxCacheDir()
+	caFile := filepath.Join(cacheDir, "ca.crt")
+	if _, err := os.Stat(caFile); err == nil {
+		creds, err := credentials.NewClientTLSFromFile(caFile, "")
+		if err == nil {
+			conn, err := dialWithAPIKey(endpoint, apiKey, creds)
+			if err == nil {
+				return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
+			}
+		}
+	}
+
+	// First connection: skip verify, download CA cert, save for future use
+	creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})
+	conn, err := dialWithAPIKey(endpoint, apiKey, creds)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
 	}
-	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
+	client := &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}
+
+	// Download CA cert
+	resp, err := client.GetCACert(context.Background(), &pb.GetCACertRequest{})
+	if err == nil && resp.Cert != "" {
+		os.MkdirAll(cacheDir, 0700) //nolint:errcheck
+		os.WriteFile(caFile, []byte(resp.Cert), 0644) //nolint:errcheck
+		// Reconnect with verified TLS using the downloaded cert
+		conn.Close()
+		creds, err = credentials.NewClientTLSFromFile(caFile, "")
+		if err == nil {
+			conn, err = dialWithAPIKey(endpoint, apiKey, creds)
+			if err == nil {
+				return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
+			}
+		}
+	}
+	return client, nil
+}
+
+// dialWithAPIKey connects with TLS creds and API key auth interceptor.
+func dialWithAPIKey(endpoint, apiKey string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
+	opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}))
+	return grpc.NewClient(endpoint, opts...)
+}
+
+func sandboxCacheDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".k8e", "sandbox"), nil
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
