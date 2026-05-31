@@ -13,7 +13,7 @@ import (
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
-const snapshotsDir = ".k8e/sandbox/snapshots"
+const snapshotDirName = "snapshots"
 
 // SnapshotMeta holds metadata about a saved snapshot.
 type SnapshotMeta struct {
@@ -26,8 +26,8 @@ type SnapshotMeta struct {
 }
 
 func snapshotDir(name string) string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, snapshotsDir, name)
+	dir, _ := dataDir()
+	return filepath.Join(dir, snapshotDirName, name)
 }
 
 func snapshotMetaPath(name string) string {
@@ -143,8 +143,8 @@ func snapshotListCommand() cli.Command {
 		Name:  "list",
 		Usage: "List saved snapshots",
 		Action: func(ctx *cli.Context) error {
-			home, _ := os.UserHomeDir()
-			base := filepath.Join(home, snapshotsDir)
+			dir, _ := dataDir()
+			base := filepath.Join(dir, snapshotDirName)
 			entries, err := os.ReadDir(base)
 			if err != nil {
 				if os.IsNotExist(err) {
