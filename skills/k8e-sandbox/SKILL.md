@@ -1,233 +1,208 @@
 ---
 name: k8e-sandbox-skill
-description: "Manage K8E Sandbox — run code in isolated environments via CLI. Supports claude code, codex, and pi."
+description: K8E sandbox skill — execute code and shell commands in gVisor/Kata/Firecracker-isolated pods. All code execution must go through the sandbox, never on the host. Trigger when user asks to run, execute, test, try, install, analyze code or data files.
+user-invocable: true
 ---
 
-# K8E Sandbox Skill
+# K8E Sandbox
 
-Always run code and shell commands in the sandbox, never directly on the host. Each session runs in a gVisor/Kata/Firecracker-isolated pod with kernel-level egress enforcement — mistakes can't damage the host, and network access is restricted to an explicit allowlist.
+All code execution goes through `k8e sandbox` — never run code directly on the host. Each session is a gVisor/Kata/Firecracker-isolated pod with kernel-level egress enforcement. Mistakes can't damage the host.
 
-Use this skill for **any code execution, testing, or isolated environment needs**. Trigger for English requests like "run this", "execute", "test it", "check if this works", "install X and use it". Trigger equally for Chinese requests: "帮我跑一下", "运行这个", "试试这个", "执行一下", "跑一下", "测试这段代码", "帮我分析这个CSV", "帮我跑这段代码", "跑一下看看", "帮我试试", "能不能跑", "看看输出", "帮我算一下", "帮我处理这个文件", "安装并使用".
+**Trigger keywords (English):** "run this", "execute", "test it", "install X", "check if this works", "analyze this data"
 
-## Quick Start
+**Trigger keywords (中文):** "帮我跑", "运行", "试试", "执行", "测试", "安装并使用", "分析这个CSV", "处理这个文件", "看看输出", "帮我算"
 
-```bash
-# Run code (auto-creates session)
-k8e sandbox run "print('hello')" --lang python
+## Environment
 
-# Run shell command
-k8e sandbox run "ls -la /workspace"
-
-# Check status
-k8e sandbox status
-```
-
-## All Commands
-
-| Command | Description |
-|---------|-------------|
-| `k8e sandbox run <code>` | Run code or shell command (auto-manages session, auto-creates if none) |
-| `k8e sandbox status` | Check sandbox service availability and current session |
-| `k8e sandbox create` | Create a new session (custom runtime, egress allowlist) |
-| `k8e sandbox destroy <sid>` | Destroy a session and free resources |
-| `k8e sandbox write <sid> <path>` | Write file to `/workspace` (content via stdin) |
-| `k8e sandbox read <sid> <path>` | Read file from `/workspace` |
-| `k8e sandbox list <sid>` | List files in `/workspace` (filter by --since timestamp) |
-| `k8e sandbox subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
-| `k8e sandbox confirm <sid> <action>` | Gate irreversible action on human approval |
-
-## `k8e sandbox run` — Detailed Usage
+The sandbox CLI auto-discovers the local K8E cluster via TLS. For remote clusters, set:
 
 ```bash
-k8e sandbox run <code>
-  [--lang python|bash|node|ts]   # default: bash
-  [--session-id <id>]         # specify session explicitly (skips auto-creation)
-  [--tenant <id>]             # tenant for cross-process session reuse
-  [--timeout 30]              # timeout in seconds
-  [--raw]                     # streaming raw output (no JSON wrapper)
+export K8E_SANDBOX_ENDPOINT=10.0.0.1:50051   # remote gateway endpoint
 ```
 
-**Code source priority**: argument > stdin (pipe/heredoc).
+### Standalone CLI (no full k8e install)
 
-### Single-line code
+Download the platform-specific binary — only the sandbox commands, no server/agent:
+
+| Platform | Binary |
+|----------|--------|
+| macOS Intel | `k8e-sandbox-cli-darwin-amd64` |
+| macOS Apple Silicon | `k8e-sandbox-cli-darwin-arm64` |
+| Linux x86_64 | `k8e-sandbox-cli-linux-amd64` |
+| Linux ARM64 | `k8e-sandbox-cli-linux-arm64` |
+| Windows x86_64 | `k8e-sandbox-cli-windows-amd64.exe` |
 
 ```bash
-k8e sandbox run "print('hello')" --lang python
+# Download and make executable
+curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
+chmod +x k8e-sandbox-cli-linux-amd64
 
-k8e sandbox run "node -e 'console.log(42)'"
+# All commands work the same — just prefix with the binary name
+./k8e-sandbox-cli-linux-amd64 sandbox run "print('hello')" --lang python
+./k8e-sandbox-cli-linux-amd64 sandbox status
 
-k8e sandbox run "ls -la /workspace"              # default --lang bash
+# Or symlink for convenience
+ln -sf k8e-sandbox-cli-linux-amd64 /usr/local/bin/k8e-sandbox
+k8e-sandbox sandbox run "echo hello"
 ```
 
-### Multi-line code via stdin
+When using the standalone CLI, set `K8E_SANDBOX_ENDPOINT` to point to your K8E gateway.
 
-```bash
-k8e sandbox run --lang python <<'PYEOF'
-import json
-data = {"key": "value"}
-print(json.dumps(data))
-PYEOF
+## Command Reference
+
+| Command | Purpose | Key flags |
+|---------|---------|-----------|
+| `k8e sandbox run <code>` | Execute code or shell command | `--lang python\|bash\|node\|ts`, `--session-id`, `--tenant`, `--timeout 30`, `--raw` |
+| `k8e sandbox status` | Check service + current session | — |
+| `k8e sandbox create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--manifest`, `--git-repo` |
+| `k8e sandbox destroy <sid>` | Destroy session | — |
+| `k8e sandbox write <sid> <path>` | Write file to /workspace | content via stdin, `--mode w\|a` |
+| `k8e sandbox read <sid> <path>` | Read file from /workspace | `--raw` (plain text output) |
+| `k8e sandbox list <sid>` | List workspace files | `--since <unix_ts>` |
+| `k8e sandbox subagent <parent-sid>` | Spawn child sandbox (depth 1) | shares parent /workspace PVC |
+| `k8e sandbox confirm <sid> <action>` | Gate destructive action on human approval | `--timeout 30`, `--no-wait` |
+| `k8e sandbox approve <approval-id>` | Approve pending confirm | — |
+
+## Run details
+
+```
+k8e sandbox run <code> [--lang python|bash|node|ts] [--session-id <id>] [--tenant <id>] [--timeout <seconds>] [--raw]
 ```
 
-### Streaming output (long-running tasks)
+Code source: argument > stdin. Language default: `bash`.
 
-```bash
-k8e sandbox run "python3 train.py" --session-id sess-abc --raw
-# Real-time output, exit code = command exit code
+| Language | Single-line | Multi-line |
+|----------|-------------|------------|
+| python | `python3 -c "..."` | writes `/tmp/_k8e_run.py` |
+| node/js | `node -e "..."` | writes `/tmp/_k8e_run.js` |
+| ts | `tsx -e "..."` | writes `/tmp/_k8e_run.ts` |
+| bash | pass-through | pass-through |
+
+### Mode table
+
+| Mode | Behavior | Output | Exit code |
+|------|----------|--------|-----------|
+| Default (JSON) | Wait for completion | `{"stdout":"...","stderr":"...","exit_code":0,"session_id":"sess-xxx"}` | match command |
+| `--raw` | Stream in real-time | plain text to stdout | match command |
+
+## Session lifecycle
+
+| Mode | How it works | State location |
+|------|-------------|----------------|
+| Auto (default) | `run` auto-creates session if none exists | `~/.k8e/sandbox/default/state.json` |
+| Tenant | `--tenant my-project` for cross-process reuse | `~/.k8e/sandbox/{tenant}/state.json` |
+| Manual | `create` → `run --session-id` → `destroy` | no state file |
+
+Auto-sessions persist across `run` calls within the same process. Use `--tenant` to persist across process restarts. Use manual mode when you need custom runtime or egress settings.
+
+## Egress rules
+
+Default allowed hosts (kernel-level Cilium eBPF enforcement):
+`pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`
+
+Override with `--allowed-hosts` on `create`. Everything else blocked.
+
+## Typical Scenarios
+
+### Scenario 1: Quick code execution (most common)
+
+```
+→ k8e sandbox run "print('hello')" --lang python
+→ parse JSON output, display stdout to user
 ```
 
-### Specify session explicitly
+No session management needed. CLI auto-creates and reuses.
 
-```bash
-k8e sandbox run "pip install pandas" --session-id sess-abc
+### Scenario 2: Install package then use it
+
+```
+1. k8e sandbox run "pip install pandas" --lang bash
+2. k8e sandbox run "python3 -c 'import pandas; print(pandas.__version__)'" --lang bash
 ```
 
-When `--session-id` is set, the CLI does NOT use state files. If the session is expired, it returns an error — the Agent should create a new session.
+Same auto-session reused across both calls.
 
-## Output Format
+### Scenario 3: Write file, execute, read results
 
-### Default: JSON (parse with jq)
+```
+1. k8e sandbox write $SID /workspace/analyze.py <<'PYEOF'
+   import pandas as pd
+   df = pd.read_csv('/workspace/data.csv')
+   print(df.describe())
+   PYEOF
 
-```bash
-$ k8e sandbox run "print('hello')" --lang python
-{"stdout":"hello\n","stderr":"","exit_code":0,"session_id":"sess-abc123"}
+2. echo "name,value\na,1\nb,2" | k8e sandbox write $SID /workspace/data.csv
 
-$ k8e sandbox run "print('hello')" --lang python | jq -r .stdout
-hello
+3. k8e sandbox run "python3 /workspace/analyze.py" --session-id $SID
+
+4. k8e sandbox read $SID /workspace/result.json --raw | jq .
 ```
 
-### --raw mode: plain text
+### Scenario 4: Custom egress + explicit session
 
-```bash
-$ k8e sandbox run "print('hello')" --lang python --raw
-hello
-
-$ k8e sandbox read sess-abc /workspace/data.json --raw | jq .key
-42
+```
+1. SID=$(k8e sandbox create --runtime gvisor --allowed-hosts pypi.org,api.example.com | jq -r .session_id)
+2. k8e sandbox run "curl -s https://api.example.com/data" --session-id $SID
+3. k8e sandbox destroy $SID
 ```
 
-### Error format
+### Scenario 5: Parallel sub-agents
 
-```bash
-# Service unreachable → exit 2
-$ k8e sandbox run "echo hello"
-{"error":"sandbox not reachable","detail":"connection refused"}
-exit 2
-
-# Session not found → exit 1
-$ k8e sandbox destroy no-exist
-{"ok":false,"error":"session not found"}
-exit 1
+```
+1. SUB1=$(k8e sandbox subagent $PARENT | jq -r .session_id)
+2. SUB2=$(k8e sandbox subagent $PARENT | jq -r .session_id)
+3. k8e sandbox run "python3 task_a.py" --session-id $SUB1 --raw &
+4. k8e sandbox run "python3 task_b.py" --session-id $SUB2 --raw &
+5. wait
 ```
 
-## Session Management
+Sub-agents share parent `/workspace` PVC, communicate via files. Max depth 1.
 
-### Auto-managed session (default)
+### Scenario 6: Human approval for destructive actions
 
-```bash
-k8e sandbox run "echo hello"
-# Creates a session automatically if none exists
-# Saves session ID to ~/.k8e/sandbox/default/state.json
-# Subsequent calls reuse the same session
+```
+1. k8e sandbox confirm $SID "delete /workspace/production-data"  →  blocks, outputs approval prompt to stderr
+2. Show the stderr output to user — they copy the approve command
+3. Command returns {"approved": true} on success
 ```
 
-### Tenant-based persistence
+For non-blocking registration: add `--no-wait`, get `approval_id`, call `k8e sandbox approve $AID` later.
 
-```bash
-k8e sandbox run "echo hello" --tenant my-project
-# Session saved to ~/.k8e/sandbox/my-project/state.json
-# All calls with same tenant reuse the session across process restarts
+## Error reference
+
+| Exit code | Cause | Action |
+|-----------|-------|--------|
+| 2 | Sandbox service unreachable | Check `k8e sandbox status`, ensure gateway is running |
+| 1 | Command failed / session not found | Parse error message from JSON; create new session if expired |
+| non-zero | Command inside sandbox failed | Check `stderr` in JSON output |
+
+JSON error output format:
+```json
+{"error":"description","detail":"specific cause"}
+{"ok":false,"error":"reason"}
 ```
 
-### Manual lifecycle
+## Isolated runtimes
 
-```bash
-SID=$(k8e sandbox create --runtime gvisor --allowed-hosts pypi.org,github.com | jq -r .session_id)
-k8e sandbox run "python3 analyze.py" --session-id $SID
-k8e sandbox destroy $SID
-```
+| Runtime | Isolation | Boot time | Requirement |
+|---------|-----------|-----------|-------------|
+| `gvisor` (default) | Userspace kernel | ~10ms | runsc binary |
+| `kata` | VM (QEMU) | ~500ms | kata-runtime |
+| `firecracker` | Hardware microVM | ~125ms | /dev/kvm |
 
-## Common Patterns
+Use `--runtime firecracker` only when `/dev/kvm` is available. gVisor is the recommended default — no KVM required.
 
-### Write a script then execute
+## Your role
 
-```bash
-k8e sandbox write $SESSION_ID /workspace/analyze.py <<'EOF'
-import pandas as pd
-df = pd.read_csv('/workspace/data.csv')
-print(df.describe())
-EOF
-k8e sandbox run "python3 /workspace/analyze.py" --session-id $SESSION_ID
-```
+**Do:**
+- Run ALL code through `k8e sandbox run`, never on host
+- Use `--lang python` for `.py` code, `--lang bash` for shell commands
+- Use `--raw` for long-running output (training, streaming)
+- Use `jq` to parse JSON output: `k8e sandbox run "..." | jq -r .stdout`
+- Auto-manage sessions (default mode) unless custom settings needed
+- Show stderr from `confirm` to user verbatim
 
-### Write data file then analyze
-
-```bash
-echo "name,value\na,1\nb,2" | k8e sandbox write $SID /workspace/data.csv
-k8e sandbox run "python3 /workspace/analyze.py" --session-id $SID
-k8e sandbox read $SID /workspace/result.json --raw | jq .
-```
-
-### Custom egress allowlist
-
-```bash
-SID=$(k8e sandbox create --runtime gvisor --allowed-hosts pypi.org,github.com | jq -r .session_id)
-k8e sandbox run "curl -s https://api.github.com/repos/kubernetes/kubernetes" --session-id $SID
-k8e sandbox destroy $SID
-```
-
-Default allowed hosts: `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`. Anything not on the list is blocked at the kernel level by Cilium eBPF.
-
-### Parallel sub-agents sharing a workspace
-
-```bash
-SUB1=$(k8e sandbox subagent sess-parent | jq -r .session_id)
-SUB2=$(k8e sandbox subagent sess-parent | jq -r .session_id)
-
-k8e sandbox run "python3 /workspace/code.py" --session-id $SUB1 --raw &
-k8e sandbox run "python3 /workspace/test.py" --session-id $SUB2 --raw &
-wait
-```
-
-Sub-agents (depth=1) share the parent's `/workspace` PVC and communicate by writing files. Sub-agents cannot spawn further agents — calling `subagent` from a sub-agent returns an error.
-
-## Human Approval (ConfirmAction)
-
-Before any irreversible action (deleting files, deploying, sending data externally), call `k8e sandbox confirm`:
-
-```bash
-k8e sandbox confirm $SID "delete /workspace/secret.txt"
-```
-
-This command:
-1. Immediately prints the approval request and ID to stderr
-2. Blocks until a human approves via `k8e sandbox approve <id>` in another terminal
-3. Returns `{"approved":true}` on stdout when approved
-4. Times out after 30s (use `--timeout <seconds>` to extend)
-
-The output on stderr looks like:
-```
-[k8e-sandbox] ⚠ Approval required: delete /workspace/secret.txt
-[k8e-sandbox]    To approve: k8e sandbox approve approval-xxx-12345
-[k8e-sandbox]    Timeout: 30s
-```
-
-**Show this output to the user** when using confirm. The user copies the approve command to another terminal.
-
-### Register only (non-blocking)
-
-```bash
-AID=$(k8e sandbox confirm $SID "delete file" --no-wait | jq -r .approval_id)
-# ... later ...
-k8e sandbox approve $AID
-```
-
-## Tips
-
-- `k8e sandbox run` creates a session automatically and saves it to `~/.k8e/sandbox/{tenant}/state.json`
-- Use `--tenant` for cross-process session persistence across Agent restarts
-- All commands output JSON by default; pipe to `jq` for field extraction
-- Session timeout is controlled by `SandboxMatrix` CRD, not the CLI
-- Use `--raw` on `run` for streaming output of long-running commands
-- Use `--raw` on `read` to pipe file contents directly to `jq` or other tools
-- For pip install, just use `k8e sandbox run "pip install pkg" --session-id $SID`
+**Don't:**
+- Never run `python3`, `node`, `pip`, `npm`, `curl` directly on host
+- Never use `k8e sandbox run` with `sudo`
+- Don't create sessions manually when auto-mode works
