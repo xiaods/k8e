@@ -642,7 +642,7 @@ func InstallSkillCommand() cli.Command {
 			if target == "" {
 				target = "all"
 			}
-			if err := client.InstallSkill(target); err != nil {
+			if err := InstallSkill(target); err != nil {
 				printErrorExit(err.Error(), 1)
 			}
 			return nil
