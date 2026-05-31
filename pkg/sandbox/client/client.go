@@ -14,7 +14,6 @@ import (
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
@@ -73,18 +72,23 @@ func NewClient() (*Client, error) {
 }
 
 // NewClientWithEndpoint connects to a remote K8E cluster at endpoint with optional API key.
-// When apiKey is set, uses insecure transport + per-RPC metadata authentication.
-// When apiKey is empty, falls back to TLS auto-discovery.
+// Uses TLS with API key in metadata for authentication.
 func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
-	if apiKey == "" {
+	var opts []grpc.DialOption
+	if apiKey != "" {
+		// API key auth over TLS (not insecure)
+		creds, err := resolveCreds()
+		if err != nil {
+			return nil, fmt.Errorf("sandbox client: tls: %w", err)
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+		opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
+			return invoker(ctx, method, req, reply, cc, opts...)
+		}))
+	} else {
 		return NewClient()
 	}
-	// Remote cluster with API key: insecure connection + metadata auth interceptor
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
-	opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-		return invoker(ctx, method, req, reply, cc, opts...)
-	}))
 	conn, err := grpc.NewClient(endpoint, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
