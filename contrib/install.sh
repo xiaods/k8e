@@ -11,7 +11,7 @@ set -o noglob
 # Environment variables:
 #   K8E_*              All K8E_ prefixed vars are passed to the systemd service
 #   K8E_URL            Server URL (agent mode when set)
-#   K8E_TOKEN          Cluster join token (required for agent)
+#   K8E_TOKEN          Cluster join token (default: ilovek8e)
 #   INSTALL_K8E_EXEC   Override exec command (server/agent)
 #   INSTALL_K8E_VERSION Specific version to install (default: latest)
 #   INSTALL_K8E_BIN_DIR Binary install path (default: /usr/local/bin)
@@ -35,7 +35,7 @@ FILE_K8E_SERVICE=${SYSTEMD_DIR}/${SERVICE_K8E}
 FILE_K8E_ENV=${SYSTEMD_DIR}/${SERVICE_K8E}.env
 
 # ── Logging ──────────────────────────────────────────────────────────────────
-info()  { echo "[INFO]  $*"; }
+info()  { echo "[INFO]  $*" >&2; }
 warn()  { echo "[WARN]  $*" >&2; }
 fatal() { echo "[ERROR] $*" >&2; exit 1; }
 
@@ -463,15 +463,12 @@ auto_configure() {
 
     # Generate random token if not set
     if [ -z "${K8E_TOKEN}" ]; then
-        K8E_TOKEN=$(head -c 32 /dev/urandom 2>/dev/null | base64 | tr -d '/+=' | head -c 32)
+        K8E_TOKEN="ilovek8e"
     fi
     export K8E_TOKEN
 
-    if command -v docker >/dev/null 2>&1; then
-        export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666 --docker"
-    else
-        export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666"
-    fi
+    # Default server command for one-click install
+    export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode 644"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -492,5 +489,28 @@ eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
     create_systemd_service_file
     service_enable_and_start
     check_config
-    info "K8E installation complete!"
+
+    # ── Print summary ─────────────────────────────────────────────────────
+    echo ""
+    echo "============================================"
+    echo "  K8E installation complete!"
+    echo "============================================"
+    echo ""
+    echo "  Kubeconfig:   /etc/k8e/k8e.yaml"
+    echo "  Token:        ${K8E_TOKEN:-ilovek8e}"
+    echo "  Sandbox:      ${K8E_SANDBOX_ENDPOINT:-127.0.0.1:50051}"
+    echo ""
+    echo "  Verify:"
+    echo "    export KUBECONFIG=/etc/k8e/k8e.yaml"
+    echo "    kubectl get nodes"
+    echo ""
+    echo "  Join agent:"
+    echo "    curl -sfL https://k8e.sh/install.sh | K8E_URL=https://<server-ip>:6443 K8E_TOKEN=${K8E_TOKEN:-ilovek8e} sh -"
+    echo ""
+    echo "  Download sandbox CLI:"
+    echo "    curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-\$(uname -s | tr A-Z a-z)-\$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+    echo "    chmod +x k8e-sandbox-cli-*"
+    echo "    ./k8e-sandbox-cli-* install-skill all"
+    echo ""
+    echo "============================================"
 }
