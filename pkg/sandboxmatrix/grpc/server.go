@@ -26,7 +26,7 @@ import (
 )
 
 const apiKeySecretNS = "sandbox-matrix"
-const apiKeySecretName = "sandbox-api-keys"
+const apiKeySecretName = "sandbox-apikeys"
 
 const sandboxdPort = 2024
 
@@ -63,7 +63,7 @@ func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFil
 	return s
 }
 
-// loadAPIKeys reads API keys from the sandbox-api-keys Secret.
+// loadAPIKeys reads API keys from the sandbox-apikeys Secret.
 func (s *Server) loadAPIKeys(ctx context.Context) {
 	secret, err := s.k8s.CoreV1().Secrets(apiKeySecretNS).Get(ctx, apiKeySecretName, metav1.GetOptions{})
 	if err != nil {

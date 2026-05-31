@@ -27,7 +27,7 @@ func readAPIKeys() (apiKeyStore, error) {
 	}
 	secret, err := k8s.CoreV1().Secrets(apiKeySecretNS).Get(context.Background(), apiKeySecretName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("api-key secret not found (run 'k8e sandbox-apikey create <name>' to create your first key)")
+		return make(apiKeyStore), nil // secret not created yet — first key
 	}
 	data, ok := secret.Data["keys.json"]
 	if !ok {
