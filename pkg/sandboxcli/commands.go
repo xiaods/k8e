@@ -409,7 +409,7 @@ func WriteCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			path := ctx.Args().Get(1)
 			if sid == "" || path == "" {
-				printErrorExit("usage: k8e sandbox write <session-id> <path>", 1)
+				printErrorExit("usage: k8e-sandbox-cli write <session-id> <path>", 1)
 				return nil
 			}
 			data, err := io.ReadAll(os.Stdin)
@@ -448,7 +448,7 @@ func ReadCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			path := ctx.Args().Get(1)
 			if sid == "" || path == "" {
-				printErrorExit("usage: k8e sandbox read <session-id> <path>", 1)
+				printErrorExit("usage: k8e-sandbox-cli read <session-id> <path>", 1)
 				return nil
 			}
 
@@ -554,7 +554,7 @@ func ConfirmCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			action := ctx.Args().Get(1)
 			if sid == "" || action == "" {
-				printErrorExit("usage: k8e sandbox confirm <session-id> <action>", 1)
+				printErrorExit("usage: k8e-sandbox-cli confirm <session-id> <action>", 1)
 				return nil
 			}
 
@@ -577,7 +577,7 @@ func ConfirmCommand() cli.Command {
 
 			// Print approval prompt to stderr immediately
 			fmt.Fprintf(os.Stderr, "[k8e-sandbox] ⚠  Approval required: %s\n", action)
-			fmt.Fprintf(os.Stderr, "[k8e-sandbox]    To approve: k8e sandbox approve %s\n", resp.ApprovalId)
+			fmt.Fprintf(os.Stderr, "[k8e-sandbox]    To approve: k8e-sandbox-cli approve %s\n", resp.ApprovalId)
 			fmt.Fprintf(os.Stderr, "[k8e-sandbox]    Timeout: %ds\n", ctx.Int("timeout"))
 
 			// Phase 2: poll for approval (blocks)

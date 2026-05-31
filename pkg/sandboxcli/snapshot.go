@@ -62,7 +62,7 @@ func snapshotSaveCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			name := ctx.Args().Get(1)
 			if sid == "" || name == "" {
-				printErrorExit("usage: k8e sandbox snapshot save <session-id> <name>", 1)
+				printErrorExit("usage: k8e-sandbox-cli snapshot save <session-id> <name>", 1)
 				return nil
 			}
 
@@ -192,7 +192,7 @@ func snapshotRestoreCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				printErrorExit("usage: k8e sandbox snapshot restore <name>", 1)
+				printErrorExit("usage: k8e-sandbox-cli snapshot restore <name>", 1)
 				return nil
 			}
 
@@ -282,7 +282,7 @@ func snapshotDeleteCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				printErrorExit("usage: k8e sandbox snapshot delete <name>", 1)
+				printErrorExit("usage: k8e-sandbox-cli snapshot delete <name>", 1)
 				return nil
 			}
 
