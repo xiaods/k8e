@@ -189,7 +189,7 @@ Then ask your agent naturally:
 
 The agent executes `k8e sandbox run` automatically — no session management needed.
 
-Supported agents: **claude code**, **codex**, **pi**, **kiro**, **gemini**, **openclaw**.
+Supported agents: **claude code**, **codex**, **pi**.
 
 ---
 
@@ -254,7 +254,7 @@ kubectl get runtimeclass
 `k8e sandbox` is a built-in CLI command group for AI agents to access K8E sandbox infrastructure — no MCP server, no extra processes.
 
 ```
-AI Agent (claude code / codex / pi / kiro / gemini / openclaw)
+AI Agent (claude code / codex / pi)
     │  shell command
     ▼
 k8e sandbox run "print('hello')" --lang python
@@ -278,9 +278,6 @@ k8e sandbox install-skill all
 k8e sandbox install-skill claude    # → ~/.claude/skills/k8e-sandbox/
 k8e sandbox install-skill codex     # → .codex/skills/ or ~/.codex/skills/
 k8e sandbox install-skill pi        # → .pi/skills/ or ~/.pi/skills/
-k8e sandbox install-skill kiro      # → .kiro/skills/ or ~/.kiro/skills/
-k8e sandbox install-skill gemini    # → ~/.gemini/skills/k8e-sandbox/
-k8e sandbox install-skill openclaw  # → ~/.openclaw/skills/k8e-sandbox/
 ```
 
 Then ask your agent naturally:
@@ -303,7 +300,7 @@ The agent executes `k8e sandbox run` automatically — no session management nee
 | `k8e sandbox subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
 | `k8e sandbox confirm <sid> <action>` | Gate irreversible action on human approval |
 | `k8e sandbox approve <approval-id>` | Approve a pending confirm request |
-| `k8e sandbox install-skill <target>` | Install skill file for AI agent (claude/codex/pi/kiro/gemini/openclaw/all) |
+| `k8e sandbox install-skill <target>` | Install skill file for AI agent (claude/codex/pi/all) |
 
 See [skills/k8e-sandbox/SKILL.md](skills/k8e-sandbox/SKILL.md) for full usage examples.
 
