@@ -70,18 +70,19 @@ pub fn build(b: *std.Build) !void {
     const k8e_binaries = [_][]const u8{
         "k8e-agent",           "k8e-server",      "k8e-token",      "k8e-etcd-snapshot",
         "k8e-secrets-encrypt", "k8e-certificate", "k8e-completion", "kubectl",
-        "containerd",          "crictl",          "ctr",
+        "crictl",              "ctr",
     };
     const cleanup_k8e = b.addSystemCommand(&.{
         bash, "-c",
         "for i in bin/k8e bin/k8e-agent bin/k8e-server bin/k8e-token bin/k8e-etcd-snapshot " ++
             "bin/k8e-secrets-encrypt bin/k8e-certificate bin/k8e-completion " ++
-            "bin/kubectl bin/containerd bin/crictl bin/ctr" ++
+            "bin/kubectl bin/crictl bin/ctr" ++
             "; do [ -f \"$i\" ] && echo \"Removing $i\" && rm -f \"$i\" || true; done",
     });
 
     // Pre-build cleanup: remove stale containerd binaries (aligned with k3s scripts/build)
     // containerd_binaries=(
+    //     "bin/containerd"
     //     "bin/containerd-shim"
     //     "bin/containerd-shim-runc-v2"
     //     "bin/runc"
@@ -90,7 +91,7 @@ pub fn build(b: *std.Build) !void {
     // )
     const cleanup_containerd = b.addSystemCommand(&.{
         bash, "-c",
-        "for i in bin/containerd-shim bin/containerd-shim-runc-v2 bin/runc " ++
+        "for i in bin/containerd bin/containerd-shim bin/containerd-shim-runc-v2 bin/runc " ++
             "bin/containerd-shim-runhcs-v1 bin/runhcs" ++
             "; do [ -f \"$i\" ] && echo \"Removing $i\" && rm -f \"$i\" || true; done",
     });
@@ -160,6 +161,22 @@ pub fn build(b: *std.Build) !void {
     const shim_step = b.step("shim", "Build containerd-shim-runc-v2 (Linux)");
     const shim_tags = "ctrd netgo osusergo providerless urfave_cli_no_docs static_build apparmor seccomp";
     const containerd_src = "build/src/github.com/containerd/containerd";
+
+    // Build containerd binary (Linux only)
+    // Outputs to containerd source bin/ dir, then copied to project bin/ with shim
+    const containerd_build = b.addSystemCommand(&.{ "go", "build" });
+    containerd_build.setEnvironmentVariable("CGO_ENABLED", "1");
+    containerd_build.setEnvironmentVariable("GOPATH", b.fmt("{s}/build", .{root}));
+    containerd_build.setCwd(b.path(containerd_src));
+    containerd_build.addArgs(&.{
+        "-tags",                         shim_tags,
+        "-ldflags",                      ldflags,
+        "-o",                            "bin/containerd",
+        "./cmd/containerd",
+    });
+    containerd_build.step.dependOn(&download_cmd.step);
+    containerd_build.step.dependOn(&cleanup_containerd.step);
+
     const shim_build = b.addSystemCommand(&.{ "go", "build" });
     shim_build.setEnvironmentVariable("CGO_ENABLED", "1");
     shim_build.setEnvironmentVariable("GOPATH", b.fmt("{s}/build", .{root}));
@@ -179,6 +196,7 @@ pub fn build(b: *std.Build) !void {
         b.fmt("cp -vf {s}/{s}/bin/* {s}/bin/", .{ root, containerd_src, root }),
     });
     shim_cp.step.dependOn(&shim_build.step);
+    shim_cp.step.dependOn(&containerd_build.step);
     shim_step.dependOn(&shim_cp.step);
 
     // Build runc (Linux only)
