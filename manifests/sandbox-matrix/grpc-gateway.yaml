@@ -61,7 +61,7 @@ spec:
           type: Directory
       containers:
       - name: gateway
-        image: busybox:musl
+        image: busybox:1.36
         command: ["/k8e", "sandbox-gateway"]
         ports:
         - containerPort: 50051
