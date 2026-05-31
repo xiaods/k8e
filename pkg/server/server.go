@@ -350,51 +350,14 @@ func HomeKubeConfig(write, rootless bool) (string, error) {
 }
 
 func printTokens(config *config.Control) error {
-	var serverTokenFile string
-	if config.Runtime.ServerToken != "" {
-		serverTokenFile = filepath.Join(config.DataDir, "token")
-		if err := writeToken(config.Runtime.ServerToken, serverTokenFile, config.Runtime.ServerCA); err != nil {
-			return err
-		}
-
-		// backwards compatibility
-		np := filepath.Join(config.DataDir, "node-token")
-		if !isSymlink(np) {
-			if err := os.RemoveAll(np); err != nil {
-				return err
-			}
-			if err := os.Symlink(serverTokenFile, np); err != nil {
-				return err
-			}
-		}
-
-		logrus.Infof("Server node token is available at %s", serverTokenFile)
-		printToken(config.SupervisorPort, config.BindAddressOrLoopback(true, true), "To join server node to cluster:", "server", "SERVER_NODE_TOKEN")
+	serverTokenFile, err := writeServerTokenFile(config)
+	if err != nil {
+		return err
 	}
 
-	var agentTokenFile string
-	if config.Runtime.AgentToken != "" {
-		if config.AgentToken != "" {
-			agentTokenFile = filepath.Join(config.DataDir, "agent-token")
-			if isSymlink(agentTokenFile) {
-				if err := os.RemoveAll(agentTokenFile); err != nil {
-					return err
-				}
-			}
-			if err := writeToken(config.Runtime.AgentToken, agentTokenFile, config.Runtime.ServerCA); err != nil {
-				return err
-			}
-		} else if serverTokenFile != "" {
-			agentTokenFile = filepath.Join(config.DataDir, "agent-token")
-			if !isSymlink(agentTokenFile) {
-				if err := os.RemoveAll(agentTokenFile); err != nil {
-					return err
-				}
-				if err := os.Symlink(serverTokenFile, agentTokenFile); err != nil {
-					return err
-				}
-			}
-		}
+	agentTokenFile, err := writeAgentTokenFile(config, serverTokenFile)
+	if err != nil {
+		return err
 	}
 
 	if agentTokenFile != "" {
@@ -403,6 +366,62 @@ func printTokens(config *config.Control) error {
 	}
 
 	return nil
+}
+
+func writeServerTokenFile(config *config.Control) (string, error) {
+	if config.Runtime.ServerToken == "" {
+		return "", nil
+	}
+	serverTokenFile := filepath.Join(config.DataDir, "token")
+	if err := writeToken(config.Runtime.ServerToken, serverTokenFile, config.Runtime.ServerCA); err != nil {
+		return "", err
+	}
+
+	// backwards compatibility
+	np := filepath.Join(config.DataDir, "node-token")
+	if !isSymlink(np) {
+		if err := os.RemoveAll(np); err != nil {
+			return "", err
+		}
+		if err := os.Symlink(serverTokenFile, np); err != nil {
+			return "", err
+		}
+	}
+
+	logrus.Infof("Server node token is available at %s", serverTokenFile)
+	printToken(config.SupervisorPort, config.BindAddressOrLoopback(true, true), "To join server node to cluster:", "server", "SERVER_NODE_TOKEN")
+	return serverTokenFile, nil
+}
+
+func writeAgentTokenFile(config *config.Control, serverTokenFile string) (string, error) {
+	if config.Runtime.AgentToken == "" {
+		return "", nil
+	}
+	if config.AgentToken != "" {
+		agentTokenFile := filepath.Join(config.DataDir, "agent-token")
+		if isSymlink(agentTokenFile) {
+			if err := os.RemoveAll(agentTokenFile); err != nil {
+				return "", err
+			}
+		}
+		if err := writeToken(config.Runtime.AgentToken, agentTokenFile, config.Runtime.ServerCA); err != nil {
+			return "", err
+		}
+		return agentTokenFile, nil
+	}
+	if serverTokenFile != "" {
+		agentTokenFile := filepath.Join(config.DataDir, "agent-token")
+		if !isSymlink(agentTokenFile) {
+			if err := os.RemoveAll(agentTokenFile); err != nil {
+				return "", err
+			}
+			if err := os.Symlink(serverTokenFile, agentTokenFile); err != nil {
+				return "", err
+			}
+		}
+		return agentTokenFile, nil
+	}
+	return "", nil
 }
 
 func writeKubeConfig(certs string, config *Config) error {
@@ -513,7 +532,7 @@ func setNoProxyEnv(config *config.Control) error {
 	splitter := func(c rune) bool {
 		return c == ','
 	}
-	envList := []string{}
+	var envList []string
 	envList = append(envList, strings.FieldsFunc(os.Getenv("NO_PROXY"), splitter)...)
 	envList = append(envList, strings.FieldsFunc(os.Getenv("no_proxy"), splitter)...)
 	envList = append(envList,
