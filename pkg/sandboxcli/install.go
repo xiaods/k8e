@@ -1,7 +1,7 @@
 package sandboxcli
 
 import (
-	_ "embed"
+	_ "embed" // required for //go:embed directive
 	"fmt"
 	"os"
 	"path/filepath"
