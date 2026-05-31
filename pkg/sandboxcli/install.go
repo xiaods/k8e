@@ -16,7 +16,6 @@ const skillFileName = "SKILL.md"
 const (
 	dirClaude = ".claude"
 	dirCodex  = ".codex"
-	dirPi     = ".pi"
 )
 
 // installSkillLocalOrGlobal installs skills into the agent's local workspace first,
@@ -38,7 +37,11 @@ func InstallSkill(target string) error {
 	case "codex":
 		return installSkillLocalOrGlobal(dirCodex, "codex")
 	case "pi":
-		return installSkillLocalOrGlobal(dirPi, "pi")
+		// project-local: .pi/skills/, global: ~/.agents/skills/
+		if _, err := os.Stat(filepath.Join(".pi", "skills")); err == nil {
+			return installAllSkills(filepath.Join(".pi", "skills"), "pi (workspace)")
+		}
+		return installAllSkills(filepath.Join(homeDir(), ".agents", "skills"), "pi (global)")
 	case "all":
 		var errs []error
 		for _, fn := range []func() error{
