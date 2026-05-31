@@ -12,6 +12,42 @@ All code execution goes through `k8e sandbox` — never run code directly on the
 
 **Trigger keywords (中文):** "帮我跑", "运行", "试试", "执行", "测试", "安装并使用", "分析这个CSV", "处理这个文件", "看看输出", "帮我算"
 
+## Environment
+
+The sandbox CLI auto-discovers the local K8E cluster via TLS. For remote clusters, set:
+
+```bash
+export K8E_SANDBOX_ENDPOINT=10.0.0.1:50051   # remote gateway endpoint
+```
+
+### Standalone CLI (no full k8e install)
+
+Download the platform-specific binary — only the sandbox commands, no server/agent:
+
+| Platform | Binary |
+|----------|--------|
+| macOS Intel | `k8e-sandbox-cli-darwin-amd64` |
+| macOS Apple Silicon | `k8e-sandbox-cli-darwin-arm64` |
+| Linux x86_64 | `k8e-sandbox-cli-linux-amd64` |
+| Linux ARM64 | `k8e-sandbox-cli-linux-arm64` |
+| Windows x86_64 | `k8e-sandbox-cli-windows-amd64.exe` |
+
+```bash
+# Download and make executable
+curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
+chmod +x k8e-sandbox-cli-linux-amd64
+
+# All commands work the same — just prefix with the binary name
+./k8e-sandbox-cli-linux-amd64 sandbox run "print('hello')" --lang python
+./k8e-sandbox-cli-linux-amd64 sandbox status
+
+# Or symlink for convenience
+ln -sf k8e-sandbox-cli-linux-amd64 /usr/local/bin/k8e-sandbox
+k8e-sandbox sandbox run "echo hello"
+```
+
+When using the standalone CLI, set `K8E_SANDBOX_ENDPOINT` to point to your K8E gateway.
+
 ## Command Reference
 
 | Command | Purpose | Key flags |
