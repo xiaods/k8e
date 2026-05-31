@@ -11,7 +11,7 @@ set -o noglob
 # Environment variables:
 #   K8E_*              All K8E_ prefixed vars are passed to the systemd service
 #   K8E_URL            Server URL (agent mode when set)
-#   K8E_TOKEN          Cluster join token (required for agent)
+#   K8E_TOKEN          Cluster join token (default: ilovek8e)
 #   INSTALL_K8E_EXEC   Override exec command (server/agent)
 #   INSTALL_K8E_VERSION Specific version to install (default: latest)
 #   INSTALL_K8E_BIN_DIR Binary install path (default: /usr/local/bin)
@@ -463,15 +463,12 @@ auto_configure() {
 
     # Generate random token if not set
     if [ -z "${K8E_TOKEN}" ]; then
-        K8E_TOKEN=$(head -c 32 /dev/urandom 2>/dev/null | base64 | tr -d '/+=' | head -c 32)
+        K8E_TOKEN="ilovek8e"
     fi
     export K8E_TOKEN
 
-    if command -v docker >/dev/null 2>&1; then
-        export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666 --docker"
-    else
-        export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode=666"
-    fi
+    # Default server command for one-click install
+    export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode 644"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
