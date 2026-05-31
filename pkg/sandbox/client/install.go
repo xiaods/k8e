@@ -9,6 +9,22 @@ import (
 
 const skillFileName = "SKILL.md"
 
+const (
+	dirClaude = ".claude"
+	dirCodex  = ".codex"
+	dirPi     = ".pi"
+)
+
+// installSkillLocalOrGlobal installs skills into the agent's local workspace first,
+// falling back to the global home directory.
+func installSkillLocalOrGlobal(dir, label string) error {
+	local := filepath.Join(dir, "skills")
+	if _, err := os.Stat(dir); err == nil {
+		return installAllSkills(local, label+" (workspace)")
+	}
+	return installAllSkills(filepath.Join(homeDir(), dir, "skills"), label+" (global)")
+}
+
 // skillsDataDir returns the staged skills directory.
 // Search order: /var/lib/k8e/server/skills/ (production), binary dir/skills/, working dir/skills/ (dev).
 func skillsDataDir() (string, error) {
@@ -32,19 +48,11 @@ func skillsDataDir() (string, error) {
 func InstallSkill(target string) error {
 	switch target {
 	case "claude":
-		return installAllSkills(filepath.Join(homeDir(), ".claude", "skills"), "claude code")
+		return installAllSkills(filepath.Join(homeDir(), dirClaude, "skills"), "claude code")
 	case "codex":
-		local := filepath.Join(".codex", "skills")
-		if _, err := os.Stat(filepath.Join(".codex")); err == nil {
-			return installAllSkills(local, "codex (workspace)")
-		}
-		return installAllSkills(filepath.Join(homeDir(), ".codex", "skills"), "codex (global)")
+		return installSkillLocalOrGlobal(dirCodex, "codex")
 	case "pi":
-		local := filepath.Join(".pi", "skills")
-		if _, err := os.Stat(filepath.Join(".pi")); err == nil {
-			return installAllSkills(local, "pi (workspace)")
-		}
-		return installAllSkills(filepath.Join(homeDir(), ".pi", "skills"), "pi (global)")
+		return installSkillLocalOrGlobal(dirPi, "pi")
 	case "all":
 		var errs []error
 		for _, fn := range []func() error{
