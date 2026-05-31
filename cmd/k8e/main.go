@@ -87,6 +87,7 @@ func main() {
 			certCommand,
 		),
 		cmds.NewCompletionCommand(internalCLIAction(version.Program+"-completion", dataDir, os.Args)),
+		cmds.NewSandboxApiKeyCommand(),
 		cmds.NewSandboxGatewayCommand(cmds.SandboxGateway),
 	}
 
