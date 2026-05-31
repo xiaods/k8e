@@ -29,7 +29,7 @@ import (
 	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/rootlessports"
 	"github.com/xiaods/k8e/pkg/sandboxmatrix"
-	"github.com/xiaods/k8e/pkg/sandboxmcp"
+	"github.com/xiaods/k8e/pkg/sandbox/client"
 	"github.com/xiaods/k8e/pkg/secretsencrypt"
 	"github.com/xiaods/k8e/pkg/static"
 	"github.com/xiaods/k8e/pkg/util"
@@ -256,7 +256,7 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		if err := sandboxmatrix.Register(ctx, sc.K8s, config.ControlConfig.Runtime.KubeConfigSupervisor, config.ControlConfig.SandboxConfig); err != nil {
 			logrus.Warnf("sandbox matrix: %v", err)
 		}
-		if err := sandboxmcp.StageSkills(config.ControlConfig.DataDir); err != nil {
+		if err := client.StageSkills(config.ControlConfig.DataDir); err != nil {
 			logrus.Warnf("skills stage: %v", err)
 		}
 	}

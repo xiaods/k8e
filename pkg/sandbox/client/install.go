@@ -1,4 +1,4 @@
-package sandboxmcp
+package client
 
 import (
 	"fmt"

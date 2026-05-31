@@ -36,7 +36,7 @@ The repository is organized as a **Zig-based Go project**:
 │   │       ├── server.go          # gRPC SandboxService (create/destroy/exec sessions)
 │   │       ├── orchestrator.go    # Orchestration logic (sub-agents, confirm actions)
 │   │       └── pb/                # Generated protobuf Go code
-│   ├── sandboxmcp/                # gRPC client + skill installation
+│   ├── sandbox/client/           # gRPC client + skill installation
 │   │   ├── client.go              # gRPC client with TLS auto-discovery
 │   │   └── install.go             # Skill installation for codex/claude/pi/openclaw
 │   ├── sandboxcli/                # CLI command handlers for k8e sandbox
@@ -115,12 +115,12 @@ make test       # or: zig build test
 # Run a specific Go test (examples)
 go test ./pkg/server/... -run TestServerStart -v -count=1
 go test ./pkg/sandboxmatrix/... -v -count=1
-go test ./pkg/sandboxmcp/... -v -count=1
+go test ./pkg/sandbox/client/... -v -count=1
 go test ./tests/... -v -count=1 -timeout 120s
 
 # Verify compilation of a single package
 go build ./pkg/sandboxmatrix/
-go vet ./pkg/sandboxmcp/
+go vet ./pkg/sandbox/client/
 ```
 
 Integration tests require a running K8E cluster and are invoked via `make test`.

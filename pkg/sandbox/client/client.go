@@ -1,5 +1,5 @@
-// Package sandboxmcp provides the gRPC client for K8E sandbox operations.
-package sandboxmcp
+// Package client provides the gRPC client for K8E sandbox operations.
+package client
 
 import (
 	"context"
