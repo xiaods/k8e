@@ -28,11 +28,23 @@ func skillsDataDir() (string, error) {
 }
 
 // InstallSkill installs skill files into the given agent.
-// target: "claude", "kiro", "gemini", "openclaw", or "all"
+// target: "claude", "codex", "pi", "kiro", "gemini", "openclaw", or "all"
 func InstallSkill(target string) error {
 	switch target {
 	case "claude":
 		return installAllSkills(filepath.Join(homeDir(), ".claude", "skills"), "claude code")
+	case "codex":
+		local := filepath.Join(".codex", "skills")
+		if _, err := os.Stat(filepath.Join(".codex")); err == nil {
+			return installAllSkills(local, "codex (workspace)")
+		}
+		return installAllSkills(filepath.Join(homeDir(), ".codex", "skills"), "codex (global)")
+	case "pi":
+		local := filepath.Join(".pi", "skills")
+		if _, err := os.Stat(filepath.Join(".pi")); err == nil {
+			return installAllSkills(local, "pi (workspace)")
+		}
+		return installAllSkills(filepath.Join(homeDir(), ".pi", "skills"), "pi (global)")
 	case "kiro":
 		local := filepath.Join(".kiro", "skills")
 		if _, err := os.Stat(filepath.Join(".kiro")); err == nil {
@@ -47,6 +59,8 @@ func InstallSkill(target string) error {
 		var errs []error
 		for _, fn := range []func() error{
 			func() error { return InstallSkill("claude") },
+			func() error { return InstallSkill("codex") },
+			func() error { return InstallSkill("pi") },
 			func() error { return InstallSkill("kiro") },
 			func() error { return InstallSkill("gemini") },
 			func() error { return InstallSkill("openclaw") },
