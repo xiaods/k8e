@@ -35,7 +35,7 @@ FILE_K8E_SERVICE=${SYSTEMD_DIR}/${SERVICE_K8E}
 FILE_K8E_ENV=${SYSTEMD_DIR}/${SERVICE_K8E}.env
 
 # ── Logging ──────────────────────────────────────────────────────────────────
-info()  { echo "[INFO]  $*"; }
+info()  { echo "[INFO]  $*" >&2; }
 warn()  { echo "[WARN]  $*" >&2; }
 fatal() { echo "[ERROR] $*" >&2; exit 1; }
 
