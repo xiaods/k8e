@@ -14,17 +14,10 @@ import (
 	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
-// newClientFromCtx creates a gRPC client using endpoint/apikey from global flags or env vars.
+// newClientFromCtx creates a gRPC client using endpoint/apikey from global flags.
 func newClientFromCtx(ctx *cli.Context) *client.Client {
 	endpoint := ctx.GlobalString("endpoint")
 	apikey := ctx.GlobalString("apikey")
-	// fallback to env vars if parent not available
-	if endpoint == "" {
-		endpoint = os.Getenv("K8E_SANDBOX_ENDPOINT")
-	}
-	if apikey == "" {
-		apikey = os.Getenv("K8E_SANDBOX_APIKEY")
-	}
 
 	var c *client.Client
 	var err error
