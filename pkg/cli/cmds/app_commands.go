@@ -70,6 +70,7 @@ func NewAppCommands(f AppCommandFuncs) []cli.Command {
 			f.Cert.Check, f.Cert.Rotate, f.Cert.RotateCA,
 		),
 		NewCompletionCommand(f.Completion),
+		NewSandboxApiKeyCommand(),
 		NewSandboxGatewayCommand(SandboxGateway),
 	}
 }
