@@ -92,6 +92,19 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Load API keys from Secret for remote client authentication
 	s.loadAPIKeys(ctx)
+	// Reload API keys every 30s so newly created keys take effect without restart
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.loadAPIKeys(ctx)
+			}
+		}
+	}()
 
 	creds, err := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 	if err != nil {
