@@ -83,6 +83,6 @@ jobs:
           GOOS=darwin  GOARCH=arm64   go build ./pkg/sandboxcli/... ./pkg/sandbox/client/...
           echo "--- windows/amd64 ---"
           GOOS=windows GOARCH=amd64   go build ./pkg/sandboxcli/... ./pkg/sandbox/client/...
-          echo "--- sandbox-cli binary (linux/amd64) ---"
-          GOOS=linux   GOARCH=amd64   go build -o /dev/null ./cmd/sandbox-cli/
+          echo "--- sandboxcli binary (linux/amd64) ---"
+          GOOS=linux   GOARCH=amd64   go build -o /dev/null ./cmd/sandboxcli/
           echo "All cross-compile targets OK"
