@@ -37,7 +37,6 @@ func main() {
 		sandboxcli.ConfirmCommand(),
 		sandboxcli.ApproveCommand(),
 		sandboxcli.SnapshotCommand(),
-		sandboxcli.ApiKeyCommand(),
 		sandboxcli.InstallSkillCommand(),
 	}
 
