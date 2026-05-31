@@ -49,6 +49,7 @@ spec:
       labels:
         app: sandbox-grpc-gateway
     spec:
+      hostNetwork: true
       serviceAccountName: sandbox-grpc-gateway
       volumes:
       - name: k8e-bin
