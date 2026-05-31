@@ -113,6 +113,19 @@ func installAllSkills(agentSkillsDir, label string) error {
 	return nil
 }
 
+// StageSkills extracts embedded skill files from bindata to the data directory.
+// Called by k8e server at startup to make skill files available on disk.
+func StageSkills(dataDir string) error {
+	dest := filepath.Join(dataDir, "skills")
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return fmt.Errorf("stage skills: %w", err)
+	}
+	if err := RestoreAssets(dest, "skills"); err != nil {
+		return fmt.Errorf("stage skills: %w", err)
+	}
+	return nil
+}
+
 func homeDir() string {
 	if runtime.GOOS == "windows" {
 		return os.Getenv("USERPROFILE")
