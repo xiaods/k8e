@@ -68,7 +68,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | 🗑️ **Ephemeral Workspaces** | Auto-cleanup after agent session ends |
 | 🧠 **Warm Pool** | Pre-booted sandbox pods for sub-500ms session claim latency |
 | 🤝 **agent-sandbox compatible** | Works with [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) |
-| 🔄 **SKILL + CLI** | AI agents (codex, claude, pi, openclaw) connect via `k8e sandbox` CLI commands |
+| 🔄 **SKILL + CLI** | AI agents (claude code, codex, pi) connect via `k8e sandbox` CLI commands |
 
 ---
 
@@ -113,7 +113,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 └────────┬────────┘
          │  gRPC (TLS)
          ▼
-│  AI Agent       │  (codex / claude / pi / openclaw)
+│  AI Agent       │  (claude code / codex / pi)
 └─────────────────┘
 ```
 

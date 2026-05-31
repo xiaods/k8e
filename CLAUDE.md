@@ -37,7 +37,7 @@ The repository is organized as a **Zig-based Go project**:
 │   │       └── pb/                # Generated protobuf Go code
 │   ├── sandbox/client/           # gRPC client + skill installation
 │   │   ├── client.go              # gRPC client with TLS auto-discovery
-│   │   └── install.go             # Skill installation for codex/claude/pi/openclaw
+│   │   └── install.go             # Skill installation for claude code/codex/pi
 │   ├── sandboxcli/                # CLI command handlers for k8e sandbox
 │   │   ├── commands.go            # 10 sandbox command handlers
 │   │   ├── session.go             # Session state persistence + flock locking
