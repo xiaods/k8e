@@ -92,7 +92,7 @@ jobs:
         run: |
           EXT=""
           if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
-          go build -ldflags="-s -w" -o "k8e-sandbox-cli-${{ matrix.target }}${EXT}" ./cmd/sandbox-cli/
+          go build -ldflags="-s -w" -o "k8e-sandbox-cli-${{ matrix.target }}${EXT}" ./cmd/sandboxcli/
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:

@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const stateDirName = ".k8e/sandbox"
-
 type SessionState struct {
 	SessionID string `json:"session_id"`
 	Phase     string `json:"phase"` // "active" or "creating"
@@ -21,11 +19,11 @@ type SessionState struct {
 }
 
 func stateDir(tenant string) string {
-	home, _ := os.UserHomeDir()
+	dir, _ := dataDir()
 	if tenant == "" {
 		tenant = "default"
 	}
-	return filepath.Join(home, stateDirName, tenant)
+	return filepath.Join(dir, tenant)
 }
 
 func statePath(tenant string) string {

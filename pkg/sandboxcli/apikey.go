@@ -15,7 +15,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-const apiKeySecretName = "sandbox-api-keys"
+const apiKeySecretName = "sandbox-apikeys"
 const apiKeySecretNS = "sandbox-matrix"
 
 type apiKeyStore map[string]string // name → key
@@ -27,7 +27,7 @@ func readAPIKeys() (apiKeyStore, error) {
 	}
 	secret, err := k8s.CoreV1().Secrets(apiKeySecretNS).Get(context.Background(), apiKeySecretName, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("api-key secret not found (run 'k8e sandbox api-key init' on the server node)")
+		return nil, fmt.Errorf("api-key secret not found (run 'k8e sandbox-apikey create <name>' to create your first key)")
 	}
 	data, ok := secret.Data["keys.json"]
 	if !ok {
@@ -106,7 +106,7 @@ func apiKeyCreateCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				printErrorExit("usage: k8e sandbox api-key create <name>", 1)
+				printErrorExit("usage: k8e sandbox-apikey create <name>", 1)
 				return nil
 			}
 			store, err := readAPIKeys()
@@ -158,7 +158,7 @@ func apiKeyDeleteCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				printErrorExit("usage: k8e sandbox api-key delete <name>", 1)
+				printErrorExit("usage: k8e sandbox-apikey delete <name>", 1)
 				return nil
 			}
 			store, err := readAPIKeys()

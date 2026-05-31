@@ -386,7 +386,7 @@ fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo) ![]const u8 {
 }
 
 fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step) !void {
-    const cli_step = b.step("sandbox-cli", "Build cross-platform sandbox CLI binary");
+    const cli_step = b.step("sandboxcli", "Build cross-platform sandbox CLI binary");
     const cli_targets = [_]struct { goos: []const u8, goarch: []const u8, ext: []const u8 }{
         .{ .goos = "linux", .goarch = "amd64", .ext = "" },
         .{ .goos = "linux", .goarch = "arm64", .ext = "" },
@@ -403,7 +403,7 @@ fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step) !void {
             "go", "build",
             "-ldflags", "-s -w",
             "-o", out_path,
-            "./cmd/sandbox-cli/",
+            "./cmd/sandboxcli/",
         });
         go_build.setEnvironmentVariable("GOOS", t.goos);
         go_build.setEnvironmentVariable("GOARCH", t.goarch);

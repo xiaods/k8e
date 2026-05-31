@@ -40,7 +40,7 @@ curl -sfL https://k8e.sh/install.sh | sh -
 | 3 | [⚙️ Components](#️-components) |
 | 4 | [🚀 Quick Start](#-quick-start) |
 | 5 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup) |
-| 6 | [🤖 Sandbox CLI Skill](#-sandbox-cli-skill) |
+| 6 | [🤖 Sandbox CLI](#-sandbox-cli) |
 | 7 | [🐍 Python Client SDK](#-python-client-sdk) |
 | 8 | [🟦 TypeScript Client SDK](#-typescript-client-sdk) |
 | 9 | [🖥️ Advanced Installation](#️-advanced-installation) |
@@ -68,7 +68,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | 🗑️ **Ephemeral Workspaces** | Auto-cleanup after agent session ends |
 | 🧠 **Warm Pool** | Pre-booted sandbox pods for sub-500ms session claim latency |
 | 🤝 **agent-sandbox compatible** | Works with [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) |
-| 🔄 **SKILL + CLI** | AI agents (claude code, codex, pi) connect via `k8e sandbox` CLI commands |
+| 🔄 **SKILL + CLI** | AI agents (claude code, codex, pi) connect via `k8e-sandbox-cli` CLI commands |
 
 ---
 
@@ -109,7 +109,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
          ▲
          │  gRPC (TLS)
 ┌────────┴────────┐
-│  k8e sandbox    │  ← CLI commands
+│  k8e-sandbox-cli    │  ← CLI commands
 └────────┬────────┘
          │  gRPC (TLS)
          ▼
@@ -136,7 +136,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | 📈 **Metrics Server** | v0.7.x | Resource metrics |
 | 💾 **Local Path Provisioner** | v0.0.30 | Persistent storage |
 | 🛡️ **gVisor / Kata / Firecracker** | — | Pluggable sandbox isolation runtimes |
-| 🤖 **Sandbox CLI** | built-in | `k8e sandbox` — agent tool commands |
+| 🤖 **Sandbox CLI** | standalone | `k8e-sandbox-cli` — agent tool commands |
 
 </div>
 
@@ -175,19 +175,26 @@ kubectl get runtimeclass              # should show: gvisor
 kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
 ```
 
-### Step 4 — Connect Your AI Agent
+### Step 4 — Download Sandbox CLI & Connect Your AI Agent
 
-Install the K8E sandbox skill into your AI agent:
+Download the standalone sandbox CLI and install the skill into your agent:
 
 ```bash
-k8e sandbox install-skill all   # installs skill files for all supported agents
+# Download sandbox CLI (~44MB)
+curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
+chmod +x k8e-sandbox-cli-linux-amd64
+
+# Install the skill
+./k8e-sandbox-cli-linux-amd64 install-skill all
 ```
+
+Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
 
 Then ask your agent naturally:
 
 > "Run this Python snippet in a sandbox"
 
-The agent executes `k8e sandbox run` automatically — no session management needed.
+The agent executes `k8e-sandbox-cli run` automatically — no session management needed.
 
 Supported agents: **claude code**, **codex**, **pi**.
 
@@ -249,16 +256,16 @@ kubectl get runtimeclass
 
 ---
 
-## 🤖 Sandbox CLI Skill
+## 🤖 Sandbox CLI
 
-`k8e sandbox` is a built-in CLI command group for AI agents to access K8E sandbox infrastructure — no MCP server, no extra processes.
+`k8e-sandbox-cli` is a standalone binary (~44MB) that gives AI agents direct access to K8E sandbox infrastructure — no server install needed.
 
 ```
 AI Agent (claude code / codex / pi)
     │  shell command
     ▼
-k8e sandbox run "print('hello')" --lang python
-    │  gRPC (TLS, auto-discovered)
+k8e-sandbox-cli run "print('hello')" --lang python
+    │  gRPC (TLS)
     ▼
 sandbox-grpc-gateway:50051
     │
@@ -268,27 +275,26 @@ Isolated Pod (gVisor / Kata / Firecracker)
 
 ### Install the Skill
 
-**Option A — Full k8e install** (server node, auto-discovers cluster):
+**On the server**, create an API key for secure remote access:
 
 ```bash
-k8e sandbox install-skill all
+k8e sandbox-apikey create my-agent
+# → {"name":"my-agent","key":"k8e-abc123..."}
 ```
 
-**Option B — Standalone CLI** (remote client, no server install):
+**On the client**, download the standalone CLI and install the skill:
 
 ```bash
 # 1. Download the platform-specific binary (~44MB)
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
 
-# 2. Point to your K8E gateway
+# 2. Point to your K8E gateway with the API key
 export K8E_SANDBOX_ENDPOINT=<server-ip>:50051
+export K8E_SANDBOX_APIKEY=k8e-abc123...
 
 # 3. Install the skill
-./k8e-sandbox-cli-linux-amd64 sandbox install-skill all
-
-# 4. All sandbox commands work the same
-./k8e-sandbox-cli-linux-amd64 sandbox run "print('hello')" --lang python
+./k8e-sandbox-cli-linux-amd64 install-skill all
 ```
 
 Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
@@ -297,23 +303,26 @@ Then ask your agent naturally:
 
 > "Run this Python snippet in a sandbox"
 
-The agent executes `k8e sandbox run` automatically — no session management needed.
+The agent executes `k8e-sandbox-cli run` automatically — no session management needed.
 
 ### Available Commands
 
 | Command | Description |
 |---|---|
-| `k8e sandbox run <code>` | Run code or shell command (auto-creates/manages session) |
-| `k8e sandbox status` | Check sandbox service availability and current session |
-| `k8e sandbox create` | Create a new session (custom runtime, egress, manifest, git-repo) |
-| `k8e sandbox destroy <sid>` | Destroy a session and free resources |
-| `k8e sandbox write <sid> <path>` | Write file to `/workspace` (content via stdin) |
-| `k8e sandbox read <sid> <path>` | Read file from `/workspace` |
-| `k8e sandbox list <sid>` | List files in `/workspace` (filter by `--since` timestamp) |
-| `k8e sandbox subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
-| `k8e sandbox confirm <sid> <action>` | Gate irreversible action on human approval |
-| `k8e sandbox approve <approval-id>` | Approve a pending confirm request |
-| `k8e sandbox install-skill <target>` | Install skill file for AI agent (claude/codex/pi/all) |
+| `k8e-sandbox-cli run <code>` | Run code or shell command (auto-creates/manages session) |
+| `k8e-sandbox-cli status` | Check sandbox service availability and current session |
+| `k8e-sandbox-cli create` | Create a new session (custom runtime, egress, manifest, git-repo) |
+| `k8e-sandbox-cli destroy <sid>` | Destroy a session and free resources |
+| `k8e-sandbox-cli write <sid> <path>` | Write file to `/workspace` (content via stdin) |
+| `k8e-sandbox-cli read <sid> <path>` | Read file from `/workspace` |
+| `k8e-sandbox-cli list <sid>` | List files in `/workspace` (filter by `--since` timestamp) |
+| `k8e-sandbox-cli subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
+| `k8e-sandbox-cli confirm <sid> <action>` | Gate irreversible action on human approval |
+| `k8e-sandbox-cli approve <approval-id>` | Approve a pending confirm request |
+| `k8e-sandbox-cli install-skill <target>` | Install skill file for AI agent (claude/codex/pi/all) |
+| `k8e sandbox-apikey create <name>` | Create API key for remote sandbox access (server-side) |
+| `k8e sandbox-apikey list` | List API key names (server-side) |
+| `k8e sandbox-apikey delete <name>` | Delete an API key (server-side) |
 
 See [skills/k8e-sandbox/SKILL.md](skills/k8e-sandbox/SKILL.md) for full usage examples.
 
@@ -321,38 +330,38 @@ See [skills/k8e-sandbox/SKILL.md](skills/k8e-sandbox/SKILL.md) for full usage ex
 
 ```bash
 # Run Python code (auto-creates session)
-k8e sandbox run "print('hello')" --lang python
+k8e-sandbox-cli run "print('hello')" --lang python
 
 # Shell command (default lang=bash)
-k8e sandbox run "ls -la /workspace"
+k8e-sandbox-cli run "ls -la /workspace"
 
 # TypeScript
-k8e sandbox run "console.log(42)" --lang ts
+k8e-sandbox-cli run "console.log(42)" --lang ts
 
 # Multi-line via stdin
-k8e sandbox run --lang python <<'EOF'
+k8e-sandbox-cli run --lang python <<'EOF'
 for i in range(10):
     print(i)
 EOF
 
 # Write a script then execute
-k8e sandbox write $SID /workspace/script.py <<'PYEOF'
+k8e-sandbox-cli write $SID /workspace/script.py <<'PYEOF'
 import pandas as pd
 print(pd.__version__)
 PYEOF
-k8e sandbox run "python3 /workspace/script.py" --session-id $SID
+k8e-sandbox-cli run "python3 /workspace/script.py" --session-id $SID
 
 # Create session with custom runtime and egress
-SID=$(k8e sandbox create --runtime firecracker --allowed-hosts pypi.org,github.com | jq -r .session_id)
+SID=$(k8e-sandbox-cli create --runtime firecracker --allowed-hosts pypi.org,github.com | jq -r .session_id)
 
 # Clone git repo at session creation
-SID=$(k8e sandbox create --git-repo https://github.com/user/repo.git --git-ref main | jq -r .session_id)
+SID=$(k8e-sandbox-cli create --git-repo https://github.com/user/repo.git --git-ref main | jq -r .session_id)
 
 # Stream long-running output
-k8e sandbox run "python3 train.py" --session-id $SID --raw
+k8e-sandbox-cli run "python3 train.py" --session-id $SID --raw
 
 # Tenant-based cross-process session reuse
-k8e sandbox run "echo hello" --tenant my-project
+k8e-sandbox-cli run "echo hello" --tenant my-project
 ```
 
 ### Configuration Overrides
@@ -360,9 +369,9 @@ k8e sandbox run "echo hello" --tenant my-project
 The CLI auto-discovers the local cluster via TLS. Override when needed:
 
 ```bash
-K8E_SANDBOX_ENDPOINT=10.0.0.1:50051 k8e sandbox run "echo hello"
-K8E_SANDBOX_CERT=/path/to/ca.crt k8e sandbox run "echo hello"
-k8e sandbox run "echo hello" --tenant my-project
+K8E_SANDBOX_ENDPOINT=10.0.0.1:50051 k8e-sandbox-cli run "echo hello"
+K8E_SANDBOX_CERT=/path/to/ca.crt k8e-sandbox-cli run "echo hello"
+k8e-sandbox-cli run "echo hello" --tenant my-project
 ```
 
 ---
@@ -555,7 +564,7 @@ K8E_KUBECONFIG_OUTPUT=<path>    # kubeconfig output path
 | Binary size | **<100MB** | ~70MB | ~1GB+ | ~200MB |
 | Agentic Sandbox | ✅ Native | ❌ No | ⚠️ Manual | ❌ No |
 | eBPF networking | ✅ Cilium | ⚠️ Optional | ⚠️ Optional | ❌ No |
-| Sandbox CLI skill built-in | ✅ Yes | ❌ No | ❌ No | ❌ No |
+| Sandbox CLI standalone | ✅ Yes | ❌ No | ❌ No | ❌ No |
 | HA embedded etcd | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited |
 | CNCF conformant | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | Multi-arch | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |

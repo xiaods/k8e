@@ -62,12 +62,12 @@ func NewClient() (*Client, error) {
 
 	creds, err := resolveCreds()
 	if err != nil {
-		return nil, fmt.Errorf("sandbox mcp: tls: %w", err)
+		return nil, fmt.Errorf("sandbox client: tls: %w", err)
 	}
 
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(creds))
 	if err != nil {
-		return nil, fmt.Errorf("sandbox mcp: dial %s: %w", endpoint, err)
+		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
 	}
 	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
@@ -87,7 +87,7 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 	}))
 	conn, err := grpc.NewClient(endpoint, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("sandbox mcp: dial %s: %w", endpoint, err)
+		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
 	}
 	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
