@@ -647,7 +647,7 @@ func InstallSkillCommand() cli.Command {
 	return cli.Command{
 		Name:      "install-skill",
 		Usage:     "Install K8E sandbox skill into AI agent config",
-		ArgsUsage: "[claude|kiro|gemini|openclaw|all]",
+		ArgsUsage: "[claude|codex|pi|all]",
 		Action: func(ctx *cli.Context) error {
 			target := ctx.Args().First()
 			if target == "" {
