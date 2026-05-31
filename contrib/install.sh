@@ -256,7 +256,7 @@ download_and_verify() {
 
 # ── Symlinks ─────────────────────────────────────────────────────────────────
 create_symlinks() {
-    for cmd in kubectl crictl ctr; do
+    for cmd in kubectl crictl ctr containerd; do
         if [ ! -e "${BIN_DIR}/${cmd}" ]; then
             if ! command -v "${cmd}" >/dev/null 2>&1; then
                 info "Creating ${BIN_DIR}/${cmd} → k8e"
@@ -426,7 +426,7 @@ if (ls ${SYSTEMD_DIR}/k8e*.service) >/dev/null 2>&1; then
     set +x; echo 'Additional k8e services installed, skipping uninstall of k8e'; set -x
     exit
 fi
-for cmd in kubectl crictl ctr; do
+for cmd in kubectl crictl ctr containerd; do
     if [ -L ${BIN_DIR}/\$cmd ]; then
         rm -f ${BIN_DIR}/\$cmd
     fi
