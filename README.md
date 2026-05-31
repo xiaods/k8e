@@ -268,17 +268,30 @@ Isolated Pod (gVisor / Kata / Firecracker)
 
 ### Install the Skill
 
-`install-skill` copies skill files to the agent's skills directory:
+**Option A — Full k8e install** (server node, auto-discovers cluster):
 
 ```bash
-# All supported agents at once
 k8e sandbox install-skill all
-
-# Or per agent
-k8e sandbox install-skill claude    # → ~/.claude/skills/k8e-sandbox/
-k8e sandbox install-skill codex     # → .codex/skills/ or ~/.codex/skills/
-k8e sandbox install-skill pi        # → .pi/skills/ or ~/.pi/skills/
 ```
+
+**Option B — Standalone CLI** (remote client, no server install):
+
+```bash
+# 1. Download the platform-specific binary (~44MB)
+curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
+chmod +x k8e-sandbox-cli-linux-amd64
+
+# 2. Point to your K8E gateway
+export K8E_SANDBOX_ENDPOINT=<server-ip>:50051
+
+# 3. Install the skill
+./k8e-sandbox-cli-linux-amd64 sandbox install-skill all
+
+# 4. All sandbox commands work the same
+./k8e-sandbox-cli-linux-amd64 sandbox run "print('hello')" --lang python
+```
+
+Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
 
 Then ask your agent naturally:
 
