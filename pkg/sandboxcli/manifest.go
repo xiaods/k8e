@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v2"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
-	"github.com/xiaods/k8e/pkg/sandboxmcp"
+	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
 // ManifestEntry represents one entry in a workspace manifest.
@@ -60,7 +60,7 @@ func parseManifest(path string) (*Manifest, error) {
 
 // materializeManifest applies all entries from a parsed manifest into a sandbox session.
 // On error, returns the 1-based index of the failed entry.
-func materializeManifest(client *sandboxmcp.Client, sid string, m *Manifest) error {
+func materializeManifest(client *client.Client, sid string, m *Manifest) error {
 	if m == nil || len(m.Entries) == 0 {
 		return nil
 	}
@@ -88,7 +88,7 @@ func materializeManifest(client *sandboxmcp.Client, sid string, m *Manifest) err
 	return nil
 }
 
-func materializeFile(ctx context.Context, client *sandboxmcp.Client, sid string, f *FileEntry) error {
+func materializeFile(ctx context.Context, client *client.Client, sid string, f *FileEntry) error {
 	mode := "w"
 	if f.Mode != "" {
 		mode = f.Mode
@@ -99,14 +99,14 @@ func materializeFile(ctx context.Context, client *sandboxmcp.Client, sid string,
 	return err
 }
 
-func materializeDir(ctx context.Context, client *sandboxmcp.Client, sid string, d *DirEntry) error {
+func materializeDir(ctx context.Context, client *client.Client, sid string, d *DirEntry) error {
 	_, err := client.SandboxServiceClient.Exec(ctx, &pb.ExecRequest{
 		SessionId: sid, Command: "mkdir -p " + filepath.Join("/workspace", d.Path), Timeout: 10,
 	})
 	return err
 }
 
-func materializeGitRepo(ctx context.Context, client *sandboxmcp.Client, sid string, g *GitRepoEntry) error {
+func materializeGitRepo(ctx context.Context, client *client.Client, sid string, g *GitRepoEntry) error {
 	ref := g.Ref
 	if ref == "" {
 		ref = "main"

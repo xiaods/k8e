@@ -1,9 +1,6 @@
 ---
 name: k8e-sandbox-skill
-description: "Manage K8E Sandbox — run code in isolated environments via CLI. Supports codex, claude, pi, and openclaw."
-metadata:
-  openclaw:
-    emoji: "🏗️"
+description: "Manage K8E Sandbox — run code in isolated environments via CLI. Supports claude code, codex, and pi."
 ---
 
 # K8E Sandbox Skill

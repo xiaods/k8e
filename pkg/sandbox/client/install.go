@@ -1,4 +1,4 @@
-package sandboxmcp
+package client
 
 import (
 	"fmt"
@@ -8,6 +8,22 @@ import (
 )
 
 const skillFileName = "SKILL.md"
+
+const (
+	dirClaude = ".claude"
+	dirCodex  = ".codex"
+	dirPi     = ".pi"
+)
+
+// installSkillLocalOrGlobal installs skills into the agent's local workspace first,
+// falling back to the global home directory.
+func installSkillLocalOrGlobal(dir, label string) error {
+	local := filepath.Join(dir, "skills")
+	if _, err := os.Stat(dir); err == nil {
+		return installAllSkills(local, label+" (workspace)")
+	}
+	return installAllSkills(filepath.Join(homeDir(), dir, "skills"), label+" (global)")
+}
 
 // skillsDataDir returns the staged skills directory.
 // Search order: /var/lib/k8e/server/skills/ (production), binary dir/skills/, working dir/skills/ (dev).
@@ -28,28 +44,21 @@ func skillsDataDir() (string, error) {
 }
 
 // InstallSkill installs skill files into the given agent.
-// target: "claude", "kiro", "gemini", "openclaw", or "all"
+// target: "claude", "codex", "pi", or "all"
 func InstallSkill(target string) error {
 	switch target {
 	case "claude":
-		return installAllSkills(filepath.Join(homeDir(), ".claude", "skills"), "claude code")
-	case "kiro":
-		local := filepath.Join(".kiro", "skills")
-		if _, err := os.Stat(filepath.Join(".kiro")); err == nil {
-			return installAllSkills(local, "kiro-cli (workspace)")
-		}
-		return installAllSkills(filepath.Join(homeDir(), ".kiro", "skills"), "kiro-cli (global)")
-	case "openclaw":
-		return installAllSkills(filepath.Join(homeDir(), ".openclaw", "skills"), "openclaw")
-	case "gemini":
-		return installAllSkills(filepath.Join(homeDir(), ".gemini", "skills"), "gemini cli")
+		return installAllSkills(filepath.Join(homeDir(), dirClaude, "skills"), "claude code")
+	case "codex":
+		return installSkillLocalOrGlobal(dirCodex, "codex")
+	case "pi":
+		return installSkillLocalOrGlobal(dirPi, "pi")
 	case "all":
 		var errs []error
 		for _, fn := range []func() error{
 			func() error { return InstallSkill("claude") },
-			func() error { return InstallSkill("kiro") },
-			func() error { return InstallSkill("gemini") },
-			func() error { return InstallSkill("openclaw") },
+			func() error { return InstallSkill("codex") },
+			func() error { return InstallSkill("pi") },
 		} {
 			if err := fn(); err != nil {
 				errs = append(errs, err)

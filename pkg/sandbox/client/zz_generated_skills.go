@@ -2,7 +2,7 @@
 // sources:
 // skills/k8e-sandbox-skill/SKILL.md
 
-package sandboxmcp
+package client
 
 import (
 	"bytes"

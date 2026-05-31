@@ -31,7 +31,7 @@ This is a single-context repo:
 ├── docs/kip-7-embedded-etcd-fuse.md        # Embedded etcd 融合方案（集成官方 embed 包）
 ├── pkg/                         # Main source code
 │   ├── sandboxcli/              # CLI command handlers (k8e sandbox)
-│   ├── sandboxmcp/              # gRPC client + skill installation
+│   ├── sandbox/client/              # gRPC client + skill installation
 │   ├── sandboxmatrix/           # Core sandbox orchestration (warm pools, sessions)
 │   ├── server/                  # Control plane daemon
 │   ├── agent/                   # Agent daemon (kubelet + containerd)

@@ -11,11 +11,11 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
-	"github.com/xiaods/k8e/pkg/sandboxmcp"
+	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
 // newClientFromCtx creates a gRPC client using endpoint/apikey from parent sandbox command flags.
-func newClientFromCtx(ctx *cli.Context) *sandboxmcp.Client {
+func newClientFromCtx(ctx *cli.Context) *client.Client {
 	endpoint := ""
 	apikey := ""
 	if parent := ctx.Parent(); parent != nil {
@@ -30,12 +30,12 @@ func newClientFromCtx(ctx *cli.Context) *sandboxmcp.Client {
 		apikey = os.Getenv("K8E_SANDBOX_APIKEY")
 	}
 
-	var c *sandboxmcp.Client
+	var c *client.Client
 	var err error
 	if endpoint != "" {
-		c, err = sandboxmcp.NewClientWithEndpoint(endpoint, apikey)
+		c, err = client.NewClientWithEndpoint(endpoint, apikey)
 	} else {
-		c, err = sandboxmcp.NewClient()
+		c, err = client.NewClient()
 	}
 	if err != nil {
 		printErrorExit("sandbox not reachable: "+err.Error(), 2)
@@ -67,7 +67,7 @@ func isMultiLine(code string) bool {
 
 // ensureSession resolves session ID, auto-creating one with manifest if needed.
 // Returns (sessionID, needsFinalize, error).
-func ensureSession(client *sandboxmcp.Client, ctx *cli.Context) (string, bool, error) {
+func ensureSession(client *client.Client, ctx *cli.Context) (string, bool, error) {
 	sid, err := resolveSession(context.Background(), ctx.String("tenant"), ctx.String("session-id"))
 	if err != nil {
 		return "", false, err
@@ -132,7 +132,7 @@ func buildCommand(lang, code string) string {
 }
 
 // writeCodeFile writes multi-line code to the sandbox workspace via WriteFile RPC.
-func writeCodeFile(client *sandboxmcp.Client, sid, lang, code string) error {
+func writeCodeFile(client *client.Client, sid, lang, code string) error {
 	path := "/tmp/_k8e_run.py"
 	switch strings.ToLower(lang) {
 	case "node", "nodejs", "js", "javascript":
@@ -204,7 +204,7 @@ func RunCommand() cli.Command {
 	}
 }
 
-func runStream(client *sandboxmcp.Client, req *pb.ExecRequest) error {
+func runStream(client *client.Client, req *pb.ExecRequest) error {
 	stream, err := client.SandboxServiceClient.ExecStream(context.Background(), req)
 	if err != nil {
 		printErrorExit("exec: "+err.Error(), 1)
@@ -225,7 +225,7 @@ func runStream(client *sandboxmcp.Client, req *pb.ExecRequest) error {
 	return nil
 }
 
-func runJSON(client *sandboxmcp.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) error {
+func runJSON(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) error {
 	resp, err := client.SandboxServiceClient.Exec(context.Background(), req)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no pod IP") {
@@ -653,7 +653,7 @@ func InstallSkillCommand() cli.Command {
 			if target == "" {
 				target = "all"
 			}
-			if err := sandboxmcp.InstallSkill(target); err != nil {
+			if err := client.InstallSkill(target); err != nil {
 				printErrorExit(err.Error(), 1)
 			}
 			return nil
