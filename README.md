@@ -40,7 +40,7 @@ curl -sfL https://k8e.sh/install.sh | sh -
 | 3 | [⚙️ Components](#️-components) |
 | 4 | [🚀 Quick Start](#-quick-start) |
 | 5 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup) |
-| 6 | [🤖 Sandbox CLI Skill](#-sandbox-cli-skill) |
+| 6 | [🤖 Sandbox CLI](#-sandbox-cli) |
 | 7 | [🐍 Python Client SDK](#-python-client-sdk) |
 | 8 | [🟦 TypeScript Client SDK](#-typescript-client-sdk) |
 | 9 | [🖥️ Advanced Installation](#️-advanced-installation) |
@@ -564,7 +564,7 @@ K8E_KUBECONFIG_OUTPUT=<path>    # kubeconfig output path
 | Binary size | **<100MB** | ~70MB | ~1GB+ | ~200MB |
 | Agentic Sandbox | ✅ Native | ❌ No | ⚠️ Manual | ❌ No |
 | eBPF networking | ✅ Cilium | ⚠️ Optional | ⚠️ Optional | ❌ No |
-| Sandbox CLI skill built-in | ✅ Yes | ❌ No | ❌ No | ❌ No |
+| Sandbox CLI standalone | ✅ Yes | ❌ No | ❌ No | ❌ No |
 | HA embedded etcd | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited |
 | CNCF conformant | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
 | Multi-arch | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
