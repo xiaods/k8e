@@ -29,9 +29,8 @@ func installSkillLocalOrGlobal(dir, label string) error {
 // Search order: /var/lib/k8e/server/skills/ (production), binary dir/skills/, working dir/skills/ (dev).
 func skillsDataDir() (string, error) {
 	candidates := []string{
-		"/var/lib/k8e/server/skills",                    // production: k8e server data dir
-		filepath.Join(os.TempDir(), "k8e-skills", "skills"), // standalone CLI
-		filepath.Join("skills"),                             // working dir (dev/go run)
+		filepath.Join(os.TempDir(), "k8e-skills", "skills"), // standalone CLI staging
+		filepath.Join("skills"),                                // working dir (dev/go run)
 	}
 	if exe, err := os.Executable(); err == nil {
 		candidates = append([]string{filepath.Join(filepath.Dir(exe), "skills")}, candidates...)
