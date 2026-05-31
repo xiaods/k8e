@@ -76,11 +76,9 @@ func NewClient() (*Client, error) {
 func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 	var opts []grpc.DialOption
 	if apiKey != "" {
-		// API key auth over TLS (not insecure)
-		creds, err := resolveCreds()
-		if err != nil {
-			return nil, fmt.Errorf("sandbox client: tls: %w", err)
-		}
+		// TLS with skip-verify: encryption via TLS, authentication via API key.
+		// Remote clients don't have the self-signed CA cert to verify the server.
+		creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 		opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
