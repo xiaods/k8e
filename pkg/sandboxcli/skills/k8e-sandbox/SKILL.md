@@ -33,6 +33,20 @@ fi
 
 Do NOT proceed with any code execution until both are set.
 
+### Server-side TLS setup (one-time)
+
+The server admin must add the public IP to the TLS certificate SAN list so clients can verify the connection:
+
+```yaml
+# /etc/k8e/config.yaml
+tls-san:
+  - 54.116.141.251
+```
+
+Then restart: `systemctl restart k8e`
+
+If the server has not added the public IP, the CLI will use TOFU (Trust-On-First-Use) with API key authentication — functional but less secure. Remind the admin to add `tls-san` for full TLS verification.
+
 ## Environment
 
 Download the platform-specific binary (~44MB) from [GitHub Releases](https://github.com/xiaods/k8e/releases).
