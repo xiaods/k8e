@@ -6,19 +6,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
-	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -141,51 +136,6 @@ func sandboxCacheDir() (string, error) {
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
-
-var sessionGVR = k8sschema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxsessions"}
-
-// FindActiveSession returns the session ID of an existing Active session for the given tenantID,
-// or "" if none found. Used for cross-process session reuse.
-func FindActiveSession(tenantID string) (string, error) {
-	if tenantID == "" {
-		return "", nil
-	}
-	dyn, err := newDynamicClient()
-	if err != nil {
-		return "", nil
-	}
-	list, err := dyn.Resource(sessionGVR).Namespace("sandbox-matrix").List(
-		context.Background(), metav1.ListOptions{},
-	)
-	if err != nil {
-		return "", nil
-	}
-	for i := range list.Items {
-		data, _ := json.Marshal(list.Items[i].Object)
-		var s sandboxv1.SandboxSession
-		if err := json.Unmarshal(data, &s); err != nil {
-			continue
-		}
-		if s.Spec.TenantID == tenantID && s.Status.Phase == sandboxv1.SandboxPhaseActive {
-			return s.Name, nil
-		}
-	}
-	return "", nil
-}
-
-func newDynamicClient() (dynamic.Interface, error) {
-	for _, kc := range resolvedKubeconfigCandidates() {
-		if _, err := os.Stat(kc); err != nil {
-			continue
-		}
-		restCfg, err := clientcmd.BuildConfigFromFlags("", kc)
-		if err != nil {
-			continue
-		}
-		return dynamic.NewForConfig(restCfg)
-	}
-	return nil, fmt.Errorf("no kubeconfig found")
-}
 
 func resolveCreds() (credentials.TransportCredentials, error) {
 	// explicit env override — support both CA-only and mTLS (cert+key)
