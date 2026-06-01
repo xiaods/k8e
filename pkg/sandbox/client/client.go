@@ -101,7 +101,7 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 	client := &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}
 
 	// Download CA cert
-	resp, err := client.GetCACert(context.Background(), &pb.GetCACertRequest{})
+	resp, err := client.SandboxServiceClient.GetCACert(context.Background(), &pb.GetCACertRequest{})
 	if err == nil && resp.Cert != "" {
 		os.MkdirAll(cacheDir, 0700) //nolint:errcheck
 		os.WriteFile(caFile, []byte(resp.Cert), 0644) //nolint:errcheck
