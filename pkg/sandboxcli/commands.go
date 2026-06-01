@@ -113,10 +113,8 @@ func buildCommand(lang, code string) string {
 		}
 		return fmt.Sprintf("node -e %q", code)
 	case "ts", "typescript":
-		if isMultiLine(code) {
-			return "tsx /workspace/_k8e_run.ts"
-		}
-		return fmt.Sprintf("tsx -e %q", code)
+		// tsx always creates /tmp/tsx-0. Redirect via TMPDIR.
+		return "TMPDIR=/workspace tsx /workspace/_k8e_run.ts"
 	default: // bash / sh
 		return code
 	}
@@ -177,7 +175,7 @@ func runAction(ctx *cli.Context) error {
 		return nil
 	}
 
-	if isInterpretedLang(lang) && isMultiLine(code) {
+	if isInterpretedLang(lang) && (isMultiLine(code) || strings.HasPrefix(lang, "ts")) {
 		if err := writeCodeFile(cli, sid, lang, code); err != nil {
 			printErrorExit("write code: "+err.Error(), 1)
 			return nil
