@@ -95,6 +95,8 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 	// Trust-On-First-Use (TOFU): connect without cert verification to download
 	// the server CA cert via GetCACert (authenticated with API key). Once the cert
 	// is saved locally, reconnect with full TLS verification for all subsequent calls.
+	// The InsecureSkipVerify window is a single GetCACert RPC protected by API key auth.
+	//nolint:gosec // intentional TOFU pattern
 	creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})
 	conn, err := dialWithAPIKey(endpoint, apiKey, creds)
 	if err != nil {
