@@ -104,17 +104,17 @@ func buildCommand(lang, code string) string {
 	switch strings.ToLower(lang) {
 	case "python", "python3", "py":
 		if isMultiLine(code) {
-			return "python3 /tmp/_k8e_run.py"
+			return "python3 /workspace/_k8e_run.py"
 		}
 		return fmt.Sprintf("python3 -c %q", code)
 	case "node", "nodejs", "js", "javascript":
 		if isMultiLine(code) {
-			return "node /tmp/_k8e_run.js"
+			return "node /workspace/_k8e_run.js"
 		}
 		return fmt.Sprintf("node -e %q", code)
 	case "ts", "typescript":
 		if isMultiLine(code) {
-			return "tsx /tmp/_k8e_run.ts"
+			return "tsx /workspace/_k8e_run.ts"
 		}
 		return fmt.Sprintf("tsx -e %q", code)
 	default: // bash / sh
@@ -124,12 +124,12 @@ func buildCommand(lang, code string) string {
 
 // writeCodeFile writes multi-line code to the sandbox workspace via WriteFile RPC.
 func writeCodeFile(client *client.Client, sid, lang, code string) error {
-	path := "/tmp/_k8e_run.py"
+	path := "/workspace/_k8e_run.py"
 	switch strings.ToLower(lang) {
 	case "node", "nodejs", "js", "javascript":
-		path = "/tmp/_k8e_run.js"
+		path = "/workspace/_k8e_run.js"
 	case "ts", "typescript":
-		path = "/tmp/_k8e_run.ts"
+		path = "/workspace/_k8e_run.ts"
 	}
 	_, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
 		SessionId: sid, Path: path, Content: code, Mode: "w",

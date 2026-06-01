@@ -22,3 +22,5 @@ spec:
     kubeProxyReplacement: "true"
     k8sServiceHost: "%{API_SERVER_HOST}%"
     k8sServicePort: "%{API_SERVER_PORT}%"
+    dnsProxy:
+      enabled: true

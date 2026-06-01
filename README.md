@@ -344,11 +344,13 @@ for i in range(10):
     print(i)
 EOF
 
-# Write a script then execute
+# Default egress allows pypi.org, github.com, npmjs.org — auto-mode works for pip installs
+SID=$(k8e-sandbox-cli create | jq -r .session_id)
 k8e-sandbox-cli write $SID /workspace/script.py <<'PYEOF'
 import pandas as pd
 print(pd.__version__)
 PYEOF
+k8e-sandbox-cli run "pip install pandas" --session-id $SID
 k8e-sandbox-cli run "python3 /workspace/script.py" --session-id $SID
 
 # Create session with custom runtime and egress
