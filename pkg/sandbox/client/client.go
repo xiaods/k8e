@@ -92,7 +92,9 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 		}
 	}
 
-	// First connection: skip verify, download CA cert, save for future use
+	// Trust-On-First-Use (TOFU): connect without cert verification to download
+	// the server CA cert via GetCACert (authenticated with API key). Once the cert
+	// is saved locally, reconnect with full TLS verification for all subsequent calls.
 	creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})
 	conn, err := dialWithAPIKey(endpoint, apiKey, creds)
 	if err != nil {

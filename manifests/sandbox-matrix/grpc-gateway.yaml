@@ -49,6 +49,10 @@ spec:
       labels:
         app: sandbox-grpc-gateway
     spec:
+      # hostNetwork: required so the gateway listens on the host port 50051.
+      # The k8e-sandbox-cli connects to 127.0.0.1:50051 on the server node.
+      # Without hostNetwork, the pod network is not reachable from the host.
+      # Security: only use on single-node clusters or control-plane nodes.
       hostNetwork: true
       serviceAccountName: sandbox-grpc-gateway
       volumes:
