@@ -142,13 +142,12 @@ func tofuConnect(endpoint, apiKey, caFile string) (*Client, error) {
 // fingerprint is verified against the GetCACert response before any other
 // data is exchanged. After verification, the connection is discarded and a
 // fully-verified connection is established.
-//
-//nolint:gosec // InsecureSkipVerify is intentional and scoped — see function doc
 func newTOFUCredentials() (*[]*x509.Certificate, credentials.TransportCredentials) {
 	peerCerts := &[]*x509.Certificate{}
+	//nolint:gosec // intentional TOFU, MITM blocked by verifyFingerprint
 	creds := credentials.NewTLS(&tls.Config{
 		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: true, // NOSONAR — TOFU bootstrap, verified immediately after
 		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 			for _, raw := range rawCerts {
 				if cert, err := x509.ParseCertificate(raw); err == nil {
