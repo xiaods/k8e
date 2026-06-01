@@ -85,6 +85,8 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 				return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 			}
 		}
+		// Cached cert validation failed (e.g. endpoint IP not in SAN) — clear and fall through to TOFU
+		os.Remove(caFile) //nolint:errcheck
 	}
 
 	// Trust-On-First-Use (TOFU): connect without cert verification to download
@@ -99,20 +101,11 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 	}
 	client := &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}
 
-	// Download CA cert
+	// Download CA cert for future use (cache only, don't disrupt current connection)
 	resp, err := client.SandboxServiceClient.GetCACert(context.Background(), &pb.GetCACertRequest{})
 	if err == nil && resp.Cert != "" {
 		os.MkdirAll(cacheDir, 0700) //nolint:errcheck
 		os.WriteFile(caFile, []byte(resp.Cert), 0644) //nolint:errcheck
-		// Reconnect with verified TLS using the downloaded cert
-		conn.Close()
-		creds, err = credentials.NewClientTLSFromFile(caFile, "")
-		if err == nil {
-			conn, err = dialWithAPIKey(endpoint, apiKey, creds)
-			if err == nil {
-				return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
-			}
-		}
 	}
 	return client, nil
 }

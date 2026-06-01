@@ -14,6 +14,8 @@ import (
 	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
+const errSessionNotFound = "not found"
+
 // newClientFromCtx creates a gRPC client using endpoint/apikey from global flags.
 func newClientFromCtx(ctx *cli.Context) *client.Client {
 	endpoint := ctx.GlobalString("endpoint")
@@ -153,49 +155,70 @@ func RunCommand() cli.Command {
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
 			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
 		},
-		Action: func(ctx *cli.Context) error {
-			code, err := readCode(ctx)
-			if err != nil {
-				printErrorExit(err.Error(), 1)
-				return nil
-			}
-			lang := ctx.String("lang")
-			raw := ctx.Bool("raw")
-
-			client := newClientFromCtx(ctx)
-			defer client.Close()
-
-			sid, needsFinalize, err := ensureSession(client, ctx)
-			if err != nil {
-				printErrorExit(err.Error(), 2)
-				return nil
-			}
-
-			// python/node multi-line: write file first, then execute
-			if isInterpretedLang(lang) && isMultiLine(code) {
-				if err := writeCodeFile(client, sid, lang, code); err != nil {
-					printErrorExit("write code: "+err.Error(), 1)
-					return nil
-				}
-			}
-
-			cmd := buildCommand(lang, code)
-			execReq := &pb.ExecRequest{
-				SessionId: sid, Command: cmd,
-				Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace",
-			}
-
-			if raw {
-				return runStream(client, execReq)
-			}
-			return runJSON(client, execReq, sid, needsFinalize, ctx.String("tenant"))
-		},
+		Action: runAction,
 	}
+}
+
+func runAction(ctx *cli.Context) error {
+	code, err := readCode(ctx)
+	if err != nil {
+		printErrorExit(err.Error(), 1)
+		return nil
+	}
+	lang := ctx.String("lang")
+	raw := ctx.Bool("raw")
+
+	cli := newClientFromCtx(ctx)
+	defer cli.Close()
+
+	sid, needsFinalize, err := ensureSession(cli, ctx)
+	if err != nil {
+		printErrorExit(err.Error(), 2)
+		return nil
+	}
+
+	if isInterpretedLang(lang) && isMultiLine(code) {
+		if err := writeCodeFile(cli, sid, lang, code); err != nil {
+			printErrorExit("write code: "+err.Error(), 1)
+			return nil
+		}
+	}
+
+	cmd := buildCommand(lang, code)
+	req := &pb.ExecRequest{SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace"}
+
+	retry := func() error {
+		clearState(ctx.String("tenant"))
+		s, f, e := ensureSession(cli, ctx)
+		if e != nil {
+			return e
+		}
+		req.SessionId = s
+		if raw {
+			return runStream(cli, req)
+		}
+		return runJSON(cli, req, s, f, ctx.String("tenant"))
+	}
+
+	if raw {
+		if err := runStream(cli, req); isSessionExpired(err) {
+			return retry()
+		} else {
+			return err
+		}
+	}
+	if err := runJSON(cli, req, sid, needsFinalize, ctx.String("tenant")); isSessionExpired(err) {
+		return retry()
+	}
+	return err
 }
 
 func runStream(client *client.Client, req *pb.ExecRequest) error {
 	stream, err := client.SandboxServiceClient.ExecStream(context.Background(), req)
 	if err != nil {
+		if strings.Contains(err.Error(), errSessionNotFound) {
+			return fmt.Errorf("session %s not found (expired or destroyed)", req.SessionId)
+		}
 		printErrorExit("exec: "+err.Error(), 1)
 		return nil
 	}
@@ -214,12 +237,19 @@ func runStream(client *client.Client, req *pb.ExecRequest) error {
 	return nil
 }
 
+func isSessionExpired(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, errSessionNotFound) || strings.Contains(s, "expired")
+}
+
 func runJSON(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) error {
 	resp, err := client.SandboxServiceClient.Exec(context.Background(), req)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no pod IP") {
-			printErrorExit("session not found: "+sid+" (expired or destroyed)", 1)
-			return nil
+		if strings.Contains(err.Error(), errSessionNotFound) || strings.Contains(err.Error(), "no pod IP") {
+			return fmt.Errorf("session %s not found (expired or destroyed)", sid)
 		}
 		printErrorExit("exec: "+err.Error(), 2)
 		return nil
@@ -244,7 +274,7 @@ func StatusCommand() cli.Command {
 			// lightweight probe
 		_, err := client.SandboxServiceClient.DestroySession(context.Background(),
 			&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
-		available := err == nil || strings.Contains(err.Error(), "not found")
+		available := err == nil || strings.Contains(err.Error(), errSessionNotFound)
 		errMsg := ""
 		if !available && err != nil {
 			errMsg = err.Error()
