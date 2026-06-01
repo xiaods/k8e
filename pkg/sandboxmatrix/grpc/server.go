@@ -121,7 +121,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	opts := []grpc.ServerOption{grpc.Creds(creds)}
 	if len(s.apiKeys) > 0 {
-		opts = append(opts, grpc.UnaryInterceptor(s.apiKeyInterceptor))
+		opts = append(opts,
+			grpc.UnaryInterceptor(s.apiKeyInterceptor),
+			grpc.StreamInterceptor(s.apiStreamInterceptor),
+		)
 	}
 	gs := grpc.NewServer(opts...)
 	pb.RegisterSandboxServiceServer(gs, s)
@@ -190,8 +193,18 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 	if err != nil {
 		return err
 	}
-	body, _ := json.Marshal(map[string]any{"command": req.Command})
-	httpReq, _ := http.NewRequestWithContext(stream.Context(), http.MethodPost,
+	timeout := req.Timeout
+	if timeout == 0 {
+		timeout = 30
+	}
+	workdir := req.Workdir
+	if workdir == "" {
+		workdir = "/workspace"
+	}
+	body, _ := json.Marshal(map[string]any{"command": req.Command, "timeout": timeout, "workdir": workdir})
+	httpCtx, cancel := context.WithTimeout(stream.Context(), time.Duration(timeout+5)*time.Second)
+	defer cancel()
+	httpReq, _ := http.NewRequestWithContext(httpCtx, http.MethodPost,
 		fmt.Sprintf("http://%s:%d/exec/stream", podIP, sandboxdPort), bytes.NewReader(body))
 
 	resp, err := sandboxdClient.Do(httpReq)
@@ -345,27 +358,43 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 			}
 		}
 	}
-	return "", status.Errorf(codes.Unavailable, "session %s has no pod IP after 60s", sessionID)
+	return "", status.Errorf(codes.FailedPrecondition, "session %s has no pod IP after 60s", sessionID)
 }
 
-// apiKeyInterceptor validates the authorization header against known API keys.
-func (s *Server) apiKeyInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+// validateAPIKey extracts and validates the API key from the gRPC context metadata.
+func (s *Server) validateAPIKey(ctx context.Context) error {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "missing metadata")
+		return status.Error(codes.Unauthenticated, "missing metadata")
 	}
 	auth := md.Get("authorization")
 	if len(auth) == 0 {
-		return nil, status.Error(codes.Unauthenticated, "missing authorization header")
+		return status.Error(codes.Unauthenticated, "missing authorization header")
 	}
 	token := strings.TrimPrefix(auth[0], "Bearer ")
 	if token == auth[0] {
-		return nil, status.Error(codes.Unauthenticated, "invalid authorization format, expected 'Bearer <key>'")
+		return status.Error(codes.Unauthenticated, "invalid authorization format, expected 'Bearer <key>'")
 	}
 	for _, key := range s.apiKeys {
 		if key == token {
-			return handler(ctx, req)
+			return nil
 		}
 	}
-	return nil, status.Error(codes.Unauthenticated, "invalid api key")
+	return status.Error(codes.Unauthenticated, "invalid api key")
+}
+
+// apiKeyInterceptor validates the authorization header against known API keys for unary RPCs.
+func (s *Server) apiKeyInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if err := s.validateAPIKey(ctx); err != nil {
+		return nil, err
+	}
+	return handler(ctx, req)
+}
+
+// apiStreamInterceptor validates the authorization header for streaming RPCs.
+func (s *Server) apiStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if err := s.validateAPIKey(ss.Context()); err != nil {
+		return err
+	}
+	return handler(srv, ss)
 }

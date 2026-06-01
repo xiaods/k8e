@@ -237,11 +237,18 @@ func connectVerified(endpoint, apiKey, caFile string) (*Client, error) {
 
 // dialWithAPIKey creates a gRPC connection with TLS creds and API key auth interceptor.
 func dialWithAPIKey(endpoint, apiKey string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+	injectAuth := func(ctx context.Context) context.Context {
+		return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
+	}
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
-	opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
-		return invoker(ctx, method, req, reply, cc, opts...)
-	}))
+	opts = append(opts,
+		grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+			return invoker(injectAuth(ctx), method, req, reply, cc, opts...)
+		}),
+		grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+			return streamer(injectAuth(ctx), desc, cc, method, opts...)
+		}),
+	)
 	return grpc.NewClient(endpoint, opts...)
 }
 

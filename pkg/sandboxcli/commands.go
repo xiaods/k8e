@@ -2,6 +2,7 @@ package sandboxcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,11 +11,16 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
 const errSessionNotFound = "not found"
+
+// ErrSessionGone is returned when a sandbox session has expired or been destroyed.
+var ErrSessionGone = errors.New("sandbox session expired or destroyed")
 
 // newClientFromCtx creates a gRPC client using endpoint/apikey from global flags.
 func newClientFromCtx(ctx *cli.Context) *client.Client {
@@ -185,69 +191,99 @@ func runAction(ctx *cli.Context) error {
 	cmd := buildCommand(lang, code)
 	req := &pb.ExecRequest{SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace"}
 
-	retry := func() error {
+	retry := func() (int, error) {
 		clearState(ctx.String("tenant"))
 		s, f, e := ensureSession(cli, ctx)
 		if e != nil {
-			return e
+			return 1, e
 		}
 		req.SessionId = s
 		if raw {
-			return runStream(cli, req)
+			return runStream(cli, req, s, f, ctx.String("tenant"))
 		}
-		return runJSON(cli, req, s, f, ctx.String("tenant"))
+		err := runJSON(cli, req, s, f, ctx.String("tenant"))
+		return 0, err
 	}
 
 	if raw {
-		if err := runStream(cli, req); isSessionExpired(err) {
-			return retry()
-		} else {
+		exitCode, err := runStream(cli, req, sid, needsFinalize, ctx.String("tenant"))
+		if isSessionExpired(err) {
+			exitCode, err = retry()
+		}
+		if err != nil {
 			return err
 		}
+		os.Exit(exitCode)
+		return nil
 	}
 	if err := runJSON(cli, req, sid, needsFinalize, ctx.String("tenant")); isSessionExpired(err) {
-		return retry()
+		_, err = retry()
+		if err != nil {
+			return err
+		}
 	}
 	return err
 }
 
-func runStream(client *client.Client, req *pb.ExecRequest) error {
+func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) (exitCode int, err error) {
 	stream, err := client.SandboxServiceClient.ExecStream(context.Background(), req)
 	if err != nil {
-		if strings.Contains(err.Error(), errSessionNotFound) {
-			return fmt.Errorf("session %s not found (expired or destroyed)", req.SessionId)
+		if isSessionExpired(err) {
+			return 1, fmt.Errorf("%w: session %s", ErrSessionGone, req.SessionId)
 		}
-		printErrorExit("exec: "+err.Error(), 1)
-		return nil
+		logrus.Errorf("exec stream: %v", err)
+		return 1, err
 	}
+
+	var streamErr error
 	for {
-		chunk, err := stream.Recv()
-		if err != nil {
-			if err.Error() == "EOF" || strings.Contains(err.Error(), "EOF") {
+		chunk, recvErr := stream.Recv()
+		if recvErr != nil {
+			if recvErr.Error() == "EOF" || strings.Contains(recvErr.Error(), "EOF") {
 				break
 			}
-			logrus.Debugf("stream error: %v", err)
+			streamErr = recvErr
 			break
 		}
 		os.Stdout.WriteString(chunk.Chunk)
 	}
-	os.Exit(0)
-	return nil
+
+	if needsFinalize {
+		_ = finalizeState(tenant, sid)
+	}
+
+	if streamErr != nil {
+		fmt.Fprintf(os.Stderr, "stream error: %v\n", streamErr)
+		return 1, nil
+	}
+	return 0, nil
 }
 
 func isSessionExpired(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, errSessionNotFound) || strings.Contains(s, "expired")
+	if errors.Is(err, ErrSessionGone) {
+		return true
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch st.Code() {
+	case codes.NotFound:
+		return true
+	case codes.FailedPrecondition:
+		return true
+	}
+	return false
 }
 
 func runJSON(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) error {
 	resp, err := client.SandboxServiceClient.Exec(context.Background(), req)
 	if err != nil {
-		if strings.Contains(err.Error(), errSessionNotFound) || strings.Contains(err.Error(), "no pod IP") {
-			return fmt.Errorf("session %s not found (expired or destroyed)", sid)
+		if isSessionExpired(err) {
+			return fmt.Errorf("%w: session %s", ErrSessionGone, sid)
 		}
 		printErrorExit("exec: "+err.Error(), 2)
 		return nil
