@@ -37,7 +37,6 @@ This is a single-context repo:
 │   ├── agent/                   # Agent daemon (kubelet + containerd)
 │   └── ...
 ├── skills/k8e-sandbox/         # SKILL.md for agent CLI integration
-├── sdk/python/                  # Python gRPC client SDK
 ├── sandbox/                     # Sandbox container runtime shim
 └── sandboxd/                    # Runtime daemon (Zig)
 ```

@@ -33,19 +33,27 @@ fi
 
 Do NOT proceed with any code execution until both are set.
 
-### Server-side TLS setup (one-time)
+## TLS Certificate Setup (REQUIRED for remote access)
 
-The server admin must add the public IP to the TLS certificate SAN list so clients can verify the connection:
+**Before using the sandbox from a remote client**, the server admin MUST add the public IP to the TLS certificate. Without this, every connection will fail with:
+
+```
+tls: failed to verify certificate: x509: certificate is valid for 127.0.0.1, ::1, ..., not <PUBLIC_IP>
+```
+
+**Fix** — on the server, add to `/etc/k8e/config.yaml`:
 
 ```yaml
-# /etc/k8e/config.yaml
 tls-san:
   - 54.116.141.251
 ```
 
 Then restart: `systemctl restart k8e`
 
-If the server has not added the public IP, the CLI will use TOFU (Trust-On-First-Use) with API key authentication — functional but less secure. Remind the admin to add `tls-san` for full TLS verification.
+**If you see the TLS certificate error above**:
+1. Tell the user: "The server TLS certificate does not include the public IP. Run `k8e sandbox-apikey create` on the server and add `tls-san` to `/etc/k8e/config.yaml`, then restart k8e."
+2. Delete the local cert cache: `rm -f ~/.k8e/sandbox/ca.crt`
+3. Retry — the CLI will use TOFU (Trust-On-First-Use) as a temporary fallback.
 
 ## Environment
 
@@ -198,6 +206,7 @@ For non-blocking registration: add `--no-wait`, get `approval_id`, call `k8e-san
 
 | Exit code | Cause | Action |
 |-----------|-------|--------|
+| 2 (TLS) | `not <IP>` in error | Server TLS SAN missing. Tell user to add `tls-san` + restart. Clear `~/.k8e/sandbox/ca.crt` and retry. |
 | 2 | Sandbox service unreachable | Check `k8e-sandbox-cli status`, ensure gateway is running |
 | 1 | Command failed / session not found | Parse error message from JSON; create new session if expired |
 | non-zero | Command inside sandbox failed | Check `stderr` in JSON output |

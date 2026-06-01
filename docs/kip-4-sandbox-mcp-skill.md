@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-04-04 | deprecated |
+| @xiaods | 2026-04-04 | outdated |
 
 ## Summary
 
@@ -435,77 +435,6 @@ K8E_SANDBOX_MCP_ADDR=:8811 k8e sandbox-install-skill all
 ## Python & TypeScript Client SDKs
 
 ### Motivation
-
-Agent-generated code (Python scripts, TypeScript services) that needs to call the sandbox should not spawn `k8e sandbox-mcp` — that reintroduces the stdio overhead. The SDKs provide a direct gRPC client with long-lived connection and session reuse.
-
-```
-Agent-generated code → SDK → gRPC (long-lived) → sandbox   ~5ms/call
-vs.
-Agent-generated code → spawn k8e sandbox-mcp → gRPC        ~500ms/call
-```
-
-### Package Layout
-
-```
-sdk/
-  python/sandbox_client.py      — Python gRPC SDK
-  typescript/sandbox_client.ts  — TypeScript gRPC SDK
-```
-
-### Design Principles
-
-- `SandboxClient` holds one gRPC channel for its lifetime — create once, reuse across calls
-- `run(code, language)` is the default entry point — session lazily created and reused automatically
-- TLS auto-discovery mirrors Go client logic: `K8E_SANDBOX_CERT` env → well-known paths → system CA
-- `close()` destroys the default session (unless tenant reuse is enabled) and closes the channel
-
-### Python API
-
-```python
-from sandbox_client import SandboxClient, sandbox_session
-
-# simple usage — session auto-managed
-with SandboxClient() as client:
-    result = client.run("print(sum(range(1,101)))", language="python")
-    # result.stdout, result.stderr, result.exit_code
-
-# explicit session with custom options
-with sandbox_session(runtime_class="kata", allowed_hosts=["github.com"]) as (client, sid):
-    client.write_file(sid, "/workspace/main.py", code)
-    result = client.exec(sid, "python3 /workspace/main.py")
-
-# streaming
-for chunk in client.exec_stream(sid, "python3 train.py"):
-    print(chunk, end="", flush=True)
-```
-
-### TypeScript API
-
-```typescript
-import { SandboxClient, sandboxRun } from "./sandbox_client";
-
-// simple usage
-const client = new SandboxClient();
-const result = await client.run("print('hello')", "python");
-await client.close();
-
-// one-shot
-const { stdout } = await sandboxRun("echo hello");
-
-// streaming
-for await (const chunk of client.execStream(sid, "python3 train.py")) {
-  process.stdout.write(chunk);
-}
-```
-
-### When to Use SDK vs MCP Tools
-
-| Scenario | Use |
-|---|---|
-| Agent executing user requests interactively | MCP tools (`sandbox_run` etc.) |
-| Agent-generated Python/TS code calling sandbox | SDK |
-| CI/CD scripts, backend services | SDK |
-| Non-Go, non-Python, non-TS agent | MCP tools |
 
 ---
 
