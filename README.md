@@ -344,7 +344,7 @@ for i in range(10):
     print(i)
 EOF
 
-# Create a session and write a script
+# Default egress allows pypi.org, github.com, npmjs.org — auto-mode works for pip installs
 SID=$(k8e-sandbox-cli create | jq -r .session_id)
 k8e-sandbox-cli write $SID /workspace/script.py <<'PYEOF'
 import pandas as pd
