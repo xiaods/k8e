@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-05-19 | Draft |
+| @xiaods | 2026-05-19 | outdated |
 
 ## Summary
 
@@ -98,44 +98,7 @@ k8e sandbox-install-skill all  # 同时写入 kiro / claude / gemini 配置
 }
 ```
 
-### Layer 2：gRPC 高性能调用
-
-OpenClaw 的 Python 后端可以直接使用 K8E 的 Python gRPC SDK，绕过 MCP 协议开销：
-
-```python
-from sandbox_client import SandboxClient
-
-with SandboxClient() as client:
-    # 批量创建沙箱会话
-    sessions = []
-    for task in task_batch:
-        sid = await client.create_session(
-            runtime_class="gvisor",
-            allowed_hosts=["github.com", "pypi.org", "api.openclaw.ai"],
-            tenant_id=f"openclaw-{task.id}"
-        )
-        sessions.append(sid)
-
-    # 并行执行
-    results = await asyncio.gather(*[
-        client.run(sid, task.code, language=task.lang)
-        for sid, task in zip(sessions, task_batch)
-    ])
-
-    # 清理
-    for sid in sessions:
-        await client.destroy_session(sid)
-```
-
-**性能对比**：
-
-| 路径 | 延迟（单次调用） | 适用场景 |
-|------|------------------|----------|
-| MCP stdio | ~500ms | 低频交互式操作 |
-| MCP SSE | ~200ms（首次握手后） | 中频、长连接 |
-| gRPC direct | ~1–5ms | 高频、批处理 |
-
-### Layer 3：CRD 策略管控
+### Layer 2：CRD 策略管控
 
 OpenClaw 通过 Kubernetes API 管理 `SandboxMatrix` CRD，实现动态策略调整：
 
@@ -315,8 +278,6 @@ OpenClaw 仪表盘应展示：
 | `pkg/sandboxmatrix/grpc/orchestrator.go` | 会话生命周期 + CNP 网络策略 |
 | `proto/sandbox/v1/sandbox.proto` | gRPC / protobuf 服务定义 |
 | `pkg/sandboxmatrix/api/v1alpha1/types.go` | CRD 类型定义 |
-| `sdk/python/sandbox_client.py` | Python gRPC 客户端 SDK |
-| `sdk/typescript/sandbox_client.ts` | TypeScript gRPC 客户端 SDK |
 | `pkg/cli/cmds/sandbox_mcp.go` | `sandbox-mcp` + `sandbox-install-skill` CLI |
 | `cmd/server/` | 服务器入口（启动 sandbox-matrix） |
 | `cmd/agent/` | Agent 入口（注册 sandbox-matrix） |

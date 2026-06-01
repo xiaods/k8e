@@ -2,13 +2,18 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc"
@@ -74,51 +79,135 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 		return NewClient()
 	}
 
-	// Try cached CA cert first
+	// Try cached CA cert first with a blocking dial so TLS errors surface immediately.
+	// Only certificate validation errors trigger TOFU; network errors are returned as-is
+	// to avoid deleting a valid cache during transient outages.
 	cacheDir, _ := sandboxCacheDir()
 	caFile := filepath.Join(cacheDir, "ca.crt")
 	if _, err := os.Stat(caFile); err == nil {
 		creds, err := credentials.NewClientTLSFromFile(caFile, "")
 		if err == nil {
-			conn, err := dialWithAPIKey(endpoint, apiKey, creds)
+			conn, err := dialWithAPIKey(endpoint, apiKey, creds, true)
 			if err == nil {
 				return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 			}
+			if !isCertError(err) {
+				return nil, fmt.Errorf("sandbox client: %w", err)
+			}
 		}
-		// Cached cert validation failed (e.g. endpoint IP not in SAN) — clear and fall through to TOFU
+		// Cached cert is invalid (malformed or server cert has changed) —
+		// clear and fall through to TOFU to refresh the pinned certificate.
 		os.Remove(caFile) //nolint:errcheck
 	}
 
 	// Trust-On-First-Use (TOFU): connect without cert verification to download
-	// the server CA cert via GetCACert (authenticated with API key). Once the cert
-	// is saved locally, reconnect with full TLS verification for all subsequent calls.
-	// The InsecureSkipVerify window is a single GetCACert RPC protected by API key auth.
-	//nolint:gosec // intentional TOFU pattern
-	creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})
-	conn, err := dialWithAPIKey(endpoint, apiKey, creds)
+	// the server CA cert via GetCACert (authenticated with API key). The TLS
+	// handshake peer certificate fingerprint is captured and compared against
+	// the downloaded cert to detect MITM. After verification, the insecure
+	// connection is closed and a new verified connection is established.
+	var peerCerts []*x509.Certificate
+	tofuCreds := credentials.NewTLS(&tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true,
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			for _, raw := range rawCerts {
+				if cert, err := x509.ParseCertificate(raw); err == nil {
+					peerCerts = append(peerCerts, cert)
+				}
+			}
+			return nil
+		},
+	})
+	//nolint:gosec // intentional TOFU pattern, MITM detected via fingerprint comparison
+	tofuConn, err := dialWithAPIKey(endpoint, apiKey, tofuCreds, false)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
 	}
-	client := &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}
+	tofuClient := pb.NewSandboxServiceClient(tofuConn)
 
-	// Download CA cert (cache only for local connections where SAN matches endpoint)
-	resp, err := client.SandboxServiceClient.GetCACert(context.Background(), &pb.GetCACertRequest{})
-	if err == nil && resp.Cert != "" {
-		os.MkdirAll(cacheDir, 0700) //nolint:errcheck
-		// Save cert — will be used if endpoint matches SAN (local), skipped otherwise
-		os.WriteFile(caFile, []byte(resp.Cert), 0644) //nolint:errcheck
+	resp, err := tofuClient.GetCACert(context.Background(), &pb.GetCACertRequest{})
+	tofuConn.Close() // immediately close insecure connection
+	if err != nil {
+		return nil, fmt.Errorf("sandbox client: get CA cert: %w", err)
 	}
-	return client, nil
+	if resp.Cert == "" {
+		return nil, fmt.Errorf("sandbox client: server returned empty CA cert")
+	}
+
+	// Verify the downloaded cert matches what was presented during TLS handshake
+	if len(peerCerts) == 0 {
+		return nil, fmt.Errorf("sandbox client: no peer certificate captured during TLS handshake")
+	}
+	downloadedPEM, _ := pem.Decode([]byte(resp.Cert))
+	if downloadedPEM == nil {
+		return nil, fmt.Errorf("sandbox client: invalid PEM in server CA cert")
+	}
+	downloadedCert, err := x509.ParseCertificate(downloadedPEM.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox client: parse server CA cert: %w", err)
+	}
+	peerFP := sha256.Sum256(peerCerts[0].Raw)
+	dlFP := sha256.Sum256(downloadedCert.Raw)
+	if !bytes.Equal(peerFP[:], dlFP[:]) {
+		return nil, fmt.Errorf("sandbox client: TLS certificate fingerprint mismatch — possible MITM attack")
+	}
+
+	// Save cert to cache for future connections
+	os.MkdirAll(cacheDir, 0700) //nolint:errcheck
+	os.WriteFile(caFile, []byte(resp.Cert), 0644) //nolint:errcheck
+
+	// Reconnect with full TLS verification using the downloaded cert
+	verifiedCreds, err := credentials.NewClientTLSFromFile(caFile, "")
+	if err != nil {
+		return nil, fmt.Errorf("sandbox client: load downloaded cert: %w", err)
+	}
+	conn, err := dialWithAPIKey(endpoint, apiKey, verifiedCreds, false)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox client: verified dial %s: %w", endpoint, err)
+	}
+	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
 
 // dialWithAPIKey connects with TLS creds and API key auth interceptor.
-func dialWithAPIKey(endpoint, apiKey string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+// When block is true, the dial blocks until the connection is established
+// or the 10s timeout expires — errors (including TLS verification failures)
+// are returned immediately instead of surfacing on the first RPC.
+func dialWithAPIKey(endpoint, apiKey string, creds credentials.TransportCredentials, block bool) (*grpc.ClientConn, error) {
 	opts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
 	opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}))
+	if block {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		opts = append(opts, grpc.WithBlock(), grpc.WithReturnConnectionError())
+		return grpc.DialContext(ctx, endpoint, opts...)
+	}
 	return grpc.NewClient(endpoint, opts...)
+}
+
+// isCertError reports whether err is caused by a TLS certificate validation
+// failure (unknown authority, hostname mismatch, expired cert, etc.) as
+// opposed to a network error (connection refused, timeout, DNS failure).
+func isCertError(err error) bool {
+	var unknownAuth x509.UnknownAuthorityError
+	var certInvalid x509.CertificateInvalidError
+	var hostname x509.HostnameError
+	var constraint x509.ConstraintViolationError
+	if errors.As(err, &unknownAuth) || errors.As(err, &certInvalid) ||
+		errors.As(err, &hostname) || errors.As(err, &constraint) {
+		return true
+	}
+	// gRPC may nest the TLS error deeper; check wrapped errors too
+	for err != nil {
+		errStr := err.Error()
+		if len(errStr) > 5 && (errStr[:5] == "tls: " || errStr[:5] == "x509:") {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
 }
 
 func sandboxCacheDir() (string, error) {

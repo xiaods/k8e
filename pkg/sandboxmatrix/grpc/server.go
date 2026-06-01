@@ -121,13 +121,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	opts := []grpc.ServerOption{grpc.Creds(creds)}
 	if len(s.apiKeys) > 0 {
-		opts = append(opts, grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-			// GetCACert is public — no auth required
-			if info.FullMethod == "/sandbox.v1.SandboxService/GetCACert" {
-				return handler(ctx, req)
-			}
-			return s.apiKeyInterceptor(ctx, req, info, handler)
-		}))
+		opts = append(opts, grpc.UnaryInterceptor(s.apiKeyInterceptor))
 	}
 	gs := grpc.NewServer(opts...)
 	pb.RegisterSandboxServiceServer(gs, s)
@@ -315,7 +309,7 @@ func (s *Server) ApproveAction(ctx context.Context, req *pb.ApproveActionRequest
 }
 
 // GetCACert returns the server's CA certificate for TLS verification.
-// No authentication required — the cert is needed to establish trust.
+// Requires API key authentication — the cert is only served to authenticated clients.
 func (s *Server) GetCACert(ctx context.Context, req *pb.GetCACertRequest) (*pb.GetCACertResponse, error) {
 	pem, err := os.ReadFile(s.certFile)
 	if err != nil {
