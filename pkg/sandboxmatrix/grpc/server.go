@@ -86,6 +86,13 @@ func (s *Server) loadAPIKeys(ctx context.Context) {
 
 // Start registers the gRPC server and begins listening on lisAddr (default 0.0.0.0:50051).
 func (s *Server) Start(ctx context.Context) error {
+	// Check port availability before binding to give a clear error
+	testConn, err := net.DialTimeout("tcp", s.lisAddr, 100*time.Millisecond)
+	if err == nil {
+		testConn.Close()
+		return fmt.Errorf("grpc port %s is already in use — another gateway may be running", s.lisAddr)
+	}
+
 	lis, err := net.Listen("tcp", s.lisAddr)
 	if err != nil {
 		return fmt.Errorf("grpc listen: %w", err)
