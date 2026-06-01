@@ -1198,7 +1198,7 @@ func (x *GetCACertRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetCACertRequest) ProtoMessage() {}
+func (*GetCACertRequest) ProtoMessage() {} // generated stub
 
 func (x *GetCACertRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[22]
@@ -1235,7 +1235,7 @@ func (x *GetCACertResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetCACertResponse) ProtoMessage() {}
+func (*GetCACertResponse) ProtoMessage() {} // generated stub
 
 func (x *GetCACertResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[23]
