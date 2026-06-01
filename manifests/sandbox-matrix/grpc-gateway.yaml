@@ -65,7 +65,6 @@ spec:
         command: ["/k8e", "sandbox-gateway"]
         ports:
         - containerPort: 50051
-          hostPort: 50051
           name: grpc
         resources:
           limits:
