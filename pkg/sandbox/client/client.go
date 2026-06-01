@@ -101,10 +101,11 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 	}
 	client := &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}
 
-	// Download CA cert for future use (cache only, don't disrupt current connection)
+	// Download CA cert (cache only for local connections where SAN matches endpoint)
 	resp, err := client.SandboxServiceClient.GetCACert(context.Background(), &pb.GetCACertRequest{})
 	if err == nil && resp.Cert != "" {
 		os.MkdirAll(cacheDir, 0700) //nolint:errcheck
+		// Save cert — will be used if endpoint matches SAN (local), skipped otherwise
 		os.WriteFile(caFile, []byte(resp.Cert), 0644) //nolint:errcheck
 	}
 	return client, nil
