@@ -185,10 +185,31 @@ func RunCommand() cli.Command {
 				Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace",
 			}
 
-			if raw {
-				return runStream(client, execReq)
+			retryOnce := func() (string, bool, error) {
+				clearState(ctx.String("tenant"))
+				return ensureSession(client, ctx)
 			}
-			return runJSON(client, execReq, sid, needsFinalize, ctx.String("tenant"))
+
+			if raw {
+				err := runStream(client, execReq)
+				if err != nil && isSessionExpired(err) {
+					sid, _, err2 := retryOnce()
+					if err2 == nil {
+						execReq.SessionId = sid
+						err = runStream(client, execReq)
+					}
+				}
+				return err
+			}
+			err = runJSON(client, execReq, sid, needsFinalize, ctx.String("tenant"))
+			if err != nil && isSessionExpired(err) {
+				sid, needsFinalize, err2 := retryOnce()
+				if err2 == nil {
+					execReq.SessionId = sid
+					err = runJSON(client, execReq, sid, needsFinalize, ctx.String("tenant"))
+				}
+			}
+			return err
 		},
 	}
 }
@@ -196,6 +217,9 @@ func RunCommand() cli.Command {
 func runStream(client *client.Client, req *pb.ExecRequest) error {
 	stream, err := client.SandboxServiceClient.ExecStream(context.Background(), req)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("session %s not found (expired or destroyed)", req.SessionId)
+		}
 		printErrorExit("exec: "+err.Error(), 1)
 		return nil
 	}
@@ -214,12 +238,19 @@ func runStream(client *client.Client, req *pb.ExecRequest) error {
 	return nil
 }
 
+func isSessionExpired(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "not found") || strings.Contains(s, "expired")
+}
+
 func runJSON(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) error {
 	resp, err := client.SandboxServiceClient.Exec(context.Background(), req)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "no pod IP") {
-			printErrorExit("session not found: "+sid+" (expired or destroyed)", 1)
-			return nil
+			return fmt.Errorf("session %s not found (expired or destroyed)", sid)
 		}
 		printErrorExit("exec: "+err.Error(), 2)
 		return nil
