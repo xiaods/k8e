@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 
 	"github.com/sirupsen/logrus"
@@ -40,6 +41,10 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
+		var exitErr *sandboxcli.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode)
+		}
 		logrus.Fatal(err)
 	}
 }

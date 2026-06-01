@@ -23,7 +23,7 @@ const errSessionNotFound = "not found"
 var ErrSessionGone = errors.New("sandbox session expired or destroyed")
 
 // newClientFromCtx creates a gRPC client using endpoint/apikey from global flags.
-func newClientFromCtx(ctx *cli.Context) *client.Client {
+func newClientFromCtx(ctx *cli.Context) (*client.Client, *ExitError) {
 	endpoint := ctx.GlobalString("endpoint")
 	apikey := ctx.GlobalString("apikey")
 
@@ -35,9 +35,9 @@ func newClientFromCtx(ctx *cli.Context) *client.Client {
 		c, err = client.NewClient()
 	}
 	if err != nil {
-		printErrorExit("sandbox not reachable: "+err.Error(), 2)
+		return nil, printErrorExit("sandbox not reachable: "+err.Error(), 2)
 	}
-	return c
+	return c, nil
 }
 
 // readCode returns code from arg (priority) or stdin pipe.
@@ -166,25 +166,25 @@ func RunCommand() cli.Command {
 func runAction(ctx *cli.Context) error {
 	code, err := readCode(ctx)
 	if err != nil {
-		printErrorExit(err.Error(), 1)
-		return nil
+		return printErrorExit(err.Error(), 1)
 	}
 	lang := ctx.String("lang")
 	raw := ctx.Bool("raw")
 
-	cli := newClientFromCtx(ctx)
+	cli, exitErr := newClientFromCtx(ctx)
+	if exitErr != nil {
+		return exitErr
+	}
 	defer cli.Close()
 
 	sid, needsFinalize, err := ensureSession(cli, ctx)
 	if err != nil {
-		printErrorExit(err.Error(), 2)
-		return nil
+		return printErrorExit(err.Error(), 2)
 	}
 
 	if isInterpretedLang(lang) && (isMultiLine(code) || strings.HasPrefix(lang, "ts")) {
 		if err := writeCodeFile(cli, sid, lang, code); err != nil {
-			printErrorExit("write code: "+err.Error(), 1)
-			return nil
+			return printErrorExit("write code: "+err.Error(), 1)
 		}
 	}
 
@@ -213,8 +213,7 @@ func runAction(ctx *cli.Context) error {
 		if err != nil {
 			return err
 		}
-		os.Exit(exitCode)
-		return nil
+		return &ExitError{ExitCode: exitCode}
 	}
 	if err := runJSON(cli, req, sid, needsFinalize, ctx.String("tenant")); isSessionExpired(err) {
 		_, err = retry()
@@ -285,8 +284,7 @@ func runJSON(client *client.Client, req *pb.ExecRequest, sid string, needsFinali
 		if isSessionExpired(err) {
 			return fmt.Errorf("%w: session %s", ErrSessionGone, sid)
 		}
-		printErrorExit("exec: "+err.Error(), 2)
-		return nil
+		return printErrorExit("exec: "+err.Error(), 2)
 	}
 	if needsFinalize {
 		_ = finalizeState(tenant, sid)
@@ -302,7 +300,10 @@ func StatusCommand() cli.Command {
 		Name:  "status",
 		Usage: "Check sandbox service availability and current session",
 		Action: func(ctx *cli.Context) error {
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			// lightweight probe
@@ -349,7 +350,10 @@ func CreateCommand() cli.Command {
 			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
 		},
 		Action: func(ctx *cli.Context) error {
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			var hosts []string
@@ -364,8 +368,7 @@ func CreateCommand() cli.Command {
 				AllowedHosts: hosts,
 			})
 			if err != nil {
-				printErrorExit("create session: "+err.Error(), 2)
-				return nil
+				return printErrorExit("create session: "+err.Error(), 2)
 			}
 
 			sid := resp.SessionId
@@ -374,14 +377,12 @@ func CreateCommand() cli.Command {
 			manifest, mErr := resolveManifest(ctx)
 			if mErr != nil {
 				client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
-				printErrorExit("manifest: "+mErr.Error(), 1)
-				return nil
+				return printErrorExit("manifest: "+mErr.Error(), 1)
 			}
 			if manifest != nil {
 				if err := materializeManifest(client, sid, manifest); err != nil {
 					client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
-					printErrorExit("manifest materialization failed: "+err.Error(), 1)
-					return nil
+					return printErrorExit("manifest materialization failed: "+err.Error(), 1)
 				}
 			}
 
@@ -427,17 +428,18 @@ func DestroyCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().First()
 			if sid == "" {
-				printErrorExit("session-id required", 1)
-				return nil
+				return printErrorExit("session-id required", 1)
 			}
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.DestroySession(context.Background(),
 				&pb.DestroySessionRequest{SessionId: sid})
 			if err != nil {
-				printErrorExit("destroy: "+err.Error(), 1)
-				return nil
+				return printErrorExit("destroy: "+err.Error(), 1)
 			}
 
 			// clear state file if it matches this session
@@ -470,24 +472,24 @@ func WriteCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			path := ctx.Args().Get(1)
 			if sid == "" || path == "" {
-				printErrorExit("usage: k8e-sandbox-cli write <session-id> <path>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli write <session-id> <path>", 1)
 			}
 			data, err := io.ReadAll(os.Stdin)
 			if err != nil {
-				printErrorExit("read stdin: "+err.Error(), 1)
-				return nil
+				return printErrorExit("read stdin: "+err.Error(), 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
 				SessionId: sid, Path: path, Content: string(data), Mode: ctx.String("mode"),
 			})
 			if err != nil {
-				printErrorExit("write: "+err.Error(), 1)
-				return nil
+				return printErrorExit("write: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{"ok": resp.Ok, "path": path})
 			return nil
@@ -509,19 +511,20 @@ func ReadCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			path := ctx.Args().Get(1)
 			if sid == "" || path == "" {
-				printErrorExit("usage: k8e-sandbox-cli read <session-id> <path>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli read <session-id> <path>", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ReadFile(context.Background(), &pb.ReadFileRequest{
 				SessionId: sid, Path: path,
 			})
 			if err != nil {
-				printErrorExit("read: "+err.Error(), 1)
-				return nil
+				return printErrorExit("read: "+err.Error(), 1)
 			}
 			if ctx.Bool("raw") {
 				fmt.Print(resp.Content)
@@ -546,19 +549,20 @@ func ListCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().First()
 			if sid == "" {
-				printErrorExit("session-id required", 1)
-				return nil
+				return printErrorExit("session-id required", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ListFiles(context.Background(), &pb.ListFilesRequest{
 				SessionId: sid, Since: ctx.Int64("since"),
 			})
 			if err != nil {
-				printErrorExit("list: "+err.Error(), 1)
-				return nil
+				return printErrorExit("list: "+err.Error(), 1)
 			}
 			files := make([]map[string]any, len(resp.Files))
 			for i, f := range resp.Files {
@@ -580,19 +584,20 @@ func SubagentCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			parentSid := ctx.Args().First()
 			if parentSid == "" {
-				printErrorExit("parent-session-id required", 1)
-				return nil
+				return printErrorExit("parent-session-id required", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.RunSubAgent(context.Background(), &pb.RunSubAgentRequest{
 				ParentSessionId: parentSid,
 			})
 			if err != nil {
-				printErrorExit("subagent: "+err.Error(), 1)
-				return nil
+				return printErrorExit("subagent: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{"session_id": resp.SessionId})
 			return nil
@@ -615,11 +620,13 @@ func ConfirmCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			action := ctx.Args().Get(1)
 			if sid == "" || action == "" {
-				printErrorExit("usage: k8e-sandbox-cli confirm <session-id> <action>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli confirm <session-id> <action>", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			// Phase 1: register
@@ -627,8 +634,7 @@ func ConfirmCommand() cli.Command {
 				SessionId: sid, Action: action,
 			})
 			if err != nil {
-				printErrorExit("confirm register: "+err.Error(), 2)
-				return nil
+				return printErrorExit("confirm register: "+err.Error(), 2)
 			}
 
 			if ctx.Bool("no-wait") {
@@ -649,8 +655,7 @@ func ConfirmCommand() cli.Command {
 				ApprovalId: resp.ApprovalId,
 			})
 			if err != nil {
-				printErrorExit("confirm timeout: "+err.Error(), 1)
-				return nil
+				return printErrorExit("confirm timeout: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{"approved": pollResp.Approved, "approval_id": resp.ApprovalId})
 			return nil
@@ -672,20 +677,21 @@ func ApproveCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			aid := ctx.Args().First()
 			if aid == "" {
-				printErrorExit("approval-id required", 1)
-				return nil
+				return printErrorExit("approval-id required", 1)
 			}
 			approved := !ctx.Bool("reject")
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ApproveAction(context.Background(), &pb.ApproveActionRequest{
 				ApprovalId: aid, Approved: approved, Reason: ctx.String("reason"),
 			})
 			if err != nil {
-				printErrorExit("approve: "+err.Error(), 1)
-				return nil
+				return printErrorExit("approve: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{"ok": resp.Ok})
 			return nil
@@ -711,7 +717,7 @@ func InstallSkillCommand() cli.Command {
 				target = "all"
 			}
 			if err := InstallSkill(target); err != nil {
-				printErrorExit(err.Error(), 1)
+				return printErrorExit(err.Error(), 1)
 			}
 			return nil
 		},

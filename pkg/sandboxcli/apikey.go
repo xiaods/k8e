@@ -106,23 +106,19 @@ func apiKeyCreateCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				printErrorExit("usage: k8e sandbox-apikey create <name>", 1)
-				return nil
+				return printErrorExit("usage: k8e sandbox-apikey create <name>", 1)
 			}
 			store, err := readAPIKeys()
 			if err != nil {
-				printErrorExit(err.Error(), 1)
-				return nil
+				return printErrorExit(err.Error(), 1)
 			}
 			if _, exists := store[name]; exists {
-				printErrorExit("api-key '"+name+"' already exists", 1)
-				return nil
+				return printErrorExit("api-key '"+name+"' already exists", 1)
 			}
 			key := generateAPIKey()
 			store[name] = key
 			if err := writeAPIKeys(store); err != nil {
-				printErrorExit("write api-key: "+err.Error(), 2)
-				return nil
+				return printErrorExit("write api-key: "+err.Error(), 2)
 			}
 			printJSON(map[string]any{"name": name, "key": key})
 			return nil
@@ -137,8 +133,7 @@ func apiKeyListCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			store, err := readAPIKeys()
 			if err != nil {
-				printErrorExit(err.Error(), 1)
-				return nil
+				return printErrorExit(err.Error(), 1)
 			}
 			names := make([]string, 0, len(store))
 			for k := range store {
@@ -158,22 +153,18 @@ func apiKeyDeleteCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				printErrorExit("usage: k8e sandbox-apikey delete <name>", 1)
-				return nil
+				return printErrorExit("usage: k8e sandbox-apikey delete <name>", 1)
 			}
 			store, err := readAPIKeys()
 			if err != nil {
-				printErrorExit(err.Error(), 1)
-				return nil
+				return printErrorExit(err.Error(), 1)
 			}
 			if _, exists := store[name]; !exists {
-				printErrorExit("api-key '"+name+"' not found", 1)
-				return nil
+				return printErrorExit("api-key '"+name+"' not found", 1)
 			}
 			delete(store, name)
 			if err := writeAPIKeys(store); err != nil {
-				printErrorExit("write api-key: "+err.Error(), 2)
-				return nil
+				return printErrorExit("write api-key: "+err.Error(), 2)
 			}
 			printJSON(map[string]any{"ok": true, "name": name})
 			return nil
