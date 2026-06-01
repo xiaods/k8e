@@ -14,6 +14,9 @@ service SandboxService {
   rpc RunSubAgent(RunSubAgentRequest)       returns (RunSubAgentResponse);
   rpc ConfirmAction(ConfirmActionRequest)   returns (ConfirmActionResponse);
   rpc ApproveAction(ApproveActionRequest)   returns (ApproveActionResponse);
+  // GetCACert returns the server CA certificate for TLS verification.
+  // No authentication required — the cert is needed to establish trust.
+  rpc GetCACert(GetCACertRequest)           returns (GetCACertResponse);
 }
 
 message CreateSessionRequest {
@@ -87,3 +90,6 @@ message ApproveActionRequest {
 message ApproveActionResponse {
   bool ok = 1;
 }
+
+message GetCACertRequest  {}
+message GetCACertResponse { string cert = 1; }

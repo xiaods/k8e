@@ -74,7 +74,6 @@ func NewAppCommands(f AppCommandFuncs) []cli.Command {
 		),
 		NewCompletionCommand(f.Completion),
 		NewSandboxApiKeyCommand(),
-		NewSandboxGatewayCommand(SandboxGateway),
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -85,6 +86,13 @@ func (s *Server) loadAPIKeys(ctx context.Context) {
 
 // Start registers the gRPC server and begins listening on lisAddr (default 0.0.0.0:50051).
 func (s *Server) Start(ctx context.Context) error {
+	// Check port availability before binding to give a clear error
+	testConn, err := net.DialTimeout("tcp", s.lisAddr, 100*time.Millisecond)
+	if err == nil {
+		testConn.Close()
+		return fmt.Errorf("grpc port %s is already in use — another gateway may be running", s.lisAddr)
+	}
+
 	lis, err := net.Listen("tcp", s.lisAddr)
 	if err != nil {
 		return fmt.Errorf("grpc listen: %w", err)
@@ -92,6 +100,19 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Load API keys from Secret for remote client authentication
 	s.loadAPIKeys(ctx)
+	// Reload API keys every 30s so newly created keys take effect without restart
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.loadAPIKeys(ctx)
+			}
+		}
+	}()
 
 	creds, err := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 	if err != nil {
@@ -100,7 +121,13 @@ func (s *Server) Start(ctx context.Context) error {
 
 	opts := []grpc.ServerOption{grpc.Creds(creds)}
 	if len(s.apiKeys) > 0 {
-		opts = append(opts, grpc.UnaryInterceptor(s.apiKeyInterceptor))
+		opts = append(opts, grpc.UnaryInterceptor(func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+			// GetCACert is public — no auth required
+			if info.FullMethod == "/sandbox.v1.SandboxService/GetCACert" {
+				return handler(ctx, req)
+			}
+			return s.apiKeyInterceptor(ctx, req, info, handler)
+		}))
 	}
 	gs := grpc.NewServer(opts...)
 	pb.RegisterSandboxServiceServer(gs, s)
@@ -285,6 +312,16 @@ func (s *Server) ConfirmAction(ctx context.Context, req *pb.ConfirmActionRequest
 
 func (s *Server) ApproveAction(ctx context.Context, req *pb.ApproveActionRequest) (*pb.ApproveActionResponse, error) {
 	return s.orch.ApproveAction(ctx, req)
+}
+
+// GetCACert returns the server's CA certificate for TLS verification.
+// No authentication required — the cert is needed to establish trust.
+func (s *Server) GetCACert(ctx context.Context, req *pb.GetCACertRequest) (*pb.GetCACertResponse, error) {
+	pem, err := os.ReadFile(s.certFile)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "read ca cert: %v", err)
+	}
+	return &pb.GetCACertResponse{Cert: string(pem)}, nil
 }
 
 func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error) {

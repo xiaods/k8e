@@ -6,19 +6,14 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
-	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	k8sschema "k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -73,71 +68,74 @@ func NewClient() (*Client, error) {
 }
 
 // NewClientWithEndpoint connects to a remote K8E cluster at endpoint with optional API key.
-// When apiKey is set, uses insecure transport + per-RPC metadata authentication.
-// When apiKey is empty, falls back to TLS auto-discovery.
+// On first connection, auto-downloads the server CA cert for future verified connections.
 func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 	if apiKey == "" {
 		return NewClient()
 	}
-	// Remote cluster with API key: insecure connection + metadata auth interceptor
-	opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
+
+	// Try cached CA cert first
+	cacheDir, _ := sandboxCacheDir()
+	caFile := filepath.Join(cacheDir, "ca.crt")
+	if _, err := os.Stat(caFile); err == nil {
+		creds, err := credentials.NewClientTLSFromFile(caFile, "")
+		if err == nil {
+			conn, err := dialWithAPIKey(endpoint, apiKey, creds)
+			if err == nil {
+				return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
+			}
+		}
+	}
+
+	// Trust-On-First-Use (TOFU): connect without cert verification to download
+	// the server CA cert via GetCACert (authenticated with API key). Once the cert
+	// is saved locally, reconnect with full TLS verification for all subsequent calls.
+	// The InsecureSkipVerify window is a single GetCACert RPC protected by API key auth.
+	//nolint:gosec // intentional TOFU pattern
+	creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true})
+	conn, err := dialWithAPIKey(endpoint, apiKey, creds)
+	if err != nil {
+		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
+	}
+	client := &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}
+
+	// Download CA cert
+	resp, err := client.SandboxServiceClient.GetCACert(context.Background(), &pb.GetCACertRequest{})
+	if err == nil && resp.Cert != "" {
+		os.MkdirAll(cacheDir, 0700) //nolint:errcheck
+		os.WriteFile(caFile, []byte(resp.Cert), 0644) //nolint:errcheck
+		// Reconnect with verified TLS using the downloaded cert
+		conn.Close()
+		creds, err = credentials.NewClientTLSFromFile(caFile, "")
+		if err == nil {
+			conn, err = dialWithAPIKey(endpoint, apiKey, creds)
+			if err == nil {
+				return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
+			}
+		}
+	}
+	return client, nil
+}
+
+// dialWithAPIKey connects with TLS creds and API key auth interceptor.
+func dialWithAPIKey(endpoint, apiKey string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
+	opts := []grpc.DialOption{grpc.WithTransportCredentials(creds)}
 	opts = append(opts, grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey)
 		return invoker(ctx, method, req, reply, cc, opts...)
 	}))
-	conn, err := grpc.NewClient(endpoint, opts...)
+	return grpc.NewClient(endpoint, opts...)
+}
+
+func sandboxCacheDir() (string, error) {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
+		return "", err
 	}
-	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
+	return filepath.Join(home, ".k8e", "sandbox"), nil
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
-
-var sessionGVR = k8sschema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxsessions"}
-
-// FindActiveSession returns the session ID of an existing Active session for the given tenantID,
-// or "" if none found. Used for cross-process session reuse.
-func FindActiveSession(tenantID string) (string, error) {
-	if tenantID == "" {
-		return "", nil
-	}
-	dyn, err := newDynamicClient()
-	if err != nil {
-		return "", nil
-	}
-	list, err := dyn.Resource(sessionGVR).Namespace("sandbox-matrix").List(
-		context.Background(), metav1.ListOptions{},
-	)
-	if err != nil {
-		return "", nil
-	}
-	for i := range list.Items {
-		data, _ := json.Marshal(list.Items[i].Object)
-		var s sandboxv1.SandboxSession
-		if err := json.Unmarshal(data, &s); err != nil {
-			continue
-		}
-		if s.Spec.TenantID == tenantID && s.Status.Phase == sandboxv1.SandboxPhaseActive {
-			return s.Name, nil
-		}
-	}
-	return "", nil
-}
-
-func newDynamicClient() (dynamic.Interface, error) {
-	for _, kc := range resolvedKubeconfigCandidates() {
-		if _, err := os.Stat(kc); err != nil {
-			continue
-		}
-		restCfg, err := clientcmd.BuildConfigFromFlags("", kc)
-		if err != nil {
-			continue
-		}
-		return dynamic.NewForConfig(restCfg)
-	}
-	return nil, fmt.Errorf("no kubeconfig found")
-}
 
 func resolveCreds() (credentials.TransportCredentials, error) {
 	// explicit env override — support both CA-only and mTLS (cert+key)

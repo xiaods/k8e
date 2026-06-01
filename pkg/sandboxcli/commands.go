@@ -242,9 +242,13 @@ func StatusCommand() cli.Command {
 			defer client.Close()
 
 			// lightweight probe
-			_, err := client.SandboxServiceClient.DestroySession(context.Background(),
-				&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
-			available := err == nil || strings.Contains(err.Error(), "not found")
+		_, err := client.SandboxServiceClient.DestroySession(context.Background(),
+			&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
+		available := err == nil || strings.Contains(err.Error(), "not found")
+		errMsg := ""
+		if !available && err != nil {
+			errMsg = err.Error()
+		}
 
 			sid, tid := "", ""
 			if state, _ := loadState("default"); state != nil && state.SessionID != "" {
@@ -258,7 +262,7 @@ func StatusCommand() cli.Command {
 				tid = t
 			}
 
-			printJSON(map[string]any{"available": available, "session_id": sid, "tenant_id": tid})
+			printJSON(map[string]any{"available": available, "session_id": sid, "tenant_id": tid, "error": errMsg})
 			return nil
 		},
 	}
