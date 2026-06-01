@@ -12,6 +12,27 @@ All code execution goes through `k8e-sandbox-cli` — never run code directly on
 
 **Trigger keywords (中文):** "帮我跑", "运行", "试试", "执行", "测试", "安装并使用", "分析这个CSV", "处理这个文件", "看看输出", "帮我算"
 
+## Pre-flight
+
+Before any sandbox operation, check that the required environment variables are set:
+
+```bash
+if [ -z "$K8E_SANDBOX_ENDPOINT" ] || [ -z "$K8E_SANDBOX_APIKEY" ]; then
+  echo "⚠ Sandbox not configured. Please provide:"
+  echo "  export K8E_SANDBOX_ENDPOINT=<server-ip>:50051"
+  echo "  export K8E_SANDBOX_APIKEY=<your-api-key>"
+  exit 1
+fi
+```
+
+**If either variable is missing**, stop immediately and ask the user:
+
+> "I need your K8E sandbox credentials to run code securely:
+>   `K8E_SANDBOX_ENDPOINT` — the server address (e.g. `54.116.141.251:50051`)
+>   `K8E_SANDBOX_APIKEY` — your API key (get it from the server: `k8e sandbox-apikey create my-agent`)"
+
+Do NOT proceed with any code execution until both are set.
+
 ## Environment
 
 Download the platform-specific binary (~44MB) from [GitHub Releases](https://github.com/xiaods/k8e/releases).
