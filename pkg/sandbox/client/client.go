@@ -85,6 +85,8 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 				return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 			}
 		}
+		// Cached cert validation failed (e.g. endpoint IP not in SAN) — clear and fall through to TOFU
+		os.Remove(caFile) //nolint:errcheck
 	}
 
 	// Trust-On-First-Use (TOFU): connect without cert verification to download
