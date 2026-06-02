@@ -16,6 +16,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
+	"github.com/xiaods/k8e/pkg/sandboxmatrix/ratelimit"
+	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -23,6 +25,7 @@ import (
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
@@ -92,13 +95,14 @@ func sanitizePipPackage(raw string) (string, error) {
 // Server implements the SandboxService gRPC interface.
 type Server struct {
 	pb.UnimplementedSandboxServiceServer
-	k8s      kubernetes.Interface
-	dyn      dynamic.Interface
-	orch     *Orchestrator
-	lisAddr  string
-	certFile string
-	keyFile  string
-	apiKeys  map[string]string // name → key for validation
+	k8s         kubernetes.Interface
+	dyn         dynamic.Interface
+	orch        *Orchestrator
+	lisAddr     string
+	certFile    string
+	keyFile     string
+	apiKeys     map[string]string // name → key for validation
+	rateLimiter *ratelimit.Limiter
 }
 
 func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFile string, grpcPort int) *Server {
@@ -106,11 +110,12 @@ func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFil
 		grpcPort = 50051
 	}
 	s := &Server{
-		k8s:      k8s,
-		dyn:      dyn,
-		lisAddr:  fmt.Sprintf("0.0.0.0:%d", grpcPort),
-		certFile: certFile,
-		keyFile:  keyFile,
+		k8s:         k8s,
+		dyn:         dyn,
+		lisAddr:     fmt.Sprintf("0.0.0.0:%d", grpcPort),
+		certFile:    certFile,
+		keyFile:     keyFile,
+		rateLimiter: ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
 	}
 	s.orch = NewOrchestrator(k8s, dyn)
 	return s
@@ -136,6 +141,52 @@ func (s *Server) loadAPIKeys(ctx context.Context) {
 	logrus.Infof("sandbox gRPC: loaded %d API key(s)", len(store))
 }
 
+// reloadConfigLoop periodically reloads API keys and rate limits from the SandboxMatrix CRD.
+func (s *Server) reloadConfigLoop(ctx context.Context) {
+	// Immediate cleanup goroutine for stale rate limit tenants
+	go func() {
+		reapTicker := time.NewTicker(5 * time.Minute)
+		defer reapTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-reapTicker.C:
+				s.rateLimiter.ReapStale(10 * time.Minute)
+			}
+		}
+	}()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.loadAPIKeys(ctx)
+			s.reloadRateLimits(ctx)
+		}
+	}
+}
+
+// reloadRateLimits reads rate limit config from the SandboxMatrix CRD and applies it.
+func (s *Server) reloadRateLimits(ctx context.Context) {
+	matrixGVR := schema.GroupVersionResource{Group: "k8e.sh", Version: "v1alpha1", Resource: "sandboxmatrices"}
+	matrices, err := s.dyn.Resource(matrixGVR).Namespace("sandbox-matrix").List(ctx, metav1.ListOptions{})
+	if err != nil || len(matrices.Items) == 0 {
+		return
+	}
+	obj := matrices.Items[0].Object
+	var spec sandboxv1.RateLimitSpec
+	if raw, found, _ := unstructured.NestedFieldNoCopy(obj, "spec", "rateLimits"); found {
+		if data, err := json.Marshal(raw); err == nil {
+			json.Unmarshal(data, &spec)
+		}
+	}
+	s.rateLimiter.ReloadConfig(&spec)
+}
+
 // Start registers the gRPC server and begins listening on lisAddr (default 0.0.0.0:50051).
 func (s *Server) Start(ctx context.Context) error {
 	// Check port availability before binding to give a clear error
@@ -152,21 +203,12 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Load API keys from Secret for remote client authentication
 	s.loadAPIKeys(ctx)
-	// Reload API keys every 30s so newly created keys take effect without restart
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				s.loadAPIKeys(ctx)
-			}
-		}
-	}()
+	// Reload API keys and rate limits every 30s
+	go s.reloadConfigLoop(ctx)
 	// Clean up expired pending approvals from disconnected clients
 	go s.orch.StartApprovalGC(ctx)
+	// Rebuild background run registry from existing Session CRDs
+	go s.orch.RebuildRunRegistry(ctx, "sandbox-matrix")
 
 	creds, err := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 	if err != nil {
@@ -176,8 +218,13 @@ func (s *Server) Start(ctx context.Context) error {
 	opts := []grpc.ServerOption{grpc.Creds(creds)}
 	if len(s.apiKeys) > 0 {
 		opts = append(opts,
-			grpc.UnaryInterceptor(s.apiKeyInterceptor),
-			grpc.StreamInterceptor(s.apiStreamInterceptor),
+			grpc.ChainUnaryInterceptor(s.rateLimiter.UnaryInterceptor, s.apiKeyInterceptor),
+			grpc.ChainStreamInterceptor(s.rateLimiter.StreamInterceptor, s.apiStreamInterceptor),
+		)
+	} else {
+		opts = append(opts,
+			grpc.UnaryInterceptor(s.rateLimiter.UnaryInterceptor),
+			grpc.StreamInterceptor(s.rateLimiter.StreamInterceptor),
 		)
 	}
 	gs := grpc.NewServer(opts...)
@@ -209,6 +256,15 @@ func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionReque
 }
 
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
+	// Background mode: submit async, return run_id immediately
+	if req.Background {
+		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "background submit: %v", err)
+		}
+		return &pb.ExecResponse{RunId: runID, Status: "started", SessionId: req.SessionId}, nil
+	}
+
 	podIP, err := s.getPodIP(ctx, req.SessionId)
 	if err != nil {
 		return nil, err
@@ -378,6 +434,11 @@ func (s *Server) GetCACert(ctx context.Context, req *pb.GetCACertRequest) (*pb.G
 		return nil, status.Errorf(codes.Internal, "read ca cert: %v", err)
 	}
 	return &pb.GetCACertResponse{Cert: string(pem)}, nil
+}
+
+// PollRun checks the status of a background execution.
+func (s *Server) PollRun(ctx context.Context, req *pb.PollRunRequest) (*pb.PollRunResponse, error) {
+	return s.orch.PollRun(ctx, req.RunId)
 }
 
 func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error) {

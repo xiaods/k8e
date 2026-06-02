@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.35.0
-// source: proto/sandbox/v1/sandbox.proto
+// source: sandbox/v1/sandbox.proto
 
 package pb
 
@@ -33,7 +33,7 @@ type CreateSessionRequest struct {
 
 func (x *CreateSessionRequest) Reset() {
 	*x = CreateSessionRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[0]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -45,7 +45,7 @@ func (x *CreateSessionRequest) String() string {
 func (*CreateSessionRequest) ProtoMessage() {}
 
 func (x *CreateSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[0]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -58,7 +58,7 @@ func (x *CreateSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateSessionRequest.ProtoReflect.Descriptor instead.
 func (*CreateSessionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{0}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *CreateSessionRequest) GetSessionId() string {
@@ -99,7 +99,7 @@ type CreateSessionResponse struct {
 
 func (x *CreateSessionResponse) Reset() {
 	*x = CreateSessionResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[1]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -111,7 +111,7 @@ func (x *CreateSessionResponse) String() string {
 func (*CreateSessionResponse) ProtoMessage() {}
 
 func (x *CreateSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[1]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -124,7 +124,7 @@ func (x *CreateSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateSessionResponse.ProtoReflect.Descriptor instead.
 func (*CreateSessionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{1}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *CreateSessionResponse) GetSessionId() string {
@@ -150,7 +150,7 @@ type DestroySessionRequest struct {
 
 func (x *DestroySessionRequest) Reset() {
 	*x = DestroySessionRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[2]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -162,7 +162,7 @@ func (x *DestroySessionRequest) String() string {
 func (*DestroySessionRequest) ProtoMessage() {}
 
 func (x *DestroySessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[2]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -175,7 +175,7 @@ func (x *DestroySessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestroySessionRequest.ProtoReflect.Descriptor instead.
 func (*DestroySessionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{2}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *DestroySessionRequest) GetSessionId() string {
@@ -194,7 +194,7 @@ type DestroySessionResponse struct {
 
 func (x *DestroySessionResponse) Reset() {
 	*x = DestroySessionResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[3]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -206,7 +206,7 @@ func (x *DestroySessionResponse) String() string {
 func (*DestroySessionResponse) ProtoMessage() {}
 
 func (x *DestroySessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[3]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -219,7 +219,7 @@ func (x *DestroySessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DestroySessionResponse.ProtoReflect.Descriptor instead.
 func (*DestroySessionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{3}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *DestroySessionResponse) GetOk() bool {
@@ -235,13 +235,14 @@ type ExecRequest struct {
 	Command       string                 `protobuf:"bytes,2,opt,name=command,proto3" json:"command,omitempty"`
 	Timeout       int32                  `protobuf:"varint,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	Workdir       string                 `protobuf:"bytes,4,opt,name=workdir,proto3" json:"workdir,omitempty"`
+	Background    bool                   `protobuf:"varint,5,opt,name=background,proto3" json:"background,omitempty"` // submit asynchronously, return run_id immediately
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExecRequest) Reset() {
 	*x = ExecRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[4]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -253,7 +254,7 @@ func (x *ExecRequest) String() string {
 func (*ExecRequest) ProtoMessage() {}
 
 func (x *ExecRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[4]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -266,7 +267,7 @@ func (x *ExecRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecRequest.ProtoReflect.Descriptor instead.
 func (*ExecRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{4}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *ExecRequest) GetSessionId() string {
@@ -297,18 +298,28 @@ func (x *ExecRequest) GetWorkdir() string {
 	return ""
 }
 
+func (x *ExecRequest) GetBackground() bool {
+	if x != nil {
+		return x.Background
+	}
+	return false
+}
+
 type ExecResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Stdout        string                 `protobuf:"bytes,1,opt,name=stdout,proto3" json:"stdout,omitempty"`
 	Stderr        string                 `protobuf:"bytes,2,opt,name=stderr,proto3" json:"stderr,omitempty"`
 	ExitCode      int32                  `protobuf:"varint,3,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	SessionId     string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RunId         string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"` // set when background=true
+	Status        string                 `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`            // "started" when background=true
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ExecResponse) Reset() {
 	*x = ExecResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[5]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -320,7 +331,7 @@ func (x *ExecResponse) String() string {
 func (*ExecResponse) ProtoMessage() {}
 
 func (x *ExecResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[5]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -333,7 +344,7 @@ func (x *ExecResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecResponse.ProtoReflect.Descriptor instead.
 func (*ExecResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{5}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *ExecResponse) GetStdout() string {
@@ -357,6 +368,27 @@ func (x *ExecResponse) GetExitCode() int32 {
 	return 0
 }
 
+func (x *ExecResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ExecResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ExecResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
 type ExecStreamResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Chunk         string                 `protobuf:"bytes,1,opt,name=chunk,proto3" json:"chunk,omitempty"`
@@ -366,7 +398,7 @@ type ExecStreamResponse struct {
 
 func (x *ExecStreamResponse) Reset() {
 	*x = ExecStreamResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[6]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -378,7 +410,7 @@ func (x *ExecStreamResponse) String() string {
 func (*ExecStreamResponse) ProtoMessage() {}
 
 func (x *ExecStreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[6]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -391,7 +423,7 @@ func (x *ExecStreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecStreamResponse.ProtoReflect.Descriptor instead.
 func (*ExecStreamResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{6}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ExecStreamResponse) GetChunk() string {
@@ -413,7 +445,7 @@ type WriteFileRequest struct {
 
 func (x *WriteFileRequest) Reset() {
 	*x = WriteFileRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[7]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -425,7 +457,7 @@ func (x *WriteFileRequest) String() string {
 func (*WriteFileRequest) ProtoMessage() {}
 
 func (x *WriteFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[7]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -438,7 +470,7 @@ func (x *WriteFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileRequest.ProtoReflect.Descriptor instead.
 func (*WriteFileRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{7}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *WriteFileRequest) GetSessionId() string {
@@ -478,7 +510,7 @@ type WriteFileResponse struct {
 
 func (x *WriteFileResponse) Reset() {
 	*x = WriteFileResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[8]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -490,7 +522,7 @@ func (x *WriteFileResponse) String() string {
 func (*WriteFileResponse) ProtoMessage() {}
 
 func (x *WriteFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[8]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -503,7 +535,7 @@ func (x *WriteFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteFileResponse.ProtoReflect.Descriptor instead.
 func (*WriteFileResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{8}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *WriteFileResponse) GetOk() bool {
@@ -523,7 +555,7 @@ type ReadFileRequest struct {
 
 func (x *ReadFileRequest) Reset() {
 	*x = ReadFileRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[9]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -535,7 +567,7 @@ func (x *ReadFileRequest) String() string {
 func (*ReadFileRequest) ProtoMessage() {}
 
 func (x *ReadFileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[9]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -548,7 +580,7 @@ func (x *ReadFileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileRequest.ProtoReflect.Descriptor instead.
 func (*ReadFileRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{9}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ReadFileRequest) GetSessionId() string {
@@ -574,7 +606,7 @@ type ReadFileResponse struct {
 
 func (x *ReadFileResponse) Reset() {
 	*x = ReadFileResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[10]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -586,7 +618,7 @@ func (x *ReadFileResponse) String() string {
 func (*ReadFileResponse) ProtoMessage() {}
 
 func (x *ReadFileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[10]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -599,7 +631,7 @@ func (x *ReadFileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadFileResponse.ProtoReflect.Descriptor instead.
 func (*ReadFileResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{10}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ReadFileResponse) GetContent() string {
@@ -619,7 +651,7 @@ type ListFilesRequest struct {
 
 func (x *ListFilesRequest) Reset() {
 	*x = ListFilesRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[11]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -631,7 +663,7 @@ func (x *ListFilesRequest) String() string {
 func (*ListFilesRequest) ProtoMessage() {}
 
 func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[11]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -644,7 +676,7 @@ func (x *ListFilesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFilesRequest.ProtoReflect.Descriptor instead.
 func (*ListFilesRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{11}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListFilesRequest) GetSessionId() string {
@@ -670,7 +702,7 @@ type ListFilesResponse struct {
 
 func (x *ListFilesResponse) Reset() {
 	*x = ListFilesResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[12]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -682,7 +714,7 @@ func (x *ListFilesResponse) String() string {
 func (*ListFilesResponse) ProtoMessage() {}
 
 func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[12]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -695,7 +727,7 @@ func (x *ListFilesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFilesResponse.ProtoReflect.Descriptor instead.
 func (*ListFilesResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{12}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListFilesResponse) GetFiles() []*FileEntry {
@@ -715,7 +747,7 @@ type FileEntry struct {
 
 func (x *FileEntry) Reset() {
 	*x = FileEntry{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[13]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -727,7 +759,7 @@ func (x *FileEntry) String() string {
 func (*FileEntry) ProtoMessage() {}
 
 func (x *FileEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[13]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -740,7 +772,7 @@ func (x *FileEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FileEntry.ProtoReflect.Descriptor instead.
 func (*FileEntry) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{13}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *FileEntry) GetPath() string {
@@ -767,7 +799,7 @@ type PipInstallRequest struct {
 
 func (x *PipInstallRequest) Reset() {
 	*x = PipInstallRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[14]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -779,7 +811,7 @@ func (x *PipInstallRequest) String() string {
 func (*PipInstallRequest) ProtoMessage() {}
 
 func (x *PipInstallRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[14]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -792,7 +824,7 @@ func (x *PipInstallRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PipInstallRequest.ProtoReflect.Descriptor instead.
 func (*PipInstallRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{14}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PipInstallRequest) GetSessionId() string {
@@ -819,7 +851,7 @@ type PipInstallResponse struct {
 
 func (x *PipInstallResponse) Reset() {
 	*x = PipInstallResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[15]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +863,7 @@ func (x *PipInstallResponse) String() string {
 func (*PipInstallResponse) ProtoMessage() {}
 
 func (x *PipInstallResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[15]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +876,7 @@ func (x *PipInstallResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PipInstallResponse.ProtoReflect.Descriptor instead.
 func (*PipInstallResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{15}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *PipInstallResponse) GetOutput() string {
@@ -872,7 +904,7 @@ type RunSubAgentRequest struct {
 
 func (x *RunSubAgentRequest) Reset() {
 	*x = RunSubAgentRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[16]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -884,7 +916,7 @@ func (x *RunSubAgentRequest) String() string {
 func (*RunSubAgentRequest) ProtoMessage() {}
 
 func (x *RunSubAgentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[16]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -897,7 +929,7 @@ func (x *RunSubAgentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunSubAgentRequest.ProtoReflect.Descriptor instead.
 func (*RunSubAgentRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{16}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *RunSubAgentRequest) GetParentSessionId() string {
@@ -930,7 +962,7 @@ type RunSubAgentResponse struct {
 
 func (x *RunSubAgentResponse) Reset() {
 	*x = RunSubAgentResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[17]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -942,7 +974,7 @@ func (x *RunSubAgentResponse) String() string {
 func (*RunSubAgentResponse) ProtoMessage() {}
 
 func (x *RunSubAgentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[17]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -955,7 +987,7 @@ func (x *RunSubAgentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunSubAgentResponse.ProtoReflect.Descriptor instead.
 func (*RunSubAgentResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{17}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RunSubAgentResponse) GetSessionId() string {
@@ -976,7 +1008,7 @@ type ConfirmActionRequest struct {
 
 func (x *ConfirmActionRequest) Reset() {
 	*x = ConfirmActionRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[18]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -988,7 +1020,7 @@ func (x *ConfirmActionRequest) String() string {
 func (*ConfirmActionRequest) ProtoMessage() {}
 
 func (x *ConfirmActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[18]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1001,7 +1033,7 @@ func (x *ConfirmActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmActionRequest.ProtoReflect.Descriptor instead.
 func (*ConfirmActionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{18}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ConfirmActionRequest) GetSessionId() string {
@@ -1035,7 +1067,7 @@ type ConfirmActionResponse struct {
 
 func (x *ConfirmActionResponse) Reset() {
 	*x = ConfirmActionResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[19]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +1079,7 @@ func (x *ConfirmActionResponse) String() string {
 func (*ConfirmActionResponse) ProtoMessage() {}
 
 func (x *ConfirmActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[19]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +1092,7 @@ func (x *ConfirmActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfirmActionResponse.ProtoReflect.Descriptor instead.
 func (*ConfirmActionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{19}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ConfirmActionResponse) GetApprovalId() string {
@@ -1088,7 +1120,7 @@ type ApproveActionRequest struct {
 
 func (x *ApproveActionRequest) Reset() {
 	*x = ApproveActionRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[20]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1100,7 +1132,7 @@ func (x *ApproveActionRequest) String() string {
 func (*ApproveActionRequest) ProtoMessage() {}
 
 func (x *ApproveActionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[20]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1113,7 +1145,7 @@ func (x *ApproveActionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApproveActionRequest.ProtoReflect.Descriptor instead.
 func (*ApproveActionRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{20}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ApproveActionRequest) GetApprovalId() string {
@@ -1146,7 +1178,7 @@ type ApproveActionResponse struct {
 
 func (x *ApproveActionResponse) Reset() {
 	*x = ApproveActionResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[21]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1158,7 +1190,7 @@ func (x *ApproveActionResponse) String() string {
 func (*ApproveActionResponse) ProtoMessage() {}
 
 func (x *ApproveActionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[21]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1171,7 +1203,7 @@ func (x *ApproveActionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApproveActionResponse.ProtoReflect.Descriptor instead.
 func (*ApproveActionResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{21}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ApproveActionResponse) GetOk() bool {
@@ -1189,7 +1221,7 @@ type GetCACertRequest struct {
 
 func (x *GetCACertRequest) Reset() {
 	*x = GetCACertRequest{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[22]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1198,10 +1230,10 @@ func (x *GetCACertRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetCACertRequest) ProtoMessage() {} // generated stub
+func (*GetCACertRequest) ProtoMessage() {}
 
 func (x *GetCACertRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[22]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1214,7 +1246,7 @@ func (x *GetCACertRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCACertRequest.ProtoReflect.Descriptor instead.
 func (*GetCACertRequest) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{22}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{22}
 }
 
 type GetCACertResponse struct {
@@ -1226,7 +1258,7 @@ type GetCACertResponse struct {
 
 func (x *GetCACertResponse) Reset() {
 	*x = GetCACertResponse{}
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[23]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1235,10 +1267,10 @@ func (x *GetCACertResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetCACertResponse) ProtoMessage() {} // generated stub
+func (*GetCACertResponse) ProtoMessage() {}
 
 func (x *GetCACertResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_sandbox_v1_sandbox_proto_msgTypes[23]
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1251,7 +1283,7 @@ func (x *GetCACertResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetCACertResponse.ProtoReflect.Descriptor instead.
 func (*GetCACertResponse) Descriptor() ([]byte, []int) {
-	return file_proto_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{23}
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetCACertResponse) GetCert() string {
@@ -1261,11 +1293,131 @@ func (x *GetCACertResponse) GetCert() string {
 	return ""
 }
 
-var File_proto_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
+type PollRunRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
 
-const file_proto_sandbox_v1_sandbox_proto_rawDesc = "" +
+func (x *PollRunRequest) Reset() {
+	*x = PollRunRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PollRunRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PollRunRequest) ProtoMessage() {}
+
+func (x *PollRunRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PollRunRequest.ProtoReflect.Descriptor instead.
+func (*PollRunRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *PollRunRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+type PollRunResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RunId         string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"` // started | running | completed | failed | timed_out
+	Stdout        string                 `protobuf:"bytes,3,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	Stderr        string                 `protobuf:"bytes,4,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	ExitCode      int32                  `protobuf:"varint,5,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PollRunResponse) Reset() {
+	*x = PollRunResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PollRunResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PollRunResponse) ProtoMessage() {}
+
+func (x *PollRunResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PollRunResponse.ProtoReflect.Descriptor instead.
+func (*PollRunResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *PollRunResponse) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *PollRunResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *PollRunResponse) GetStdout() string {
+	if x != nil {
+		return x.Stdout
+	}
+	return ""
+}
+
+func (x *PollRunResponse) GetStderr() string {
+	if x != nil {
+		return x.Stderr
+	}
+	return ""
+}
+
+func (x *PollRunResponse) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+var File_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
+
+const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
-	"\x1eproto/sandbox/v1/sandbox.proto\x12\n" +
+	"\x18sandbox/v1/sandbox.proto\x12\n" +
 	"sandbox.v1\"\x9c\x01\n" +
 	"\x14CreateSessionRequest\x12\x1d\n" +
 	"\n" +
@@ -1281,17 +1433,24 @@ const file_proto_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"(\n" +
 	"\x16DestroySessionResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"z\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"\x9a\x01\n" +
 	"\vExecRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
 	"\acommand\x18\x02 \x01(\tR\acommand\x12\x18\n" +
 	"\atimeout\x18\x03 \x01(\x05R\atimeout\x12\x18\n" +
-	"\aworkdir\x18\x04 \x01(\tR\aworkdir\"[\n" +
+	"\aworkdir\x18\x04 \x01(\tR\aworkdir\x12\x1e\n" +
+	"\n" +
+	"background\x18\x05 \x01(\bR\n" +
+	"background\"\xa9\x01\n" +
 	"\fExecResponse\x12\x16\n" +
 	"\x06stdout\x18\x01 \x01(\tR\x06stdout\x12\x16\n" +
 	"\x06stderr\x18\x02 \x01(\tR\x06stderr\x12\x1b\n" +
-	"\texit_code\x18\x03 \x01(\x05R\bexitCode\"*\n" +
+	"\texit_code\x18\x03 \x01(\x05R\bexitCode\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x04 \x01(\tR\tsessionId\x12\x15\n" +
+	"\x06run_id\x18\x05 \x01(\tR\x05runId\x12\x16\n" +
+	"\x06status\x18\x06 \x01(\tR\x06status\"*\n" +
 	"\x12ExecStreamResponse\x12\x14\n" +
 	"\x05chunk\x18\x01 \x01(\tR\x05chunk\"s\n" +
 	"\x10WriteFileRequest\x12\x1d\n" +
@@ -1351,7 +1510,15 @@ const file_proto_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\"\x12\n" +
 	"\x10GetCACertRequest\"'\n" +
 	"\x11GetCACertResponse\x12\x12\n" +
-	"\x04cert\x18\x01 \x01(\tR\x04cert2\xb1\a\n" +
+	"\x04cert\x18\x01 \x01(\tR\x04cert\"'\n" +
+	"\x0ePollRunRequest\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\x8d\x01\n" +
+	"\x0fPollRunResponse\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12\x16\n" +
+	"\x06stdout\x18\x03 \x01(\tR\x06stdout\x12\x16\n" +
+	"\x06stderr\x18\x04 \x01(\tR\x06stderr\x12\x1b\n" +
+	"\texit_code\x18\x05 \x01(\x05R\bexitCode2\xf5\a\n" +
 	"\x0eSandboxService\x12T\n" +
 	"\rCreateSession\x12 .sandbox.v1.CreateSessionRequest\x1a!.sandbox.v1.CreateSessionResponse\x12W\n" +
 	"\x0eDestroySession\x12!.sandbox.v1.DestroySessionRequest\x1a\".sandbox.v1.DestroySessionResponse\x129\n" +
@@ -1366,22 +1533,23 @@ const file_proto_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\vRunSubAgent\x12\x1e.sandbox.v1.RunSubAgentRequest\x1a\x1f.sandbox.v1.RunSubAgentResponse\x12T\n" +
 	"\rConfirmAction\x12 .sandbox.v1.ConfirmActionRequest\x1a!.sandbox.v1.ConfirmActionResponse\x12T\n" +
 	"\rApproveAction\x12 .sandbox.v1.ApproveActionRequest\x1a!.sandbox.v1.ApproveActionResponse\x12H\n" +
-	"\tGetCACert\x12\x1c.sandbox.v1.GetCACertRequest\x1a\x1d.sandbox.v1.GetCACertResponseB1Z/github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pbb\x06proto3"
+	"\tGetCACert\x12\x1c.sandbox.v1.GetCACertRequest\x1a\x1d.sandbox.v1.GetCACertResponse\x12B\n" +
+	"\aPollRun\x12\x1a.sandbox.v1.PollRunRequest\x1a\x1b.sandbox.v1.PollRunResponseB1Z/github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pbb\x06proto3"
 
 var (
-	file_proto_sandbox_v1_sandbox_proto_rawDescOnce sync.Once
-	file_proto_sandbox_v1_sandbox_proto_rawDescData []byte
+	file_sandbox_v1_sandbox_proto_rawDescOnce sync.Once
+	file_sandbox_v1_sandbox_proto_rawDescData []byte
 )
 
-func file_proto_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
-	file_proto_sandbox_v1_sandbox_proto_rawDescOnce.Do(func() {
-		file_proto_sandbox_v1_sandbox_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_sandbox_v1_sandbox_proto_rawDesc), len(file_proto_sandbox_v1_sandbox_proto_rawDesc)))
+func file_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
+	file_sandbox_v1_sandbox_proto_rawDescOnce.Do(func() {
+		file_sandbox_v1_sandbox_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)))
 	})
-	return file_proto_sandbox_v1_sandbox_proto_rawDescData
+	return file_sandbox_v1_sandbox_proto_rawDescData
 }
 
-var file_proto_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
-var file_proto_sandbox_v1_sandbox_proto_goTypes = []any{
+var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*CreateSessionRequest)(nil),   // 0: sandbox.v1.CreateSessionRequest
 	(*CreateSessionResponse)(nil),  // 1: sandbox.v1.CreateSessionResponse
 	(*DestroySessionRequest)(nil),  // 2: sandbox.v1.DestroySessionRequest
@@ -1406,8 +1574,10 @@ var file_proto_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*ApproveActionResponse)(nil),  // 21: sandbox.v1.ApproveActionResponse
 	(*GetCACertRequest)(nil),       // 22: sandbox.v1.GetCACertRequest
 	(*GetCACertResponse)(nil),      // 23: sandbox.v1.GetCACertResponse
+	(*PollRunRequest)(nil),         // 24: sandbox.v1.PollRunRequest
+	(*PollRunResponse)(nil),        // 25: sandbox.v1.PollRunResponse
 }
-var file_proto_sandbox_v1_sandbox_proto_depIdxs = []int32{
+var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	13, // 0: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
 	0,  // 1: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
 	2,  // 2: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
@@ -1421,45 +1591,47 @@ var file_proto_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	18, // 10: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
 	20, // 11: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
 	22, // 12: sandbox.v1.SandboxService.GetCACert:input_type -> sandbox.v1.GetCACertRequest
-	1,  // 13: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
-	3,  // 14: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
-	5,  // 15: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
-	6,  // 16: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
-	8,  // 17: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
-	10, // 18: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
-	12, // 19: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
-	15, // 20: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
-	17, // 21: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
-	19, // 22: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
-	21, // 23: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	23, // 24: sandbox.v1.SandboxService.GetCACert:output_type -> sandbox.v1.GetCACertResponse
-	13, // [13:25] is the sub-list for method output_type
-	1,  // [1:13] is the sub-list for method input_type
+	24, // 13: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
+	1,  // 14: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
+	3,  // 15: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
+	5,  // 16: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
+	6,  // 17: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
+	8,  // 18: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
+	10, // 19: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
+	12, // 20: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
+	15, // 21: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
+	17, // 22: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
+	19, // 23: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
+	21, // 24: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
+	23, // 25: sandbox.v1.SandboxService.GetCACert:output_type -> sandbox.v1.GetCACertResponse
+	25, // 26: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
+	14, // [14:27] is the sub-list for method output_type
+	1,  // [1:14] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
 	1,  // [1:1] is the sub-list for extension extendee
 	0,  // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_proto_sandbox_v1_sandbox_proto_init() }
-func file_proto_sandbox_v1_sandbox_proto_init() {
-	if File_proto_sandbox_v1_sandbox_proto != nil {
+func init() { file_sandbox_v1_sandbox_proto_init() }
+func file_sandbox_v1_sandbox_proto_init() {
+	if File_sandbox_v1_sandbox_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_sandbox_v1_sandbox_proto_rawDesc), len(file_proto_sandbox_v1_sandbox_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_proto_sandbox_v1_sandbox_proto_goTypes,
-		DependencyIndexes: file_proto_sandbox_v1_sandbox_proto_depIdxs,
-		MessageInfos:      file_proto_sandbox_v1_sandbox_proto_msgTypes,
+		GoTypes:           file_sandbox_v1_sandbox_proto_goTypes,
+		DependencyIndexes: file_sandbox_v1_sandbox_proto_depIdxs,
+		MessageInfos:      file_sandbox_v1_sandbox_proto_msgTypes,
 	}.Build()
-	File_proto_sandbox_v1_sandbox_proto = out.File
-	file_proto_sandbox_v1_sandbox_proto_goTypes = nil
-	file_proto_sandbox_v1_sandbox_proto_depIdxs = nil
+	File_sandbox_v1_sandbox_proto = out.File
+	file_sandbox_v1_sandbox_proto_goTypes = nil
+	file_sandbox_v1_sandbox_proto_depIdxs = nil
 }

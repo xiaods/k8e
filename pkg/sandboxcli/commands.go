@@ -153,7 +153,8 @@ func RunCommand() cli.Command {
 			cli.IntFlag{Name: "timeout", Value: 30, Usage: "Timeout in seconds"},
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},
-			cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
+			cli.BoolFlag{Name: "background", Usage: "Submit asynchronously, return run_id immediately"},
+		cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
 			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-repo", Usage: "Git repo to clone (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
@@ -163,34 +164,23 @@ func RunCommand() cli.Command {
 	}
 }
 
-func runAction(ctx *cli.Context) error {
-	code, err := readCode(ctx)
-	if err != nil {
-		return printErrorExit(err.Error(), 1)
-	}
-	lang := ctx.String("lang")
-	raw := ctx.Bool("raw")
-
-	cli, exitErr := newClientFromCtx(ctx)
-	if exitErr != nil {
-		return exitErr
-	}
-	defer cli.Close()
-
-	sid, needsFinalize, err := ensureSession(cli, ctx)
+func runBackground(cli *client.Client, ctx *cli.Context, code, lang string) error {
+	sid, _, err := ensureSession(cli, ctx)
 	if err != nil {
 		return printErrorExit(err.Error(), 2)
 	}
-
-	if isInterpretedLang(lang) && (isMultiLine(code) || strings.HasPrefix(lang, "ts")) {
-		if err := writeCodeFile(cli, sid, lang, code); err != nil {
-			return printErrorExit("write code: "+err.Error(), 1)
-		}
-	}
-
 	cmd := buildCommand(lang, code)
-	req := &pb.ExecRequest{SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace"}
+	resp, err := cli.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+		SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace", Background: true,
+	})
+	if err != nil {
+		return printErrorExit("background submit: "+err.Error(), 2)
+	}
+	printJSON(map[string]any{"run_id": resp.RunId, "status": resp.Status, "session_id": sid})
+	return nil
+}
 
+func runExec(cli *client.Client, ctx *cli.Context, req *pb.ExecRequest, sid string, needsFinalize, raw bool) error {
 	retry := func() (int, error) {
 		clearState(ctx.String("tenant"))
 		s, f, e := ensureSession(cli, ctx)
@@ -215,13 +205,49 @@ func runAction(ctx *cli.Context) error {
 		}
 		return &ExitError{ExitCode: exitCode}
 	}
-	if err := runJSON(cli, req, sid, needsFinalize, ctx.String("tenant")); isSessionExpired(err) {
-		_, err = retry()
-		if err != nil {
-			return err
+	if err := runJSON(cli, req, sid, needsFinalize, ctx.String("tenant")); err != nil {
+		if isSessionExpired(err) {
+			_, retryErr := retry()
+			return retryErr
+		}
+		return err
+	}
+	return nil
+}
+
+func runAction(ctx *cli.Context) error {
+	code, err := readCode(ctx)
+	if err != nil {
+		return printErrorExit(err.Error(), 1)
+	}
+	lang := ctx.String("lang")
+	raw := ctx.Bool("raw")
+
+	cli, exitErr := newClientFromCtx(ctx)
+	if exitErr != nil {
+		return exitErr
+	}
+	defer cli.Close()
+
+	// Background mode: submit async, return run_id immediately
+	if ctx.Bool("background") {
+		return runBackground(cli, ctx, code, lang)
+	}
+
+	sid, needsFinalize, err := ensureSession(cli, ctx)
+	if err != nil {
+		return printErrorExit(err.Error(), 2)
+	}
+
+	if isInterpretedLang(lang) && (isMultiLine(code) || strings.HasPrefix(lang, "ts")) {
+		if err := writeCodeFile(cli, sid, lang, code); err != nil {
+			return printErrorExit("write code: "+err.Error(), 1)
 		}
 	}
-	return err
+
+	cmd := buildCommand(lang, code)
+	req := &pb.ExecRequest{SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace"}
+	return runExec(cli, ctx, req, sid, needsFinalize, raw)
 }
 
 func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) (exitCode int, err error) {
@@ -920,6 +946,40 @@ func printBenchmarkResults(results map[string][]time.Duration) {
 		}
 	}
 	fmt.Fprintln(os.Stderr, "")
+}
+
+// ── PollCommand ─────────────────────────────────────────────────────────────
+
+func PollCommand() cli.Command {
+	return cli.Command{
+		Name:      "poll",
+		Usage:     "Check status of a background sandbox execution",
+		ArgsUsage: "<run-id>",
+		Action: func(ctx *cli.Context) error {
+			runID := ctx.Args().First()
+			if runID == "" {
+				return printErrorExit("usage: k8e-sandbox-cli poll <run-id>", 1)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			resp, err := client.SandboxServiceClient.PollRun(context.Background(), &pb.PollRunRequest{RunId: runID})
+			if err != nil {
+				return printErrorExit("poll: "+err.Error(), 1)
+			}
+			printJSON(map[string]any{
+				"run_id":    resp.RunId,
+				"status":    resp.Status,
+				"stdout":    resp.Stdout,
+				"stderr":    resp.Stderr,
+				"exit_code": resp.ExitCode,
+			})
+			return nil
+		},
+	}
 }
 
 // ── InstallSkillCommand ────────────────────────────────────────────────────

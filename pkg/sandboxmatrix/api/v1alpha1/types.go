@@ -19,11 +19,24 @@ type SandboxMatrix struct {
 }
 
 type SandboxMatrixSpec struct {
-	WarmPoolSize        int               `json:"warmPoolSize,omitempty"`
-	RuntimeClass        string            `json:"runtimeClass,omitempty"`
-	SessionTTL          int               `json:"sessionTTL,omitempty"`
-	DefaultAllowedHosts []string          `json:"defaultAllowedHosts,omitempty"`
+	WarmPoolSize        int                `json:"warmPoolSize,omitempty"`
+	RuntimeClass        string             `json:"runtimeClass,omitempty"`
+	SessionTTL          int                `json:"sessionTTL,omitempty"`
+	DefaultAllowedHosts []string           `json:"defaultAllowedHosts,omitempty"`
 	ResourceLimits      corev1.ResourceList `json:"resourceLimits,omitempty"`
+	RateLimits          *RateLimitSpec     `json:"rateLimits,omitempty"`
+}
+
+// RateLimitSpec configures per-tenant rate limiting.
+type RateLimitSpec struct {
+	// WriteBurst is the max burst size for mutating RPCs (CreateSession, Exec, etc.).
+	WriteBurst int `json:"writeBurst,omitempty"`
+	// WriteRate is the sustained rate per second for mutating RPCs.
+	WriteRate float64 `json:"writeRate,omitempty"`
+	// ReadBurst is the max burst size for read-only RPCs (ReadFile, ListFiles, etc.).
+	ReadBurst int `json:"readBurst,omitempty"`
+	// ReadRate is the sustained rate per second for read-only RPCs.
+	ReadRate float64 `json:"readRate,omitempty"`
 }
 
 type SandboxMatrixStatus struct {
@@ -63,10 +76,12 @@ type SandboxSessionStatus struct {
 type SandboxPhase string
 
 const (
-	SandboxPhaseWarm        SandboxPhase = "Warm"
-	SandboxPhaseActive      SandboxPhase = "Active"
-	SandboxPhaseResetting   SandboxPhase = "Resetting"
-	SandboxPhaseTerminating SandboxPhase = "Terminating"
+	SandboxPhaseWarm                 SandboxPhase = "Warm"
+	SandboxPhaseActive               SandboxPhase = "Active"
+	SandboxPhaseResetting            SandboxPhase = "Resetting"
+	SandboxPhaseTerminating          SandboxPhase = "Terminating"
+	SandboxPhaseBackgroundRunning    SandboxPhase = "BackgroundRunning"
+	SandboxPhaseBackgroundCompleted  SandboxPhase = "BackgroundCompleted"
 )
 
 // +genclient

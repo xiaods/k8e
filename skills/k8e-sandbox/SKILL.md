@@ -19,7 +19,7 @@ Before any sandbox operation, check that the required environment variables are 
 ```bash
 if [ -z "$K8E_SANDBOX_ENDPOINT" ] || [ -z "$K8E_SANDBOX_APIKEY" ]; then
   echo "⚠ Sandbox not configured. Please provide:"
-  echo "  export K8E_SANDBOX_ENDPOINT=<server-ip>:50051"
+  echo "  export K8E_SANDBOX_ENDPOINT=<your-public-ip>:50051"
   echo "  export K8E_SANDBOX_APIKEY=<your-api-key>"
   exit 1
 fi
@@ -28,7 +28,7 @@ fi
 **If either variable is missing**, stop immediately and ask the user:
 
 > "I need your K8E sandbox credentials to run code securely:
->   `K8E_SANDBOX_ENDPOINT` — the server address (e.g. `54.116.141.251:50051`)
+>   `K8E_SANDBOX_ENDPOINT` — the server address (e.g. `<your-public-ip>:50051`)
 >   `K8E_SANDBOX_APIKEY` — your API key (get it from the server: `k8e sandbox-apikey create my-agent`)"
 
 Do NOT proceed with any code execution until both are set.
@@ -45,7 +45,7 @@ tls: failed to verify certificate: x509: certificate is valid for 127.0.0.1, ::1
 
 ```yaml
 tls-san:
-  - 54.116.141.251
+  - <your-public-ip>
 ```
 
 Then restart: `systemctl restart k8e`
@@ -77,7 +77,7 @@ chmod +x k8e-sandbox-cli-linux-amd64
 
 # From a remote client, set the gateway endpoint and API key
 # (Get the API key from the server: k8e sandbox-apikey create my-agent)
-export K8E_SANDBOX_ENDPOINT=<server-ip>:50051
+export K8E_SANDBOX_ENDPOINT=<your-public-ip>:50051
 export K8E_SANDBOX_APIKEY=k8e-abc123...
 ./k8e-sandbox-cli-linux-amd64 run "echo hello"
 ```
@@ -95,9 +95,13 @@ export K8E_SANDBOX_APIKEY=k8e-abc123...
 | `k8e-sandbox-cli list <sid>` | List workspace files | `--since <unix_ts>` |
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child sandbox (depth 1) | shares parent /workspace PVC |
 | `k8e-sandbox-cli confirm <sid> <action>` | Gate destructive action on human approval | `--timeout 30`, `--no-wait` |
-| `k8e-sandbox-cli approve <approval-id>` | Approve pending confirm | — |
-
-## Run details
+| `k8e-sandbox-cli approve <approval-id>` | Approve pending confirm | `--reject`, `--reason` |
+| `k8e-sandbox-cli benchmark` | Measure cold start / warm claim / lifecycle latency | `--pool-size 3`, `--iterations 3` |
+| `k8e-sandbox-cli snapshot save <sid> <name>` | Save workspace to disk | — |
+| `k8e-sandbox-cli snapshot restore <name>` | Create session from saved snapshot | `--runtime`, `--tenant` |
+| `k8e-sandbox-cli snapshot list` | List saved snapshots | — |
+| `k8e-sandbox-cli snapshot delete <name>` | Delete a snapshot | — |
+| `k8e-sandbox-cli install-skill [claude\|codex\|pi\|all]` | Install this skill into agent config | — |
 
 ```
 k8e-sandbox-cli run <code> [--lang python|bash|node|ts] [--session-id <id>] [--tenant <id>] [--timeout <seconds>] [--raw]
@@ -202,13 +206,26 @@ Sub-agents share parent `/workspace` PVC, communicate via files. Max depth 1.
 
 For non-blocking registration: add `--no-wait`, get `approval_id`, call `k8e-sandbox-cli approve $AID` later.
 
+### Scenario 7: Workspace snapshot save/restore
+
+```
+# Save current workspace
+k8e-sandbox-cli snapshot save $SID my-analysis
+
+# Later, restore from snapshot into a new session
+SID=$(k8e-sandbox-cli snapshot restore my-analysis | jq -r .session_id)
+k8e-sandbox-cli read $SID /workspace/result.json --raw
+```
+
 ## Error reference
 
 | Exit code | Cause | Action |
 |-----------|-------|--------|
-| 2 (TLS) | `not <IP>` in error | Server TLS SAN missing. Tell user to add `tls-san` + restart. Clear `~/.k8e/sandbox/ca.crt` and retry. |
+| 2 (TLS) | `not <IP>` in error | Server TLS SAN missing. Add `tls-san` + restart k8e. Clear `~/.k8e/sandbox/ca.crt` and retry. |
 | 2 | Sandbox service unreachable | Check `k8e-sandbox-cli status`, ensure gateway is running |
 | 1 | Command failed / session not found | Parse error message from JSON; create new session if expired |
+| 8 (ResourceExhausted) | `warm pool full` | All sandbox pods are in use. Wait for an active session to finish, or add more server memory. |
+| 8 (ResourceExhausted) | `rate limit exceeded` | Too many requests. Slow down and retry after a few seconds. |
 | non-zero | Command inside sandbox failed | Check `stderr` in JSON output |
 
 JSON error output format:

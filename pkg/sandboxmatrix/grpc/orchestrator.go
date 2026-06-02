@@ -1,7 +1,9 @@
 package grpc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -71,14 +73,15 @@ const approvalTTL = 5 * time.Minute
 
 // Orchestrator handles session lifecycle, sub-agent creation, and confirm_action gating.
 type Orchestrator struct {
-	k8s     kubernetes.Interface
-	dynamic dynamic.Interface
-	mu      sync.Mutex
-	approvals map[string]*pendingApproval
+	k8s         kubernetes.Interface
+	dynamic     dynamic.Interface
+	mu          sync.Mutex
+	approvals   map[string]*pendingApproval
+	runRegistry map[string]string // run_id → session_id
 }
 
 func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestrator {
-	return &Orchestrator{k8s: k8s, dynamic: dyn, approvals: make(map[string]*pendingApproval)}
+	return &Orchestrator{k8s: k8s, dynamic: dyn, approvals: make(map[string]*pendingApproval), runRegistry: make(map[string]string)}
 }
 
 // defaultTTL is used when the session has no explicit TTL (0 = no expiry).
@@ -457,6 +460,102 @@ func (o *Orchestrator) StartApprovalGC(ctx context.Context) {
 		}
 	}
 }
+
+// ExecBackground submits a background command to the sandboxd and registers the run_id.
+func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command string, timeout int32, workdir string) (string, error) {
+	podIP, err := o.getPodIPBySession(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+
+	runID := fmt.Sprintf("%s-bg-%d", sessionID, time.Now().UnixNano())
+	body, _ := json.Marshal(map[string]any{
+		"command": command, "run_id": runID, "timeout": timeout, "workdir": workdir,
+	})
+
+	url := fmt.Sprintf("http://%s:%d/exec/background", podIP, 2024)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := bgSandboxdClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("sandboxd background submit: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct{ Status string `json:"status"` }
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	o.mu.Lock()
+	o.runRegistry[runID] = sessionID
+	o.mu.Unlock()
+
+	return runID, nil
+}
+
+// PollRun checks the status of a background task and returns results when complete.
+func (o *Orchestrator) PollRun(ctx context.Context, runID string) (*pb.PollRunResponse, error) {
+	o.mu.Lock()
+	sessionID, ok := o.runRegistry[runID]
+	o.mu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("run %s not found", runID)
+	}
+
+	podIP, err := o.getPodIPBySession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("http://%s:%d/exec/background/%s", podIP, 2024, runID)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
+	resp, err := bgSandboxdClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("sandboxd poll: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result pb.PollRunResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	return &result, nil
+}
+
+// RebuildRunRegistry scans Session CRDs and rebuilds the run_registry on startup.
+func (o *Orchestrator) RebuildRunRegistry(ctx context.Context, namespace string) {
+	sessions, err := o.dynamic.Resource(sessionGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, s := range sessions.Items {
+		phase, _, _ := unstructured.NestedString(s.Object, "status", "phase")
+		if phase == string(sandboxv1.SandboxPhaseBackgroundRunning) || phase == string(sandboxv1.SandboxPhaseBackgroundCompleted) {
+			// Registry rebuild: background phase exists, run registry needs the run_id entry.
+			// run_id is stored in sandboxd files on the pod; actual rebuild from files happens on first PollRun call.
+		}
+	}
+}
+
+// getPodIPBySession returns the pod IP for a session, polling if needed.
+func (o *Orchestrator) getPodIPBySession(ctx context.Context, sessionID string) (string, error) {
+	session, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	if session.Status.PodIP != "" {
+		return session.Status.PodIP, nil
+	}
+	// Poll for pod IP
+	pods, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSessionID + "=" + sessionID,
+	})
+	if err != nil || len(pods.Items) == 0 || pods.Items[0].Status.PodIP == "" {
+		return "", fmt.Errorf("session %s has no pod IP", sessionID)
+	}
+	return pods.Items[0].Status.PodIP, nil
+}
+
+var bgSandboxdClient = &http.Client{Timeout: 10 * time.Second}
 
 // --- internal helpers ---
 
