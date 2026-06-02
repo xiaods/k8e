@@ -207,62 +207,68 @@ func TestDestroySession_ReleasesPod(t *testing.T) {
 	sess := mustCreateSession(t, o, "destroy-test")
 	podName, pvcName := sess.Status.PodName, sess.Status.WorkspacePVC
 
-	// Manually persist pod name/ip in session status + set pod labels (fake clients are limited)
-	if podName != "" {
-		u, _ := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, "destroy-test", metav1.GetOptions{})
-		if u != nil {
-			st := u.Object["status"].(map[string]interface{})
-			st["podName"] = podName
-			st["podIP"] = "10.0.0.1"
-			o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{})
-		}
-		pod, _ := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
-		if pod != nil {
-			pod.Status.PodIP = "10.0.0.1"
-			if pod.Labels == nil {
-				pod.Labels = make(map[string]string)
-			}
-			pod.Labels[labelSessionID] = "destroy-test"
-			pod.Labels[labelState] = stateActive
-			o.k8s.CoreV1().Pods(sandboxNS).UpdateStatus(ctx, pod, metav1.UpdateOptions{})
-		}
-	}
-
-	// Manually ensure pod has the session-id label (fake client label selectors are limited)
-	if podName != "" {
-		pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("get pod: %v", err)
-		}
-		if pod.Labels == nil {
-			pod.Labels = make(map[string]string)
-		}
-		pod.Labels[labelSessionID] = "destroy-test"
-		pod.Labels[labelState] = stateActive
-		o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{})
-	}
+	// Fake clients don't support label selectors; manually set up pod labels and session status
+	setupPodForRelease(t, o, ctx, podName)
 
 	if err := o.DestroySession(ctx, "destroy-test"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
-	// Pod should survive (released back to pool, not deleted)
-	if podName != "" {
-		pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
-		if err != nil {
-			t.Fatalf("expected pod to survive after destroy: %v", err)
-		}
-		if pod.Labels[labelState] != StateResetting {
-			t.Errorf("expected pod state=%s, got %s", StateResetting, pod.Labels[labelState])
-		}
-		if pod.Labels[labelSessionID] == "destroy-test" {
-			t.Error("expected session-id label to be removed")
-		}
+
+	assertPodReleased(t, o, ctx, podName)
+	assertPVCSurvives(t, o, ctx, pvcName)
+}
+
+func setupPodForRelease(t *testing.T, o *Orchestrator, ctx context.Context, podName string) {
+	t.Helper()
+	if podName == "" {
+		return
 	}
-	// PVC should survive
-	if pvcName != "" {
-		if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{}); err != nil {
-			t.Fatalf("expected PVC to survive after destroy: %v", err)
-		}
+	// Persist pod IP in session CRD status
+	u, _ := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, "destroy-test", metav1.GetOptions{})
+	if u != nil {
+		st := u.Object["status"].(map[string]interface{})
+		st["podName"] = podName
+		st["podIP"] = "10.0.0.1"
+		o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{})
+	}
+	// Set pod labels and status
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	pod.Status.PodIP = "10.0.0.1"
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[labelSessionID] = "destroy-test"
+	pod.Labels[labelState] = stateActive
+	o.k8s.CoreV1().Pods(sandboxNS).UpdateStatus(ctx, pod, metav1.UpdateOptions{})
+}
+
+func assertPodReleased(t *testing.T, o *Orchestrator, ctx context.Context, podName string) {
+	t.Helper()
+	if podName == "" {
+		return
+	}
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod to survive after destroy: %v", err)
+	}
+	if pod.Labels[labelState] != StateResetting {
+		t.Errorf("expected pod state=%s, got %s", StateResetting, pod.Labels[labelState])
+	}
+	if pod.Labels[labelSessionID] == "destroy-test" {
+		t.Error("expected session-id label to be removed")
+	}
+}
+
+func assertPVCSurvives(t *testing.T, o *Orchestrator, ctx context.Context, pvcName string) {
+	t.Helper()
+	if pvcName == "" {
+		return
+	}
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected PVC to survive after destroy: %v", err)
 	}
 }
 
