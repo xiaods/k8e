@@ -112,7 +112,15 @@ fn readAllFromFd(allocator: std.mem.Allocator, fd: i32, max_bytes: usize) ![]u8 
         @memcpy(buf[total..][0..@as(usize, @intCast(n))], tmp[0..@as(usize, @intCast(n))]);
         total += @as(usize, @intCast(n));
     }
-    return buf[0..total];
+    // Shrink to exact size so DebugAllocator canary check passes
+    if (allocator.resize(buf, total)) {
+        return buf.ptr[0..total];
+    }
+    // Resize not supported — copy to exact-fit buffer
+    const exact = try allocator.alloc(u8, total);
+    @memcpy(exact, buf[0..total]);
+    allocator.free(buf);
+    return exact;
 }
 
 /// spawnTimeoutKiller kills the child process after timeout_sec seconds.
