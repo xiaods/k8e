@@ -3,6 +3,7 @@ package ratelimit
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -143,6 +144,19 @@ func (l *Limiter) Allow(tenant string, isWrite bool) bool {
 	return true
 }
 
+// ReapStale removes tenants that haven't been seen for the given duration.
+// Call periodically to prevent unbounded memory growth.
+func (l *Limiter) ReapStale(maxAge time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cutoff := time.Now().Add(-maxAge)
+	for tenant, b := range l.cache {
+		if b.lastFill.Before(cutoff) {
+			delete(l.cache, tenant)
+		}
+	}
+}
+
 // extractTenant extracts the tenant identifier from gRPC metadata or API key.
 func extractTenant(ctx context.Context) string {
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -155,12 +169,15 @@ func extractTenant(ctx context.Context) string {
 	}
 	// Fall back to API key hash prefix
 	if vals := md.Get("authorization"); len(vals) > 0 {
-		// Use first 8 chars of the Bearer token as tenant key
 		token := vals[0]
-		if len(token) > 15 {
-			return "key:" + token[7:15]
+		if strings.HasPrefix(token, "Bearer ") && len(token) > 7 {
+			key := token[7:]
+			if len(key) > 8 {
+				key = key[:8]
+			}
+			return "key:" + key
 		}
-		return "key:" + token
+		return "key:anon"
 	}
 	// Last resort: use source IP from peer info
 	return "anon"
@@ -195,7 +212,10 @@ func isWriteRPC(method string) bool {
 		"/sandbox.v1.SandboxService/ExecStream",
 		"/sandbox.v1.SandboxService/PipInstall",
 		"/sandbox.v1.SandboxService/RunSubAgent",
-		"/sandbox.v1.SandboxService/WriteFile":
+		"/sandbox.v1.SandboxService/WriteFile",
+		"/sandbox.v1.SandboxService/GetCACert",
+		"/sandbox.v1.SandboxService/ConfirmAction",
+		"/sandbox.v1.SandboxService/ApproveAction":
 		return true
 	default:
 		return false

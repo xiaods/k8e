@@ -143,6 +143,20 @@ func (s *Server) loadAPIKeys(ctx context.Context) {
 
 // reloadConfigLoop periodically reloads API keys and rate limits from the SandboxMatrix CRD.
 func (s *Server) reloadConfigLoop(ctx context.Context) {
+	// Immediate cleanup goroutine for stale rate limit tenants
+	go func() {
+		reapTicker := time.NewTicker(5 * time.Minute)
+		defer reapTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-reapTicker.C:
+				s.rateLimiter.ReapStale(10 * time.Minute)
+			}
+		}
+	}()
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
