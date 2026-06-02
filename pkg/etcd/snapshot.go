@@ -21,7 +21,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/robfig/cron/v3"
 	"github.com/sirupsen/logrus"
-	k8e "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	k8e "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/etcd/s3"
@@ -49,8 +49,8 @@ const (
 )
 
 var (
-	annotationLocalReconciled = "etcd." + version.Program + ".cattle.io/local-snapshots-timestamp"
-	annotationS3Reconciled    = "etcd." + version.Program + ".cattle.io/s3-snapshots-timestamp"
+	annotationLocalReconciled = "etcd." + version.Program + ".sh/local-snapshots-timestamp"
+	annotationS3Reconciled    = "etcd." + version.Program + ".sh/s3-snapshots-timestamp"
 
 	// snapshotDataBackoff will retry at increasing steps for up to ~30 seconds.
 	// If the ConfigMap update fails, the list won't be reconciled again until next time

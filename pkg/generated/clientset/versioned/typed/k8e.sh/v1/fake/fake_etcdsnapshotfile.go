@@ -18,8 +18,8 @@ limitations under the License.
 package fake
 
 import (
-	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
-	k8ecattleiov1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
+	k8ecattleiov1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.sh/v1"
 	gentype "k8s.io/client-go/gentype"
 )
 

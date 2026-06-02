@@ -28,10 +28,8 @@ import (
 	"github.com/xiaods/k8e/pkg/profile"
 	"github.com/xiaods/k8e/pkg/rootless"
 	"github.com/xiaods/k8e/pkg/server"
-	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/xiaods/k8e/pkg/vpn"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	kubeapiserverflag "k8s.io/component-base/cli/flag"
@@ -92,20 +90,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 	}
 
-	if cmds.AgentConfig.VPNAuthFile != "" {
-		cmds.AgentConfig.VPNAuth, err = util.ReadFile(cmds.AgentConfig.VPNAuthFile)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Starts the VPN in the server if config was set up
-	if cmds.AgentConfig.VPNAuth != "" {
-		err := vpn.StartVPN(cmds.AgentConfig.VPNAuth)
-		if err != nil {
-			return err
-		}
-	}
+	// VPN (tailscale) integration removed.
 
 	containerRuntimeReady := make(chan struct{})
 
@@ -256,48 +241,14 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		serverConfig.ControlConfig.SANs = append(serverConfig.ControlConfig.SANs, ip.String())
 	}
 
-	// if not set, try setting advertise-ip from agent VPN
-	if cmds.AgentConfig.VPNAuth != "" {
-		vpnInfo, err := vpn.GetVPNInfo(cmds.AgentConfig.VPNAuth)
-		if err != nil {
-			return err
-		}
+	// VPN removed — use agent node-ip/node-external-ip for advertise-ip
+	if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeExternalIP) != 0 {
+		serverConfig.ControlConfig.AdvertiseIP = util.GetFirstValidIPString(cmds.AgentConfig.NodeExternalIP)
+	}
 
-		// If we are in ipv6-only mode, we should pass the ipv6 address. Otherwise, ipv4
-		if utilsnet.IsIPv6(nodeIPs[0]) {
-			if vpnInfo.IPv6Address != nil {
-				logrus.Infof("Changed advertise-address to %v due to VPN", vpnInfo.IPv6Address)
-				if serverConfig.ControlConfig.AdvertiseIP != "" {
-					logrus.Warn("Conflict in the config detected. VPN integration overwrites advertise-address but the config is setting the advertise-address parameter")
-				}
-				serverConfig.ControlConfig.AdvertiseIP = vpnInfo.IPv6Address.String()
-			} else {
-				return errors.New("tailscale does not provide an ipv6 address")
-			}
-		} else {
-			// We are in dual-stack or ipv4-only mode
-			if vpnInfo.IPv4Address != nil {
-				logrus.Infof("Changed advertise-address to %v due to VPN", vpnInfo.IPv4Address)
-				if serverConfig.ControlConfig.AdvertiseIP != "" {
-					logrus.Warn("Conflict in the config detected. VPN integration overwrites advertise-address but the config is setting the advertise-address parameter")
-				}
-				serverConfig.ControlConfig.AdvertiseIP = vpnInfo.IPv4Address.String()
-			} else {
-				return errors.New("tailscale does not provide an ipv4 address")
-			}
-		}
-		logrus.Warn("Etcd IP (PrivateIP) remains the local IP. Running etcd traffic over VPN is not recommended due to performance issues")
-	} else {
-
-		// if not set, try setting advertise-ip from agent node-external-ip
-		if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeExternalIP) != 0 {
-			serverConfig.ControlConfig.AdvertiseIP = util.GetFirstValidIPString(cmds.AgentConfig.NodeExternalIP)
-		}
-
-		// if not set, try setting advertise-ip from agent node-ip
-		if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeIP) != 0 {
-			serverConfig.ControlConfig.AdvertiseIP = util.GetFirstValidIPString(cmds.AgentConfig.NodeIP)
-		}
+	// if not set, try setting advertise-ip from agent node-ip
+	if serverConfig.ControlConfig.AdvertiseIP == "" && len(cmds.AgentConfig.NodeIP) != 0 {
+		serverConfig.ControlConfig.AdvertiseIP = util.GetFirstValidIPString(cmds.AgentConfig.NodeIP)
 	}
 
 	// if we ended up with any advertise-ips, ensure they're added to the SAN list;
@@ -412,29 +363,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.LeaderControllers = append(serverConfig.LeaderControllers, leaderControllers...)
 	serverConfig.Controllers = append(serverConfig.Controllers, controllers...)
 
-	// TLS config based on mozilla ssl-config generator
-	// https://ssl-config.mozilla.org/#server=golang&version=1.13.6&config=intermediate&guideline=5.4
-	// Need to disable the TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256 Cipher for TLS1.2
-	tlsCipherSuitesArg := getArgValueFromList("tls-cipher-suites", serverConfig.ControlConfig.ExtraAPIArgs)
-	tlsCipherSuites := strings.Split(tlsCipherSuitesArg, ",")
-	for i := range tlsCipherSuites {
-		tlsCipherSuites[i] = strings.TrimSpace(tlsCipherSuites[i])
-	}
-	if len(tlsCipherSuites) == 0 || tlsCipherSuites[0] == "" {
-		tlsCipherSuites = []string{
-			"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-			"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-			"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-			"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-			"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305",
-			"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305",
-		}
-		serverConfig.ControlConfig.ExtraAPIArgs = append(serverConfig.ControlConfig.ExtraAPIArgs, "tls-cipher-suites="+strings.Join(tlsCipherSuites, ","))
-	}
-	serverConfig.ControlConfig.CipherSuites = tlsCipherSuites
-	serverConfig.ControlConfig.TLSCipherSuites, err = kubeapiserverflag.TLSCipherSuites(tlsCipherSuites)
-	if err != nil {
-		return errors.Wrap(err, "invalid tls-cipher-suites")
+	// TLS cipher suites based on mozilla ssl-config generator
+	if err := configureTLSCipherSuites(&serverConfig); err != nil {
+		return err
 	}
 
 	// If performing a cluster reset, make sure control-plane components are
@@ -551,20 +482,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		go getAPIAddressFromEtcd(ctx, serverConfig, agentConfig)
 	}
 
-	// Until the agent is run and retrieves config from the server, we won't know
-	// if the embedded registry is enabled. If it is not enabled, these are not
-	// used as the registry is never started.
-	registry := spegel.DefaultRegistry
-	registry.Bootstrapper = spegel.NewChainingBootstrapper(
-		spegel.NewServerBootstrapper(&serverConfig.ControlConfig),
-		spegel.NewAgentBootstrapper(cfg.ServerURL, token, agentConfig.DataDir),
-		spegel.NewSelfBootstrapper(),
-	)
-	registry.Router = func(ctx context.Context, nodeConfig *config.Node) (*mux.Router, error) {
-		return https.Start(ctx, nodeConfig, serverConfig.ControlConfig.Runtime)
-	}
+	// Embedded P2P registry (spegel) removed. Direct image pull from registries.
 
-	// same deal for metrics - these are not used if the extra metrics listener is not enabled.
+	// metrics setup
 	metrics := k8emetrics.DefaultMetrics
 	metrics.Router = func(ctx context.Context, nodeConfig *config.Node) (*mux.Router, error) {
 		return https.Start(ctx, nodeConfig, serverConfig.ControlConfig.Runtime)
@@ -596,6 +516,33 @@ func validateNetworkConfiguration(serverConfig server.Config) error {
 		return fmt.Errorf("invalid egress-selector-mode %s", serverConfig.ControlConfig.EgressSelectorMode)
 	}
 
+	return nil
+}
+
+// configureTLSCipherSuites sets default TLS cipher suites if none are configured.
+func configureTLSCipherSuites(serverConfig *server.Config) error {
+	tlsCipherSuitesArg := getArgValueFromList("tls-cipher-suites", serverConfig.ControlConfig.ExtraAPIArgs)
+	tlsCipherSuites := strings.Split(tlsCipherSuitesArg, ",")
+	for i := range tlsCipherSuites {
+		tlsCipherSuites[i] = strings.TrimSpace(tlsCipherSuites[i])
+	}
+	if len(tlsCipherSuites) == 0 || tlsCipherSuites[0] == "" {
+		tlsCipherSuites = []string{
+			"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+			"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+			"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+			"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+			"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305",
+			"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305",
+		}
+		serverConfig.ControlConfig.ExtraAPIArgs = append(serverConfig.ControlConfig.ExtraAPIArgs, "tls-cipher-suites="+strings.Join(tlsCipherSuites, ","))
+	}
+	serverConfig.ControlConfig.CipherSuites = tlsCipherSuites
+	var err error
+	serverConfig.ControlConfig.TLSCipherSuites, err = kubeapiserverflag.TLSCipherSuites(tlsCipherSuites)
+	if err != nil {
+		return errors.Wrap(err, "invalid tls-cipher-suites")
+	}
 	return nil
 }
 

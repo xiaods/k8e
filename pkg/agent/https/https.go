@@ -10,7 +10,6 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/generated/clientset/versioned/scheme"
 	"github.com/xiaods/k8e/pkg/util"
-	"github.com/xiaods/k8e/pkg/version"
 	"k8s.io/apiserver/pkg/apis/apiserver"
 	"k8s.io/apiserver/pkg/authentication/authenticator"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
@@ -78,10 +77,8 @@ func Start(ctx context.Context, nodeConfig *config.Node, runtime *config.Control
 		}
 
 		authz := options.NewDelegatingAuthorizationOptions()
-		authz.AlwaysAllowPaths = []string{ // skip authz for paths that should not use SubjectAccessReview; basically everything that will use this router other than metrics
-			"/v1-" + version.Program + "/p2p", // spegel libp2p peer discovery
-			"/v2/*",                           // spegel registry mirror
-			"/debug/pprof/*",                  // profiling
+		authz.AlwaysAllowPaths = []string{ // skip authz for paths that should not use SubjectAccessReview
+			"/debug/pprof/*", // profiling
 		}
 		authz.RemoteKubeConfigFile = nodeConfig.AgentConfig.KubeConfigKubelet
 		if applyErr := authz.ApplyTo(&config.Authorization); applyErr != nil {

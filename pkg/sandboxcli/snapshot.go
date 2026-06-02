@@ -62,11 +62,13 @@ func snapshotSaveCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			name := ctx.Args().Get(1)
 			if sid == "" || name == "" {
-				printErrorExit("usage: k8e-sandbox-cli snapshot save <session-id> <name>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli snapshot save <session-id> <name>", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			// 1. Create tar.gz inside sandbox
@@ -77,8 +79,7 @@ func snapshotSaveCommand() cli.Command {
 				Timeout:   300,
 			})
 			if err != nil {
-				printErrorExit("archive workspace: "+err.Error(), 1)
-				return nil
+				return printErrorExit("archive workspace: "+err.Error(), 1)
 			}
 
 			// 2. Get file count and size
@@ -98,19 +99,16 @@ func snapshotSaveCommand() cli.Command {
 				SessionId: sid, Path: "/tmp/_snapshot.tar.gz",
 			})
 			if err != nil {
-				printErrorExit("read snapshot: "+err.Error(), 1)
-				return nil
+				return printErrorExit("read snapshot: "+err.Error(), 1)
 			}
 
 			// 4. Save to disk
 			dir := snapshotDir(name)
 			if err := os.MkdirAll(dir, 0755); err != nil {
-				printErrorExit("create snapshot dir: "+err.Error(), 2)
-				return nil
+				return printErrorExit("create snapshot dir: "+err.Error(), 2)
 			}
 			if err := os.WriteFile(snapshotTarPath(name), []byte(readResp.Content), 0644); err != nil {
-				printErrorExit("write snapshot: "+err.Error(), 2)
-				return nil
+				return printErrorExit("write snapshot: "+err.Error(), 2)
 			}
 
 			// 5. Write metadata
@@ -151,8 +149,7 @@ func snapshotListCommand() cli.Command {
 					printJSON(map[string]any{"snapshots": []any{}})
 					return nil
 				}
-				printErrorExit("read snapshots dir: "+err.Error(), 2)
-				return nil
+				return printErrorExit("read snapshots dir: "+err.Error(), 2)
 			}
 
 			var snapshots []map[string]any
@@ -192,31 +189,30 @@ func snapshotRestoreCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				printErrorExit("usage: k8e-sandbox-cli snapshot restore <name>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli snapshot restore <name>", 1)
 			}
 
 			// 1. Read metadata
 			metaData, err := os.ReadFile(snapshotMetaPath(name))
 			if err != nil {
-				printErrorExit("snapshot not found: "+name, 1)
-				return nil
+				return printErrorExit("snapshot not found: "+name, 1)
 			}
 			var meta SnapshotMeta
 			if json.Unmarshal(metaData, &meta) != nil {
-				printErrorExit("snapshot metadata corrupted: "+name, 2)
-				return nil
+				return printErrorExit("snapshot metadata corrupted: "+name, 2)
 			}
 
 			// 2. Read tar.gz
 			tarData, err := os.ReadFile(snapshotTarPath(name))
 			if err != nil {
-				printErrorExit("snapshot data not found: "+name, 2)
-				return nil
+				return printErrorExit("snapshot data not found: "+name, 2)
 			}
 
 			// 3. Create new session
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			var hosts []string
@@ -230,8 +226,7 @@ func snapshotRestoreCommand() cli.Command {
 				AllowedHosts: hosts,
 			})
 			if err != nil {
-				printErrorExit("create session: "+err.Error(), 2)
-				return nil
+				return printErrorExit("create session: "+err.Error(), 2)
 			}
 
 			sid := resp.SessionId
@@ -243,8 +238,7 @@ func snapshotRestoreCommand() cli.Command {
 			})
 			if err != nil {
 				client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
-				printErrorExit("upload snapshot: "+err.Error(), 2)
-				return nil
+				return printErrorExit("upload snapshot: "+err.Error(), 2)
 			}
 
 			// 5. Extract
@@ -255,8 +249,7 @@ func snapshotRestoreCommand() cli.Command {
 			})
 			if err != nil {
 				client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
-				printErrorExit("extract snapshot: "+err.Error(), 1)
-				return nil
+				return printErrorExit("extract snapshot: "+err.Error(), 1)
 			}
 
 			// 6. Write state (inherit tenant from snapshot if not overridden)
@@ -282,14 +275,12 @@ func snapshotDeleteCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				printErrorExit("usage: k8e-sandbox-cli snapshot delete <name>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli snapshot delete <name>", 1)
 			}
 
 			dir := snapshotDir(name)
 			if err := os.RemoveAll(dir); err != nil {
-				printErrorExit("delete snapshot: "+err.Error(), 2)
-				return nil
+				return printErrorExit("delete snapshot: "+err.Error(), 2)
 			}
 			printJSON(map[string]any{"ok": true})
 			return nil

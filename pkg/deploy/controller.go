@@ -22,8 +22,8 @@ import (
 	"github.com/rancher/wrangler/v3/pkg/objectset"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/agent/util"
-	apisv1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
-	controllersv1 "github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io/v1"
+	apisv1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
+	controllersv1 "github.com/xiaods/k8e/pkg/generated/controllers/k8e.sh/v1"
 	pkgutil "github.com/xiaods/k8e/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -39,7 +39,7 @@ import (
 
 const (
 	ControllerName = "deploy"
-	GVKAnnotation  = "addon.k8e.cattle.io/gvks"
+	GVKAnnotation  = "addon.k8e.sh/gvks"
 	startKey       = "_start_"
 	gvkSep         = ";"
 )

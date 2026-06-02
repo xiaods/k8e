@@ -1,16 +1,15 @@
 package containerd
 
 import (
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/containerd/containerd/remotes/docker"
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/rancher/wharfie/pkg/registries"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -28,24 +27,24 @@ func u(s string) *url.URL {
 	return u
 }
 
-func Test_UnitGetHostConfigs(t *testing.T) {
-	type args struct {
-		registryContent   string
-		noDefaultEndpoint bool
-		mirrorAddr        string
-	}
-	tests := []struct {
-		name string
-		args args
-		want HostConfigs
-	}{
+type hostConfigsArgs struct {
+	registryContent   string
+	noDefaultEndpoint bool
+	mirrorAddr        string
+}
+
+var hostConfigsTestCases = []struct {
+	name string
+	args hostConfigsArgs
+	want HostConfigs
+}{
 		{
 			name: "no registries",
 			want: HostConfigs{},
 		},
 		{
 			name: "registry with default endpoint",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -55,7 +54,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with default endpoint explicitly listed",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -67,7 +66,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with default endpoint - embedded registry",
-			args: args{
+			args: hostConfigsArgs{
 				mirrorAddr: "127.0.0.1:6443",
 				registryContent: `
 				  mirrors:
@@ -110,7 +109,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with default endpoint and creds",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -138,7 +137,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with default endpoint explicitly listed and creds",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -169,7 +168,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 
 		{
 			name: "registry with only creds",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 					configs:
 					  docker.io:
@@ -195,7 +194,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "private registry with default endpoint",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						registry.example.com:
@@ -205,7 +204,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "private registry with default endpoint and creds",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						registry.example.com:
@@ -233,7 +232,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "private registry with only creds",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 					configs:
 					  registry.example.com:
@@ -259,7 +258,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - full URL with override path",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -284,7 +283,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - hostname only with override path",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -309,7 +308,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - hostname only with default path",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -333,7 +332,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - full URL",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -357,7 +356,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - URL without path",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -381,7 +380,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - hostname only",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -405,7 +404,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - hostname and port only",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -429,7 +428,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - ip address only",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -453,7 +452,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - ip and port only",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -477,7 +476,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - duplicate endpoints",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -502,7 +501,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - duplicate endpoints in different formats",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -528,7 +527,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - duplicate endpoints in different positions",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -557,7 +556,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - localhost and port only",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -581,7 +580,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - localhost and port with scheme",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -605,7 +604,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - loopback ip and port only",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -629,7 +628,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - loopback ip and port with scheme",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -653,7 +652,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint and mirror creds",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -700,7 +699,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint and mirror creds - override path with v2",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -763,7 +762,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint and mirror creds - override path without v2",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						docker.io:
@@ -826,7 +825,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint and mirror creds - no default endpoint",
-			args: args{
+			args: hostConfigsArgs{
 				noDefaultEndpoint: true,
 				registryContent: `
 				  mirrors:
@@ -871,7 +870,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint and mirror creds - embedded registry",
-			args: args{
+			args: hostConfigsArgs{
 				mirrorAddr: "127.0.0.1:6443",
 				registryContent: `
 				  mirrors:
@@ -942,7 +941,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint and mirror creds - embedded registry with rewrites",
-			args: args{
+			args: hostConfigsArgs{
 				mirrorAddr: "127.0.0.1:6443",
 				registryContent: `
 				  mirrors:
@@ -1018,7 +1017,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint and mirror creds - embedded registry and no default endpoint",
-			args: args{
+			args: hostConfigsArgs{
 				mirrorAddr:        "127.0.0.1:6443",
 				noDefaultEndpoint: true,
 				registryContent: `
@@ -1087,7 +1086,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - embedded registry, default endpoint explicitly listed",
-			args: args{
+			args: hostConfigsArgs{
 				mirrorAddr: "127.0.0.1:6443",
 				registryContent: `
 				  mirrors:
@@ -1140,7 +1139,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "registry with mirror endpoint - embedded registry and no default endpoint, default endpoint explicitly listed",
-			args: args{
+			args: hostConfigsArgs{
 				mirrorAddr:        "127.0.0.1:6443",
 				noDefaultEndpoint: true,
 				registryContent: `
@@ -1194,7 +1193,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "wildcard mirror endpoint - no endpoints",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						"*":
@@ -1204,7 +1203,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "wildcard mirror endpoint - full URL",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						"*":
@@ -1228,7 +1227,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "wildcard mirror endpoint - full URL, embedded registry",
-			args: args{
+			args: hostConfigsArgs{
 				mirrorAddr: "127.0.0.1:6443",
 				registryContent: `
 				  mirrors:
@@ -1276,7 +1275,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "wildcard mirror endpoint - full URL, embedded registry, no default",
-			args: args{
+			args: hostConfigsArgs{
 				noDefaultEndpoint: true,
 				mirrorAddr:        "127.0.0.1:6443",
 				registryContent: `
@@ -1323,7 +1322,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 
 		{
 			name: "wildcard config",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  configs:
 						"*":
@@ -1353,7 +1352,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "localhost registry - default https endpoint on unspecified port",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						"localhost":
@@ -1363,7 +1362,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "localhost registry - default https endpoint on https port",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						"localhost:443":
@@ -1373,7 +1372,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "localhost registry - default http endpoint on odd port",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						"localhost:5000":
@@ -1383,7 +1382,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "localhost registry - default http endpoint on http port",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						"localhost:80":
@@ -1393,7 +1392,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "localhost registry - default http endpoint on odd port, embedded registry",
-			args: args{
+			args: hostConfigsArgs{
 				mirrorAddr: "127.0.0.1:6443",
 				registryContent: `
 				  mirrors:
@@ -1419,7 +1418,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 		},
 		{
 			name: "localhost registry - https endpoint on odd port with tls verification disabled",
-			args: args{
+			args: hostConfigsArgs{
 				registryContent: `
 				  mirrors:
 						localhost:5000:
@@ -1455,9 +1454,10 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 				},
 			},
 		},
-	}
+}
 
-	for _, tt := range tests {
+func Test_UnitGetHostConfigs(t *testing.T) {
+	for _, tt := range hostConfigsTestCases {
 		t.Run(tt.name, func(t *testing.T) {
 			// replace tabs from the inline yaml with spaces; yaml doesn't support tabs for indentation.
 			tt.args.registryContent = strings.ReplaceAll(tt.args.registryContent, "\t", "  ")
@@ -1482,15 +1482,31 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 				},
 			}
 
-			// set up embedded registry, if enabled for the test
-			if tt.args.mirrorAddr != "" {
-				conf := spegel.DefaultRegistry
-				conf.ServerCAFile = "server-ca"
-				conf.ClientKeyFile = "client-key"
-				conf.ClientCertFile = "client-cert"
-				conf.InternalAddress, conf.RegistryPort, _ = net.SplitHostPort(tt.args.mirrorAddr)
-				conf.InjectMirror(nodeConfig)
+		// set up embedded registry mirror TLS config, if enabled for the test
+		if tt.args.mirrorAddr != "" {
+			if registry.Registry.Configs == nil {
+				registry.Registry.Configs = map[string]registries.RegistryConfig{}
 			}
+			registry.Registry.Configs[tt.args.mirrorAddr] = registries.RegistryConfig{
+				TLS: &registries.TLSConfig{
+					CAFile:   "server-ca",
+					KeyFile:  "client-key",
+					CertFile: "client-cert",
+				},
+			}
+			mirrorURL := "https://" + tt.args.mirrorAddr + "/v2"
+			if registry.Registry.Mirrors == nil {
+				registry.Registry.Mirrors = map[string]registries.Mirror{}
+			}
+			for host, mirror := range registry.Registry.Mirrors {
+				// Don't handle localhost registries (matching old spegel behavior)
+				if docker.IsLocalhost(host) {
+					continue
+				}
+				mirror.Endpoints = append([]string{mirrorURL}, mirror.Endpoints...)
+				registry.Registry.Mirrors[host] = mirror
+			}
+		}
 
 			// Generate config template struct for all hosts
 			got := getHostConfigs(registry.Registry, tt.args.noDefaultEndpoint, tt.args.mirrorAddr)

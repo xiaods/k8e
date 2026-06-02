@@ -65,6 +65,7 @@ type SandboxPhase string
 const (
 	SandboxPhaseWarm        SandboxPhase = "Warm"
 	SandboxPhaseActive      SandboxPhase = "Active"
+	SandboxPhaseResetting   SandboxPhase = "Resetting"
 	SandboxPhaseTerminating SandboxPhase = "Terminating"
 )
 

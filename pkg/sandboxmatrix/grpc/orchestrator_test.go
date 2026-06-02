@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	testGroupK8e    = "k8e.cattle.io"
+	testGroupK8e    = "k8e.sh"
 	testGroupCilium = "cilium.io"
-	testAPIVer      = "k8e.cattle.io/v1alpha1"
+	testAPIVer      = "k8e.sh/v1alpha1"
 	msgUnexpected   = "unexpected error: %v"
 	msgCreate       = "create: %v"
 )
@@ -201,24 +201,74 @@ func TestCreateSession_CreatesPVC(t *testing.T) {
 	}
 }
 
-func TestDestroySession_DeletesPodAndPVC(t *testing.T) {
+func TestDestroySession_ReleasesPod(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()
 	sess := mustCreateSession(t, o, "destroy-test")
 	podName, pvcName := sess.Status.PodName, sess.Status.WorkspacePVC
 
+	// Fake clients don't support label selectors; manually set up pod labels and session status
+	setupPodForRelease(t, ctx, o, podName)
+
 	if err := o.DestroySession(ctx, "destroy-test"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
-	if podName != "" {
-		if _, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{}); err == nil {
-			t.Error("expected pod to be deleted")
-		}
+
+	assertPodReleased(t, ctx, o, podName)
+	assertPVCSurvives(t, ctx, o, pvcName)
+}
+
+func setupPodForRelease(t *testing.T, ctx context.Context, o *Orchestrator, podName string) {
+	t.Helper()
+	if podName == "" {
+		return
 	}
-	if pvcName != "" {
-		if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{}); err == nil {
-			t.Error("expected PVC to be deleted")
-		}
+	// Persist pod IP in session CRD status
+	u, _ := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, "destroy-test", metav1.GetOptions{})
+	if u != nil {
+		st := u.Object["status"].(map[string]interface{})
+		st["podName"] = podName
+		st["podIP"] = "10.0.0.1"
+		o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{})
+	}
+	// Set pod labels and status
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	pod.Status.PodIP = "10.0.0.1"
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[labelSessionID] = "destroy-test"
+	pod.Labels[labelState] = stateActive
+	o.k8s.CoreV1().Pods(sandboxNS).UpdateStatus(ctx, pod, metav1.UpdateOptions{})
+}
+
+func assertPodReleased(t *testing.T, ctx context.Context, o *Orchestrator, podName string) {
+	t.Helper()
+	if podName == "" {
+		return
+	}
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected pod to survive after destroy: %v", err)
+	}
+	if pod.Labels[labelState] != StateResetting {
+		t.Errorf("expected pod state=%s, got %s", StateResetting, pod.Labels[labelState])
+	}
+	if pod.Labels[labelSessionID] == "destroy-test" {
+		t.Error("expected session-id label to be removed")
+	}
+}
+
+func assertPVCSurvives(t *testing.T, ctx context.Context, o *Orchestrator, pvcName string) {
+	t.Helper()
+	if pvcName == "" {
+		return
+	}
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected PVC to survive after destroy: %v", err)
 	}
 }
 

@@ -5,11 +5,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"gopkg.in/yaml.v2"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
+
+// gitRepoRe validates git repo URLs: scheme://host/path or git@host:path
+var gitRepoRe = regexp.MustCompile(`^(https?://[\w.-]+(/[\w./:~?#\[\]@!$&'()*+,;=%-]*)?|git@[\w.-]+:[\w./:~?#\[\]@!$&'()*+,;=%-]+)$`)
+
+// gitRefRe validates branch/tag names (no shell metacharacters)
+var gitRefRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
 
 // ManifestEntry represents one entry in a workspace manifest.
 type ManifestEntry struct {
@@ -107,15 +114,29 @@ func materializeDir(ctx context.Context, client *client.Client, sid string, d *D
 }
 
 func materializeGitRepo(ctx context.Context, client *client.Client, sid string, g *GitRepoEntry) error {
+	if err := validateGitRepo(g); err != nil {
+		return err
+	}
 	ref := g.Ref
 	if ref == "" {
 		ref = "main"
 	}
-	cmd := fmt.Sprintf("git clone --depth 1 -b %s %s %s", ref, g.Repo, filepath.Join("/workspace", g.Path))
+	cmd := fmt.Sprintf("git clone --depth 1 -b %s -- %s %s", ref, g.Repo, filepath.Join("/workspace", g.Path))
 	_, err := client.SandboxServiceClient.Exec(ctx, &pb.ExecRequest{
 		SessionId: sid, Command: cmd, Timeout: 120,
 	})
 	return err
+}
+
+// validateGitRepo checks that repo URL and ref contain no shell metacharacters.
+func validateGitRepo(g *GitRepoEntry) error {
+	if !gitRepoRe.MatchString(g.Repo) {
+		return fmt.Errorf("invalid git repo URL: %q", g.Repo)
+	}
+	if g.Ref != "" && !gitRefRe.MatchString(g.Ref) {
+		return fmt.Errorf("invalid git ref: %q", g.Ref)
+	}
+	return nil
 }
 
 func entryDesc(e ManifestEntry) string {

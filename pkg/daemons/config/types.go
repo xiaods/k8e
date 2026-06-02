@@ -13,7 +13,7 @@ import (
 	"github.com/rancher/wharfie/pkg/registries"
 	"github.com/rancher/wrangler/v3/pkg/generated/controllers/core"
 	"github.com/rancher/wrangler/v3/pkg/leader"
-	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
+	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.sh"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilnet "k8s.io/apimachinery/pkg/util/net"
 	"k8s.io/apiserver/pkg/authentication/authenticator"

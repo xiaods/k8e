@@ -13,7 +13,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/sirupsen/logrus"
-	k8e "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	k8e "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
 	v1 "k8s.io/api/core/v1"
@@ -36,8 +36,8 @@ const (
 var (
 	InvalidKeyChars = regexp.MustCompile(`[^-._a-zA-Z0-9]`)
 
-	LabelStorageNode    = "etcd." + version.Program + ".cattle.io/snapshot-storage-node"
-	AnnotationTokenHash = "etcd." + version.Program + ".cattle.io/snapshot-token-hash"
+	LabelStorageNode    = "etcd." + version.Program + ".sh/snapshot-storage-node"
+	AnnotationTokenHash = "etcd." + version.Program + ".sh/snapshot-token-hash"
 
 	ExtraMetadataConfigMapName = version.Program + "-etcd-snapshot-extra-metadata"
 )

@@ -510,8 +510,6 @@ var ServerFlags = []cli.Flag{
 	NodeIPFlag,
 	NodeExternalIPFlag,
 	ResolvConfFlag,
-	VPNAuth,
-	VPNAuthFile,
 	ExtraKubeletArgs,
 	ProtectKernelDefaultsFlag,
 	&cli.BoolFlag{

@@ -15,6 +15,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/cmds"
 	"github.com/xiaods/k8e/pkg/cli/commands"
 	"github.com/xiaods/k8e/pkg/configfilearg"
+	"github.com/xiaods/k8e/pkg/sandboxcli"
 )
 
 func main() {
@@ -22,6 +23,10 @@ func main() {
 	app.Commands = cmds.NewAppCommands(commands.Funcs())
 
 	if err := app.Run(configfilearg.MustParse(os.Args)); err != nil && !errors.Is(err, context.Canceled) {
+		var exitErr *sandboxcli.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode)
+		}
 		logrus.Fatal(err)
 	}
 }

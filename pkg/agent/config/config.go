@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,10 +29,8 @@ import (
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control/deps"
-	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
-	"github.com/xiaods/k8e/pkg/vpn"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/wait"
 	utilsnet "k8s.io/utils/net"
@@ -106,7 +103,7 @@ func Request(path string, info *clientaccess.Info, requester HTTPRequester) ([]b
 
 func getNodeNamedCrt(nodeName string, nodeIPs []net.IP, nodePasswordFile string) HTTPRequester {
 	return func(u string, client *http.Client, username, password, token string) ([]byte, error) {
-		req, err := http.NewRequest(http.MethodGet, u, nil)
+		req, err := http.NewRequest(http.MethodGet, u, http.NoBody)
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +159,7 @@ func ensureNodeID(nodeIDFile string) (string, error) {
 		id, err := os.ReadFile(nodeIDFile)
 		return strings.TrimSpace(string(id)), err
 	}
-	id := make([]byte, 4, 4)
+	id := make([]byte, 4)
 	_, err := cryptorand.Read(id)
 	if err != nil {
 		return "", err
@@ -176,7 +173,7 @@ func ensureNodePassword(nodePasswordFile string) (string, error) {
 		password, err := os.ReadFile(nodePasswordFile)
 		return strings.TrimSpace(string(password)), err
 	}
-	password := make([]byte, 16, 16)
+	password := make([]byte, 16)
 	_, err := cryptorand.Read(password)
 	if err != nil {
 		return "", err
@@ -336,6 +333,40 @@ func locateOrGenerateResolvConf(envInfo *cmds.Agent) string {
 	return resolvConf
 }
 
+// applySnapshotterConfig configures the image service socket based on the selected snapshotter.
+func applySnapshotterConfig(nodeConfig *config.Node, envInfo *cmds.Agent) error {
+	if nodeConfig.Docker {
+		return nil
+	}
+	if nodeConfig.ImageServiceEndpoint != "" {
+		nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ImageServiceEndpoint
+		return nil
+	}
+	if nodeConfig.ContainerRuntimeEndpoint != "" {
+		nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ContainerRuntimeEndpoint
+		return nil
+	}
+	switch nodeConfig.AgentConfig.Snapshotter {
+	case "overlayfs":
+		if err := containerd.OverlaySupported(nodeConfig.Containerd.Root); err != nil {
+			return errors.Wrapf(err, "\"overlayfs\" snapshotter cannot be enabled for %q, try using \"fuse-overlayfs\" or \"native\"",
+				nodeConfig.Containerd.Root)
+		}
+	case "fuse-overlayfs":
+		if err := containerd.FuseoverlayfsSupported(nodeConfig.Containerd.Root); err != nil {
+			return errors.Wrapf(err, "\"fuse-overlayfs\" snapshotter cannot be enabled for %q, try using \"native\"",
+				nodeConfig.Containerd.Root)
+		}
+	case "stargz":
+		if err := containerd.StargzSupported(nodeConfig.Containerd.Root); err != nil {
+			return errors.Wrapf(err, "\"stargz\" snapshotter cannot be enabled for %q, try using \"overlayfs\" or \"native\"",
+				nodeConfig.Containerd.Root)
+		}
+		nodeConfig.AgentConfig.ImageServiceSocket = "/run/containerd-stargz-grpc/containerd-stargz-grpc.sock"
+	}
+	return nil
+}
+
 func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.Node, error) {
 	if envInfo.Debug {
 		logrus.SetLevel(logrus.DebugLevel)
@@ -392,48 +423,11 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 		return nil, err
 	}
 
-	// If there is a VPN, we must overwrite NodeIP
-	var vpnInfo vpn.VPNInfo
-	if envInfo.VPNAuth != "" {
-		vpnInfo, err = vpn.GetVPNInfo(envInfo.VPNAuth)
-		if err != nil {
-			return nil, err
-		}
-
-		// Pass ipv4, ipv6 or both depending on nodeIPs mode
-		var vpnIPs []net.IP
-		if utilsnet.IsIPv4(nodeIPs[0]) && vpnInfo.IPv4Address != nil {
-			vpnIPs = append(vpnIPs, vpnInfo.IPv4Address)
-			if vpnInfo.IPv6Address != nil {
-				vpnIPs = append(vpnIPs, vpnInfo.IPv6Address)
-			}
-		} else if utilsnet.IsIPv6(nodeIPs[0]) && vpnInfo.IPv6Address != nil {
-			vpnIPs = append(vpnIPs, vpnInfo.IPv6Address)
-			if vpnInfo.IPv4Address != nil {
-				vpnIPs = append(vpnIPs, vpnInfo.IPv4Address)
-			}
-		} else {
-			return nil, errors.Errorf("address family mismatch when assigning VPN addresses to node: node=%v, VPN ipv4=%v ipv6=%v", nodeIPs, vpnInfo.IPv4Address, vpnInfo.IPv6Address)
-		}
-
-		// Overwrite nodeip and throw a warning if user explicitly set those parameters
-		if len(vpnIPs) != 0 {
-			logrus.Infof("Node-ip changed to %v due to VPN", vpnIPs)
-			if len(envInfo.NodeIP) != 0 {
-				logrus.Warn("VPN provider overrides configured node-ip parameter")
-			}
-			if len(envInfo.NodeExternalIP) != 0 {
-				logrus.Warn("VPN provider overrides node-external-ip parameter")
-			}
-			nodeIPs = vpnIPs
-		}
-	}
+	// VPN integration (tailscale) removed — NodeIP stays as local interface address.
 
 	if controlConfig.ClusterIPRange != nil {
 		if utilsnet.IPFamilyOfCIDR(controlConfig.ClusterIPRange) != utilsnet.IPFamilyOf(nodeIPs[0]) && len(nodeIPs) > 1 {
-			firstNodeIP := nodeIPs[0]
-			nodeIPs[0] = nodeIPs[1]
-			nodeIPs[1] = firstNodeIP
+			nodeIPs[0], nodeIPs[1] = nodeIPs[1], nodeIPs[0]
 		}
 	}
 
@@ -455,7 +449,8 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	// Ensure that the kubelet's server certificate is valid for all configured node IPs.  Note
 	// that in the case of an external CCM, additional IPs may be added by the infra provider
 	// that the cert will not be valid for, as they are not present in the list collected here.
-	nodeExternalAndInternalIPs := append(nodeIPs, nodeExternalIPs...)
+	nodeExternalAndInternalIPs := make([]net.IP, 0, len(nodeIPs)+len(nodeExternalIPs))
+	nodeExternalAndInternalIPs = append(append(nodeExternalAndInternalIPs, nodeIPs...), nodeExternalIPs...)
 
 	// Ask the server to generate a kubelet server cert+key. These files are unique to this node.
 	servingCert, err := getServingCert(nodeName, nodeExternalAndInternalIPs, servingKubeletCert, servingKubeletKey, newNodePasswordFile, info)
@@ -522,31 +517,8 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.Containerd.Config = filepath.Join(envInfo.DataDir, "agent", "etc", "containerd", "config.toml")
 	nodeConfig.Containerd.Root = filepath.Join(envInfo.DataDir, "agent", "containerd")
 	nodeConfig.CRIDockerd.Root = filepath.Join(envInfo.DataDir, "agent", "cri-dockerd")
-	if !nodeConfig.Docker {
-		if nodeConfig.ImageServiceEndpoint != "" {
-			nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ImageServiceEndpoint
-		} else if nodeConfig.ContainerRuntimeEndpoint == "" {
-			switch nodeConfig.AgentConfig.Snapshotter {
-			case "overlayfs":
-				if err := containerd.OverlaySupported(nodeConfig.Containerd.Root); err != nil {
-					return nil, errors.Wrapf(err, "\"overlayfs\" snapshotter cannot be enabled for %q, try using \"fuse-overlayfs\" or \"native\"",
-						nodeConfig.Containerd.Root)
-				}
-			case "fuse-overlayfs":
-				if err := containerd.FuseoverlayfsSupported(nodeConfig.Containerd.Root); err != nil {
-					return nil, errors.Wrapf(err, "\"fuse-overlayfs\" snapshotter cannot be enabled for %q, try using \"native\"",
-						nodeConfig.Containerd.Root)
-				}
-			case "stargz":
-				if err := containerd.StargzSupported(nodeConfig.Containerd.Root); err != nil {
-					return nil, errors.Wrapf(err, "\"stargz\" snapshotter cannot be enabled for %q, try using \"overlayfs\" or \"native\"",
-						nodeConfig.Containerd.Root)
-				}
-				nodeConfig.AgentConfig.ImageServiceSocket = "/run/containerd-stargz-grpc/containerd-stargz-grpc.sock"
-			}
-		} else {
-			nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ContainerRuntimeEndpoint
-		}
+	if err := applySnapshotterConfig(nodeConfig, envInfo); err != nil {
+		return nil, err
 	}
 	nodeConfig.Containerd.Opt = filepath.Join(envInfo.DataDir, "agent", "containerd")
 	nodeConfig.Containerd.Log = filepath.Join(envInfo.DataDir, "agent", "containerd", "containerd.log")
@@ -654,26 +626,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.AgentConfig.Registry = privRegistries.Registry
 
 	if nodeConfig.EmbeddedRegistry {
-		psk, err := hex.DecodeString(controlConfig.IPSECPSK)
-		if err != nil {
-			return nil, err
-		}
-		if len(psk) < 32 {
-			return nil, errors.New("insufficient PSK bytes")
-		}
-
-		conf := spegel.DefaultRegistry
-		conf.ExternalAddress = nodeConfig.AgentConfig.NodeIP
-		conf.InternalAddress = controlConfig.Loopback(false)
-		conf.RegistryPort = strconv.Itoa(controlConfig.SupervisorPort)
-		conf.ClientCAFile = clientCAFile
-		conf.ClientCertFile = clientK8eControllerCert
-		conf.ClientKeyFile = clientK8eControllerKey
-		conf.ServerCAFile = serverCAFile
-		conf.ServerCertFile = servingKubeletCert
-		conf.ServerKeyFile = servingKubeletKey
-		conf.PSK = psk[:32]
-		conf.InjectMirror(nodeConfig)
+		// P2P embedded registry (spegel) removed — expect external registry or direct pull.
 	}
 
 	if err := validateNetworkConfig(nodeConfig); err != nil {
@@ -696,8 +649,11 @@ func getAPIServers(ctx context.Context, node *config.Node, proxy proxy.Proxy) ([
 		return nil, err
 	}
 
-	endpoints := []string{}
-	return endpoints, json.Unmarshal(data, &endpoints)
+	var endpoints []string
+	if err := json.Unmarshal(data, &endpoints); err != nil {
+		return nil, err
+	}
+	return endpoints, nil
 }
 
 // getConfig returns server configuration data. Note that this may be mutated during system startup; anything that needs
@@ -711,12 +667,6 @@ func getConfig(info *clientaccess.Info) (*config.Control, error) {
 
 	controlControl := &config.Control{}
 	return controlControl, json.Unmarshal(data, controlControl)
-}
-
-// getReadyz returns nil if the server is ready, or an error if not.
-func getReadyz(info *clientaccess.Info) error {
-	_, err := info.Get("/v1-" + version.Program + "/readyz")
-	return err
 }
 
 // validateNetworkConfig ensures that the network configuration values provided by the server make sense.

@@ -2,8 +2,8 @@ package grpc
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -23,19 +24,34 @@ import (
 )
 
 const (
+	// SandboxAPIGroup is the K8E API group for sandbox CRDs.
+	SandboxAPIGroup   = "k8e.sh"
+	sandboxAPIGroup   = SandboxAPIGroup
+	sandboxAPIVersion = SandboxAPIGroup + "/v1alpha1"
+
 	maxDepth       = 1
 	sandboxNS      = "sandbox-matrix"
 	labelState     = "sandbox.k8e.io/state"
 	labelSessionID = "sandbox.k8e.io/session-id"
 	stateWarm      = "warm"
 	stateActive    = "active"
+
+	// LabelState is the pod label key for sandbox state (warm/active).
+	LabelState     = labelState
+	// StateWarm marks a pod as a pre-warmed sandbox.
+	StateWarm      = stateWarm
+	// StateActive marks a pod as an active sandbox session.
+	StateActive    = stateActive
+	// StateResetting marks a pod that is being reset before returning to warm pool.
+	StateResetting = "resetting"
+
 	sandboxImage   = "ghcr.io/xiaods/k8e-sandbox:latest"
 )
 
 var (
-	sessionGVR = schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxsessions"}
+	sessionGVR = schema.GroupVersionResource{Group: sandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxsessions"}
 	cnpGVR     = schema.GroupVersionResource{Group: "cilium.io", Version: "v2", Resource: "ciliumnetworkpolicies"}
-	matrixGVR  = schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxmatrices"}
+	matrixGVR  = schema.GroupVersionResource{Group: sandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}
 
 	defaultAllowedHosts = []string{
 		"pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
@@ -47,7 +63,11 @@ var (
 type pendingApproval struct {
 	action   string
 	approved chan bool
+	createdAt time.Time
 }
+
+// approvalTTL is how long a pending approval waits before auto-expiry.
+const approvalTTL = 5 * time.Minute
 
 // Orchestrator handles session lifecycle, sub-agent creation, and confirm_action gating.
 type Orchestrator struct {
@@ -67,6 +87,79 @@ const defaultTTL = 0
 func (o *Orchestrator) CreateSession(ctx context.Context, req *pb.CreateSessionRequest) (*sandboxv1.SandboxSession, error) {
 	matrixHosts, ttl, cpu, memory := o.getMatrixConfig(ctx)
 	return o.createSessionWithTTL(ctx, req, ttl, matrixHosts, cpu, memory)
+}
+
+// CheckCapacity returns nil if there is sufficient node memory for a new sandbox pod.
+// Returns ResourceExhausted with a human-readable message when the pool is full.
+func (o *Orchestrator) CheckCapacity(ctx context.Context) error {
+	allocatable, err := o.nodeMemoryAllocatable(ctx)
+	if err != nil {
+		return err
+	}
+
+	pods, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+		LabelSelector: labelState,
+	})
+	if err != nil {
+		return fmt.Errorf("capacity check: list pods: %w", err)
+	}
+
+	usedMemory := sumPodMemoryLimits(pods)
+	available := allocatable.Value() * 9 / 10
+	perPod := podMemoryLimit(pods)
+
+	if available-usedMemory < perPod {
+		return status.Errorf(codes.ResourceExhausted,
+			"warm pool full: %d pods, %s/%s used. Please wait and retry, or add more memory.",
+			len(pods.Items),
+			resource.NewQuantity(usedMemory, resource.BinarySI).String(),
+			resource.NewQuantity(allocatable.Value(), resource.BinarySI).String(),
+		)
+	}
+	return nil
+}
+
+// nodeMemoryAllocatable returns the allocatable memory of the first node.
+func (o *Orchestrator) nodeMemoryAllocatable(ctx context.Context) (*resource.Quantity, error) {
+	nodes, err := o.k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("capacity check: list nodes: %w", err)
+	}
+	if len(nodes.Items) == 0 {
+		return nil, fmt.Errorf("capacity check: no nodes found")
+	}
+	allocatable := nodes.Items[0].Status.Allocatable.Memory()
+	if allocatable == nil || allocatable.IsZero() {
+		return nil, fmt.Errorf("capacity check: node %s has no allocatable memory", nodes.Items[0].Name)
+	}
+	return allocatable, nil
+}
+
+// sumPodMemoryLimits returns the sum of memory limits across all containers in the pod list.
+func sumPodMemoryLimits(pods *corev1.PodList) int64 {
+	var used int64
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		for _, container := range pod.Spec.Containers {
+			if mem, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
+				used += mem.Value()
+			}
+		}
+	}
+	return used
+}
+
+// podMemoryLimit estimates the per-pod memory from the first pod, or falls back to 512Mi.
+func podMemoryLimit(pods *corev1.PodList) int64 {
+	if len(pods.Items) == 0 {
+		return 512 * 1024 * 1024
+	}
+	for _, container := range pods.Items[0].Spec.Containers {
+		if mem, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
+			return mem.Value()
+		}
+	}
+	return 512 * 1024 * 1024
 }
 
 func (o *Orchestrator) CreateSessionWithTTL(ctx context.Context, req *pb.CreateSessionRequest, ttl int) (*sandboxv1.SandboxSession, error) {
@@ -105,7 +198,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 		allowedHosts = matrixDefaultHosts
 	}
 	session := &sandboxv1.SandboxSession{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "k8e.cattle.io/v1alpha1", Kind: "SandboxSession"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
 		ObjectMeta: metav1.ObjectMeta{Name: sessionID, Namespace: sandboxNS},
 		Spec: sandboxv1.SandboxSessionSpec{
 			TenantID:     req.TenantId,
@@ -151,14 +244,73 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 	session.Status.Phase = sandboxv1.SandboxPhaseTerminating
 	o.updateSessionStatus(ctx, session)
 
+	// 1. Delete CNP
 	o.deleteCNP(ctx, session)
-	if session.Status.PodName != "" {
-		o.k8s.CoreV1().Pods(sandboxNS).Delete(ctx, session.Status.PodName, metav1.DeleteOptions{}) //nolint:errcheck
+
+	// 2. Find the pod by session-id label and reset its workspace
+	podIP, podName := o.findPodBySession(ctx, sessionID)
+	if podIP == "" && session.Status.PodName != "" {
+		// Fallback: fake clients may not support label selectors; use pod name from session
+		pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, session.Status.PodName, metav1.GetOptions{})
+		if err == nil {
+			podIP = pod.Status.PodIP
+			podName = pod.Name
+		}
 	}
-	if session.Status.WorkspacePVC != "" {
-		o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Delete(ctx, session.Status.WorkspacePVC, metav1.DeleteOptions{}) //nolint:errcheck
+	if podIP != "" {
+		o.resetWorkspace(ctx, podIP)
+		// 3. Relabel pod: active → resetting, remove session-id
+		if podName != "" {
+			o.releasePod(ctx, podName)
+		}
 	}
+
+	// 4. Delete Session CRD (pod and PVC survive, return to pool)
 	return o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Delete(ctx, sessionID, metav1.DeleteOptions{})
+}
+
+// findPodBySession returns pod IP and name for a session by label, or empty strings.
+func (o *Orchestrator) findPodBySession(ctx context.Context, sessionID string) (string, string) {
+	pods, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSessionID + "=" + sessionID,
+	})
+	if err != nil || len(pods.Items) == 0 {
+		return "", ""
+	}
+	return pods.Items[0].Status.PodIP, pods.Items[0].Name
+}
+
+// resetWorkspace calls sandboxd's /workspace/reset endpoint and waits for completion.
+func (o *Orchestrator) resetWorkspace(ctx context.Context, podIP string) {
+	url := fmt.Sprintf("http://%s:2024/workspace/reset", podIP)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody)
+	if err != nil {
+		return
+	}
+	httpCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req = req.WithContext(httpCtx)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
+}
+
+// releasePod relabels a pod from active to resetting and removes session-id label.
+func (o *Orchestrator) releasePod(ctx context.Context, podName string) {
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[labelState] = StateResetting
+	delete(pod.Labels, labelSessionID)
+	o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
 // ListActiveSessions returns all Active SandboxSessions in the given namespace.
@@ -188,7 +340,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 
 	childID := fmt.Sprintf("%s-sub-%d", req.ParentSessionId, time.Now().UnixNano())
 	child := &sandboxv1.SandboxSession{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "k8e.cattle.io/v1alpha1", Kind: "SandboxSession"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
 		ObjectMeta: metav1.ObjectMeta{Name: childID, Namespace: sandboxNS},
 		Spec: sandboxv1.SandboxSessionSpec{
 			TenantID:        parent.Spec.TenantID,
@@ -246,18 +398,21 @@ func (o *Orchestrator) ConfirmAction(ctx context.Context, req *pb.ConfirmActionR
 			o.mu.Unlock()
 			return &pb.ConfirmActionResponse{ApprovalId: req.ApprovalId, Approved: approved}, nil
 		case <-ctx.Done():
-			return nil, status.Errorf(codes.Canceled, "cancelled")
-		case <-time.After(30 * time.Second):
 			o.mu.Lock()
 			delete(o.approvals, req.ApprovalId)
 			o.mu.Unlock()
-			return nil, status.Errorf(codes.DeadlineExceeded, "timeout")
+			return nil, status.Errorf(codes.Canceled, "cancelled")
+		case <-time.After(approvalTTL):
+			o.mu.Lock()
+			delete(o.approvals, req.ApprovalId)
+			o.mu.Unlock()
+			return nil, status.Errorf(codes.DeadlineExceeded, "approval timed out after %v", approvalTTL)
 		}
 	}
 
 	approvalID := fmt.Sprintf("approval-%s-%d", req.SessionId, time.Now().UnixNano())
 	o.mu.Lock()
-	o.approvals[approvalID] = &pendingApproval{action: req.Action, approved: make(chan bool, 1)}
+	o.approvals[approvalID] = &pendingApproval{action: req.Action, approved: make(chan bool, 1), createdAt: time.Now()}
 	o.mu.Unlock()
 	return &pb.ConfirmActionResponse{ApprovalId: approvalID, Approved: false}, nil
 }
@@ -279,6 +434,28 @@ func (o *Orchestrator) ApproveAction(ctx context.Context, req *pb.ApproveActionR
 		return nil, status.Errorf(codes.NotFound, "approval %s: %v", req.ApprovalId, err)
 	}
 	return &pb.ApproveActionResponse{Ok: true}, nil
+}
+
+// StartApprovalGC periodically cleans expired pending approvals from disconnected clients.
+func (o *Orchestrator) StartApprovalGC(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			o.mu.Lock()
+			cutoff := time.Now().Add(-approvalTTL)
+			for id, pa := range o.approvals {
+				if pa.createdAt.Before(cutoff) {
+					close(pa.approved)
+					delete(o.approvals, id)
+				}
+			}
+			o.mu.Unlock()
+		}
+	}
 }
 
 // --- internal helpers ---
@@ -340,6 +517,12 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 }
 
 func sandboxPodSpec(runtimeClass, pvcName, cpu, memory string) corev1.PodSpec {
+	return SandboxPodSpec(runtimeClass, pvcName, cpu, memory, sandboxImage)
+}
+
+// SandboxPodSpec builds a PodSpec for a sandbox session. Exported for use by the controller.
+// Set pvcName to empty string to use an EmptyDir volume instead of a PVC.
+func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.PodSpec {
 	if cpu == "" {
 		cpu = "500m"
 	}
@@ -357,7 +540,7 @@ func sandboxPodSpec(runtimeClass, pvcName, cpu, memory string) corev1.PodSpec {
 	spec := corev1.PodSpec{
 		Containers: []corev1.Container{{
 			Name:  "sandbox",
-			Image: sandboxImage,
+			Image: image,
 			Ports: []corev1.ContainerPort{{ContainerPort: 2024}},
 			Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
@@ -475,22 +658,16 @@ func (o *Orchestrator) deleteCNP(ctx context.Context, session *sandboxv1.Sandbox
 }
 
 func sessionToUnstructured(s *sandboxv1.SandboxSession) (*unstructured.Unstructured, error) {
-	data, err := json.Marshal(s)
+	s.SetGroupVersionKind(schema.GroupVersionKind{Group: sandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxSession"})
+	u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(s)
 	if err != nil {
 		return nil, err
 	}
-	var obj map[string]interface{}
-	if err := json.Unmarshal(data, &obj); err != nil {
-		return nil, err
-	}
-	return &unstructured.Unstructured{Object: obj}, nil
+	return &unstructured.Unstructured{Object: u}, nil
 }
 
 func unstructuredToSession(u *unstructured.Unstructured) (*sandboxv1.SandboxSession, error) {
-	data, err := json.Marshal(u.Object)
-	if err != nil {
-		return nil, err
-	}
 	var s sandboxv1.SandboxSession
-	return &s, json.Unmarshal(data, &s)
+	err := runtime.DefaultUnstructuredConverter.FromUnstructured(u.Object, &s)
+	return &s, err
 }

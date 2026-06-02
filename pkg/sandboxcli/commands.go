@@ -2,6 +2,7 @@ package sandboxcli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,14 +11,19 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
 const errSessionNotFound = "not found"
 
+// ErrSessionGone is returned when a sandbox session has expired or been destroyed.
+var ErrSessionGone = errors.New("sandbox session expired or destroyed")
+
 // newClientFromCtx creates a gRPC client using endpoint/apikey from global flags.
-func newClientFromCtx(ctx *cli.Context) *client.Client {
+func newClientFromCtx(ctx *cli.Context) (*client.Client, *ExitError) {
 	endpoint := ctx.GlobalString("endpoint")
 	apikey := ctx.GlobalString("apikey")
 
@@ -29,9 +35,9 @@ func newClientFromCtx(ctx *cli.Context) *client.Client {
 		c, err = client.NewClient()
 	}
 	if err != nil {
-		printErrorExit("sandbox not reachable: "+err.Error(), 2)
+		return nil, printErrorExit("sandbox not reachable: "+err.Error(), 2)
 	}
-	return c
+	return c, nil
 }
 
 // readCode returns code from arg (priority) or stdin pipe.
@@ -160,97 +166,125 @@ func RunCommand() cli.Command {
 func runAction(ctx *cli.Context) error {
 	code, err := readCode(ctx)
 	if err != nil {
-		printErrorExit(err.Error(), 1)
-		return nil
+		return printErrorExit(err.Error(), 1)
 	}
 	lang := ctx.String("lang")
 	raw := ctx.Bool("raw")
 
-	cli := newClientFromCtx(ctx)
+	cli, exitErr := newClientFromCtx(ctx)
+	if exitErr != nil {
+		return exitErr
+	}
 	defer cli.Close()
 
 	sid, needsFinalize, err := ensureSession(cli, ctx)
 	if err != nil {
-		printErrorExit(err.Error(), 2)
-		return nil
+		return printErrorExit(err.Error(), 2)
 	}
 
 	if isInterpretedLang(lang) && (isMultiLine(code) || strings.HasPrefix(lang, "ts")) {
 		if err := writeCodeFile(cli, sid, lang, code); err != nil {
-			printErrorExit("write code: "+err.Error(), 1)
-			return nil
+			return printErrorExit("write code: "+err.Error(), 1)
 		}
 	}
 
 	cmd := buildCommand(lang, code)
 	req := &pb.ExecRequest{SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace"}
 
-	retry := func() error {
+	retry := func() (int, error) {
 		clearState(ctx.String("tenant"))
 		s, f, e := ensureSession(cli, ctx)
 		if e != nil {
-			return e
+			return 1, e
 		}
 		req.SessionId = s
 		if raw {
-			return runStream(cli, req)
+			return runStream(cli, req, s, f, ctx.String("tenant"))
 		}
-		return runJSON(cli, req, s, f, ctx.String("tenant"))
+		err := runJSON(cli, req, s, f, ctx.String("tenant"))
+		return 0, err
 	}
 
 	if raw {
-		if err := runStream(cli, req); isSessionExpired(err) {
-			return retry()
-		} else {
+		exitCode, err := runStream(cli, req, sid, needsFinalize, ctx.String("tenant"))
+		if isSessionExpired(err) {
+			exitCode, err = retry()
+		}
+		if err != nil {
 			return err
 		}
+		return &ExitError{ExitCode: exitCode}
 	}
 	if err := runJSON(cli, req, sid, needsFinalize, ctx.String("tenant")); isSessionExpired(err) {
-		return retry()
+		_, err = retry()
+		if err != nil {
+			return err
+		}
 	}
 	return err
 }
 
-func runStream(client *client.Client, req *pb.ExecRequest) error {
+func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) (exitCode int, err error) {
 	stream, err := client.SandboxServiceClient.ExecStream(context.Background(), req)
 	if err != nil {
-		if strings.Contains(err.Error(), errSessionNotFound) {
-			return fmt.Errorf("session %s not found (expired or destroyed)", req.SessionId)
+		if isSessionExpired(err) {
+			return 1, fmt.Errorf("%w: session %s", ErrSessionGone, req.SessionId)
 		}
-		printErrorExit("exec: "+err.Error(), 1)
-		return nil
+		logrus.Errorf("exec stream: %v", err)
+		return 1, err
 	}
+
+	var streamErr error
 	for {
-		chunk, err := stream.Recv()
-		if err != nil {
-			if err.Error() == "EOF" || strings.Contains(err.Error(), "EOF") {
+		chunk, recvErr := stream.Recv()
+		if recvErr != nil {
+			if recvErr.Error() == "EOF" || strings.Contains(recvErr.Error(), "EOF") {
 				break
 			}
-			logrus.Debugf("stream error: %v", err)
+			streamErr = recvErr
 			break
 		}
 		os.Stdout.WriteString(chunk.Chunk)
 	}
-	os.Exit(0)
-	return nil
+
+	if needsFinalize {
+		_ = finalizeState(tenant, sid)
+	}
+
+	if streamErr != nil {
+		fmt.Fprintf(os.Stderr, "stream error: %v\n", streamErr)
+		return 1, nil
+	}
+	return 0, nil
 }
 
 func isSessionExpired(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, errSessionNotFound) || strings.Contains(s, "expired")
+	if errors.Is(err, ErrSessionGone) {
+		return true
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch st.Code() {
+	case codes.NotFound:
+		return true
+	case codes.FailedPrecondition:
+		return true
+	}
+	return false
 }
 
 func runJSON(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) error {
 	resp, err := client.SandboxServiceClient.Exec(context.Background(), req)
 	if err != nil {
-		if strings.Contains(err.Error(), errSessionNotFound) || strings.Contains(err.Error(), "no pod IP") {
-			return fmt.Errorf("session %s not found (expired or destroyed)", sid)
+		if isSessionExpired(err) {
+			return fmt.Errorf("%w: session %s", ErrSessionGone, sid)
 		}
-		printErrorExit("exec: "+err.Error(), 2)
-		return nil
+		return printErrorExit("exec: "+err.Error(), 2)
 	}
 	if needsFinalize {
 		_ = finalizeState(tenant, sid)
@@ -266,7 +300,10 @@ func StatusCommand() cli.Command {
 		Name:  "status",
 		Usage: "Check sandbox service availability and current session",
 		Action: func(ctx *cli.Context) error {
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			// lightweight probe
@@ -313,7 +350,10 @@ func CreateCommand() cli.Command {
 			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
 		},
 		Action: func(ctx *cli.Context) error {
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			var hosts []string
@@ -328,8 +368,7 @@ func CreateCommand() cli.Command {
 				AllowedHosts: hosts,
 			})
 			if err != nil {
-				printErrorExit("create session: "+err.Error(), 2)
-				return nil
+				return printErrorExit("create session: "+err.Error(), 2)
 			}
 
 			sid := resp.SessionId
@@ -338,14 +377,12 @@ func CreateCommand() cli.Command {
 			manifest, mErr := resolveManifest(ctx)
 			if mErr != nil {
 				client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
-				printErrorExit("manifest: "+mErr.Error(), 1)
-				return nil
+				return printErrorExit("manifest: "+mErr.Error(), 1)
 			}
 			if manifest != nil {
 				if err := materializeManifest(client, sid, manifest); err != nil {
 					client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
-					printErrorExit("manifest materialization failed: "+err.Error(), 1)
-					return nil
+					return printErrorExit("manifest materialization failed: "+err.Error(), 1)
 				}
 			}
 
@@ -391,17 +428,18 @@ func DestroyCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().First()
 			if sid == "" {
-				printErrorExit("session-id required", 1)
-				return nil
+				return printErrorExit("session-id required", 1)
 			}
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.DestroySession(context.Background(),
 				&pb.DestroySessionRequest{SessionId: sid})
 			if err != nil {
-				printErrorExit("destroy: "+err.Error(), 1)
-				return nil
+				return printErrorExit("destroy: "+err.Error(), 1)
 			}
 
 			// clear state file if it matches this session
@@ -434,24 +472,24 @@ func WriteCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			path := ctx.Args().Get(1)
 			if sid == "" || path == "" {
-				printErrorExit("usage: k8e-sandbox-cli write <session-id> <path>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli write <session-id> <path>", 1)
 			}
 			data, err := io.ReadAll(os.Stdin)
 			if err != nil {
-				printErrorExit("read stdin: "+err.Error(), 1)
-				return nil
+				return printErrorExit("read stdin: "+err.Error(), 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
 				SessionId: sid, Path: path, Content: string(data), Mode: ctx.String("mode"),
 			})
 			if err != nil {
-				printErrorExit("write: "+err.Error(), 1)
-				return nil
+				return printErrorExit("write: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{"ok": resp.Ok, "path": path})
 			return nil
@@ -473,19 +511,20 @@ func ReadCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			path := ctx.Args().Get(1)
 			if sid == "" || path == "" {
-				printErrorExit("usage: k8e-sandbox-cli read <session-id> <path>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli read <session-id> <path>", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ReadFile(context.Background(), &pb.ReadFileRequest{
 				SessionId: sid, Path: path,
 			})
 			if err != nil {
-				printErrorExit("read: "+err.Error(), 1)
-				return nil
+				return printErrorExit("read: "+err.Error(), 1)
 			}
 			if ctx.Bool("raw") {
 				fmt.Print(resp.Content)
@@ -510,19 +549,20 @@ func ListCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().First()
 			if sid == "" {
-				printErrorExit("session-id required", 1)
-				return nil
+				return printErrorExit("session-id required", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ListFiles(context.Background(), &pb.ListFilesRequest{
 				SessionId: sid, Since: ctx.Int64("since"),
 			})
 			if err != nil {
-				printErrorExit("list: "+err.Error(), 1)
-				return nil
+				return printErrorExit("list: "+err.Error(), 1)
 			}
 			files := make([]map[string]any, len(resp.Files))
 			for i, f := range resp.Files {
@@ -544,19 +584,20 @@ func SubagentCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			parentSid := ctx.Args().First()
 			if parentSid == "" {
-				printErrorExit("parent-session-id required", 1)
-				return nil
+				return printErrorExit("parent-session-id required", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.RunSubAgent(context.Background(), &pb.RunSubAgentRequest{
 				ParentSessionId: parentSid,
 			})
 			if err != nil {
-				printErrorExit("subagent: "+err.Error(), 1)
-				return nil
+				return printErrorExit("subagent: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{"session_id": resp.SessionId})
 			return nil
@@ -579,11 +620,13 @@ func ConfirmCommand() cli.Command {
 			sid := ctx.Args().Get(0)
 			action := ctx.Args().Get(1)
 			if sid == "" || action == "" {
-				printErrorExit("usage: k8e-sandbox-cli confirm <session-id> <action>", 1)
-				return nil
+				return printErrorExit("usage: k8e-sandbox-cli confirm <session-id> <action>", 1)
 			}
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			// Phase 1: register
@@ -591,8 +634,7 @@ func ConfirmCommand() cli.Command {
 				SessionId: sid, Action: action,
 			})
 			if err != nil {
-				printErrorExit("confirm register: "+err.Error(), 2)
-				return nil
+				return printErrorExit("confirm register: "+err.Error(), 2)
 			}
 
 			if ctx.Bool("no-wait") {
@@ -613,8 +655,7 @@ func ConfirmCommand() cli.Command {
 				ApprovalId: resp.ApprovalId,
 			})
 			if err != nil {
-				printErrorExit("confirm timeout: "+err.Error(), 1)
-				return nil
+				return printErrorExit("confirm timeout: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{"approved": pollResp.Approved, "approval_id": resp.ApprovalId})
 			return nil
@@ -636,20 +677,21 @@ func ApproveCommand() cli.Command {
 		Action: func(ctx *cli.Context) error {
 			aid := ctx.Args().First()
 			if aid == "" {
-				printErrorExit("approval-id required", 1)
-				return nil
+				return printErrorExit("approval-id required", 1)
 			}
 			approved := !ctx.Bool("reject")
 
-			client := newClientFromCtx(ctx)
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ApproveAction(context.Background(), &pb.ApproveActionRequest{
 				ApprovalId: aid, Approved: approved, Reason: ctx.String("reason"),
 			})
 			if err != nil {
-				printErrorExit("approve: "+err.Error(), 1)
-				return nil
+				return printErrorExit("approve: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{"ok": resp.Ok})
 			return nil
@@ -660,6 +702,224 @@ func ApproveCommand() cli.Command {
 // timeDuration converts seconds to time.Duration.
 func timeDuration(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
+}
+
+// ── BenchmarkCommand ──────────────────────────────────────────────────────
+
+func BenchmarkCommand() cli.Command {
+	return cli.Command{
+		Name:  "benchmark",
+		Usage: "Measure warm pool performance: cold start, warm claim, reset latency",
+		Flags: []cli.Flag{
+			cli.IntFlag{Name: "pool-size", Value: 3, Usage: "Number of warm pods to pre-create"},
+			cli.IntFlag{Name: "iterations", Value: 3, Usage: "Number of iterations per metric"},
+		},
+		Action: runBenchmark,
+	}
+}
+
+func runBenchmark(ctx *cli.Context) error {
+	poolSize := ctx.Int("pool-size")
+	iters := ctx.Int("iterations")
+
+	cli, exitErr := newClientFromCtx(ctx)
+	if exitErr != nil {
+		return exitErr
+	}
+	defer cli.Close()
+
+	tenant := ctx.String("tenant")
+	if tenant == "" {
+		tenant = "bench-" + fmt.Sprint(time.Now().Unix())
+	}
+
+	// Phase 1: Cold start
+	fmt.Fprintf(os.Stderr, "\n[bench] Phase 1/3: Cold start (%d iterations)\n", iters)
+	results := benchColdStart(cli, tenant, iters)
+
+	// Phase 2: Pre-create warm pool and run warm claim benchmarks
+	cleanup, err := benchPreCreateWarmPool(cli, tenant, poolSize)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	fmt.Fprintf(os.Stderr, "[bench] Phase 2/3: Warm claim (%d iterations)\n", iters)
+	mergeResults(results, benchWarmClaim(cli, tenant, iters))
+
+	// Phase 3: Full lifecycle
+	fmt.Fprintf(os.Stderr, "[bench] Phase 3/3: Full lifecycle (%d iterations)\n", iters)
+	mergeResults(results, benchLifecycle(cli, tenant, iters))
+
+	printBenchmarkResults(results)
+	return nil
+}
+
+// benchPreCreateWarmPool creates poolSize sessions and returns a cleanup function.
+func benchPreCreateWarmPool(c *client.Client, tenant string, poolSize int) (func(), error) {
+	sids := make([]string, 0, poolSize)
+	for i := 0; i < poolSize; i++ {
+		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			TenantId: tenant, RuntimeClass: "gvisor",
+		})
+		if err != nil {
+			for _, sid := range sids {
+				c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+			}
+			return nil, printErrorExit("warm pool create: "+err.Error(), 2)
+		}
+		sids = append(sids, resp.SessionId)
+	}
+	return func() {
+		for _, sid := range sids {
+			c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+		}
+	}, nil
+}
+
+// mergeResults copies all entries from src into dst.
+func mergeResults(dst, src map[string][]time.Duration) {
+	for k, v := range src {
+		dst[k] = v
+	}
+}
+
+func benchColdStart(c *client.Client, tenant string, n int) map[string][]time.Duration {
+	result := map[string][]time.Duration{"cold_total": {}, "cold_create": {}, "cold_exec": {}}
+	for i := 0; i < n; i++ {
+		t0 := time.Now()
+		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			TenantId: tenant, RuntimeClass: "gvisor",
+		})
+		tCreate := time.Since(t0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  cold start %d: create failed: %v\n", i+1, err)
+			continue
+		}
+		result["cold_create"] = append(result["cold_create"], tCreate)
+
+		_, execErr := c.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+			SessionId: resp.SessionId, Command: "true", Timeout: 30,
+		})
+		tExec := time.Since(t0)
+		result["cold_exec"] = append(result["cold_exec"], tExec)
+		result["cold_total"] = append(result["cold_total"], tExec)
+		fmt.Fprintf(os.Stderr, "  cold %d/%d: create=%v total=%v\n", i+1, n, tCreate.Round(time.Millisecond), tExec.Round(time.Millisecond))
+
+		c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		if execErr != nil {
+			fmt.Fprintf(os.Stderr, "  cold start %d: exec failed: %v\n", i+1, execErr)
+		}
+		time.Sleep(200 * time.Millisecond) // let PVC cleanup
+	}
+	return result
+}
+
+func benchWarmClaim(c *client.Client, tenant string, n int) map[string][]time.Duration {
+	result := map[string][]time.Duration{"warm_total": {}, "warm_create": {}, "warm_exec": {}}
+	for i := 0; i < n; i++ {
+		t0 := time.Now()
+		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			TenantId: tenant, RuntimeClass: "gvisor",
+		})
+		tCreate := time.Since(t0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warm claim %d: create failed: %v\n", i+1, err)
+			continue
+		}
+		result["warm_create"] = append(result["warm_create"], tCreate)
+
+		_, execErr := c.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+			SessionId: resp.SessionId, Command: "true", Timeout: 30,
+		})
+		tExec := time.Since(t0)
+		result["warm_exec"] = append(result["warm_exec"], tExec)
+		result["warm_total"] = append(result["warm_total"], tExec)
+		fmt.Fprintf(os.Stderr, "  warm %d/%d: claim=%v total=%v\n", i+1, n, tCreate.Round(time.Millisecond), tExec.Round(time.Millisecond))
+
+		c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		if execErr != nil {
+			fmt.Fprintf(os.Stderr, "  warm claim %d: exec failed: %v\n", i+1, execErr)
+		}
+		// after destroy, reconciler will create a new warm pod — give it time
+		time.Sleep(5 * time.Second)
+	}
+	return result
+}
+
+func benchLifecycle(c *client.Client, tenant string, n int) map[string][]time.Duration {
+	result := map[string][]time.Duration{"lifecycle_create": {}, "lifecycle_exec": {}, "lifecycle_destroy": {}}
+	for i := 0; i < n; i++ {
+		t0 := time.Now()
+		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			TenantId: tenant, RuntimeClass: "gvisor",
+		})
+		tCreate := time.Since(t0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  lifecycle %d: create failed: %v\n", i+1, err)
+			continue
+		}
+		result["lifecycle_create"] = append(result["lifecycle_create"], tCreate)
+
+		_, execErr := c.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+			SessionId: resp.SessionId, Command: "sleep 0.5", Timeout: 30,
+		})
+		tExec := time.Since(t0)
+		result["lifecycle_exec"] = append(result["lifecycle_exec"], tExec)
+
+		_, destroyErr := c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		tDestroy := time.Since(t0)
+		result["lifecycle_destroy"] = append(result["lifecycle_destroy"], tDestroy)
+		fmt.Fprintf(os.Stderr, "  lifecycle %d/%d: create=%v exec=%v destroy=%v\n", i+1, n,
+			tCreate.Round(time.Millisecond), tExec.Round(time.Millisecond), tDestroy.Round(time.Millisecond))
+
+		if execErr != nil {
+			fmt.Fprintf(os.Stderr, "  lifecycle %d: exec failed: %v\n", i+1, execErr)
+		}
+		if destroyErr != nil {
+			fmt.Fprintf(os.Stderr, "  lifecycle %d: destroy failed: %v\n", i+1, destroyErr)
+		}
+	}
+	return result
+}
+
+func avg(ds []time.Duration) time.Duration {
+	if len(ds) == 0 {
+		return 0
+	}
+	var sum time.Duration
+	for _, d := range ds {
+		sum += d
+	}
+	return sum / time.Duration(len(ds))
+}
+
+func printBenchmarkResults(results map[string][]time.Duration) {
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "═══ Benchmark Results ═══")
+
+	sections := []struct {
+		title  string
+		keys   []string
+	}{
+		{"Cold Start (no warm pool)", []string{"cold_create", "cold_exec", "cold_total"}},
+		{"Warm Claim (from pool)", []string{"warm_create", "warm_exec", "warm_total"}},
+		{"Full Lifecycle", []string{"lifecycle_create", "lifecycle_exec", "lifecycle_destroy"}},
+	}
+
+	for _, sec := range sections {
+		fmt.Fprintf(os.Stderr, "\n  %s\n", sec.title)
+		fmt.Fprintln(os.Stderr, "  ─────────────────────────────────────────────")
+		for _, key := range sec.keys {
+			ds := results[key]
+			if len(ds) == 0 {
+				fmt.Fprintf(os.Stderr, "  %-25s  (no data)\n", key)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "  %-25s  avg=%8v  samples=%d\n", key, avg(ds).Round(time.Microsecond), len(ds))
+		}
+	}
+	fmt.Fprintln(os.Stderr, "")
 }
 
 // ── InstallSkillCommand ────────────────────────────────────────────────────
@@ -675,7 +935,7 @@ func InstallSkillCommand() cli.Command {
 				target = "all"
 			}
 			if err := InstallSkill(target); err != nil {
-				printErrorExit(err.Error(), 1)
+				return printErrorExit(err.Error(), 1)
 			}
 			return nil
 		},

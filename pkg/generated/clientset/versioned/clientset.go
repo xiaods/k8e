@@ -21,7 +21,7 @@ import (
 	fmt "fmt"
 	http "net/http"
 
-	k8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1"
+	k8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.sh/v1"
 	discovery "k8s.io/client-go/discovery"
 	rest "k8s.io/client-go/rest"
 	flowcontrol "k8s.io/client-go/util/flowcontrol"

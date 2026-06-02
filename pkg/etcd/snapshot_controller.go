@@ -10,10 +10,9 @@ import (
 
 	"github.com/pkg/errors"
 	controllerv1 "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
-	apisv1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
-	k8e "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	apisv1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	"github.com/xiaods/k8e/pkg/etcd/snapshot"
-	controllersv1 "github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io/v1"
+	controllersv1 "github.com/xiaods/k8e/pkg/generated/controllers/k8e.sh/v1"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	v1 "k8s.io/api/core/v1"
@@ -203,7 +202,8 @@ func (e *etcdSnapshotHandler) reconcile() error {
 	// entries for it can be pruned. Until the annotation is set, we will leave
 	// its entries alone.
 	syncedNodes := map[string]bool{}
-	for _, node := range nodeList.Items {
+	for i := range nodeList.Items {
+		node := &nodeList.Items[i]
 		if _, ok := node.Annotations[annotationLocalReconciled]; ok {
 			syncedNodes[node.Name] = true
 		}
@@ -224,7 +224,7 @@ func (e *etcdSnapshotHandler) reconcile() error {
 	snapshotPager.PageSize = snapshotListPageSize
 
 	if err := snapshotPager.EachListItem(e.ctx, metav1.ListOptions{}, func(obj k8sruntime.Object) error {
-		esf, ok := obj.(*k8e.ETCDSnapshotFile)
+		esf, ok := obj.(*apisv1.ETCDSnapshotFile)
 		if !ok {
 			return errors.New("failed to convert object to ETCDSnapshotFile")
 		}
@@ -271,7 +271,8 @@ func (e *etcdSnapshotHandler) reconcile() error {
 			s, _ = strings.CutSuffix(s, ".zip")
 			s = strings.TrimRight(s, "-012345678")
 			var matchingNode bool
-			for _, node := range nodeList.Items {
+			for i := range nodeList.Items {
+			node := &nodeList.Items[i]
 				if strings.HasSuffix(s, node.Name) {
 					if syncedNodes[node.Name] && snapshots[key] == nil {
 						delete(snapshotConfigMap.Data, key)
