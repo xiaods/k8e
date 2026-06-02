@@ -19,5 +19,5 @@ package k8e
 
 const (
 	// Package-wide consts from generator "zz_generated_register".
-	GroupName = "k8e.cattle.io"
+	GroupName = "k8e.sh"
 )

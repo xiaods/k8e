@@ -103,7 +103,7 @@ k8e sandbox-install-skill all  # 同时写入 kiro / claude / gemini 配置
 OpenClaw 通过 Kubernetes API 管理 `SandboxMatrix` CRD，实现动态策略调整：
 
 ```yaml
-apiVersion: k8e.cattle.io/v1alpha1
+apiVersion: k8e.sh/v1alpha1
 kind: SandboxMatrix
 metadata:
   name: openclaw-production
@@ -132,7 +132,7 @@ k8s = kubernetes.client.CustomObjectsApi()
 
 # 调整 warm pool 大小
 k8s.patch_namespaced_custom_object(
-    group="k8e.cattle.io",
+    group="k8e.sh",
     version="v1alpha1",
     namespace="sandbox-matrix",
     plural="sandboxmatrices",

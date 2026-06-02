@@ -201,7 +201,7 @@ message RunSubAgentRequest {
 #### `SandboxMatrix`
 
 ```yaml
-apiVersion: k8e.cattle.io/v1alpha1
+apiVersion: k8e.sh/v1alpha1
 kind: SandboxMatrix
 metadata:
   name: default
@@ -227,7 +227,7 @@ status:
 #### `SandboxSession`
 
 ```yaml
-apiVersion: k8e.cattle.io/v1alpha1
+apiVersion: k8e.sh/v1alpha1
 kind: SandboxSession
 metadata:
   name: session-abc123
@@ -252,7 +252,7 @@ status:
 #### `SandboxWarmPool`
 
 ```yaml
-apiVersion: k8e.cattle.io/v1alpha1
+apiVersion: k8e.sh/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: default

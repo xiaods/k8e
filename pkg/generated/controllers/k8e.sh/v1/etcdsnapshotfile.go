@@ -26,7 +26,7 @@ import (
 	"github.com/rancher/wrangler/v3/pkg/condition"
 	"github.com/rancher/wrangler/v3/pkg/generic"
 	"github.com/rancher/wrangler/v3/pkg/kv"
-	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"

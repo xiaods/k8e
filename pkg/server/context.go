@@ -13,7 +13,7 @@ import (
 	"github.com/rancher/wrangler/v3/pkg/generated/controllers/rbac"
 	"github.com/rancher/wrangler/v3/pkg/start"
 	addoncrd "github.com/xiaods/k8e/pkg/crd"
-	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io"
+	"github.com/xiaods/k8e/pkg/generated/controllers/k8e.sh"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

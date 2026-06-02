@@ -19,7 +19,7 @@ package v1
 
 import (
 	"github.com/rancher/wrangler/v3/pkg/generic"
-	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 )
 
 // AddonController interface for managing Addon resources.

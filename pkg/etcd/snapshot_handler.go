@@ -9,7 +9,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	k8e "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	k8e "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/util"

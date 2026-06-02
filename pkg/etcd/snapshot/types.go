@@ -13,7 +13,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/sirupsen/logrus"
-	k8e "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	k8e "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
 	v1 "k8s.io/api/core/v1"

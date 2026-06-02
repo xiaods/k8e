@@ -25,7 +25,7 @@ import (
 
 const (
 	// SandboxAPIGroup is the K8E API group for sandbox CRDs.
-	SandboxAPIGroup   = "k8e.cattle.io"
+	SandboxAPIGroup   = "k8e.sh"
 	sandboxAPIGroup   = SandboxAPIGroup
 	sandboxAPIVersion = SandboxAPIGroup + "/v1alpha1"
 

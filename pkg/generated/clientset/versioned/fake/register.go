@@ -18,7 +18,7 @@ limitations under the License.
 package fake
 
 import (
-	k8ev1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	k8ev1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"

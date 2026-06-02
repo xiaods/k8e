@@ -21,7 +21,7 @@ import (
 	"github.com/rancher/lasso/pkg/controller"
 	"github.com/rancher/wrangler/v3/pkg/generic"
 	"github.com/rancher/wrangler/v3/pkg/schemes"
-	v1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	v1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
@@ -45,9 +45,9 @@ type version struct {
 }
 
 func (v *version) Addon() AddonController {
-	return generic.NewController[*v1.Addon, *v1.AddonList](schema.GroupVersionKind{Group: "k8e.cattle.io", Version: "v1", Kind: "Addon"}, "addons", true, v.controllerFactory)
+	return generic.NewController[*v1.Addon, *v1.AddonList](schema.GroupVersionKind{Group: "k8e.sh", Version: "v1", Kind: "Addon"}, "addons", true, v.controllerFactory)
 }
 
 func (v *version) ETCDSnapshotFile() ETCDSnapshotFileController {
-	return generic.NewNonNamespacedController[*v1.ETCDSnapshotFile, *v1.ETCDSnapshotFileList](schema.GroupVersionKind{Group: "k8e.cattle.io", Version: "v1", Kind: "ETCDSnapshotFile"}, "etcdsnapshotfiles", v.controllerFactory)
+	return generic.NewNonNamespacedController[*v1.ETCDSnapshotFile, *v1.ETCDSnapshotFileList](schema.GroupVersionKind{Group: "k8e.sh", Version: "v1", Kind: "ETCDSnapshotFile"}, "etcdsnapshotfiles", v.controllerFactory)
 }

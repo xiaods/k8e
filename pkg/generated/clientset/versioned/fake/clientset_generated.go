@@ -19,8 +19,8 @@ package fake
 
 import (
 	clientset "github.com/xiaods/k8e/pkg/generated/clientset/versioned"
-	k8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1"
-	fakek8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.cattle.io/v1/fake"
+	k8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.sh/v1"
+	fakek8ev1 "github.com/xiaods/k8e/pkg/generated/clientset/versioned/typed/k8e.sh/v1/fake"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"

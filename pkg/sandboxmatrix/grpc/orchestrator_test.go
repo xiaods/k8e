@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	testGroupK8e    = "k8e.cattle.io"
+	testGroupK8e    = "k8e.sh"
 	testGroupCilium = "cilium.io"
-	testAPIVer      = "k8e.cattle.io/v1alpha1"
+	testAPIVer      = "k8e.sh/v1alpha1"
 	msgUnexpected   = "unexpected error: %v"
 	msgCreate       = "create: %v"
 )

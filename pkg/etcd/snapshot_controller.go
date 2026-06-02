@@ -10,10 +10,10 @@ import (
 
 	"github.com/pkg/errors"
 	controllerv1 "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
-	apisv1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
-	k8e "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	apisv1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
+	k8e "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	"github.com/xiaods/k8e/pkg/etcd/snapshot"
-	controllersv1 "github.com/xiaods/k8e/pkg/generated/controllers/k8e.cattle.io/v1"
+	controllersv1 "github.com/xiaods/k8e/pkg/generated/controllers/k8e.sh/v1"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	v1 "k8s.io/api/core/v1"

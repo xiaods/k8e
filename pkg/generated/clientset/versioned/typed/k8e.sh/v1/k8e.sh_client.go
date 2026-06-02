@@ -20,7 +20,7 @@ package v1
 import (
 	http "net/http"
 
-	k8ecattleiov1 "github.com/xiaods/k8e/pkg/apis/k8e.cattle.io/v1"
+	k8ecattleiov1 "github.com/xiaods/k8e/pkg/apis/k8e.sh/v1"
 	scheme "github.com/xiaods/k8e/pkg/generated/clientset/versioned/scheme"
 	rest "k8s.io/client-go/rest"
 )
@@ -31,7 +31,7 @@ type K8eV1Interface interface {
 	ETCDSnapshotFilesGetter
 }
 
-// K8eV1Client is used to interact with features provided by the k8e.cattle.io group.
+// K8eV1Client is used to interact with features provided by the k8e.sh group.
 type K8eV1Client struct {
 	restClient rest.Interface
 }
