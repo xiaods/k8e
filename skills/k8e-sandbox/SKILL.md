@@ -206,16 +206,7 @@ Sub-agents share parent `/workspace` PVC, communicate via files. Max depth 1.
 
 For non-blocking registration: add `--no-wait`, get `approval_id`, call `k8e-sandbox-cli approve $AID` later.
 
-### Scenario 7: Performance benchmark
-
-```
-# Measure cold start, warm claim, and lifecycle latency
-k8e-sandbox-cli benchmark --pool-size 3 --iterations 5
-```
-
-Outputs average latency for each phase to stderr. Use to validate warm pool sizing.
-
-### Scenario 8: Workspace snapshot save/restore
+### Scenario 7: Workspace snapshot save/restore
 
 ```
 # Save current workspace
