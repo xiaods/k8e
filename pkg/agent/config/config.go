@@ -639,8 +639,11 @@ func getAPIServers(ctx context.Context, node *config.Node, proxy proxy.Proxy) ([
 		return nil, err
 	}
 
-	endpoints := []string{}
-	return endpoints, json.Unmarshal(data, &endpoints)
+	var endpoints []string
+	if err := json.Unmarshal(data, &endpoints); err != nil {
+		return nil, err
+	}
+	return endpoints, nil
 }
 
 // getConfig returns server configuration data. Note that this may be mutated during system startup; anything that needs
@@ -654,12 +657,6 @@ func getConfig(info *clientaccess.Info) (*config.Control, error) {
 
 	controlControl := &config.Control{}
 	return controlControl, json.Unmarshal(data, controlControl)
-}
-
-// getReadyz returns nil if the server is ready, or an error if not.
-func getReadyz(info *clientaccess.Info) error {
-	_, err := info.Get("/v1-" + version.Program + "/readyz")
-	return err
 }
 
 // validateNetworkConfig ensures that the network configuration values provided by the server make sense.
