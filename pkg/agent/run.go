@@ -52,46 +52,11 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 		return errors.Wrap(err, "failed to retrieve agent configuration")
 	}
 
-	dualCluster, err := utilsnet.IsDualStackCIDRs(nodeConfig.AgentConfig.ClusterCIDRs)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate cluster-cidr")
-	}
-	dualService, err := utilsnet.IsDualStackCIDRs(nodeConfig.AgentConfig.ServiceCIDRs)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate service-cidr")
-	}
-	dualNode, err := utilsnet.IsDualStackIPs(nodeConfig.AgentConfig.NodeIPs)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate node-ip")
-	}
-	serviceIPv4 := utilsnet.IsIPv4CIDR(nodeConfig.AgentConfig.ServiceCIDR)
-	clusterIPv4 := utilsnet.IsIPv4CIDR(nodeConfig.AgentConfig.ClusterCIDR)
-	nodeIPv4 := utilsnet.IsIPv4String(nodeConfig.AgentConfig.NodeIP)
-	serviceIPv6 := utilsnet.IsIPv6CIDR(nodeConfig.AgentConfig.ServiceCIDR)
-	clusterIPv6 := utilsnet.IsIPv6CIDR(nodeConfig.AgentConfig.ClusterCIDR)
-	nodeIPv6 := utilsnet.IsIPv6String(nodeConfig.AgentConfig.NodeIP)
-
-	// check that cluster-cidr and service-cidr have the same IP versions
-	if (serviceIPv6 != clusterIPv6) || (dualCluster != dualService) || (serviceIPv4 != clusterIPv4) {
-		return fmt.Errorf("cluster-cidr: %v and service-cidr: %v, must share the same IP version (IPv4, IPv6 or dual-stack)", nodeConfig.AgentConfig.ClusterCIDRs, nodeConfig.AgentConfig.ServiceCIDRs)
+	if err := validateIPConfig(nodeConfig); err != nil {
+		return err
 	}
 
-	// check that node-ip has the IP versions set in cluster-cidr
-	if (clusterIPv6 && !(nodeIPv6 || dualNode)) || (dualCluster && !dualNode) || (clusterIPv4 && !(nodeIPv4 || dualNode)) {
-		return fmt.Errorf("cluster-cidr: %v and node-ip: %v, must share the same IP version (IPv4, IPv6 or dual-stack)", nodeConfig.AgentConfig.ClusterCIDRs, nodeConfig.AgentConfig.NodeIPs)
-	}
-
-	enableIPv6 := dualCluster || clusterIPv6
-	enableIPv4 := dualCluster || clusterIPv4
-
-	// dualStack or IPv6 are not supported on Windows node
-	if (goruntime.GOOS == "windows") && enableIPv6 {
-		return fmt.Errorf("dual-stack or IPv6 are not supported on Windows node")
-	}
-
-	syssetup.Configure(enableIPv6)
-	nodeConfig.AgentConfig.EnableIPv4 = enableIPv4
-	nodeConfig.AgentConfig.EnableIPv6 = enableIPv6
+	syssetup.Configure(nodeConfig.AgentConfig.EnableIPv6)
 
 	if nodeConfig.EmbeddedRegistry {
 		// P2P embedded registry (spegel) removed — use external registry or direct image pull.
@@ -510,6 +475,47 @@ func certMonitorSetup(ctx context.Context, nodeConfig *daemonconfig.Node, cfg cm
 		return nil
 	}
 	return certmonitor.Setup(ctx, nodeConfig, cfg.DataDir)
+}
+
+// validateIPConfig checks dual-stack consistency between cluster-cidr, service-cidr, and node-ip.
+func validateIPConfig(nodeConfig *daemonconfig.Node) error {
+	dualCluster, err := utilsnet.IsDualStackCIDRs(nodeConfig.AgentConfig.ClusterCIDRs)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate cluster-cidr")
+	}
+	dualService, err := utilsnet.IsDualStackCIDRs(nodeConfig.AgentConfig.ServiceCIDRs)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate service-cidr")
+	}
+	dualNode, err := utilsnet.IsDualStackIPs(nodeConfig.AgentConfig.NodeIPs)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate node-ip")
+	}
+
+	clusterIPv4 := utilsnet.IsIPv4CIDR(nodeConfig.AgentConfig.ClusterCIDR)
+	clusterIPv6 := utilsnet.IsIPv6CIDR(nodeConfig.AgentConfig.ClusterCIDR)
+	serviceIPv4 := utilsnet.IsIPv4CIDR(nodeConfig.AgentConfig.ServiceCIDR)
+	serviceIPv6 := utilsnet.IsIPv6CIDR(nodeConfig.AgentConfig.ServiceCIDR)
+	nodeIPv4 := utilsnet.IsIPv4String(nodeConfig.AgentConfig.NodeIP)
+	nodeIPv6 := utilsnet.IsIPv6String(nodeConfig.AgentConfig.NodeIP)
+
+	if (serviceIPv6 != clusterIPv6) || (dualCluster != dualService) || (serviceIPv4 != clusterIPv4) {
+		return fmt.Errorf("cluster-cidr: %v and service-cidr: %v, must share the same IP version (IPv4, IPv6 or dual-stack)",
+			nodeConfig.AgentConfig.ClusterCIDRs, nodeConfig.AgentConfig.ServiceCIDRs)
+	}
+	if (clusterIPv6 && !(nodeIPv6 || dualNode)) || (dualCluster && !dualNode) || (clusterIPv4 && !(nodeIPv4 || dualNode)) {
+		return fmt.Errorf("cluster-cidr: %v and node-ip: %v, must share the same IP version (IPv4, IPv6 or dual-stack)",
+			nodeConfig.AgentConfig.ClusterCIDRs, nodeConfig.AgentConfig.NodeIPs)
+	}
+
+	enableIPv6 := dualCluster || clusterIPv6
+	nodeConfig.AgentConfig.EnableIPv4 = dualCluster || clusterIPv4
+	nodeConfig.AgentConfig.EnableIPv6 = enableIPv6
+
+	if (goruntime.GOOS == "windows") && enableIPv6 {
+		return fmt.Errorf("dual-stack or IPv6 are not supported on Windows node")
+	}
+	return nil
 }
 
 // getHostname returns the actual system hostname.

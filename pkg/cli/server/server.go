@@ -363,29 +363,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.LeaderControllers = append(serverConfig.LeaderControllers, leaderControllers...)
 	serverConfig.Controllers = append(serverConfig.Controllers, controllers...)
 
-	// TLS config based on mozilla ssl-config generator
-	// https://ssl-config.mozilla.org/#server=golang&version=1.13.6&config=intermediate&guideline=5.4
-	// Need to disable the TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256 Cipher for TLS1.2
-	tlsCipherSuitesArg := getArgValueFromList("tls-cipher-suites", serverConfig.ControlConfig.ExtraAPIArgs)
-	tlsCipherSuites := strings.Split(tlsCipherSuitesArg, ",")
-	for i := range tlsCipherSuites {
-		tlsCipherSuites[i] = strings.TrimSpace(tlsCipherSuites[i])
-	}
-	if len(tlsCipherSuites) == 0 || tlsCipherSuites[0] == "" {
-		tlsCipherSuites = []string{
-			"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
-			"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
-			"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-			"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
-			"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305",
-			"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305",
-		}
-		serverConfig.ControlConfig.ExtraAPIArgs = append(serverConfig.ControlConfig.ExtraAPIArgs, "tls-cipher-suites="+strings.Join(tlsCipherSuites, ","))
-	}
-	serverConfig.ControlConfig.CipherSuites = tlsCipherSuites
-	serverConfig.ControlConfig.TLSCipherSuites, err = kubeapiserverflag.TLSCipherSuites(tlsCipherSuites)
-	if err != nil {
-		return errors.Wrap(err, "invalid tls-cipher-suites")
+	// TLS cipher suites based on mozilla ssl-config generator
+	if err := configureTLSCipherSuites(&serverConfig); err != nil {
+		return err
 	}
 
 	// If performing a cluster reset, make sure control-plane components are
@@ -536,6 +516,33 @@ func validateNetworkConfiguration(serverConfig server.Config) error {
 		return fmt.Errorf("invalid egress-selector-mode %s", serverConfig.ControlConfig.EgressSelectorMode)
 	}
 
+	return nil
+}
+
+// configureTLSCipherSuites sets default TLS cipher suites if none are configured.
+func configureTLSCipherSuites(serverConfig *server.Config) error {
+	tlsCipherSuitesArg := getArgValueFromList("tls-cipher-suites", serverConfig.ControlConfig.ExtraAPIArgs)
+	tlsCipherSuites := strings.Split(tlsCipherSuitesArg, ",")
+	for i := range tlsCipherSuites {
+		tlsCipherSuites[i] = strings.TrimSpace(tlsCipherSuites[i])
+	}
+	if len(tlsCipherSuites) == 0 || tlsCipherSuites[0] == "" {
+		tlsCipherSuites = []string{
+			"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+			"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+			"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+			"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+			"TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305",
+			"TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305",
+		}
+		serverConfig.ControlConfig.ExtraAPIArgs = append(serverConfig.ControlConfig.ExtraAPIArgs, "tls-cipher-suites="+strings.Join(tlsCipherSuites, ","))
+	}
+	serverConfig.ControlConfig.CipherSuites = tlsCipherSuites
+	var err error
+	serverConfig.ControlConfig.TLSCipherSuites, err = kubeapiserverflag.TLSCipherSuites(tlsCipherSuites)
+	if err != nil {
+		return errors.Wrap(err, "invalid tls-cipher-suites")
+	}
 	return nil
 }
 
