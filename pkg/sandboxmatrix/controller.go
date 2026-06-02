@@ -20,7 +20,8 @@ import (
 	sandboxgrpc "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc"
 )
 
-var warmPoolGVR = schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxwarmpools"}
+var warmPoolGVR = schema.GroupVersionResource{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxwarmpools"}
+var localMatrixGVR = schema.GroupVersionResource{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}
 
 const tlsDir = "/var/lib/k8e/server/tls"
 
@@ -103,66 +104,76 @@ func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynam
 	if err != nil {
 		return
 	}
-
-	// Compute memory-aware max pod count from node capacity
 	maxPods := computeMaxPods(ctx, k8s, cfg)
-
 	for _, pool := range pools.Items {
-		specMap, _ := pool.Object["spec"].(map[string]interface{})
-		configuredSize, _ := specMap["size"].(int64)
-		runtimeClass, _ := specMap["runtimeClass"].(string)
-		if runtimeClass == "" {
-			runtimeClass = cfg.DefaultRuntime
-		}
-
-		// Target size: min(user-configured, memory-capacity max). Default 1 warm pod.
-		targetSize := configuredSize
-		if targetSize <= 0 {
-			targetSize = 1
-		}
-		if maxPods > 0 && targetSize > maxPods {
-			targetSize = maxPods
-		}
-		if targetSize < 1 {
-			targetSize = 1
-		}
-
-		// Count ALL sandbox pods (warm + active + resetting) — total against capacity
-		allPods, err := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: sandboxgrpc.LabelState,
-		})
-		if err != nil {
-			continue
-		}
-
-		// Only fill warm pool gap if total pods are below capacity
-		if maxPods > 0 && int64(len(allPods.Items)) >= maxPods {
-			continue // at capacity, don't create more
-		}
-
-		warmPods, err := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{
-			LabelSelector: sandboxgrpc.LabelState + "=" + sandboxgrpc.StateWarm,
-		})
-		if err != nil {
-			continue
-		}
-
-		for i := int64(len(warmPods.Items)); i < targetSize; i++ {
-			if maxPods > 0 && int64(len(allPods.Items))+i-int64(len(warmPods.Items))+1 > maxPods {
-				break
-			}
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					GenerateName: "sandbox-warm-",
-					Namespace:    cfg.Namespace,
-					Labels:       map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
-				},
-				Spec: warmPodSpec(runtimeClass, cfg),
-			}
-			k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{})
-		}
+		reconcileSinglePool(ctx, k8s, pool, maxPods, cfg)
 	}
 	updateSandboxMatrixStatus(ctx, k8s, dyn, cfg)
+}
+
+// reconcileSinglePool ensures one WarmPool CRD's target is met within capacity limits.
+func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool unstructured.Unstructured, maxPods int64, cfg config.SandboxConfig) {
+	specMap, _ := pool.Object["spec"].(map[string]interface{})
+	configuredSize, _ := specMap["size"].(int64)
+	runtimeClass, _ := specMap["runtimeClass"].(string)
+	if runtimeClass == "" {
+		runtimeClass = cfg.DefaultRuntime
+	}
+
+	targetSize := poolTargetSize(configuredSize, maxPods)
+
+	allPods, err := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: sandboxgrpc.LabelState,
+	})
+	if err != nil {
+		return
+	}
+	if maxPods > 0 && int64(len(allPods.Items)) >= maxPods {
+		return
+	}
+
+	warmPods, err := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: sandboxgrpc.LabelState + "=" + sandboxgrpc.StateWarm,
+	})
+	if err != nil {
+		return
+	}
+
+	gap := targetSize - int64(len(warmPods.Items))
+	for i := int64(0); i < gap; i++ {
+		if maxPods > 0 && int64(len(allPods.Items))+i+1 > maxPods {
+			break
+		}
+		pod := newWarmPod(cfg, runtimeClass)
+		k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	}
+}
+
+// poolTargetSize computes the warm pool target bounded by capacity.
+func poolTargetSize(configured, maxPods int64) int64 {
+	t := configured
+	if t <= 0 {
+		t = 1
+	}
+	if maxPods > 0 && t > maxPods {
+		t = maxPods
+	}
+	if t < 1 {
+		t = 1
+	}
+	return t
+}
+
+// newWarmPod creates a warm pod spec with the correct labels and runtime.
+func newWarmPod(cfg config.SandboxConfig, runtimeClass string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			GenerateName: "sandbox-warm-",
+			Namespace:    cfg.Namespace,
+			Labels:       map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
+		},
+		Spec: warmPodSpec(runtimeClass, cfg),
+	}
 }
 
 // computeMaxPods returns the maximum number of sandbox pods the node can host.
@@ -186,8 +197,7 @@ func computeMaxPods(ctx context.Context, k8s kubernetes.Interface, cfg config.Sa
 }
 
 func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig) {
-	matrixGVR := schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxmatrices"}
-	matrices, err := dyn.Resource(matrixGVR).Namespace(cfg.Namespace).List(ctx, metav1.ListOptions{})
+	matrices, err := dyn.Resource(localMatrixGVR).Namespace(cfg.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil || len(matrices.Items) == 0 {
 		return
 	}
@@ -214,7 +224,7 @@ func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dy
 	status["activeSessions"] = int64(len(activePods.Items))
 	status["maxPods"] = maxPods
 	status["totalPods"] = totalPods
-	dyn.Resource(matrixGVR).Namespace(cfg.Namespace).UpdateStatus(ctx, matrix, metav1.UpdateOptions{}) //nolint:errcheck
+	dyn.Resource(localMatrixGVR).Namespace(cfg.Namespace).UpdateStatus(ctx, matrix, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
 func warmPodSpec(runtimeClass string, cfg config.SandboxConfig) corev1.PodSpec {
@@ -312,16 +322,7 @@ func runIdlePodReaper(ctx context.Context, k8s kubernetes.Interface, dyn dynamic
 }
 
 func reapIdlePods(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig) {
-	// Read TTL from SandboxMatrix CRD
-	ttl := int64(3600) // default 1h
-	matrixGVR := schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxmatrices"}
-	matrices, err := dyn.Resource(matrixGVR).Namespace(cfg.Namespace).List(ctx, metav1.ListOptions{})
-	if err == nil && len(matrices.Items) > 0 {
-		obj := matrices.Items[0].Object
-		if ttlVal, found, _ := unstructured.NestedInt64(obj, "spec", "sessionTTL"); found {
-			ttl = ttlVal * 2 // idle TTL = sessionTTL × 2
-		}
-	}
+	ttl := getSessionTTL(ctx, dyn, cfg.Namespace) * 2 // idle TTL = sessionTTL × 2
 
 	pods, err := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: sandboxgrpc.LabelState + "=" + sandboxgrpc.StateWarm,
@@ -333,25 +334,50 @@ func reapIdlePods(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Int
 	now := time.Now()
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		releasedAt := pod.Annotations[podReleasedAtAnnotation]
-		if releasedAt == "" {
-			// No release timestamp — add one so it can be reaped later
-			if pod.Annotations == nil {
-				pod.Annotations = make(map[string]string)
-			}
-			pod.Annotations[podReleasedAtAnnotation] = now.UTC().Format(time.RFC3339)
-			k8s.CoreV1().Pods(cfg.Namespace).Update(ctx, pod, metav1.UpdateOptions{}) //nolint:errcheck
+		if !ensureReleaseTimestamp(ctx, k8s, cfg.Namespace, pod, now) {
 			continue
 		}
-		t, parseErr := time.Parse(time.RFC3339, releasedAt)
-		if parseErr != nil {
-			continue
-		}
-		if now.Sub(t) > time.Duration(ttl)*time.Second {
-			logrus.Infof("sandbox-matrix: reap idle pod %s (idle %v)", pod.Name, now.Sub(t).Round(time.Second))
-			if delErr := k8s.CoreV1().Pods(cfg.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); delErr != nil {
-				logrus.Warnf("sandbox-matrix: reap delete %s: %v", pod.Name, delErr)
-			}
-		}
+		reapIfIdle(ctx, k8s, cfg.Namespace, pod, ttl, now)
+	}
+}
+
+// getSessionTTL reads the session TTL from the SandboxMatrix CRD. Returns 3600 as default.
+func getSessionTTL(ctx context.Context, dyn dynamic.Interface, namespace string) int64 {
+	matrices, err := dyn.Resource(localMatrixGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil || len(matrices.Items) == 0 {
+		return 3600
+	}
+	if ttlVal, found, _ := unstructured.NestedInt64(matrices.Items[0].Object, "spec", "sessionTTL"); found {
+		return ttlVal
+	}
+	return 3600
+}
+
+// ensureReleaseTimestamp adds a released-at annotation if missing, returns false if pod should be skipped.
+func ensureReleaseTimestamp(ctx context.Context, k8s kubernetes.Interface, namespace string, pod *corev1.Pod, now time.Time) bool {
+	if pod.Annotations[podReleasedAtAnnotation] != "" {
+		return true
+	}
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+	pod.Annotations[podReleasedAtAnnotation] = now.UTC().Format(time.RFC3339)
+	k8s.CoreV1().Pods(namespace).Update(ctx, pod, metav1.UpdateOptions{}) //nolint:errcheck
+	return false
+}
+
+// reapIfIdle deletes the pod if it has been idle longer than ttl seconds.
+func reapIfIdle(ctx context.Context, k8s kubernetes.Interface, namespace string, pod *corev1.Pod, ttl int64, now time.Time) {
+	releasedAt := pod.Annotations[podReleasedAtAnnotation]
+	t, parseErr := time.Parse(time.RFC3339, releasedAt)
+	if parseErr != nil {
+		return
+	}
+	if now.Sub(t) <= time.Duration(ttl)*time.Second {
+		return
+	}
+	logrus.Infof("sandbox-matrix: reap idle pod %s (idle %v)", pod.Name, now.Sub(t).Round(time.Second))
+	if delErr := k8s.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); delErr != nil {
+		logrus.Warnf("sandbox-matrix: reap delete %s: %v", pod.Name, delErr)
 	}
 }

@@ -733,51 +733,55 @@ func runBenchmark(ctx *cli.Context) error {
 		tenant = "bench-" + fmt.Sprint(time.Now().Unix())
 	}
 
-	var results map[string][]time.Duration
-
 	// Phase 1: Cold start
 	fmt.Fprintf(os.Stderr, "\n[bench] Phase 1/3: Cold start (%d iterations)\n", iters)
-	results = benchColdStart(cli, tenant, iters)
+	results := benchColdStart(cli, tenant, iters)
 
-	// Phase 2: Pre-create warm pool
-	fmt.Fprintf(os.Stderr, "[bench] Pre-creating warm pool (%d pods)...\n", poolSize)
+	// Phase 2: Pre-create warm pool and run warm claim benchmarks
+	cleanup, err := benchPreCreateWarmPool(cli, tenant, poolSize)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	fmt.Fprintf(os.Stderr, "[bench] Phase 2/3: Warm claim (%d iterations)\n", iters)
+	mergeResults(results, benchWarmClaim(cli, tenant, iters))
+
+	// Phase 3: Full lifecycle
+	fmt.Fprintf(os.Stderr, "[bench] Phase 3/3: Full lifecycle (%d iterations)\n", iters)
+	mergeResults(results, benchLifecycle(cli, tenant, iters))
+
+	printBenchmarkResults(results)
+	return nil
+}
+
+// benchPreCreateWarmPool creates poolSize sessions and returns a cleanup function.
+func benchPreCreateWarmPool(c *client.Client, tenant string, poolSize int) (func(), error) {
 	sids := make([]string, 0, poolSize)
 	for i := 0; i < poolSize; i++ {
-		resp, err := cli.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
 			TenantId: tenant, RuntimeClass: "gvisor",
 		})
 		if err != nil {
-			// cleanup
 			for _, sid := range sids {
-				cli.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+				c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
 			}
-			return printErrorExit("warm pool create: "+err.Error(), 2)
+			return nil, printErrorExit("warm pool create: "+err.Error(), 2)
 		}
 		sids = append(sids, resp.SessionId)
 	}
-	defer func() {
+	return func() {
 		for _, sid := range sids {
-			cli.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+			c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
 		}
-	}()
+	}, nil
+}
 
-	// Phase 2: Warm claim
-	fmt.Fprintf(os.Stderr, "[bench] Phase 2/3: Warm claim (%d iterations)\n", iters)
-	warmResults := benchWarmClaim(cli, tenant, iters)
-	for k, v := range warmResults {
-		results[k] = v
+// mergeResults copies all entries from src into dst.
+func mergeResults(dst, src map[string][]time.Duration) {
+	for k, v := range src {
+		dst[k] = v
 	}
-
-	// Phase 3: Session lifecycle (create → exec → destroy = full cycle)
-	fmt.Fprintf(os.Stderr, "[bench] Phase 3/3: Full lifecycle (%d iterations)\n", iters)
-	lifecycleResults := benchLifecycle(cli, tenant, iters)
-	for k, v := range lifecycleResults {
-		results[k] = v
-	}
-
-	// Print summary
-	printBenchmarkResults(results)
-	return nil
 }
 
 func benchColdStart(c *client.Client, tenant string, n int) map[string][]time.Duration {

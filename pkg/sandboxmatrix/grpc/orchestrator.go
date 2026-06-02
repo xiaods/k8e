@@ -24,6 +24,11 @@ import (
 )
 
 const (
+	// SandboxAPIGroup is the K8E API group for sandbox CRDs.
+	SandboxAPIGroup   = "k8e.cattle.io"
+	sandboxAPIGroup   = SandboxAPIGroup
+	sandboxAPIVersion = SandboxAPIGroup + "/v1alpha1"
+
 	maxDepth       = 1
 	sandboxNS      = "sandbox-matrix"
 	labelState     = "sandbox.k8e.io/state"
@@ -44,9 +49,9 @@ const (
 )
 
 var (
-	sessionGVR = schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxsessions"}
+	sessionGVR = schema.GroupVersionResource{Group: sandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxsessions"}
 	cnpGVR     = schema.GroupVersionResource{Group: "cilium.io", Version: "v2", Resource: "ciliumnetworkpolicies"}
-	matrixGVR  = schema.GroupVersionResource{Group: "k8e.cattle.io", Version: "v1alpha1", Resource: "sandboxmatrices"}
+	matrixGVR  = schema.GroupVersionResource{Group: sandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}
 
 	defaultAllowedHosts = []string{
 		"pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
@@ -87,19 +92,9 @@ func (o *Orchestrator) CreateSession(ctx context.Context, req *pb.CreateSessionR
 // CheckCapacity returns nil if there is sufficient node memory for a new sandbox pod.
 // Returns ResourceExhausted with a human-readable message when the pool is full.
 func (o *Orchestrator) CheckCapacity(ctx context.Context) error {
-	nodes, err := o.k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	allocatable, err := o.nodeMemoryAllocatable(ctx)
 	if err != nil {
-		return fmt.Errorf("capacity check: list nodes: %w", err)
-	}
-	if len(nodes.Items) == 0 {
-		return fmt.Errorf("capacity check: no nodes found")
-	}
-
-	// Use the first node (single-node K8E)
-	node := nodes.Items[0]
-	allocatable := node.Status.Allocatable.Memory()
-	if allocatable == nil || allocatable.IsZero() {
-		return fmt.Errorf("capacity check: node %s has no allocatable memory", node.Name)
+		return err
 	}
 
 	pods, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
@@ -109,32 +104,11 @@ func (o *Orchestrator) CheckCapacity(ctx context.Context) error {
 		return fmt.Errorf("capacity check: list pods: %w", err)
 	}
 
-	// Sum memory limits across all sandbox pods (warm + active + resetting)
-	var usedMemory int64
-	for _, pod := range pods.Items {
-		for _, container := range pod.Spec.Containers {
-			if mem, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
-				usedMemory += mem.Value()
-			}
-		}
-	}
-
-	// 10% buffer to avoid MemoryPressure
+	usedMemory := sumPodMemoryLimits(pods)
 	available := allocatable.Value() * 9 / 10
-	remaining := available - usedMemory
+	perPod := podMemoryLimit(pods)
 
-	// Estimate per-pod memory from existing pods, or fallback to 512Mi
-	perPod := int64(512 * 1024 * 1024)
-	if len(pods.Items) > 0 {
-		for _, container := range pods.Items[0].Spec.Containers {
-			if mem, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
-				perPod = mem.Value()
-				break
-			}
-		}
-	}
-
-	if remaining < perPod {
+	if available-usedMemory < perPod {
 		return status.Errorf(codes.ResourceExhausted,
 			"warm pool full: %d pods, %s/%s used. Please wait and retry, or add more memory.",
 			len(pods.Items),
@@ -143,6 +117,48 @@ func (o *Orchestrator) CheckCapacity(ctx context.Context) error {
 		)
 	}
 	return nil
+}
+
+// nodeMemoryAllocatable returns the allocatable memory of the first node.
+func (o *Orchestrator) nodeMemoryAllocatable(ctx context.Context) (*resource.Quantity, error) {
+	nodes, err := o.k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("capacity check: list nodes: %w", err)
+	}
+	if len(nodes.Items) == 0 {
+		return nil, fmt.Errorf("capacity check: no nodes found")
+	}
+	allocatable := nodes.Items[0].Status.Allocatable.Memory()
+	if allocatable == nil || allocatable.IsZero() {
+		return nil, fmt.Errorf("capacity check: node %s has no allocatable memory", nodes.Items[0].Name)
+	}
+	return allocatable, nil
+}
+
+// sumPodMemoryLimits returns the sum of memory limits across all containers in the pod list.
+func sumPodMemoryLimits(pods *corev1.PodList) int64 {
+	var used int64
+	for _, pod := range pods.Items {
+		for _, container := range pod.Spec.Containers {
+			if mem, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
+				used += mem.Value()
+			}
+		}
+	}
+	return used
+}
+
+// podMemoryLimit estimates the per-pod memory from the first pod, or falls back to 512Mi.
+func podMemoryLimit(pods *corev1.PodList) int64 {
+	if len(pods.Items) == 0 {
+		return 512 * 1024 * 1024
+	}
+	for _, container := range pods.Items[0].Spec.Containers {
+		if mem, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
+			return mem.Value()
+		}
+	}
+	return 512 * 1024 * 1024
 }
 
 func (o *Orchestrator) CreateSessionWithTTL(ctx context.Context, req *pb.CreateSessionRequest, ttl int) (*sandboxv1.SandboxSession, error) {
@@ -181,7 +197,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 		allowedHosts = matrixDefaultHosts
 	}
 	session := &sandboxv1.SandboxSession{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "k8e.cattle.io/v1alpha1", Kind: "SandboxSession"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
 		ObjectMeta: metav1.ObjectMeta{Name: sessionID, Namespace: sandboxNS},
 		Spec: sandboxv1.SandboxSessionSpec{
 			TenantID:     req.TenantId,
@@ -315,7 +331,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 
 	childID := fmt.Sprintf("%s-sub-%d", req.ParentSessionId, time.Now().UnixNano())
 	child := &sandboxv1.SandboxSession{
-		TypeMeta:   metav1.TypeMeta{APIVersion: "k8e.cattle.io/v1alpha1", Kind: "SandboxSession"},
+		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
 		ObjectMeta: metav1.ObjectMeta{Name: childID, Namespace: sandboxNS},
 		Spec: sandboxv1.SandboxSessionSpec{
 			TenantID:        parent.Spec.TenantID,
@@ -633,7 +649,7 @@ func (o *Orchestrator) deleteCNP(ctx context.Context, session *sandboxv1.Sandbox
 }
 
 func sessionToUnstructured(s *sandboxv1.SandboxSession) (*unstructured.Unstructured, error) {
-	s.SetGroupVersionKind(schema.GroupVersionKind{Group: "k8e.cattle.io", Version: "v1alpha1", Kind: "SandboxSession"})
+	s.SetGroupVersionKind(schema.GroupVersionKind{Group: sandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxSession"})
 	u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(s)
 	if err != nil {
 		return nil, err
