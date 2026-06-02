@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.35.0
-// source: proto/sandbox/v1/sandbox.proto
+// source: sandbox/v1/sandbox.proto
 
 package pb
 
@@ -31,6 +31,7 @@ const (
 	SandboxService_ConfirmAction_FullMethodName  = "/sandbox.v1.SandboxService/ConfirmAction"
 	SandboxService_ApproveAction_FullMethodName  = "/sandbox.v1.SandboxService/ApproveAction"
 	SandboxService_GetCACert_FullMethodName      = "/sandbox.v1.SandboxService/GetCACert"
+	SandboxService_PollRun_FullMethodName        = "/sandbox.v1.SandboxService/PollRun"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -51,6 +52,8 @@ type SandboxServiceClient interface {
 	// GetCACert returns the server CA certificate for TLS verification.
 	// No authentication required — the cert is needed to establish trust.
 	GetCACert(ctx context.Context, in *GetCACertRequest, opts ...grpc.CallOption) (*GetCACertResponse, error)
+	// PollRun checks the status of a background execution.
+	PollRun(ctx context.Context, in *PollRunRequest, opts ...grpc.CallOption) (*PollRunResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -190,6 +193,16 @@ func (c *sandboxServiceClient) GetCACert(ctx context.Context, in *GetCACertReque
 	return out, nil
 }
 
+func (c *sandboxServiceClient) PollRun(ctx context.Context, in *PollRunRequest, opts ...grpc.CallOption) (*PollRunResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PollRunResponse)
+	err := c.cc.Invoke(ctx, SandboxService_PollRun_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -208,6 +221,8 @@ type SandboxServiceServer interface {
 	// GetCACert returns the server CA certificate for TLS verification.
 	// No authentication required — the cert is needed to establish trust.
 	GetCACert(context.Context, *GetCACertRequest) (*GetCACertResponse, error)
+	// PollRun checks the status of a background execution.
+	PollRun(context.Context, *PollRunRequest) (*PollRunResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -253,6 +268,9 @@ func (UnimplementedSandboxServiceServer) ApproveAction(context.Context, *Approve
 }
 func (UnimplementedSandboxServiceServer) GetCACert(context.Context, *GetCACertRequest) (*GetCACertResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetCACert not implemented")
+}
+func (UnimplementedSandboxServiceServer) PollRun(context.Context, *PollRunRequest) (*PollRunResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PollRun not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -484,6 +502,24 @@ func _SandboxService_GetCACert_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_PollRun_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PollRunRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).PollRun(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_PollRun_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).PollRun(ctx, req.(*PollRunRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -535,6 +571,10 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "GetCACert",
 			Handler:    _SandboxService_GetCACert_Handler,
 		},
+		{
+			MethodName: "PollRun",
+			Handler:    _SandboxService_PollRun_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -543,5 +583,5 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "proto/sandbox/v1/sandbox.proto",
+	Metadata: "sandbox/v1/sandbox.proto",
 }

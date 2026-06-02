@@ -153,7 +153,8 @@ func RunCommand() cli.Command {
 			cli.IntFlag{Name: "timeout", Value: 30, Usage: "Timeout in seconds"},
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},
-			cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
+			cli.BoolFlag{Name: "background", Usage: "Submit asynchronously, return run_id immediately"},
+		cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
 			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-repo", Usage: "Git repo to clone (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
@@ -176,6 +177,23 @@ func runAction(ctx *cli.Context) error {
 		return exitErr
 	}
 	defer cli.Close()
+
+	// Background mode: submit async, return run_id immediately
+	if ctx.Bool("background") {
+		sid, _, err := ensureSession(cli, ctx)
+		if err != nil {
+			return printErrorExit(err.Error(), 2)
+		}
+		cmd := buildCommand(lang, code)
+		resp, err := cli.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+			SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace", Background: true,
+		})
+		if err != nil {
+			return printErrorExit("background submit: "+err.Error(), 2)
+		}
+		printJSON(map[string]any{"run_id": resp.RunId, "status": resp.Status, "session_id": sid})
+		return nil
+	}
 
 	sid, needsFinalize, err := ensureSession(cli, ctx)
 	if err != nil {
@@ -920,6 +938,40 @@ func printBenchmarkResults(results map[string][]time.Duration) {
 		}
 	}
 	fmt.Fprintln(os.Stderr, "")
+}
+
+// ── PollCommand ─────────────────────────────────────────────────────────────
+
+func PollCommand() cli.Command {
+	return cli.Command{
+		Name:      "poll",
+		Usage:     "Check status of a background sandbox execution",
+		ArgsUsage: "<run-id>",
+		Action: func(ctx *cli.Context) error {
+			runID := ctx.Args().First()
+			if runID == "" {
+				return printErrorExit("usage: k8e-sandbox-cli poll <run-id>", 1)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			resp, err := client.SandboxServiceClient.PollRun(context.Background(), &pb.PollRunRequest{RunId: runID})
+			if err != nil {
+				return printErrorExit("poll: "+err.Error(), 1)
+			}
+			printJSON(map[string]any{
+				"run_id":    resp.RunId,
+				"status":    resp.Status,
+				"stdout":    resp.Stdout,
+				"stderr":    resp.Stderr,
+				"exit_code": resp.ExitCode,
+			})
+			return nil
+		},
+	}
 }
 
 // ── InstallSkillCommand ────────────────────────────────────────────────────

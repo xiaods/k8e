@@ -17,6 +17,8 @@ service SandboxService {
   // GetCACert returns the server CA certificate for TLS verification.
   // No authentication required — the cert is needed to establish trust.
   rpc GetCACert(GetCACertRequest)           returns (GetCACertResponse);
+  // PollRun checks the status of a background execution.
+  rpc PollRun(PollRunRequest)               returns (PollRunResponse);
 }
 
 message CreateSessionRequest {
@@ -38,11 +40,15 @@ message ExecRequest {
   string command    = 2;
   int32  timeout    = 3;
   string workdir    = 4;
+  bool   background = 5;  // submit asynchronously, return run_id immediately
 }
 message ExecResponse {
   string stdout    = 1;
   string stderr    = 2;
   int32  exit_code = 3;
+  string session_id = 4;
+  string run_id    = 5;  // set when background=true
+  string status    = 6;  // "started" when background=true
 }
 message ExecStreamResponse { string chunk = 1; }
 
@@ -93,3 +99,12 @@ message ApproveActionResponse {
 
 message GetCACertRequest  {}
 message GetCACertResponse { string cert = 1; }
+
+message PollRunRequest  { string run_id = 1; }
+message PollRunResponse {
+  string run_id    = 1;
+  string status    = 2;  // started | running | completed | failed | timed_out
+  string stdout    = 3;
+  string stderr    = 4;
+  int32  exit_code = 5;
+}

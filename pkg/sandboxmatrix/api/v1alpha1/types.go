@@ -76,10 +76,12 @@ type SandboxSessionStatus struct {
 type SandboxPhase string
 
 const (
-	SandboxPhaseWarm        SandboxPhase = "Warm"
-	SandboxPhaseActive      SandboxPhase = "Active"
-	SandboxPhaseResetting   SandboxPhase = "Resetting"
-	SandboxPhaseTerminating SandboxPhase = "Terminating"
+	SandboxPhaseWarm                 SandboxPhase = "Warm"
+	SandboxPhaseActive               SandboxPhase = "Active"
+	SandboxPhaseResetting            SandboxPhase = "Resetting"
+	SandboxPhaseTerminating          SandboxPhase = "Terminating"
+	SandboxPhaseBackgroundRunning    SandboxPhase = "BackgroundRunning"
+	SandboxPhaseBackgroundCompleted  SandboxPhase = "BackgroundCompleted"
 )
 
 // +genclient

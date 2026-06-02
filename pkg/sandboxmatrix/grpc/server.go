@@ -207,6 +207,8 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.reloadConfigLoop(ctx)
 	// Clean up expired pending approvals from disconnected clients
 	go s.orch.StartApprovalGC(ctx)
+	// Rebuild background run registry from existing Session CRDs
+	go s.orch.RebuildRunRegistry(ctx, "sandbox-matrix")
 
 	creds, err := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
 	if err != nil {
@@ -254,6 +256,15 @@ func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionReque
 }
 
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
+	// Background mode: submit async, return run_id immediately
+	if req.Background {
+		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "background submit: %v", err)
+		}
+		return &pb.ExecResponse{RunId: runID, Status: "started", SessionId: req.SessionId}, nil
+	}
+
 	podIP, err := s.getPodIP(ctx, req.SessionId)
 	if err != nil {
 		return nil, err
@@ -423,6 +434,11 @@ func (s *Server) GetCACert(ctx context.Context, req *pb.GetCACertRequest) (*pb.G
 		return nil, status.Errorf(codes.Internal, "read ca cert: %v", err)
 	}
 	return &pb.GetCACertResponse{Cert: string(pem)}, nil
+}
+
+// PollRun checks the status of a background execution.
+func (s *Server) PollRun(ctx context.Context, req *pb.PollRunRequest) (*pb.PollRunResponse, error) {
+	return s.orch.PollRun(ctx, req.RunId)
 }
 
 func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error) {

@@ -2,6 +2,7 @@ const std = @import("std");
 const exec = @import("exec.zig");
 const files = @import("files.zig");
 const workspace = @import("workspace.zig");
+const background = @import("background.zig");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -66,7 +67,7 @@ pub fn main() !void {
         }
         const client_fd_i32: i32 = @intCast(client_fd);
         const thread = std.Thread.spawn(.{}, handleConn, .{ allocator, client_fd_i32 }) catch {
-            _ = std.os.linux.close(client_fd_i32);
+            _ = std.os.linux.close(@as(std.os.linux.fd_t, @intCast(client_fd_i32)));
             continue;
         };
         thread.detach();
@@ -74,7 +75,7 @@ pub fn main() !void {
 }
 
 fn handleConn(allocator: std.mem.Allocator, client_fd: i32) void {
-    defer _ = std.os.linux.close(client_fd);
+    defer _ = std.os.linux.close(@as(std.os.linux.fd_t, @intCast(client_fd)));
     handleRequest(allocator, client_fd) catch |err| {
         std.log.err("request error: {s}", .{@errorName(err)});
     };
@@ -106,6 +107,11 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
         try exec.handleExec(allocator, client_fd, body, true);
     } else if (std.mem.eql(u8, path, "/workspace/reset") and std.mem.eql(u8, method, "POST")) {
         try workspace.handleReset(allocator, client_fd);
+    } else if (std.mem.eql(u8, path, "/exec/background") and std.mem.eql(u8, method, "POST")) {
+        try background.handleBgSubmit(allocator, client_fd, body);
+    } else if (std.mem.startsWith(u8, path, "/exec/background/")) {
+        const run_id = path["/exec/background/".len..];
+        try background.handleBgPoll(allocator, client_fd, run_id);
     } else if (std.mem.eql(u8, path, "/files/write") and std.mem.eql(u8, method, "POST")) {
         try files.handleWrite(allocator, client_fd, body);
     } else if (std.mem.eql(u8, path, "/files/read") and std.mem.eql(u8, method, "GET")) {
