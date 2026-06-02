@@ -525,12 +525,13 @@ func (o *Orchestrator) RebuildRunRegistry(ctx context.Context, namespace string)
 	if err != nil {
 		return
 	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	for _, s := range sessions.Items {
 		phase, _, _ := unstructured.NestedString(s.Object, "status", "phase")
 		if phase == string(sandboxv1.SandboxPhaseBackgroundRunning) || phase == string(sandboxv1.SandboxPhaseBackgroundCompleted) {
-			o.mu.Lock()
-			// Rebuild from any existing run entries (run_id format: {name}-bg-{sequence})
-			o.mu.Unlock()
+			// Registry rebuild: background phase exists, run registry needs the run_id entry.
+			// run_id is stored in sandboxd files on the pod; actual rebuild from files happens on first PollRun call.
 		}
 	}
 }

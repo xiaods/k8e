@@ -164,6 +164,22 @@ func RunCommand() cli.Command {
 	}
 }
 
+func runBackground(cli *client.Client, ctx *cli.Context, code, lang string) error {
+	sid, _, err := ensureSession(cli, ctx)
+	if err != nil {
+		return printErrorExit(err.Error(), 2)
+	}
+	cmd := buildCommand(lang, code)
+	resp, err := cli.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+		SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace", Background: true,
+	})
+	if err != nil {
+		return printErrorExit("background submit: "+err.Error(), 2)
+	}
+	printJSON(map[string]any{"run_id": resp.RunId, "status": resp.Status, "session_id": sid})
+	return nil
+}
+
 func runAction(ctx *cli.Context) error {
 	code, err := readCode(ctx)
 	if err != nil {
@@ -180,19 +196,7 @@ func runAction(ctx *cli.Context) error {
 
 	// Background mode: submit async, return run_id immediately
 	if ctx.Bool("background") {
-		sid, _, err := ensureSession(cli, ctx)
-		if err != nil {
-			return printErrorExit(err.Error(), 2)
-		}
-		cmd := buildCommand(lang, code)
-		resp, err := cli.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
-			SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace", Background: true,
-		})
-		if err != nil {
-			return printErrorExit("background submit: "+err.Error(), 2)
-		}
-		printJSON(map[string]any{"run_id": resp.RunId, "status": resp.Status, "session_id": sid})
-		return nil
+		return runBackground(cli, ctx, code, lang)
 	}
 
 	sid, needsFinalize, err := ensureSession(cli, ctx)
