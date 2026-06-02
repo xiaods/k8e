@@ -180,6 +180,41 @@ func runBackground(cli *client.Client, ctx *cli.Context, code, lang string) erro
 	return nil
 }
 
+func runExec(cli *client.Client, ctx *cli.Context, req *pb.ExecRequest, sid string, needsFinalize, raw bool) error {
+	retry := func() (int, error) {
+		clearState(ctx.String("tenant"))
+		s, f, e := ensureSession(cli, ctx)
+		if e != nil {
+			return 1, e
+		}
+		req.SessionId = s
+		if raw {
+			return runStream(cli, req, s, f, ctx.String("tenant"))
+		}
+		err := runJSON(cli, req, s, f, ctx.String("tenant"))
+		return 0, err
+	}
+
+	if raw {
+		exitCode, err := runStream(cli, req, sid, needsFinalize, ctx.String("tenant"))
+		if isSessionExpired(err) {
+			exitCode, err = retry()
+		}
+		if err != nil {
+			return err
+		}
+		return &ExitError{ExitCode: exitCode}
+	}
+	if err := runJSON(cli, req, sid, needsFinalize, ctx.String("tenant")); err != nil {
+		if isSessionExpired(err) {
+			_, retryErr := retry()
+			return retryErr
+		}
+		return err
+	}
+	return nil
+}
+
 func runAction(ctx *cli.Context) error {
 	code, err := readCode(ctx)
 	if err != nil {
@@ -212,38 +247,7 @@ func runAction(ctx *cli.Context) error {
 
 	cmd := buildCommand(lang, code)
 	req := &pb.ExecRequest{SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace"}
-
-	retry := func() (int, error) {
-		clearState(ctx.String("tenant"))
-		s, f, e := ensureSession(cli, ctx)
-		if e != nil {
-			return 1, e
-		}
-		req.SessionId = s
-		if raw {
-			return runStream(cli, req, s, f, ctx.String("tenant"))
-		}
-		err := runJSON(cli, req, s, f, ctx.String("tenant"))
-		return 0, err
-	}
-
-	if raw {
-		exitCode, err := runStream(cli, req, sid, needsFinalize, ctx.String("tenant"))
-		if isSessionExpired(err) {
-			exitCode, err = retry()
-		}
-		if err != nil {
-			return err
-		}
-		return &ExitError{ExitCode: exitCode}
-	}
-	if err := runJSON(cli, req, sid, needsFinalize, ctx.String("tenant")); isSessionExpired(err) {
-		_, err = retry()
-		if err != nil {
-			return err
-		}
-	}
-	return err
+	return runExec(cli, ctx, req, sid, needsFinalize, raw)
 }
 
 func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) (exitCode int, err error) {
