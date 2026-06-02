@@ -87,7 +87,7 @@ pub fn runCommand(allocator: std.mem.Allocator, command: []const u8, workdir: []
             0,
             0,
         );
-        const err = std.posix.errno(@as(isize, @bitCast(rc)));
+        const err = std.posix.errno(@as(usize, @bitCast(rc)));
         if (err == .SUCCESS and std.posix.W.IFEXITED(status)) {
             break :blk @intCast(std.posix.W.EXITSTATUS(status));
         }

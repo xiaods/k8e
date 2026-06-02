@@ -704,6 +704,220 @@ func timeDuration(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+// ── BenchmarkCommand ──────────────────────────────────────────────────────
+
+func BenchmarkCommand() cli.Command {
+	return cli.Command{
+		Name:  "benchmark",
+		Usage: "Measure warm pool performance: cold start, warm claim, reset latency",
+		Flags: []cli.Flag{
+			cli.IntFlag{Name: "pool-size", Value: 3, Usage: "Number of warm pods to pre-create"},
+			cli.IntFlag{Name: "iterations", Value: 3, Usage: "Number of iterations per metric"},
+		},
+		Action: runBenchmark,
+	}
+}
+
+func runBenchmark(ctx *cli.Context) error {
+	poolSize := ctx.Int("pool-size")
+	iters := ctx.Int("iterations")
+
+	cli, exitErr := newClientFromCtx(ctx)
+	if exitErr != nil {
+		return exitErr
+	}
+	defer cli.Close()
+
+	tenant := ctx.String("tenant")
+	if tenant == "" {
+		tenant = "bench-" + fmt.Sprint(time.Now().Unix())
+	}
+
+	var results map[string][]time.Duration
+
+	// Phase 1: Cold start
+	fmt.Fprintf(os.Stderr, "\n[bench] Phase 1/3: Cold start (%d iterations)\n", iters)
+	results = benchColdStart(cli, tenant, iters)
+
+	// Phase 2: Pre-create warm pool
+	fmt.Fprintf(os.Stderr, "[bench] Pre-creating warm pool (%d pods)...\n", poolSize)
+	sids := make([]string, 0, poolSize)
+	for i := 0; i < poolSize; i++ {
+		resp, err := cli.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			TenantId: tenant, RuntimeClass: "gvisor",
+		})
+		if err != nil {
+			// cleanup
+			for _, sid := range sids {
+				cli.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+			}
+			return printErrorExit("warm pool create: "+err.Error(), 2)
+		}
+		sids = append(sids, resp.SessionId)
+	}
+	defer func() {
+		for _, sid := range sids {
+			cli.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+		}
+	}()
+
+	// Phase 2: Warm claim
+	fmt.Fprintf(os.Stderr, "[bench] Phase 2/3: Warm claim (%d iterations)\n", iters)
+	warmResults := benchWarmClaim(cli, tenant, iters)
+	for k, v := range warmResults {
+		results[k] = v
+	}
+
+	// Phase 3: Session lifecycle (create → exec → destroy = full cycle)
+	fmt.Fprintf(os.Stderr, "[bench] Phase 3/3: Full lifecycle (%d iterations)\n", iters)
+	lifecycleResults := benchLifecycle(cli, tenant, iters)
+	for k, v := range lifecycleResults {
+		results[k] = v
+	}
+
+	// Print summary
+	printBenchmarkResults(results)
+	return nil
+}
+
+func benchColdStart(c *client.Client, tenant string, n int) map[string][]time.Duration {
+	result := map[string][]time.Duration{"cold_total": {}, "cold_create": {}, "cold_exec": {}}
+	for i := 0; i < n; i++ {
+		t0 := time.Now()
+		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			TenantId: tenant, RuntimeClass: "gvisor",
+		})
+		tCreate := time.Since(t0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  cold start %d: create failed: %v\n", i+1, err)
+			continue
+		}
+		result["cold_create"] = append(result["cold_create"], tCreate)
+
+		_, execErr := c.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+			SessionId: resp.SessionId, Command: "true", Timeout: 30,
+		})
+		tExec := time.Since(t0)
+		result["cold_exec"] = append(result["cold_exec"], tExec)
+		result["cold_total"] = append(result["cold_total"], tExec)
+		fmt.Fprintf(os.Stderr, "  cold %d/%d: create=%v total=%v\n", i+1, n, tCreate.Round(time.Millisecond), tExec.Round(time.Millisecond))
+
+		c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		if execErr != nil {
+			fmt.Fprintf(os.Stderr, "  cold start %d: exec failed: %v\n", i+1, execErr)
+		}
+		time.Sleep(200 * time.Millisecond) // let PVC cleanup
+	}
+	return result
+}
+
+func benchWarmClaim(c *client.Client, tenant string, n int) map[string][]time.Duration {
+	result := map[string][]time.Duration{"warm_total": {}, "warm_create": {}, "warm_exec": {}}
+	for i := 0; i < n; i++ {
+		t0 := time.Now()
+		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			TenantId: tenant, RuntimeClass: "gvisor",
+		})
+		tCreate := time.Since(t0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  warm claim %d: create failed: %v\n", i+1, err)
+			continue
+		}
+		result["warm_create"] = append(result["warm_create"], tCreate)
+
+		_, execErr := c.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+			SessionId: resp.SessionId, Command: "true", Timeout: 30,
+		})
+		tExec := time.Since(t0)
+		result["warm_exec"] = append(result["warm_exec"], tExec)
+		result["warm_total"] = append(result["warm_total"], tExec)
+		fmt.Fprintf(os.Stderr, "  warm %d/%d: claim=%v total=%v\n", i+1, n, tCreate.Round(time.Millisecond), tExec.Round(time.Millisecond))
+
+		c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		if execErr != nil {
+			fmt.Fprintf(os.Stderr, "  warm claim %d: exec failed: %v\n", i+1, execErr)
+		}
+		// after destroy, reconciler will create a new warm pod — give it time
+		time.Sleep(5 * time.Second)
+	}
+	return result
+}
+
+func benchLifecycle(c *client.Client, tenant string, n int) map[string][]time.Duration {
+	result := map[string][]time.Duration{"lifecycle_create": {}, "lifecycle_exec": {}, "lifecycle_destroy": {}}
+	for i := 0; i < n; i++ {
+		t0 := time.Now()
+		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			TenantId: tenant, RuntimeClass: "gvisor",
+		})
+		tCreate := time.Since(t0)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  lifecycle %d: create failed: %v\n", i+1, err)
+			continue
+		}
+		result["lifecycle_create"] = append(result["lifecycle_create"], tCreate)
+
+		_, execErr := c.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+			SessionId: resp.SessionId, Command: "sleep 0.5", Timeout: 30,
+		})
+		tExec := time.Since(t0)
+		result["lifecycle_exec"] = append(result["lifecycle_exec"], tExec)
+
+		_, destroyErr := c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		tDestroy := time.Since(t0)
+		result["lifecycle_destroy"] = append(result["lifecycle_destroy"], tDestroy)
+		fmt.Fprintf(os.Stderr, "  lifecycle %d/%d: create=%v exec=%v destroy=%v\n", i+1, n,
+			tCreate.Round(time.Millisecond), tExec.Round(time.Millisecond), tDestroy.Round(time.Millisecond))
+
+		if execErr != nil {
+			fmt.Fprintf(os.Stderr, "  lifecycle %d: exec failed: %v\n", i+1, execErr)
+		}
+		if destroyErr != nil {
+			fmt.Fprintf(os.Stderr, "  lifecycle %d: destroy failed: %v\n", i+1, destroyErr)
+		}
+	}
+	return result
+}
+
+func avg(ds []time.Duration) time.Duration {
+	if len(ds) == 0 {
+		return 0
+	}
+	var sum time.Duration
+	for _, d := range ds {
+		sum += d
+	}
+	return sum / time.Duration(len(ds))
+}
+
+func printBenchmarkResults(results map[string][]time.Duration) {
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "═══ Benchmark Results ═══")
+
+	sections := []struct {
+		title  string
+		keys   []string
+	}{
+		{"Cold Start (no warm pool)", []string{"cold_create", "cold_exec", "cold_total"}},
+		{"Warm Claim (from pool)", []string{"warm_create", "warm_exec", "warm_total"}},
+		{"Full Lifecycle", []string{"lifecycle_create", "lifecycle_exec", "lifecycle_destroy"}},
+	}
+
+	for _, sec := range sections {
+		fmt.Fprintf(os.Stderr, "\n  %s\n", sec.title)
+		fmt.Fprintln(os.Stderr, "  ─────────────────────────────────────────────")
+		for _, key := range sec.keys {
+			ds := results[key]
+			if len(ds) == 0 {
+				fmt.Fprintf(os.Stderr, "  %-25s  (no data)\n", key)
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "  %-25s  avg=%8v  samples=%d\n", key, avg(ds).Round(time.Microsecond), len(ds))
+		}
+	}
+	fmt.Fprintln(os.Stderr, "")
+}
+
 // ── InstallSkillCommand ────────────────────────────────────────────────────
 
 func InstallSkillCommand() cli.Command {

@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -336,9 +335,6 @@ func credsFromKubeconfig(path string) (credentials.TransportCredentials, error) 
 		}
 		if len(caData) == 0 {
 			continue
-		}
-		if decoded, err := base64.StdEncoding.DecodeString(string(caData)); err == nil {
-			caData = decoded
 		}
 		pool := x509.NewCertPool()
 		if pool.AppendCertsFromPEM(caData) {

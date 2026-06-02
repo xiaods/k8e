@@ -67,7 +67,12 @@ func generateAPIKey() string {
 	return "k8e-" + hex.EncodeToString(b)
 }
 
+var cachedK8sClient kubernetes.Interface
+
 func newK8sClient() (kubernetes.Interface, error) {
+	if cachedK8sClient != nil {
+		return cachedK8sClient, nil
+	}
 	kc := os.Getenv("KUBECONFIG")
 	if kc == "" {
 		if home, _ := os.UserHomeDir(); home != "" {
@@ -81,7 +86,8 @@ func newK8sClient() (kubernetes.Interface, error) {
 	if err != nil {
 		return nil, err
 	}
-	return kubernetes.NewForConfig(cfg)
+	cachedK8sClient, err = kubernetes.NewForConfig(cfg)
+	return cachedK8sClient, err
 }
 
 // ── ApiKeyCommand ──────────────────────────────────────────────────────────

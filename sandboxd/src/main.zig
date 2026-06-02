@@ -1,6 +1,7 @@
 const std = @import("std");
 const exec = @import("exec.zig");
 const files = @import("files.zig");
+const workspace = @import("workspace.zig");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -103,6 +104,8 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
         try exec.handleExec(allocator, client_fd, body, false);
     } else if (std.mem.eql(u8, path, "/exec/stream") and std.mem.eql(u8, method, "POST")) {
         try exec.handleExec(allocator, client_fd, body, true);
+    } else if (std.mem.eql(u8, path, "/workspace/reset") and std.mem.eql(u8, method, "POST")) {
+        try workspace.handleReset(allocator, client_fd);
     } else if (std.mem.eql(u8, path, "/files/write") and std.mem.eql(u8, method, "POST")) {
         try files.handleWrite(allocator, client_fd, body);
     } else if (std.mem.eql(u8, path, "/files/read") and std.mem.eql(u8, method, "GET")) {
