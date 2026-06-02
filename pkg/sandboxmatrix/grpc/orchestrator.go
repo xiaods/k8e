@@ -249,6 +249,14 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 
 	// 2. Find the pod by session-id label and reset its workspace
 	podIP, podName := o.findPodBySession(ctx, sessionID)
+	if podIP == "" && session.Status.PodName != "" {
+		// Fallback: fake clients may not support label selectors; use pod name from session
+		pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, session.Status.PodName, metav1.GetOptions{})
+		if err == nil {
+			podIP = pod.Status.PodIP
+			podName = pod.Name
+		}
+	}
 	if podIP != "" {
 		o.resetWorkspace(ctx, podIP)
 		// 3. Relabel pod: active → resetting, remove session-id

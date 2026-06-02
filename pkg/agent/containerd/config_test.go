@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/containerd/containerd/remotes/docker"
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/rancher/wharfie/pkg/registries"
@@ -1480,10 +1481,31 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 				},
 			}
 
-			// set up embedded registry, if enabled for the test
-			if tt.args.mirrorAddr != "" {
-				// spegel removed; no mirror injection
+		// set up embedded registry mirror TLS config, if enabled for the test
+		if tt.args.mirrorAddr != "" {
+			if registry.Registry.Configs == nil {
+				registry.Registry.Configs = map[string]registries.RegistryConfig{}
 			}
+			registry.Registry.Configs[tt.args.mirrorAddr] = registries.RegistryConfig{
+				TLS: &registries.TLSConfig{
+					CAFile:   "server-ca",
+					KeyFile:  "client-key",
+					CertFile: "client-cert",
+				},
+			}
+			mirrorURL := "https://" + tt.args.mirrorAddr + "/v2"
+			if registry.Registry.Mirrors == nil {
+				registry.Registry.Mirrors = map[string]registries.Mirror{}
+			}
+			for host, mirror := range registry.Registry.Mirrors {
+				// Don't handle localhost registries (matching old spegel behavior)
+				if docker.IsLocalhost(host) {
+					continue
+				}
+				mirror.Endpoints = append([]string{mirrorURL}, mirror.Endpoints...)
+				registry.Registry.Mirrors[host] = mirror
+			}
+		}
 
 			// Generate config template struct for all hosts
 			got := getHostConfigs(registry.Registry, tt.args.noDefaultEndpoint, tt.args.mirrorAddr)
