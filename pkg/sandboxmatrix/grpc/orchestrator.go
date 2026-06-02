@@ -138,7 +138,8 @@ func (o *Orchestrator) nodeMemoryAllocatable(ctx context.Context) (*resource.Qua
 // sumPodMemoryLimits returns the sum of memory limits across all containers in the pod list.
 func sumPodMemoryLimits(pods *corev1.PodList) int64 {
 	var used int64
-	for _, pod := range pods.Items {
+	for i := range pods.Items {
+		pod := &pods.Items[i]
 		for _, container := range pod.Spec.Containers {
 			if mem, ok := container.Resources.Limits[corev1.ResourceMemory]; ok {
 				used += mem.Value()

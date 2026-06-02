@@ -28,7 +28,6 @@ import (
 	"github.com/xiaods/k8e/pkg/profile"
 	"github.com/xiaods/k8e/pkg/rootless"
 	"github.com/xiaods/k8e/pkg/server"
-	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	"github.com/xiaods/k8e/pkg/vpn"
@@ -551,20 +550,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		go getAPIAddressFromEtcd(ctx, serverConfig, agentConfig)
 	}
 
-	// Until the agent is run and retrieves config from the server, we won't know
-	// if the embedded registry is enabled. If it is not enabled, these are not
-	// used as the registry is never started.
-	registry := spegel.DefaultRegistry
-	registry.Bootstrapper = spegel.NewChainingBootstrapper(
-		spegel.NewServerBootstrapper(&serverConfig.ControlConfig),
-		spegel.NewAgentBootstrapper(cfg.ServerURL, token, agentConfig.DataDir),
-		spegel.NewSelfBootstrapper(),
-	)
-	registry.Router = func(ctx context.Context, nodeConfig *config.Node) (*mux.Router, error) {
-		return https.Start(ctx, nodeConfig, serverConfig.ControlConfig.Runtime)
-	}
+	// Embedded P2P registry (spegel) removed. Direct image pull from registries.
 
-	// same deal for metrics - these are not used if the extra metrics listener is not enabled.
+	// metrics setup
 	metrics := k8emetrics.DefaultMetrics
 	metrics.Router = func(ctx context.Context, nodeConfig *config.Node) (*mux.Router, error) {
 		return https.Start(ctx, nodeConfig, serverConfig.ControlConfig.Runtime)

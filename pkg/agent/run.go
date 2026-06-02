@@ -31,7 +31,6 @@ import (
 	"github.com/xiaods/k8e/pkg/nodeconfig"
 	"github.com/xiaods/k8e/pkg/profile"
 	"github.com/xiaods/k8e/pkg/rootless"
-	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	v1 "k8s.io/api/core/v1"
@@ -95,13 +94,11 @@ func run(ctx context.Context, cfg cmds.Agent, proxy proxy.Proxy) error {
 	nodeConfig.AgentConfig.EnableIPv6 = enableIPv6
 
 	if nodeConfig.EmbeddedRegistry {
+		// P2P embedded registry (spegel) removed — use external registry or direct image pull.
 		if nodeConfig.Docker || nodeConfig.ContainerRuntimeEndpoint != "" {
 			return errors.New("embedded registry mirror requires embedded containerd")
 		}
-
-		if err := spegel.DefaultRegistry.Start(ctx, nodeConfig); err != nil {
-			return errors.Wrap(err, "failed to start embedded registry")
-		}
+		logrus.Warn("EmbeddedRegistry is enabled but spegel P2P has been removed. Skipping registry startup.")
 	}
 
 	if nodeConfig.SupervisorMetrics {

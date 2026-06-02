@@ -3,7 +3,6 @@ package containerd
 import (
 	"bufio"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -15,7 +14,6 @@ import (
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	util2 "github.com/xiaods/k8e/pkg/agent/util"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -43,7 +41,8 @@ func writeContainerdConfig(cfg *config.Node, containerdConfig templates.Containe
 
 // writeContainerdHosts merges registry mirrors/configs, and renders and saves hosts.toml from the filled template
 func writeContainerdHosts(cfg *config.Node, containerdConfig templates.ContainerdConfig) error {
-	mirrorAddr := net.JoinHostPort(spegel.DefaultRegistry.InternalAddress, spegel.DefaultRegistry.RegistryPort)
+	// Embedded registry (spegel P2P) removed — mirror address left empty
+	mirrorAddr := ""
 	hosts := getHostConfigs(containerdConfig.PrivateRegistryConfig, containerdConfig.NoDefaultEndpoint, mirrorAddr)
 
 	// Clean up previous configuration templates

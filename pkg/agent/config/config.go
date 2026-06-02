@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -30,7 +29,6 @@ import (
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/control/deps"
-	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
 	"github.com/xiaods/k8e/pkg/vpn"
@@ -654,26 +652,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.AgentConfig.Registry = privRegistries.Registry
 
 	if nodeConfig.EmbeddedRegistry {
-		psk, err := hex.DecodeString(controlConfig.IPSECPSK)
-		if err != nil {
-			return nil, err
-		}
-		if len(psk) < 32 {
-			return nil, errors.New("insufficient PSK bytes")
-		}
-
-		conf := spegel.DefaultRegistry
-		conf.ExternalAddress = nodeConfig.AgentConfig.NodeIP
-		conf.InternalAddress = controlConfig.Loopback(false)
-		conf.RegistryPort = strconv.Itoa(controlConfig.SupervisorPort)
-		conf.ClientCAFile = clientCAFile
-		conf.ClientCertFile = clientK8eControllerCert
-		conf.ClientKeyFile = clientK8eControllerKey
-		conf.ServerCAFile = serverCAFile
-		conf.ServerCertFile = servingKubeletCert
-		conf.ServerKeyFile = servingKubeletKey
-		conf.PSK = psk[:32]
-		conf.InjectMirror(nodeConfig)
+		// P2P embedded registry (spegel) removed — expect external registry or direct pull.
 	}
 
 	if err := validateNetworkConfig(nodeConfig); err != nil {

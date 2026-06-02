@@ -13,7 +13,7 @@ import (
 )
 
 // gitRepoRe validates git repo URLs: scheme://host/path or git@host:path
-var gitRepoRe = regexp.MustCompile(`^(https?://[\w.-]+(/[\w._~:/?#\[\]@!$&'()*+,;=%-]*)?|git@[\w.-]+:[\w._~:/?#\[\]@!$&'()*+,;=%-]+)$`)
+var gitRepoRe = regexp.MustCompile(`^(https?://[\w.-]+(/[\w./:~?#\[\]@!$&'()*+,;=%-]*)?|git@[\w.-]+:[\w./:~?#\[\]@!$&'()*+,;=%-]+)$`)
 
 // gitRefRe validates branch/tag names (no shell metacharacters)
 var gitRefRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)

@@ -1,7 +1,6 @@
 package containerd
 
 import (
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/xiaods/k8e/pkg/agent/templates"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/spegel"
 	"github.com/rancher/wharfie/pkg/registries"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -1484,12 +1482,7 @@ func Test_UnitGetHostConfigs(t *testing.T) {
 
 			// set up embedded registry, if enabled for the test
 			if tt.args.mirrorAddr != "" {
-				conf := spegel.DefaultRegistry
-				conf.ServerCAFile = "server-ca"
-				conf.ClientKeyFile = "client-key"
-				conf.ClientCertFile = "client-cert"
-				conf.InternalAddress, conf.RegistryPort, _ = net.SplitHostPort(tt.args.mirrorAddr)
-				conf.InjectMirror(nodeConfig)
+				// spegel removed; no mirror injection
 			}
 
 			// Generate config template struct for all hosts
