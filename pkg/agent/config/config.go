@@ -103,7 +103,7 @@ func Request(path string, info *clientaccess.Info, requester HTTPRequester) ([]b
 
 func getNodeNamedCrt(nodeName string, nodeIPs []net.IP, nodePasswordFile string) HTTPRequester {
 	return func(u string, client *http.Client, username, password, token string) ([]byte, error) {
-		req, err := http.NewRequest(http.MethodGet, u, nil)
+		req, err := http.NewRequest(http.MethodGet, u, http.NoBody)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +159,7 @@ func ensureNodeID(nodeIDFile string) (string, error) {
 		id, err := os.ReadFile(nodeIDFile)
 		return strings.TrimSpace(string(id)), err
 	}
-	id := make([]byte, 4, 4)
+	id := make([]byte, 4)
 	_, err := cryptorand.Read(id)
 	if err != nil {
 		return "", err
