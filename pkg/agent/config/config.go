@@ -393,9 +393,7 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 
 	if controlConfig.ClusterIPRange != nil {
 		if utilsnet.IPFamilyOfCIDR(controlConfig.ClusterIPRange) != utilsnet.IPFamilyOf(nodeIPs[0]) && len(nodeIPs) > 1 {
-			firstNodeIP := nodeIPs[0]
-			nodeIPs[0] = nodeIPs[1]
-			nodeIPs[1] = firstNodeIP
+			nodeIPs[0], nodeIPs[1] = nodeIPs[1], nodeIPs[0]
 		}
 	}
 
@@ -417,7 +415,8 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	// Ensure that the kubelet's server certificate is valid for all configured node IPs.  Note
 	// that in the case of an external CCM, additional IPs may be added by the infra provider
 	// that the cert will not be valid for, as they are not present in the list collected here.
-	nodeExternalAndInternalIPs := append(nodeIPs, nodeExternalIPs...)
+	nodeExternalAndInternalIPs := make([]net.IP, 0, len(nodeIPs)+len(nodeExternalIPs))
+	nodeExternalAndInternalIPs = append(append(nodeExternalAndInternalIPs, nodeIPs...), nodeExternalIPs...)
 
 	// Ask the server to generate a kubelet server cert+key. These files are unique to this node.
 	servingCert, err := getServingCert(nodeName, nodeExternalAndInternalIPs, servingKubeletCert, servingKubeletKey, newNodePasswordFile, info)
