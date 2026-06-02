@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-02 | Draft |
+| @xiaods | 2026-06-03 | Draft |
 
 ## Summary
 
@@ -170,8 +170,10 @@ Background pool is separate from warm pool. Configured via `SandboxMatrix` CRD:
 apiVersion: k8e.sh/v1alpha1
 kind: SandboxMatrix
 spec:
-  warmPoolSize: 5          # interactive sessions
-  backgroundPoolSize: 2    # background tasks (NEW)
+  warmPoolSize: 5            # interactive sessions
+  backgroundPoolSize: 2      # background tasks (NEW)
+  backgroundPVCSize: "5Gi"   # workspace PVC size for background tasks (NEW, default 5Gi)
+  backgroundMaxTimeout: 3600 # max seconds per background task (NEW, default 1h)
   runtimeClass: gvisor
 ```
 
@@ -179,6 +181,14 @@ Background pool pods use the same pod spec but:
 - Different label: `sandbox.k8e.io/pool=background`
 - Do NOT participate in warm pool claim/release cycle
 - Reconciler maintains `backgroundPoolSize` pods independently
+- Pod NOT auto-destroyed — agent must explicitly call `k8e sandbox destroy`
+
+### run_registry Recovery
+
+Gateway maintains `run_registry` mapping `run_id → session_id` in memory.
+On gateway restart, it rebuilds the registry by scanning all Session CRDs with:
+`phase=BackgroundRunning` or `phase=BackgroundCompleted`.
+No external persistence needed.
 
 ### Workspace Reset After Background
 
@@ -196,7 +206,9 @@ When agent calls `k8e sandbox destroy`:
 | Background pod crashes during execution | sandboxd restarts, `.k8e_bg/<run_id>/exit_code` may not exist → poll returns `failed` |
 | Multiple background tasks on same session | `run_id` includes sequence: `sess-xxx-bg-1`, `sess-xxx-bg-2` |
 | Concurrent background tasks | Separate runs; each has its own `run_id`, shared workspace |
-| Timeout expired during background execution | sandboxd kills child process, writes exit_code, poll returns `timed_out` |
+| Timeout expired during background execution | sandboxd kills child process (SIGKILL), writes exit_code, poll returns `timed_out` |
+| Background task exceeds `backgroundMaxTimeout` | Submit rejected by gateway with `InvalidArgument` |
+| Background pod disk full | Exec writes to stderr, poll returns `failed` |
 
 ## Implementation Plan
 
@@ -207,4 +219,21 @@ When agent calls `k8e sandbox destroy`:
 | 3 | `orchestrator` | `run_registry`, `ExecBackground`, `PollRun` |
 | 4 | `controller` | `backgroundPoolSize` reconciler |
 | 5 | CLI `commands.go` | `run --background`, `poll` subcommand |
-| 6 | `types.go` | `SandboxPhaseBackgroundRunning`, `BackgroundCompleted` |
+| 6 | `types.go` | `SandboxPhaseBackgroundRunning`, `SandboxPhaseBackgroundCompleted` |
+
+## Design Decisions
+
+| # | Decision | Conclusion |
+|---|----------|------------|
+| 1 | Positioning | K8E is sandbox infrastructure; Agent calls CLI via SKILL.md |
+| 2 | CLI interface | `run --background` + `poll <run-id>` + `destroy <sid>` |
+| 3 | sandboxd endpoint | `POST /exec/background` (submit) + `GET /exec/background/<run-id>` (poll) |
+| 4 | Pod lifecycle | background-running → background-completed → agent destroy → reset → warm |
+| 5 | Result persistence | `/workspace/.k8e_bg/<run_id>/` files, PVC retained until destroy |
+| 6 | Proto changes | `ExecRequest.background` (bool) + `PollRun` RPC + `PollRunRequest/Response` |
+| 7 | Background pool | Separate pool via `SandboxMatrix.spec.backgroundPoolSize`, independent reconciler |
+| 8 | Pod auto-destroy | No — agent must call `k8e sandbox destroy` |
+| 9 | PVC size | `backgroundPVCSize` default 5Gi |
+| 10 | Task timeout | `backgroundMaxTimeout` default 1h (3600s). Submit rejects longer. sandboxd SIGKILL on expiry. |
+| 11 | run_registry recovery | Gateway restart scans Session CRDs with `phase=BackgroundRunning/Completed` |
+| 12 | run_id format | `{session_id}-bg-{sequence}` (e.g. `sess-123-bg-1`) |
