@@ -49,8 +49,8 @@ const (
 )
 
 var (
-	annotationLocalReconciled = "etcd." + version.Program + ".cattle.io/local-snapshots-timestamp"
-	annotationS3Reconciled    = "etcd." + version.Program + ".cattle.io/s3-snapshots-timestamp"
+	annotationLocalReconciled = "etcd." + version.Program + ".sh/local-snapshots-timestamp"
+	annotationS3Reconciled    = "etcd." + version.Program + ".sh/s3-snapshots-timestamp"
 
 	// snapshotDataBackoff will retry at increasing steps for up to ~30 seconds.
 	// If the ConfigMap update fails, the list won't be reconciled again until next time

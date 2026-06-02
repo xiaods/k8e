@@ -36,8 +36,8 @@ const (
 var (
 	InvalidKeyChars = regexp.MustCompile(`[^-._a-zA-Z0-9]`)
 
-	LabelStorageNode    = "etcd." + version.Program + ".cattle.io/snapshot-storage-node"
-	AnnotationTokenHash = "etcd." + version.Program + ".cattle.io/snapshot-token-hash"
+	LabelStorageNode    = "etcd." + version.Program + ".sh/snapshot-storage-node"
+	AnnotationTokenHash = "etcd." + version.Program + ".sh/snapshot-token-hash"
 
 	ExtraMetadataConfigMapName = version.Program + "-etcd-snapshot-extra-metadata"
 )

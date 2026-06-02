@@ -28,8 +28,8 @@ func registerMemberHandlers(ctx context.Context, etcd *ETCD) {
 }
 
 var (
-	removalAnnotation         = "etcd." + version.Program + ".cattle.io/remove"
-	removedNodeNameAnnotation = "etcd." + version.Program + ".cattle.io/removed-node-name"
+	removalAnnotation         = "etcd." + version.Program + ".sh/remove"
+	removedNodeNameAnnotation = "etcd." + version.Program + ".sh/removed-node-name"
 )
 
 type etcdMemberHandler struct {

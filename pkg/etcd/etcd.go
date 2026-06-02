@@ -93,8 +93,8 @@ var (
 	// AddressKey will contain the value of api addresses list
 	AddressKey = version.Program + "/apiaddresses"
 
-	NodeNameAnnotation    = "etcd." + version.Program + ".cattle.io/node-name"
-	NodeAddressAnnotation = "etcd." + version.Program + ".cattle.io/node-address"
+	NodeNameAnnotation    = "etcd." + version.Program + ".sh/node-name"
+	NodeAddressAnnotation = "etcd." + version.Program + ".sh/node-address"
 
 	ErrAddressNotSet    = errors.New("apiserver addresses not yet set")
 	ErrNotMember        = errNotMember()
