@@ -173,7 +173,7 @@ func ensureNodePassword(nodePasswordFile string) (string, error) {
 		password, err := os.ReadFile(nodePasswordFile)
 		return strings.TrimSpace(string(password)), err
 	}
-	password := make([]byte, 16, 16)
+	password := make([]byte, 16)
 	_, err := cryptorand.Read(password)
 	if err != nil {
 		return "", err
