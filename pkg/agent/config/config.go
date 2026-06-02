@@ -333,6 +333,40 @@ func locateOrGenerateResolvConf(envInfo *cmds.Agent) string {
 	return resolvConf
 }
 
+// applySnapshotterConfig configures the image service socket based on the selected snapshotter.
+func applySnapshotterConfig(nodeConfig *config.Node, envInfo *cmds.Agent) error {
+	if nodeConfig.Docker {
+		return nil
+	}
+	if nodeConfig.ImageServiceEndpoint != "" {
+		nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ImageServiceEndpoint
+		return nil
+	}
+	if nodeConfig.ContainerRuntimeEndpoint != "" {
+		nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ContainerRuntimeEndpoint
+		return nil
+	}
+	switch nodeConfig.AgentConfig.Snapshotter {
+	case "overlayfs":
+		if err := containerd.OverlaySupported(nodeConfig.Containerd.Root); err != nil {
+			return errors.Wrapf(err, "\"overlayfs\" snapshotter cannot be enabled for %q, try using \"fuse-overlayfs\" or \"native\"",
+				nodeConfig.Containerd.Root)
+		}
+	case "fuse-overlayfs":
+		if err := containerd.FuseoverlayfsSupported(nodeConfig.Containerd.Root); err != nil {
+			return errors.Wrapf(err, "\"fuse-overlayfs\" snapshotter cannot be enabled for %q, try using \"native\"",
+				nodeConfig.Containerd.Root)
+		}
+	case "stargz":
+		if err := containerd.StargzSupported(nodeConfig.Containerd.Root); err != nil {
+			return errors.Wrapf(err, "\"stargz\" snapshotter cannot be enabled for %q, try using \"overlayfs\" or \"native\"",
+				nodeConfig.Containerd.Root)
+		}
+		nodeConfig.AgentConfig.ImageServiceSocket = "/run/containerd-stargz-grpc/containerd-stargz-grpc.sock"
+	}
+	return nil
+}
+
 func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.Node, error) {
 	if envInfo.Debug {
 		logrus.SetLevel(logrus.DebugLevel)
@@ -483,31 +517,8 @@ func get(ctx context.Context, envInfo *cmds.Agent, proxy proxy.Proxy) (*config.N
 	nodeConfig.Containerd.Config = filepath.Join(envInfo.DataDir, "agent", "etc", "containerd", "config.toml")
 	nodeConfig.Containerd.Root = filepath.Join(envInfo.DataDir, "agent", "containerd")
 	nodeConfig.CRIDockerd.Root = filepath.Join(envInfo.DataDir, "agent", "cri-dockerd")
-	if !nodeConfig.Docker {
-		if nodeConfig.ImageServiceEndpoint != "" {
-			nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ImageServiceEndpoint
-		} else if nodeConfig.ContainerRuntimeEndpoint == "" {
-			switch nodeConfig.AgentConfig.Snapshotter {
-			case "overlayfs":
-				if err := containerd.OverlaySupported(nodeConfig.Containerd.Root); err != nil {
-					return nil, errors.Wrapf(err, "\"overlayfs\" snapshotter cannot be enabled for %q, try using \"fuse-overlayfs\" or \"native\"",
-						nodeConfig.Containerd.Root)
-				}
-			case "fuse-overlayfs":
-				if err := containerd.FuseoverlayfsSupported(nodeConfig.Containerd.Root); err != nil {
-					return nil, errors.Wrapf(err, "\"fuse-overlayfs\" snapshotter cannot be enabled for %q, try using \"native\"",
-						nodeConfig.Containerd.Root)
-				}
-			case "stargz":
-				if err := containerd.StargzSupported(nodeConfig.Containerd.Root); err != nil {
-					return nil, errors.Wrapf(err, "\"stargz\" snapshotter cannot be enabled for %q, try using \"overlayfs\" or \"native\"",
-						nodeConfig.Containerd.Root)
-				}
-				nodeConfig.AgentConfig.ImageServiceSocket = "/run/containerd-stargz-grpc/containerd-stargz-grpc.sock"
-			}
-		} else {
-			nodeConfig.AgentConfig.ImageServiceSocket = nodeConfig.ContainerRuntimeEndpoint
-		}
+	if err := applySnapshotterConfig(nodeConfig, envInfo); err != nil {
+		return nil, err
 	}
 	nodeConfig.Containerd.Opt = filepath.Join(envInfo.DataDir, "agent", "containerd")
 	nodeConfig.Containerd.Log = filepath.Join(envInfo.DataDir, "agent", "containerd", "containerd.log")

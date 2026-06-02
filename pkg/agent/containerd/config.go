@@ -113,10 +113,26 @@ func cleanContainerdHosts(dir string, hosts HostConfigs) error {
 
 // getHostConfigs merges the registry mirrors/configs into HostConfig template structs
 func getHostConfigs(registry *registries.Registry, noDefaultEndpoint bool, mirrorAddr string) HostConfigs {
-	hosts := map[string]templates.HostConfig{}
+	hosts := buildDefaultHostConfigs(registry.Configs, mirrorAddr)
 
-	// create config for default endpoints
-	for host, config := range registry.Configs {
+	// create endpoints for mirrors
+	for host, mirror := range registry.Mirrors {
+		config := ensureMirrorDefaultConfig(hosts, host, mirrorAddr, registry.Configs, noDefaultEndpoint)
+		buildMirrorEndpoints(registry.Configs, mirrorAddr, mirror, &config)
+		if host == "*" {
+			host = "_default"
+		}
+		hosts[host] = config
+	}
+
+	cleanupDefaultHosts(hosts)
+	return hosts
+}
+
+// buildDefaultHostConfigs creates HostConfig entries for every registry config.
+func buildDefaultHostConfigs(configs map[string]registries.RegistryConfig, mirrorAddr string) HostConfigs {
+	hosts := map[string]templates.HostConfig{}
+	for host, config := range configs {
 		if c, err := defaultHostConfig(host, mirrorAddr, config); err != nil {
 			logrus.Errorf("Failed to generate config for registry %s: %v", host, err)
 		} else {
@@ -126,75 +142,65 @@ func getHostConfigs(registry *registries.Registry, noDefaultEndpoint bool, mirro
 			hosts[host] = *c
 		}
 	}
+	return hosts
+}
 
-	// create endpoints for mirrors
-	for host, mirror := range registry.Mirrors {
-		// create the default config, if it wasn't explicitly mentioned in the config section
-		config, ok := hosts[host]
-		if !ok {
-			if c, err := defaultHostConfig(host, mirrorAddr, configForHost(registry.Configs, host)); err != nil {
-				logrus.Errorf("Failed to generate config for registry %s: %v", host, err)
-				continue
-			} else {
-				if noDefaultEndpoint {
-					c.Default = nil
-				} else if host == "*" {
-					c.Default = &templates.RegistryEndpoint{URL: &url.URL{}}
-				}
-				config = *c
-			}
-		}
-
-		// track which endpoints we've already seen to avoid creating duplicates
-		seenEndpoint := map[string]bool{}
-
-		// TODO: rewrites are currently copied from the mirror settings into each endpoint.
-		// In the future, we should allow for per-endpoint rewrites, instead of expecting
-		// all mirrors to have the same structure. This will require changes to the registries.yaml
-		// structure, which is defined in rancher/wharfie.
-		for i, endpoint := range mirror.Endpoints {
-			registryName, url, override, err := normalizeEndpointAddress(endpoint, mirrorAddr)
-			if err != nil {
-				logrus.Warnf("Ignoring invalid endpoint URL %d=%s for %s: %v", i, endpoint, host, err)
-			} else if _, ok := seenEndpoint[url.String()]; ok {
-				logrus.Warnf("Skipping duplicate endpoint URL %d=%s for %s", i, endpoint, host)
-			} else {
-				seenEndpoint[url.String()] = true
-				var rewrites map[string]string
-				// Do not apply rewrites to the embedded registry endpoint
-				if url.Host != mirrorAddr {
-					rewrites = mirror.Rewrites
-				}
-				ep := templates.RegistryEndpoint{
-					Config:       configForHost(registry.Configs, registryName),
-					Rewrites:     rewrites,
-					OverridePath: override,
-					URL:          url,
-				}
-				if i+1 == len(mirror.Endpoints) && endpointURLEqual(config.Default, &ep) {
-					// if the last endpoint is the default endpoint, move it there
-					config.Default = &ep
-				} else {
-					config.Endpoints = append(config.Endpoints, ep)
-				}
-			}
-		}
-
-		if host == "*" {
-			host = "_default"
-		}
-		hosts[host] = config
+// ensureMirrorDefaultConfig returns the existing host config or creates one from registry defaults.
+func ensureMirrorDefaultConfig(hosts map[string]templates.HostConfig, host, mirrorAddr string, configs map[string]registries.RegistryConfig, noDefaultEndpoint bool) templates.HostConfig {
+	if c, ok := hosts[host]; ok {
+		return c
 	}
+	c, err := defaultHostConfig(host, mirrorAddr, configForHost(configs, host))
+	if err != nil {
+		return templates.HostConfig{}
+	}
+	if noDefaultEndpoint {
+		c.Default = nil
+	} else if host == "*" {
+		c.Default = &templates.RegistryEndpoint{URL: &url.URL{}}
+	}
+	return *c
+}
 
-	// Clean up hosts and default endpoints where resulting config leaves only defaults
+// buildMirrorEndpoints populates config.Endpoints from mirror endpoint definitions.
+func buildMirrorEndpoints(configs map[string]registries.RegistryConfig, mirrorAddr string, mirror registries.Mirror, config *templates.HostConfig) {
+	seenEndpoint := map[string]bool{}
+	for i, endpoint := range mirror.Endpoints {
+		registryName, epURL, override, err := normalizeEndpointAddress(endpoint, mirrorAddr)
+		if err != nil {
+			logrus.Warnf("Ignoring invalid endpoint URL %d=%s: %v", i, endpoint, err)
+			continue
+		}
+		if seenEndpoint[epURL.String()] {
+			logrus.Warnf("Skipping duplicate endpoint URL %d=%s", i, endpoint)
+			continue
+		}
+		seenEndpoint[epURL.String()] = true
+		var rewrites map[string]string
+		if epURL.Host != mirrorAddr {
+			rewrites = mirror.Rewrites
+		}
+		ep := templates.RegistryEndpoint{
+			Config:       configForHost(configs, registryName),
+			Rewrites:     rewrites,
+			OverridePath: override,
+			URL:          epURL,
+		}
+		if i+1 == len(mirror.Endpoints) && endpointURLEqual(config.Default, &ep) {
+			config.Default = &ep
+		} else {
+			config.Endpoints = append(config.Endpoints, ep)
+		}
+	}
+}
+
+// cleanupDefaultHosts removes entries that have only unconfigured defaults.
+func cleanupDefaultHosts(hosts HostConfigs) {
 	for host, config := range hosts {
-		// if this host has no endpoints and the default has no config, delete this host
 		if len(config.Endpoints) == 0 && !endpointHasConfig(config.Default) {
 			delete(hosts, host)
 		}
 	}
-
-	return hosts
 }
 
 // normalizeEndpointAddress normalizes the endpoint address.
