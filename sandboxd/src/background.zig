@@ -87,7 +87,7 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
 
     // Parent: check timeout and set up killer if needed
     if (req.timeout > 0) {
-        std.Thread.spawn(.{}, spawnTimeoutKiller, .{ @as(i32, @intCast(pid)), req.timeout, run_dir, allocator }) catch |_| {};
+        std.Thread.spawn(.{}, spawnTimeoutKiller, .{ @as(i32, @intCast(pid)), req.timeout, run_dir, allocator }) catch {};
     }
 
     var resp_buf: [256]u8 = undefined;
