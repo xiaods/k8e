@@ -34,11 +34,25 @@ spec:
               defaultAllowedHosts:
                 type: array
                 items: {type: string}
+              resourceLimits:
+                type: object
+                properties:
+                  cpu: {type: string}
+                  memory: {type: string}
+              rateLimits:
+                type: object
+                properties:
+                  writeBurst: {type: integer}
+                  writeRate: {type: number}
+                  readBurst: {type: integer}
+                  readRate: {type: number}
           status:
             type: object
             properties:
               readyWarmCount: {type: integer}
               activeSessions: {type: integer}
+              maxPods: {type: integer}
+              totalPods: {type: integer}
     subresources:
       status: {}
     additionalPrinterColumns:
