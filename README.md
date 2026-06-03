@@ -335,8 +335,20 @@ k8e-sandbox-cli run "print('hello')" --lang python
 # Shell command (default lang=bash)
 k8e-sandbox-cli run "ls -la /workspace"
 
-# TypeScript
-k8e-sandbox-cli run "console.log(42)" --lang ts
+# TypeScript — type annotations run via tsx
+k8e-sandbox-cli run "const nums: number[] = [1, 2, 3]; console.log(nums.reduce((a, b) => a + b, 0))" --lang ts
+
+# Multi-line TypeScript via stdin (interfaces, async/await)
+k8e-sandbox-cli run --lang ts <<'EOF'
+interface User { name: string; age: number }
+
+async function oldest(users: User[]): Promise<User> {
+  return users.reduce((a, b) => (a.age > b.age ? a : b));
+}
+
+const users: User[] = [{ name: "Ada", age: 36 }, { name: "Linus", age: 54 }];
+oldest(users).then((u) => console.log(`Oldest: ${u.name} (${u.age})`));
+EOF
 
 # Multi-line via stdin
 k8e-sandbox-cli run --lang python <<'EOF'

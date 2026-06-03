@@ -1,6 +1,7 @@
 const std = @import("std");
 const main = @import("main.zig");
 const exec = @import("exec.zig");
+const path_util = @import("path.zig");
 
 const WriteRequest = struct {
     path: []const u8 = "",
@@ -21,13 +22,7 @@ pub fn handleWrite(allocator: std.mem.Allocator, client_fd: i32, body: []const u
         return;
     }
 
-    const full_path = if (std.mem.startsWith(u8, req.path, "/"))
-        try allocator.dupeZ(u8, req.path)
-    else blk: {
-        const s = try std.fmt.allocPrint(allocator, "/workspace/{s}", .{req.path});
-        break :blk try allocator.realloc(s, s.len + 1);
-    };
-    full_path[full_path.len - 1] = 0;
+    const full_path = try path_util.resolveWorkspacePath(allocator, req.path);
     defer allocator.free(full_path);
 
     // Ensure parent directory exists using mkdir recursion
@@ -42,7 +37,7 @@ pub fn handleWrite(allocator: std.mem.Allocator, client_fd: i32, body: []const u
         std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true };
     const mode: u32 = 0o644;
 
-    const fd = std.os.linux.open(@as([*:0]const u8, @ptrCast(full_path.ptr)), open_flags, mode);
+    const fd = std.os.linux.open(full_path.ptr, open_flags, mode);
     if (fd < 0) {
         const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"open failed\"}}", .{});
         defer allocator.free(msg);
@@ -84,16 +79,10 @@ pub fn handleRead(allocator: std.mem.Allocator, client_fd: i32, query: []const u
         return;
     };
 
-    const full_path = if (std.mem.startsWith(u8, path, "/"))
-        try allocator.dupeZ(u8, path)
-    else blk: {
-        const s = try std.fmt.allocPrint(allocator, "/workspace/{s}", .{path});
-        break :blk try allocator.realloc(s, s.len + 1);
-    };
-    full_path[full_path.len - 1] = 0;
+    const full_path = try path_util.resolveWorkspacePath(allocator, path);
     defer allocator.free(full_path);
 
-    const fd = std.os.linux.open(@as([*:0]const u8, @ptrCast(full_path.ptr)), std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    const fd = std.os.linux.open(full_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
     if (fd < 0) {
         const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"not found\"}}", .{});
         defer allocator.free(msg);
