@@ -214,9 +214,16 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 		return nil, err
 	}
 
-	pvcName, err := o.ensureWorkspacePVC(ctx, sessionID)
-	if err != nil {
-		return nil, err
+	// Persistent sessions (tenant set) get a dedicated workspace PVC, mounted via a
+	// cold-start pod. Ephemeral sessions claim a warm pod backed by EmptyDir, so no
+	// PVC is created — a warm pod's volume is fixed at boot and cannot be swapped.
+	var pvcName string
+	if req.TenantId != "" {
+		p, pvcErr := o.ensureWorkspacePVC(ctx, sessionID)
+		if pvcErr != nil {
+			return nil, pvcErr
+		}
+		pvcName = p
 	}
 
 	pod, err := o.claimOrCreatePod(ctx, sessionID, runtimeClass, pvcName, matrixCPU, matrixMemory)
@@ -341,6 +348,16 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 		return nil, status.Errorf(codes.PermissionDenied, "max depth %d reached", maxDepth)
 	}
 
+	// Sub-agents share the parent's workspace for file-based IPC, which requires the
+	// parent to own a real PVC. A warm-claimed (ephemeral) parent runs on EmptyDir
+	// and cannot share storage, so reject rather than silently provision an unshared
+	// PVC the parent can't see. Create the parent with a tenant_id to enable this.
+	parentPVC := parent.Status.WorkspacePVC
+	if parentPVC == "" {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"parent session %s has no shared workspace; create it with a tenant_id to enable sub-agents", req.ParentSessionId)
+	}
+
 	childID := fmt.Sprintf("%s-sub-%d", req.ParentSessionId, time.Now().UnixNano())
 	child := &sandboxv1.SandboxSession{
 		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
@@ -355,17 +372,6 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 	}
 	if err := o.createSession(ctx, child); err != nil {
 		return nil, status.Errorf(codes.Internal, "create sub-agent: %v", err)
-	}
-
-	// sub-agent shares parent's PVC (read-write) for filesystem-based IPC
-	parentPVC := parent.Status.WorkspacePVC
-	if parentPVC == "" {
-		// parent may not have a PVC (e.g. warm pool pod) — create one
-		var pvcErr error
-		parentPVC, pvcErr = o.ensureWorkspacePVC(ctx, req.ParentSessionId)
-		if pvcErr != nil {
-			return nil, status.Errorf(codes.Internal, "parent PVC: %v", pvcErr)
-		}
 	}
 
 	pod, err := o.claimOrCreatePod(ctx, childID, child.Spec.RuntimeClass, parentPVC, "", "")
@@ -585,23 +591,28 @@ func (o *Orchestrator) updateSessionStatus(ctx context.Context, session *sandbox
 }
 
 func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeClass, pvcName, cpu, memory string) (*corev1.Pod, error) {
-	pods, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
-		LabelSelector: labelState + "=" + stateWarm,
-	})
-	if err == nil {
-		for i := range pods.Items {
-			pod := &pods.Items[i]
-			if pod.Status.Phase != corev1.PodRunning {
-				continue
+	// Only ephemeral sessions (no PVC) may adopt a warm pod: warm pods boot with an
+	// EmptyDir volume, and a running pod's volumes cannot be changed to mount a
+	// session PVC. Persistent sessions therefore cold-start with the PVC attached.
+	if pvcName == "" {
+		warm, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+			LabelSelector: labelState + "=" + stateWarm,
+		})
+		if err == nil {
+			for i := range warm.Items {
+				pod := &warm.Items[i]
+				if pod.Status.Phase != corev1.PodRunning {
+					continue
+				}
+				// atomic claim: use resourceVersion for optimistic locking
+				pod.Labels[labelState] = stateActive
+				pod.Labels[labelSessionID] = sessionID
+				updated, uerr := o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{})
+				if uerr == nil {
+					return updated, nil
+				}
+				// conflict means another request claimed it first — try next warm pod
 			}
-			// atomic claim: use resourceVersion for optimistic locking
-			pod.Labels[labelState] = stateActive
-			pod.Labels[labelSessionID] = sessionID
-			updated, err := o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{})
-			if err == nil {
-				return updated, nil
-			}
-			// conflict means another request claimed it first — try next warm pod
 		}
 	}
 	pod := &corev1.Pod{

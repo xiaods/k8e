@@ -1,6 +1,6 @@
 # KIP-7: Embedded etcd 融合方案 — 集成官方 embed 包
 
-> **状态**: Accepted
+> **状态**: Implemented
 > **作者**: xiaods
 > **日期**: 2025-05-20
 > **关联**: KIP-6 (Embedded etcd 设计方案)

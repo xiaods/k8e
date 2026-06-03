@@ -188,9 +188,12 @@ func TestCreateSession_ExpiresAt_NoTTL(t *testing.T) {
 
 func TestCreateSession_CreatesPVC(t *testing.T) {
 	o := newTestOrchestrator()
-	sess := mustCreateSession(t, o, "pvc-test")
+	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{SessionId: "pvc-test", TenantId: "tenant-1"})
+	if err != nil {
+		t.Fatalf(msgCreate, err)
+	}
 	if sess.Status.WorkspacePVC == "" {
-		t.Fatal("expected WorkspacePVC to be set")
+		t.Fatal("expected WorkspacePVC to be set for a persistent (tenant) session")
 	}
 	pvc, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(context.Background(), sess.Status.WorkspacePVC, metav1.GetOptions{})
 	if err != nil {
@@ -198,6 +201,21 @@ func TestCreateSession_CreatesPVC(t *testing.T) {
 	}
 	if pvc.Labels[labelSessionID] != "pvc-test" {
 		t.Fatalf("PVC missing session label, got %v", pvc.Labels)
+	}
+}
+
+func TestCreateSession_Ephemeral_NoPVC(t *testing.T) {
+	o := newTestOrchestrator()
+	sess := mustCreateSession(t, o, "eph-test") // no tenant → ephemeral
+	if sess.Status.WorkspacePVC != "" {
+		t.Fatalf("expected no WorkspacePVC for ephemeral session, got %q", sess.Status.WorkspacePVC)
+	}
+	pvcs, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list pvcs: %v", err)
+	}
+	if len(pvcs.Items) != 0 {
+		t.Fatalf("expected no PVCs for ephemeral session, got %d", len(pvcs.Items))
 	}
 }
 
@@ -320,12 +338,13 @@ func TestRunSubAgent_Success(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()
 
-	// create parent at depth 0
+	// create parent at depth 0 with a shared workspace PVC (persistent session)
 	parent := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": testAPIVer,
 		"kind":       "SandboxSession",
 		"metadata":   map[string]interface{}{"name": "parent-ok", "namespace": sandboxNS},
 		"spec":       map[string]interface{}{"depth": int64(0), "runtimeClass": "gvisor", "allowedHosts": []interface{}{"pypi.org"}},
+		"status":     map[string]interface{}{"workspacePVC": "workspace-parent-ok"},
 	}}
 	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Create(ctx, parent, metav1.CreateOptions{}) //nolint:errcheck
 
@@ -343,6 +362,27 @@ func TestRunSubAgent_Success(t *testing.T) {
 	}
 	if child.Spec.Depth != 1 {
 		t.Fatalf("expected child depth 1, got %d", child.Spec.Depth)
+	}
+	// child must share the parent's workspace PVC for file-based IPC
+	if child.Status.WorkspacePVC != "workspace-parent-ok" {
+		t.Fatalf("expected child to share parent PVC, got %q", child.Status.WorkspacePVC)
+	}
+}
+
+func TestRunSubAgent_NoParentPVC_FailedPrecondition(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	parent := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": testAPIVer,
+		"kind":       "SandboxSession",
+		"metadata":   map[string]interface{}{"name": "parent-nopvc", "namespace": sandboxNS},
+		"spec":       map[string]interface{}{"depth": int64(0), "runtimeClass": "gvisor"},
+	}}
+	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Create(ctx, parent, metav1.CreateOptions{}) //nolint:errcheck
+
+	_, err := o.RunSubAgent(ctx, &pb.RunSubAgentRequest{ParentSessionId: "parent-nopvc"})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition for parent without PVC, got %v", status.Code(err))
 	}
 }
 

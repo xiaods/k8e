@@ -1,6 +1,6 @@
 # KIP-6: Embedded etcd — Remove kine/SQLite and harden embedded etcd
 
-**Status**: Accepted
+**Status**: Implemented
 **Author**: xiaods
 **Created**: 2025-05-20
 **Relates to**: KIP-3 (Agentic AI Sandbox Matrix), KIP-4 (Sandbox MCP Skill)

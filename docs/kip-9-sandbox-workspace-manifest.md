@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-05-30 | Draft |
+| @xiaods | 2026-06-03 | Implemented |
 
 ## Summary
 

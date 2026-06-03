@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-04-02 | Implemented |
+| @xiaods | 2026-06-02 | Implemented (revised — see [Alignment with Perplexity Sandbox](#alignment-with-perplexity-sandbox-revised-2026-06-02)) |
 
 ## Summary
 
@@ -32,6 +32,17 @@ Perplexity Computer (launched February 2026) runs thousands of sandbox sessions 
 - Two-level agent hierarchy enforced architecturally: parent spawns children via `run_subagent`; children cannot spawn further agents (no grandchildren)
 - `confirm_action` tool enforces mandatory user approval before irreversible operations — safety is structural, not prompt-based
 - Warm pool of pre-booted sandboxes enables sub-500ms session claim latency
+
+### Alignment with Perplexity Sandbox (revised 2026-06-02)
+
+An audit against Perplexity's published [Sandbox API](https://www.perplexity.ai/hub/blog/sandbox-api-isolated-code-execution-for-ai-agents) corrected several claims in this KIP. The bullets above describe Perplexity Computer; the notes below describe where **K8E's implementation actually stands** and the agreed direction:
+
+- **FUSE is not implemented.** K8E mounts a Kubernetes PVC at `/workspace`, not a FUSE daemon — wherever a diagram below shows "PVC + FUSE", read PVC only. Persistence model: a **persistent** session (created with a `tenant_id`) cold-starts with a dedicated PVC; an **ephemeral** session claims a warm pod backed by `EmptyDir` (a warm pod's volume is fixed at boot and cannot be swapped for a session PVC). Cross-session persistence is explicit snapshot save/restore (KIP-10), not transparent FUSE-backed continuity.
+- **`run_subagent` and `confirm_action` are K8E-original extensions**, not part of the Perplexity Sandbox API (the blog does not mention them). Sub-agents share the parent's workspace for file IPC, which requires a persistent (PVC-backed) parent; a warm/ephemeral parent is now rejected with `FailedPrecondition`.
+- **`confirm_action` is currently an opt-in RPC, not structural enforcement.** Nothing intercepts irreversible operations and approvals live in an in-memory map (lost on gateway restart, not shared across control-plane nodes). Agreed direction: make enforcement structural at the **gateway-tool boundary** (sensitive external actions become gRPC tools whose execution path enforces approval) with approval state persisted in a CRD. This guarantee depends on the *no-credentials-in-sandbox* property.
+- **Server-side credential injection is a non-goal** for now. Egress control is Cilium `toFQDNs` (domain allow/deny only); it does not inject credentials the way Perplexity's egress proxy does. Acceptable because the default allowlist is credential-free public package registries.
+- **The gRPC gateway runs embedded in the control plane** (`pkg/server`), not as the standalone `grpc-gateway.yaml` Deployment described in Task 4 (that manifest is not in the deploy bundle).
+- **Languages:** the image ships Python + Node/TypeScript; DuckDB is being added so the Perplexity-listed `SQL` language is supported.
 
 ### agentbox — Open-Source Reference Implementation
 
@@ -130,7 +141,7 @@ Firecracker is the strongest isolation option and what Perplexity Computer uses 
 │              Sandbox Pod  (runtimeClass: firecracker | gvisor | kata)    │
 │                                                                          │
 │   ┌──────────────────────────┐    ┌──────────────────────────────────┐  │
-│   │  sandboxd  (PID 1)       │    │  /workspace  (PVC + FUSE)        │  │
+│   │  sandboxd  (PID 1)       │    │  /workspace  (PVC, no FUSE)      │  │
 │   │  HTTP :2024              │    │  shared across sub-agents        │  │
 │   │  /exec  /files  /stream  │    └──────────────────────────────────┘  │
 │   └──────────────────────────┘                                          │
@@ -493,7 +504,9 @@ Rules enforced by the controller:
 
 ### `confirm_action` — Architectural Safety
 
-Before any irreversible operation (send email, delete file, make purchase), the agent calls `ConfirmAction`. The gRPC gateway creates a pending approval record in etcd and long-polls until the external caller approves or the timeout expires. This is enforced at the API level, not via prompt instructions.
+Before any irreversible operation (send email, delete file, make purchase), the agent calls `ConfirmAction`. The gRPC gateway records a pending approval and long-polls until the external caller approves or the timeout expires.
+
+> **Revision (2026-06-02):** As implemented this is an *opt-in* RPC backed by an **in-memory** map — nothing intercepts irreversible operations, so the safety is effectively prompt-based, and approvals are lost on gateway restart and not shared across control-plane nodes. The agreed direction is to make enforcement **structural at the gateway-tool boundary** (sensitive external actions become gRPC tools whose execution path requires a resolved approval) with approval state persisted in a **CRD**. `confirm_action` is a K8E extension, not part of the Perplexity Sandbox API. See [Alignment with Perplexity Sandbox](#alignment-with-perplexity-sandbox-revised-2026-06-02).
 
 ```
 Agent calls ConfirmAction(action="delete /workspace/report.pdf")
@@ -1120,7 +1133,7 @@ Run: `go test ./pkg/sandboxmatrix/... -v`
 4. **Resource limits** — Each sandbox pod has CPU and memory limits (default: 4 CPU, 4Gi RAM) enforced by Kubernetes
 5. **Filesystem isolation** — Only `/workspace` is writable; the container image root filesystem is read-only
 6. **Two-level hierarchy cap** — Prevents cascading agent creation and unbounded resource consumption
-7. **`confirm_action` gate** — Irreversible operations require explicit external approval; cannot be bypassed by prompt injection
+7. **`confirm_action` gate** — Intended to require explicit external approval for irreversible operations. *Today this is opt-in (the agent must choose to call it) and therefore not yet a true structural control; the planned gateway-tool enforcement (see the [alignment note](#alignment-with-perplexity-sandbox-revised-2026-06-02)) is what makes it bypass-resistant.*
 
 ### Why Root Inside Sandbox Is Safe
 

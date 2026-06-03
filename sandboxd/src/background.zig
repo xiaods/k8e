@@ -1,9 +1,19 @@
 const std = @import("std");
 const main = @import("main.zig");
+const exec = @import("exec.zig");
 
 const BG_DIR = "/workspace/.k8e_bg";
 
-/// handleBgSubmit forks a child process for background execution.
+// Fixed wrapper run by /bin/sh. An EXIT trap records the real exit code of the
+// user command on any normal shell exit (including `exit N` and errors), so a
+// completed background task is detectable without waitpid — sandboxd reaps all
+// children via SIGCHLD=IGN (see main.zig). The command and run dir are passed
+// through the environment (K8E_BG_CMD / K8E_BG_DIR) to avoid shell-quoting the
+// user command into this string. A SIGKILL from the timeout killer is not
+// trappable, so the killer writes exit_code=-1 itself.
+const BG_WRAPPER = "trap 'rc=$?; printf %s \"$rc\" > \"$K8E_BG_DIR/exit_code\"' EXIT; eval \"$K8E_BG_CMD\"";
+
+/// handleBgSubmit forks a child that runs the command in the background.
 /// POST /exec/background
 /// Body: {"command": "...", "run_id": "...", "timeout": 300, "workdir": "/workspace"}
 pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []const u8) !void {
@@ -19,75 +29,84 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
         return;
     }
 
-    // Ensure background directory exists
+    // Ensure background directories exist (paths must be null-terminated for syscalls).
     var run_dir_buf: [512]u8 = undefined;
-    const run_dir = try std.fmt.bufPrint(&run_dir_buf, "{s}/{s}", .{ BG_DIR, req.run_id });
+    const run_dir = try std.fmt.bufPrintZ(&run_dir_buf, "{s}/{s}", .{ BG_DIR, req.run_id });
     _ = std.os.linux.mkdir(@ptrCast(BG_DIR.ptr), 0o755);
-    _ = std.os.linux.mkdir(@ptrCast(run_dir.ptr), 0o755);
+    _ = std.os.linux.mkdir(run_dir.ptr, 0o755);
 
-    // Write started_at timestamp
-    var started_buf: [64]u8 = undefined;
-    const started_path = try std.fmt.bufPrint(&started_buf, "{s}/started_at", .{run_dir});
-    const started_fd = std.os.linux.open(@as([*:0]const u8, @ptrCast(started_path.ptr)), std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
-    if (started_fd >= 0) {
-        const timestamp_str = "0";
-        _ = std.os.linux.write(@intCast(started_fd), timestamp_str.ptr, timestamp_str.len);
-        _ = std.os.linux.close(@intCast(started_fd));
+    // Record the real start time (unix seconds).
+    {
+        var started_path: [600]u8 = undefined;
+        const sp = std.fmt.bufPrintZ(&started_path, "{s}/started_at", .{run_dir}) catch unreachable;
+        const fd = std.os.linux.open(sp.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+        if (fd >= 0) {
+            var ts_buf: [24]u8 = undefined;
+            const ts_str = std.fmt.bufPrint(&ts_buf, "{d}", .{unixSeconds()}) catch "0";
+            _ = std.os.linux.write(@intCast(fd), ts_str.ptr, ts_str.len);
+            _ = std.os.linux.close(@intCast(fd));
+        }
     }
 
-    // Fork child process
+    // Build argv/envp in the parent so the post-fork child can execve without allocating.
+    const dir_env = try std.fmt.allocPrintSentinel(allocator, "K8E_BG_DIR={s}", .{run_dir}, 0);
+    defer allocator.free(dir_env);
+    const cmd_env = try std.fmt.allocPrintSentinel(allocator, "K8E_BG_CMD={s}", .{req.command}, 0);
+    defer allocator.free(cmd_env);
+
+    // Explicit env: a sane PATH (covers python:/usr/local/bin and node) plus the
+    // run dir and command the wrapper reads. K8E_BG_CMD/K8E_BG_DIR carry the user
+    // command and target dir so they need no shell quoting in BG_WRAPPER.
+    const path_env: [*:0]const u8 = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+    const envp = [3:null]?[*:0]const u8{ path_env, dir_env.ptr, cmd_env.ptr };
+
+    const wrapper_z: [*:0]const u8 = BG_WRAPPER;
+    const argv = [3:null]?[*:0]const u8{ "/bin/sh".ptr, "-c".ptr, wrapper_z };
+
     const pid = std.os.linux.fork();
     if (pid == 0) {
-        // Child: redirect stdout/stderr to files, exec command
-        var stdout_path: [512]u8 = undefined;
-        const sp = try std.fmt.bufPrint(&stdout_path, "{s}/stdout", .{run_dir});
-        var stderr_path: [512]u8 = undefined;
-        const ep = try std.fmt.bufPrint(&stderr_path, "{s}/stderr", .{run_dir});
+        // Child: redirect stdout/stderr to files, then exec the wrapper.
+        var stdout_path: [600]u8 = undefined;
+        const sp = std.fmt.bufPrintZ(&stdout_path, "{s}/stdout", .{run_dir}) catch std.os.linux.exit(1);
+        var stderr_path: [600]u8 = undefined;
+        const ep = std.fmt.bufPrintZ(&stderr_path, "{s}/stderr", .{run_dir}) catch std.os.linux.exit(1);
 
-        const stdout_fd = std.os.linux.open(@as([*:0]const u8, @ptrCast(sp.ptr)), std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
-        const stderr_fd = std.os.linux.open(@as([*:0]const u8, @ptrCast(ep.ptr)), std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
-
+        const stdout_fd = std.os.linux.open(sp.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+        const stderr_fd = std.os.linux.open(ep.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
         _ = std.os.linux.dup2(@intCast(stdout_fd), 1);
         _ = std.os.linux.dup2(@intCast(stderr_fd), 2);
         _ = std.os.linux.close(@intCast(stdout_fd));
         _ = std.os.linux.close(@intCast(stderr_fd));
 
-        // Change working directory
         var cwd_buf: [4096]u8 = undefined;
         const cwd_z = std.fmt.bufPrintZ(&cwd_buf, "{s}", .{req.workdir}) catch "/workspace";
         _ = std.os.linux.chdir(cwd_z);
 
-        // Write PID file
-        var pid_buf: [512]u8 = undefined;
-        const pid_path = try std.fmt.bufPrint(&pid_buf, "{s}/pid", .{run_dir});
-        const pid_fd = std.os.linux.open(@as([*:0]const u8, @ptrCast(pid_path.ptr)), std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+        // Record the pid so poll can report "running" before completion.
+        var pid_path: [600]u8 = undefined;
+        const pp = std.fmt.bufPrintZ(&pid_path, "{s}/pid", .{run_dir}) catch std.os.linux.exit(1);
+        const pid_fd = std.os.linux.open(pp.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
         if (pid_fd >= 0) {
-            const child_pid = std.os.linux.getpid();
             var pb: [16]u8 = undefined;
-            const ps = try std.fmt.bufPrint(&pb, "{d}", .{child_pid});
+            const ps = std.fmt.bufPrint(&pb, "{d}", .{std.os.linux.getpid()}) catch "";
             _ = std.os.linux.write(@intCast(pid_fd), ps.ptr, ps.len);
             _ = std.os.linux.close(@intCast(pid_fd));
         }
 
-        // Null-terminate command
-        var cmd_buf: [65536]u8 = undefined;
-        if (req.command.len < cmd_buf.len) {
-            @memcpy(cmd_buf[0..req.command.len], req.command);
-            cmd_buf[req.command.len] = 0;
-        }
-
-        const argv: [3:null]?[*:0]const u8 = .{
-            "/bin/sh".ptr,
-            "-c".ptr,
-            @as([*:0]const u8, @ptrCast(&cmd_buf)),
-        };
-        _ = std.os.linux.execve("/bin/sh", &argv, &[1:null]?[*:0]const u8{null});
+        _ = std.os.linux.execve("/bin/sh", &argv, &envp);
         std.os.linux.exit(1);
     }
 
-    // Parent: check timeout and set up killer if needed
+    // Parent: arm a timeout killer if requested.
     if (req.timeout > 0) {
-        std.Thread.spawn(.{}, spawnTimeoutKiller, .{ @as(i32, @intCast(pid)), req.timeout, run_dir, allocator }) catch {};
+        const run_dir_owned = allocator.dupeZ(u8, run_dir) catch null;
+        if (run_dir_owned) |owned| {
+            const watcher = std.Thread.spawn(.{}, spawnTimeoutKiller, .{ @as(i32, @intCast(pid)), req.timeout, owned, allocator }) catch blk: {
+                allocator.free(owned);
+                break :blk null;
+            };
+            if (watcher) |w| w.detach();
+        }
     }
 
     var resp_buf: [256]u8 = undefined;
@@ -95,47 +114,50 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }
 
-/// handleBgPoll checks the status of a background task.
+/// handleBgPoll reports the status of a background task and returns its output
+/// once an exit_code has been recorded.
 /// GET /exec/background/<run_id>
 pub fn handleBgPoll(allocator: std.mem.Allocator, client_fd: i32, run_id: []const u8) !void {
-    var run_dir_buf: [512]u8 = undefined;
-    const run_dir = try std.fmt.bufPrint(&run_dir_buf, "{s}/{s}", .{ BG_DIR, run_id });
+    var path_buf: [600]u8 = undefined;
 
-    // Check exit_code file
-    var exit_path: [512]u8 = undefined;
-    const ep = try std.fmt.bufPrint(&exit_path, "{s}/exit_code", .{run_dir});
-    const exit_data = std.fs.cwd().readFileAlloc(allocator, ep, 32) catch null;
-    if (exit_data) |data| {
-        const exit_code = std.fmt.parseInt(i32, std.mem.trim(u8, data, &std.ascii.whitespace), 10) catch 0;
-        defer allocator.free(data);
+    // Terminal state: exit_code present.
+    const exit_path = try std.fmt.bufPrintZ(&path_buf, "{s}/{s}/exit_code", .{ BG_DIR, run_id });
+    if (readFileZ(allocator, exit_path.ptr, 32)) |exit_data| {
+        defer allocator.free(exit_data);
+        const exit_code = std.fmt.parseInt(i32, std.mem.trim(u8, exit_data, &std.ascii.whitespace), 10) catch 0;
 
-        const stdout_data = readFileOrEmpty(allocator, try std.fmt.bufPrint(&exit_path, "{s}/stdout", .{run_dir}));
-        defer if (stdout_data) |d| allocator.free(d);
-        const stderr_data = readFileOrEmpty(allocator, try std.fmt.bufPrint(&exit_path, "{s}/stderr", .{run_dir}));
-        defer if (stderr_data) |d| allocator.free(d);
+        var sp_buf: [600]u8 = undefined;
+        const stdout_path = try std.fmt.bufPrintZ(&sp_buf, "{s}/{s}/stdout", .{ BG_DIR, run_id });
+        const stdout_raw = readFileZ(allocator, stdout_path.ptr, 10 * 1024 * 1024) orelse try allocator.dupe(u8, "");
+        defer allocator.free(stdout_raw);
 
-        var resp_buf: [1024]u8 = undefined;
-        // Simple inline JSON (no full escaping for now — stdout/stderr are raw)
-        const resp = try std.fmt.bufPrint(&resp_buf,
-            "{{\"run_id\":\"{s}\",\"status\":\"completed\",\"exit_code\":{d}}}",
-            .{ run_id, exit_code });
+        var ep_buf: [600]u8 = undefined;
+        const stderr_path = try std.fmt.bufPrintZ(&ep_buf, "{s}/{s}/stderr", .{ BG_DIR, run_id });
+        const stderr_raw = readFileZ(allocator, stderr_path.ptr, 10 * 1024 * 1024) orelse try allocator.dupe(u8, "");
+        defer allocator.free(stderr_raw);
+
+        const stdout_esc = try exec.jsonEscape(allocator, stdout_raw);
+        defer allocator.free(stdout_esc);
+        const stderr_esc = try exec.jsonEscape(allocator, stderr_raw);
+        defer allocator.free(stderr_esc);
+
+        const status = if (exit_code == -1) "timed_out" else "completed";
+        const resp = try std.fmt.allocPrint(allocator, "{{\"run_id\":\"{s}\",\"status\":\"{s}\",\"exit_code\":{d},\"stdout\":\"{s}\",\"stderr\":\"{s}\"}}", .{ run_id, status, exit_code, stdout_esc, stderr_esc });
+        defer allocator.free(resp);
         try main.writeResponse(client_fd, "200 OK", "application/json", resp);
         return;
     }
 
-    // Check if pid file exists → status is running
-    var pid_path: [512]u8 = undefined;
-    const pp = try std.fmt.bufPrint(&pid_path, "{s}/pid", .{run_dir});
-    const pid_data = std.fs.cwd().readFileAlloc(allocator, pp, 16) catch null;
-    if (pid_data) |data| {
-        defer allocator.free(data);
+    // Running: pid recorded but no exit_code yet.
+    const pid_path = try std.fmt.bufPrintZ(&path_buf, "{s}/{s}/pid", .{ BG_DIR, run_id });
+    if (readFileZ(allocator, pid_path.ptr, 16)) |pid_data| {
+        allocator.free(pid_data);
         var resp_buf: [256]u8 = undefined;
         const resp = try std.fmt.bufPrint(&resp_buf, "{{\"run_id\":\"{s}\",\"status\":\"running\"}}", .{run_id});
         try main.writeResponse(client_fd, "200 OK", "application/json", resp);
         return;
     }
 
-    // No pid, no exit_code → task not found
     var resp_buf: [256]u8 = undefined;
     const resp = try std.fmt.bufPrint(&resp_buf, "{{\"run_id\":\"{s}\",\"status\":\"not_found\"}}", .{run_id});
     try main.writeResponse(client_fd, "404 Not Found", "application/json", resp);
@@ -148,19 +170,41 @@ const BgSubmitRequest = struct {
     workdir: []const u8 = "/workspace",
 };
 
-fn readFileOrEmpty(allocator: std.mem.Allocator, path: []const u8) ?[]u8 {
-    return std.fs.cwd().readFileAlloc(allocator, path, 10 * 1024 * 1024) catch null;
+// readFileZ reads up to max bytes from a null-terminated path via raw syscalls,
+// returning null if the file cannot be opened.
+fn readFileZ(allocator: std.mem.Allocator, path: [*:0]const u8, max: usize) ?[]u8 {
+    const fd = std.os.linux.open(path, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    if (@as(isize, @bitCast(fd)) < 0) return null;
+    defer _ = std.os.linux.close(@intCast(fd));
+    return exec.readAllFromFd(allocator, @intCast(fd), max) catch null;
 }
 
-fn spawnTimeoutKiller(pid: i32, timeout_sec: u32, run_dir: []const u8, allocator: std.mem.Allocator) void {
-    _ = allocator;
-    std.time.sleep(timeout_sec * std.time.ns_per_s);
-    // Kill the child process
+// unixSeconds returns the current wall-clock time in seconds since the epoch.
+fn unixSeconds() i64 {
+    var ts: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.REALTIME, &ts);
+    return @intCast(ts.sec);
+}
+
+// spawnTimeoutKiller kills the run after timeout_sec if it has not already
+// completed, recording exit_code=-1 so poll reports "timed_out".
+fn spawnTimeoutKiller(pid: i32, timeout_sec: u32, run_dir: [:0]u8, allocator: std.mem.Allocator) void {
+    defer allocator.free(run_dir);
+    const ts = std.os.linux.timespec{ .sec = @as(isize, @intCast(timeout_sec)), .nsec = 0 };
+    _ = std.os.linux.nanosleep(&ts, null);
+
+    var exit_path_buf: [600]u8 = undefined;
+    const exit_path = std.fmt.bufPrintZ(&exit_path_buf, "{s}/exit_code", .{run_dir}) catch return;
+
+    // If the command already finished, leave its recorded exit code untouched.
+    const probe = std.os.linux.open(exit_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    if (@as(isize, @bitCast(probe)) >= 0) {
+        _ = std.os.linux.close(@intCast(probe));
+        return;
+    }
+
     _ = std.os.linux.kill(@as(std.os.linux.pid_t, @intCast(pid)), std.os.linux.SIG.KILL);
-    // Write exit_code file so poll knows it timed out
-    var exit_path_buf: [512]u8 = undefined;
-    const exit_path = std.fmt.bufPrint(&exit_path_buf, "{s}/exit_code", .{run_dir}) catch return;
-    const fd = std.os.linux.open(@as([*:0]const u8, @ptrCast(exit_path.ptr)), std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+    const fd = std.os.linux.open(exit_path.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
     if (fd >= 0) {
         _ = std.os.linux.write(@intCast(fd), "-1", 2);
         _ = std.os.linux.close(@intCast(fd));

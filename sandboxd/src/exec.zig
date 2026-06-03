@@ -97,7 +97,7 @@ pub fn runCommand(allocator: std.mem.Allocator, command: []const u8, workdir: []
     return ExecResult{ .stdout = stdout, .stderr = stderr, .exit_code = exit_code };
 }
 
-fn readAllFromFd(allocator: std.mem.Allocator, fd: i32, max_bytes: usize) ![]u8 {
+pub fn readAllFromFd(allocator: std.mem.Allocator, fd: i32, max_bytes: usize) ![]u8 {
     var buf = try allocator.alloc(u8, max_bytes);
     errdefer allocator.free(buf);
     var total: usize = 0;
