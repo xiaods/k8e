@@ -4,12 +4,16 @@ package grpc
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -22,6 +26,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -95,27 +100,37 @@ func sanitizePipPackage(raw string) (string, error) {
 // Server implements the SandboxService gRPC interface.
 type Server struct {
 	pb.UnimplementedSandboxServiceServer
-	k8s         kubernetes.Interface
-	dyn         dynamic.Interface
-	orch        *Orchestrator
-	lisAddr     string
-	certFile    string
-	keyFile     string
-	apiKeys     map[string]string // name → key for validation
-	rateLimiter *ratelimit.Limiter
+	k8s            kubernetes.Interface
+	dyn            dynamic.Interface
+	orch           *Orchestrator
+	lisAddr        string
+	caCertFile     string
+	caKeyFile      string
+	serverCertFile string
+	serverKeyFile  string
+	caCert         *x509.Certificate
+	caKey          *ecdsa.PrivateKey
+	apiKeys        map[string]string // name → key for validation
+	issuedStore    *issuedCertStore
+	revocList      *RevocationList
+	localAuth      bool
+	rateLimiter    *ratelimit.Limiter
 }
 
-func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, certFile, keyFile string, grpcPort int) *Server {
+func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, caCertFile, caKeyFile, serverCertFile, serverKeyFile string, grpcPort int, localAuth bool) *Server {
 	if grpcPort == 0 {
 		grpcPort = 50051
 	}
 	s := &Server{
-		k8s:         k8s,
-		dyn:         dyn,
-		lisAddr:     fmt.Sprintf("0.0.0.0:%d", grpcPort),
-		certFile:    certFile,
-		keyFile:     keyFile,
-		rateLimiter: ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
+		k8s:            k8s,
+		dyn:            dyn,
+		lisAddr:        fmt.Sprintf("0.0.0.0:%d", grpcPort),
+		caCertFile:     caCertFile,
+		caKeyFile:      caKeyFile,
+		serverCertFile: serverCertFile,
+		serverKeyFile:  serverKeyFile,
+		localAuth:      localAuth,
+		rateLimiter:    ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
 	}
 	s.orch = NewOrchestrator(k8s, dyn)
 	return s
@@ -126,16 +141,27 @@ func (s *Server) loadAPIKeys(ctx context.Context) {
 	secret, err := s.k8s.CoreV1().Secrets(apiKeySecretNS).Get(ctx, apiKeySecretName, metav1.GetOptions{})
 	if err != nil {
 		logrus.Debugf("sandbox gRPC: no api-key secret found, all requests allowed")
+		s.apiKeys = nil
 		return
 	}
 	data, ok := secret.Data["keys.json"]
 	if !ok {
+		s.apiKeys = nil
 		return
 	}
 	var store map[string]string
 	if err := json.Unmarshal(data, &store); err != nil {
 		logrus.Warnf("sandbox gRPC: api-key secret corrupted: %v", err)
 		return
+	}
+	// Detect removed keys and revoke their certificates
+	if s.revocList != nil && s.issuedStore != nil {
+		for name := range s.apiKeys {
+			if _, ok := store[name]; !ok {
+				s.revocList.RevokeByKeyName(s.issuedStore, name)
+				logrus.Infof("sandbox gRPC: revoked certificates for deleted API key %q", name)
+			}
+		}
 	}
 	s.apiKeys = store
 	logrus.Infof("sandbox gRPC: loaded %d API key(s)", len(store))
@@ -210,23 +236,36 @@ func (s *Server) Start(ctx context.Context) error {
 	// Rebuild background run registry from existing Session CRDs
 	go s.orch.RebuildRunRegistry(ctx, "sandbox-matrix")
 
-	creds, err := credentials.NewServerTLSFromFile(s.certFile, s.keyFile)
+	// Initialize sandbox CA and server certificate
+	caKey, caCert, err := ensureCA(s.caCertFile, s.caKeyFile)
 	if err != nil {
-		return fmt.Errorf("grpc tls credentials: %w", err)
+		return fmt.Errorf("sandbox CA: %w", err)
+	}
+	s.caKey = caKey
+	s.caCert = caCert
+
+	if err := ensureServerCert(s.caKey, s.caCert, s.serverCertFile, s.serverKeyFile); err != nil {
+		return fmt.Errorf("sandbox server cert: %w", err)
 	}
 
-	opts := []grpc.ServerOption{grpc.Creds(creds)}
-	if len(s.apiKeys) > 0 {
-		opts = append(opts,
-			grpc.ChainUnaryInterceptor(s.rateLimiter.UnaryInterceptor, s.apiKeyInterceptor),
-			grpc.ChainStreamInterceptor(s.rateLimiter.StreamInterceptor, s.apiStreamInterceptor),
-		)
-	} else {
-		opts = append(opts,
-			grpc.UnaryInterceptor(s.rateLimiter.UnaryInterceptor),
-			grpc.StreamInterceptor(s.rateLimiter.StreamInterceptor),
-		)
+	serverTLS, err := tls.LoadX509KeyPair(s.serverCertFile, s.serverKeyFile)
+	if err != nil {
+		return fmt.Errorf("load server cert: %w", err)
 	}
+
+	creds, err := buildMTLSCreds(s.caCert, serverTLS)
+	if err != nil {
+		return fmt.Errorf("grpc mTLS credentials: %w", err)
+	}
+
+	s.issuedStore = newIssuedCertStore(s.caCertFile[:strings.LastIndex(s.caCertFile, "/")] + "/sandbox-issued.json")
+	s.revocList = newRevocationList()
+
+	opts := []grpc.ServerOption{grpc.Creds(creds)}
+	opts = append(opts,
+		grpc.ChainUnaryInterceptor(s.rateLimiter.UnaryInterceptor, s.mTLSAuthInterceptor),
+		grpc.ChainStreamInterceptor(s.rateLimiter.StreamInterceptor, s.mTLSStreamInterceptor),
+	)
 	gs := grpc.NewServer(opts...)
 	pb.RegisterSandboxServiceServer(gs, s)
 	logrus.Infof("sandbox gRPC gateway listening on %s", s.lisAddr)
@@ -426,19 +465,57 @@ func (s *Server) ApproveAction(ctx context.Context, req *pb.ApproveActionRequest
 	return s.orch.ApproveAction(ctx, req)
 }
 
-// GetCACert returns the server's CA certificate for TLS verification.
-// Requires API key authentication — the cert is only served to authenticated clients.
-func (s *Server) GetCACert(ctx context.Context, req *pb.GetCACertRequest) (*pb.GetCACertResponse, error) {
-	pem, err := os.ReadFile(s.certFile)
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "read ca cert: %v", err)
-	}
-	return &pb.GetCACertResponse{Cert: string(pem)}, nil
-}
-
 // PollRun checks the status of a background execution.
 func (s *Server) PollRun(ctx context.Context, req *pb.PollRunRequest) (*pb.PollRunResponse, error) {
 	return s.orch.PollRun(ctx, req.RunId)
+}
+
+// Login authenticates the client (via mTLS or API key) and returns a signed client certificate.
+func (s *Server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
+	keyName, _ := peerIdentity(ctx)
+
+	if keyName == "" {
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "missing metadata")
+		}
+		auth := md.Get("authorization")
+		if len(auth) == 0 {
+			return nil, status.Error(codes.Unauthenticated, "missing API key or client certificate")
+		}
+		token := strings.TrimPrefix(auth[0], "Bearer ")
+		for name, key := range s.apiKeys {
+			if key == token {
+				keyName = name
+				break
+			}
+		}
+		if keyName == "" {
+			return nil, status.Error(codes.Unauthenticated, "invalid API key")
+		}
+	}
+
+	certPEM, fingerprint, err := signClientCert(s.caKey, s.caCert, req.Csr, keyName, 30)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "sign certificate: %v", err)
+	}
+
+	s.issuedStore.Add(keyName, fingerprint, time.Now(), time.Now().Add(30*24*time.Hour))
+
+	logrus.WithFields(logrus.Fields{
+		"key_name":         keyName,
+		"device_name":      req.DeviceName,
+		"client_version":   req.ClientVersion,
+		"cert_fingerprint": fingerprint,
+	}).Info("sandbox gRPC: client certificate issued")
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.caCert.Raw})
+
+	return &pb.LoginResponse{
+		Cert:      certPEM,
+		CaCert:    string(caPEM),
+		ValidDays: 30,
+	}, nil
 }
 
 func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error) {
@@ -477,40 +554,48 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 	return "", status.Errorf(codes.FailedPrecondition, "session %s has no pod IP after 60s", sessionID)
 }
 
-// validateAPIKey extracts and validates the API key from the gRPC context metadata.
-func (s *Server) validateAPIKey(ctx context.Context) error {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return status.Error(codes.Unauthenticated, "missing metadata")
+// mTLSAuthInterceptor enforces mTLS for all RPCs except Login.
+func (s *Server) mTLSAuthInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	if info.FullMethod == "/sandbox.v1.SandboxService/Login" {
+		return handler(ctx, req)
 	}
-	auth := md.Get("authorization")
-	if len(auth) == 0 {
-		return status.Error(codes.Unauthenticated, "missing authorization header")
-	}
-	token := strings.TrimPrefix(auth[0], "Bearer ")
-	if token == auth[0] {
-		return status.Error(codes.Unauthenticated, "invalid authorization format, expected 'Bearer <key>'")
-	}
-	for _, key := range s.apiKeys {
-		if key == token {
-			return nil
-		}
-	}
-	return status.Error(codes.Unauthenticated, "invalid api key")
-}
-
-// apiKeyInterceptor validates the authorization header against known API keys for unary RPCs.
-func (s *Server) apiKeyInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-	if err := s.validateAPIKey(ctx); err != nil {
+	if err := s.checkMTLSAuth(ctx); err != nil {
 		return nil, err
 	}
 	return handler(ctx, req)
 }
 
-// apiStreamInterceptor validates the authorization header for streaming RPCs.
-func (s *Server) apiStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if err := s.validateAPIKey(ss.Context()); err != nil {
+// mTLSStreamInterceptor enforces mTLS for all streaming RPCs except ExecStream.
+func (s *Server) mTLSStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	if err := s.checkMTLSAuth(ss.Context()); err != nil {
 		return err
 	}
 	return handler(srv, ss)
+}
+
+func (s *Server) checkMTLSAuth(ctx context.Context) error {
+	keyName, isLocal := peerIdentity(ctx)
+	if isLocal && s.localAuth {
+		return nil
+	}
+	if keyName == "" {
+		return status.Error(codes.Unauthenticated, "client certificate required for mTLS")
+	}
+	if s.revocList.IsRevoked(certFingerprintFromContext(ctx)) {
+		return status.Error(codes.PermissionDenied, "client certificate has been revoked")
+	}
+	return nil
+}
+
+func certFingerprintFromContext(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return ""
+	}
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(tlsInfo.State.PeerCertificates) == 0 {
+		return ""
+	}
+	h := sha256.Sum256(tlsInfo.State.PeerCertificates[0].Raw)
+	return fmt.Sprintf("%x", h[:])
 }

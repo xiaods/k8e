@@ -65,9 +65,12 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	go runGCLoop(ctx, orch, cfg.Namespace)
 
 	srv := sandboxgrpc.NewServer(k8s, dyn,
-		tlsDir+"/serving-kube-apiserver.crt",
-		tlsDir+"/serving-kube-apiserver.key",
+		tlsDir+"/sandbox-ca.crt",
+		tlsDir+"/sandbox-ca.key",
+		tlsDir+"/sandbox-server.crt",
+		tlsDir+"/sandbox-server.key",
 		cfg.GRPCPort,
+		false, // localAuth=false for server-mode
 	)
 	go func() {
 		if err := srv.Start(ctx); err != nil {

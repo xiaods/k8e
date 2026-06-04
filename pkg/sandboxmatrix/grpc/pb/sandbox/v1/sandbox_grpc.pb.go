@@ -30,7 +30,7 @@ const (
 	SandboxService_RunSubAgent_FullMethodName    = "/sandbox.v1.SandboxService/RunSubAgent"
 	SandboxService_ConfirmAction_FullMethodName  = "/sandbox.v1.SandboxService/ConfirmAction"
 	SandboxService_ApproveAction_FullMethodName  = "/sandbox.v1.SandboxService/ApproveAction"
-	SandboxService_GetCACert_FullMethodName      = "/sandbox.v1.SandboxService/GetCACert"
+	SandboxService_Login_FullMethodName          = "/sandbox.v1.SandboxService/Login"
 	SandboxService_PollRun_FullMethodName        = "/sandbox.v1.SandboxService/PollRun"
 )
 
@@ -49,9 +49,10 @@ type SandboxServiceClient interface {
 	RunSubAgent(ctx context.Context, in *RunSubAgentRequest, opts ...grpc.CallOption) (*RunSubAgentResponse, error)
 	ConfirmAction(ctx context.Context, in *ConfirmActionRequest, opts ...grpc.CallOption) (*ConfirmActionResponse, error)
 	ApproveAction(ctx context.Context, in *ApproveActionRequest, opts ...grpc.CallOption) (*ApproveActionResponse, error)
-	// GetCACert returns the server CA certificate for TLS verification.
-	// No authentication required — the cert is needed to establish trust.
-	GetCACert(ctx context.Context, in *GetCACertRequest, opts ...grpc.CallOption) (*GetCACertResponse, error)
+	// Login authenticates the client and returns a signed X.509 certificate for mTLS.
+	// First login: pass API key via gRPC metadata (authorization: Bearer <key>).
+	// Renewal: present existing valid client cert via mTLS — no API key needed.
+	Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error)
 	// PollRun checks the status of a background execution.
 	PollRun(ctx context.Context, in *PollRunRequest, opts ...grpc.CallOption) (*PollRunResponse, error)
 }
@@ -183,10 +184,10 @@ func (c *sandboxServiceClient) ApproveAction(ctx context.Context, in *ApproveAct
 	return out, nil
 }
 
-func (c *sandboxServiceClient) GetCACert(ctx context.Context, in *GetCACertRequest, opts ...grpc.CallOption) (*GetCACertResponse, error) {
+func (c *sandboxServiceClient) Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetCACertResponse)
-	err := c.cc.Invoke(ctx, SandboxService_GetCACert_FullMethodName, in, out, cOpts...)
+	out := new(LoginResponse)
+	err := c.cc.Invoke(ctx, SandboxService_Login_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -218,9 +219,10 @@ type SandboxServiceServer interface {
 	RunSubAgent(context.Context, *RunSubAgentRequest) (*RunSubAgentResponse, error)
 	ConfirmAction(context.Context, *ConfirmActionRequest) (*ConfirmActionResponse, error)
 	ApproveAction(context.Context, *ApproveActionRequest) (*ApproveActionResponse, error)
-	// GetCACert returns the server CA certificate for TLS verification.
-	// No authentication required — the cert is needed to establish trust.
-	GetCACert(context.Context, *GetCACertRequest) (*GetCACertResponse, error)
+	// Login authenticates the client and returns a signed X.509 certificate for mTLS.
+	// First login: pass API key via gRPC metadata (authorization: Bearer <key>).
+	// Renewal: present existing valid client cert via mTLS — no API key needed.
+	Login(context.Context, *LoginRequest) (*LoginResponse, error)
 	// PollRun checks the status of a background execution.
 	PollRun(context.Context, *PollRunRequest) (*PollRunResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
@@ -266,8 +268,8 @@ func (UnimplementedSandboxServiceServer) ConfirmAction(context.Context, *Confirm
 func (UnimplementedSandboxServiceServer) ApproveAction(context.Context, *ApproveActionRequest) (*ApproveActionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ApproveAction not implemented")
 }
-func (UnimplementedSandboxServiceServer) GetCACert(context.Context, *GetCACertRequest) (*GetCACertResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetCACert not implemented")
+func (UnimplementedSandboxServiceServer) Login(context.Context, *LoginRequest) (*LoginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Login not implemented")
 }
 func (UnimplementedSandboxServiceServer) PollRun(context.Context, *PollRunRequest) (*PollRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PollRun not implemented")
@@ -484,20 +486,20 @@ func _SandboxService_ApproveAction_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _SandboxService_GetCACert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetCACertRequest)
+func _SandboxService_Login_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LoginRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SandboxServiceServer).GetCACert(ctx, in)
+		return srv.(SandboxServiceServer).Login(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: SandboxService_GetCACert_FullMethodName,
+		FullMethod: SandboxService_Login_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SandboxServiceServer).GetCACert(ctx, req.(*GetCACertRequest))
+		return srv.(SandboxServiceServer).Login(ctx, req.(*LoginRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -568,8 +570,8 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _SandboxService_ApproveAction_Handler,
 		},
 		{
-			MethodName: "GetCACert",
-			Handler:    _SandboxService_GetCACert_Handler,
+			MethodName: "Login",
+			Handler:    _SandboxService_Login_Handler,
 		},
 		{
 			MethodName: "PollRun",

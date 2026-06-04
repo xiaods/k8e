@@ -14,9 +14,10 @@ service SandboxService {
   rpc RunSubAgent(RunSubAgentRequest)       returns (RunSubAgentResponse);
   rpc ConfirmAction(ConfirmActionRequest)   returns (ConfirmActionResponse);
   rpc ApproveAction(ApproveActionRequest)   returns (ApproveActionResponse);
-  // GetCACert returns the server CA certificate for TLS verification.
-  // No authentication required — the cert is needed to establish trust.
-  rpc GetCACert(GetCACertRequest)           returns (GetCACertResponse);
+  // Login authenticates the client and returns a signed X.509 certificate for mTLS.
+  // First login: pass API key via gRPC metadata (authorization: Bearer <key>).
+  // Renewal: present existing valid client cert via mTLS — no API key needed.
+  rpc Login(LoginRequest) returns (LoginResponse);
   // PollRun checks the status of a background execution.
   rpc PollRun(PollRunRequest)               returns (PollRunResponse);
 }
@@ -97,8 +98,16 @@ message ApproveActionResponse {
   bool ok = 1;
 }
 
-message GetCACertRequest  {}
-message GetCACertResponse { string cert = 1; }
+message LoginRequest {
+  string csr            = 1;  // PEM-encoded PKCS#10 certificate signing request
+  string device_name    = 2;  // e.g. hostname, for audit logging
+  string client_version = 3;  // k8e version, for audit logging
+}
+message LoginResponse {
+  string cert       = 1;  // PEM-encoded signed client certificate
+  string ca_cert    = 2;  // PEM-encoded sandbox CA certificate (trust anchor)
+  int64  valid_days = 3;  // days the certificate is valid
+}
 
 message PollRunRequest  { string run_id = 1; }
 message PollRunResponse {

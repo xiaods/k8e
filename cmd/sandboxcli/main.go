@@ -26,6 +26,7 @@ func main() {
 		cli.StringFlag{Name: "apikey", EnvVar: "K8E_SANDBOX_APIKEY", Usage: "API key for remote cluster authentication"},
 	}
 	app.Commands = []cli.Command{
+		sandboxcli.LoginCommand(),
 		sandboxcli.RunCommand(),
 		sandboxcli.StatusCommand(),
 		sandboxcli.CreateCommand(),

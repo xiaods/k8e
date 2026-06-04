@@ -1213,26 +1213,29 @@ func (x *ApproveActionResponse) GetOk() bool {
 	return false
 }
 
-type GetCACertRequest struct {
+type LoginRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Csr           string                 `protobuf:"bytes,1,opt,name=csr,proto3" json:"csr,omitempty"`                                          // PEM-encoded PKCS#10 certificate signing request
+	DeviceName    string                 `protobuf:"bytes,2,opt,name=device_name,json=deviceName,proto3" json:"device_name,omitempty"`          // e.g. hostname, for audit logging
+	ClientVersion string                 `protobuf:"bytes,3,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"` // k8e version, for audit logging
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetCACertRequest) Reset() {
-	*x = GetCACertRequest{}
+func (x *LoginRequest) Reset() {
+	*x = LoginRequest{}
 	mi := &file_sandbox_v1_sandbox_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetCACertRequest) String() string {
+func (x *LoginRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetCACertRequest) ProtoMessage() {}
+func (*LoginRequest) ProtoMessage() {}
 
-func (x *GetCACertRequest) ProtoReflect() protoreflect.Message {
+func (x *LoginRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_sandbox_v1_sandbox_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1244,32 +1247,55 @@ func (x *GetCACertRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetCACertRequest.ProtoReflect.Descriptor instead.
-func (*GetCACertRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use LoginRequest.ProtoReflect.Descriptor instead.
+func (*LoginRequest) Descriptor() ([]byte, []int) {
 	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{22}
 }
 
-type GetCACertResponse struct {
+func (x *LoginRequest) GetCsr() string {
+	if x != nil {
+		return x.Csr
+	}
+	return ""
+}
+
+func (x *LoginRequest) GetDeviceName() string {
+	if x != nil {
+		return x.DeviceName
+	}
+	return ""
+}
+
+func (x *LoginRequest) GetClientVersion() string {
+	if x != nil {
+		return x.ClientVersion
+	}
+	return ""
+}
+
+type LoginResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Cert          string                 `protobuf:"bytes,1,opt,name=cert,proto3" json:"cert,omitempty"`
+	Cert          string                 `protobuf:"bytes,1,opt,name=cert,proto3" json:"cert,omitempty"`                             // PEM-encoded signed client certificate
+	CaCert        string                 `protobuf:"bytes,2,opt,name=ca_cert,json=caCert,proto3" json:"ca_cert,omitempty"`           // PEM-encoded sandbox CA certificate (trust anchor)
+	ValidDays     int64                  `protobuf:"varint,3,opt,name=valid_days,json=validDays,proto3" json:"valid_days,omitempty"` // days the certificate is valid
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *GetCACertResponse) Reset() {
-	*x = GetCACertResponse{}
+func (x *LoginResponse) Reset() {
+	*x = LoginResponse{}
 	mi := &file_sandbox_v1_sandbox_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *GetCACertResponse) String() string {
+func (x *LoginResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*GetCACertResponse) ProtoMessage() {}
+func (*LoginResponse) ProtoMessage() {}
 
-func (x *GetCACertResponse) ProtoReflect() protoreflect.Message {
+func (x *LoginResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_sandbox_v1_sandbox_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -1281,16 +1307,30 @@ func (x *GetCACertResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use GetCACertResponse.ProtoReflect.Descriptor instead.
-func (*GetCACertResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use LoginResponse.ProtoReflect.Descriptor instead.
+func (*LoginResponse) Descriptor() ([]byte, []int) {
 	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{23}
 }
 
-func (x *GetCACertResponse) GetCert() string {
+func (x *LoginResponse) GetCert() string {
 	if x != nil {
 		return x.Cert
 	}
 	return ""
+}
+
+func (x *LoginResponse) GetCaCert() string {
+	if x != nil {
+		return x.CaCert
+	}
+	return ""
+}
+
+func (x *LoginResponse) GetValidDays() int64 {
+	if x != nil {
+		return x.ValidDays
+	}
+	return 0
 }
 
 type PollRunRequest struct {
@@ -1507,10 +1547,17 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\bapproved\x18\x02 \x01(\bR\bapproved\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"'\n" +
 	"\x15ApproveActionResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"\x12\n" +
-	"\x10GetCACertRequest\"'\n" +
-	"\x11GetCACertResponse\x12\x12\n" +
-	"\x04cert\x18\x01 \x01(\tR\x04cert\"'\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"h\n" +
+	"\fLoginRequest\x12\x10\n" +
+	"\x03csr\x18\x01 \x01(\tR\x03csr\x12\x1f\n" +
+	"\vdevice_name\x18\x02 \x01(\tR\n" +
+	"deviceName\x12%\n" +
+	"\x0eclient_version\x18\x03 \x01(\tR\rclientVersion\"[\n" +
+	"\rLoginResponse\x12\x12\n" +
+	"\x04cert\x18\x01 \x01(\tR\x04cert\x12\x17\n" +
+	"\aca_cert\x18\x02 \x01(\tR\x06caCert\x12\x1d\n" +
+	"\n" +
+	"valid_days\x18\x03 \x01(\x03R\tvalidDays\"'\n" +
 	"\x0ePollRunRequest\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\"\x8d\x01\n" +
 	"\x0fPollRunResponse\x12\x15\n" +
@@ -1518,7 +1565,7 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x16\n" +
 	"\x06stdout\x18\x03 \x01(\tR\x06stdout\x12\x16\n" +
 	"\x06stderr\x18\x04 \x01(\tR\x06stderr\x12\x1b\n" +
-	"\texit_code\x18\x05 \x01(\x05R\bexitCode2\xf5\a\n" +
+	"\texit_code\x18\x05 \x01(\x05R\bexitCode2\xe9\a\n" +
 	"\x0eSandboxService\x12T\n" +
 	"\rCreateSession\x12 .sandbox.v1.CreateSessionRequest\x1a!.sandbox.v1.CreateSessionResponse\x12W\n" +
 	"\x0eDestroySession\x12!.sandbox.v1.DestroySessionRequest\x1a\".sandbox.v1.DestroySessionResponse\x129\n" +
@@ -1532,8 +1579,8 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"PipInstall\x12\x1d.sandbox.v1.PipInstallRequest\x1a\x1e.sandbox.v1.PipInstallResponse\x12N\n" +
 	"\vRunSubAgent\x12\x1e.sandbox.v1.RunSubAgentRequest\x1a\x1f.sandbox.v1.RunSubAgentResponse\x12T\n" +
 	"\rConfirmAction\x12 .sandbox.v1.ConfirmActionRequest\x1a!.sandbox.v1.ConfirmActionResponse\x12T\n" +
-	"\rApproveAction\x12 .sandbox.v1.ApproveActionRequest\x1a!.sandbox.v1.ApproveActionResponse\x12H\n" +
-	"\tGetCACert\x12\x1c.sandbox.v1.GetCACertRequest\x1a\x1d.sandbox.v1.GetCACertResponse\x12B\n" +
+	"\rApproveAction\x12 .sandbox.v1.ApproveActionRequest\x1a!.sandbox.v1.ApproveActionResponse\x12<\n" +
+	"\x05Login\x12\x18.sandbox.v1.LoginRequest\x1a\x19.sandbox.v1.LoginResponse\x12B\n" +
 	"\aPollRun\x12\x1a.sandbox.v1.PollRunRequest\x1a\x1b.sandbox.v1.PollRunResponseB1Z/github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pbb\x06proto3"
 
 var (
@@ -1572,8 +1619,8 @@ var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*ConfirmActionResponse)(nil),  // 19: sandbox.v1.ConfirmActionResponse
 	(*ApproveActionRequest)(nil),   // 20: sandbox.v1.ApproveActionRequest
 	(*ApproveActionResponse)(nil),  // 21: sandbox.v1.ApproveActionResponse
-	(*GetCACertRequest)(nil),       // 22: sandbox.v1.GetCACertRequest
-	(*GetCACertResponse)(nil),      // 23: sandbox.v1.GetCACertResponse
+	(*LoginRequest)(nil),           // 22: sandbox.v1.LoginRequest
+	(*LoginResponse)(nil),          // 23: sandbox.v1.LoginResponse
 	(*PollRunRequest)(nil),         // 24: sandbox.v1.PollRunRequest
 	(*PollRunResponse)(nil),        // 25: sandbox.v1.PollRunResponse
 }
@@ -1590,7 +1637,7 @@ var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	16, // 9: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
 	18, // 10: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
 	20, // 11: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
-	22, // 12: sandbox.v1.SandboxService.GetCACert:input_type -> sandbox.v1.GetCACertRequest
+	22, // 12: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
 	24, // 13: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
 	1,  // 14: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
 	3,  // 15: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
@@ -1603,7 +1650,7 @@ var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	17, // 22: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
 	19, // 23: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
 	21, // 24: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	23, // 25: sandbox.v1.SandboxService.GetCACert:output_type -> sandbox.v1.GetCACertResponse
+	23, // 25: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
 	25, // 26: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
 	14, // [14:27] is the sub-list for method output_type
 	1,  // [1:14] is the sub-list for method input_type
