@@ -300,6 +300,8 @@ func isSessionExpired(err error) bool {
 		return true
 	case codes.FailedPrecondition:
 		return true
+	case codes.Unavailable:
+		return true
 	}
 	return false
 }

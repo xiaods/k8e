@@ -538,6 +538,13 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 	}
 	podIP, _, _ := unstructured.NestedString(u.Object, "status", "podIP")
 	if podIP != "" {
+		// Verify the pod still exists — it may have been deleted externally.
+		pods, err := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSessionID + "=" + sessionID,
+		})
+		if err == nil && len(pods.Items) == 0 {
+			return "", status.Errorf(codes.NotFound, "session %s pod no longer exists", sessionID)
+		}
 		return podIP, nil
 	}
 	// pod just created — poll until IP is assigned (up to 60s, exponential backoff)
