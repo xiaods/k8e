@@ -3,6 +3,7 @@ const exec = @import("exec.zig");
 const files = @import("files.zig");
 const workspace = @import("workspace.zig");
 const background = @import("background.zig");
+const venv = @import("venv.zig");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -47,6 +48,8 @@ pub fn main() !void {
         std.log.err("listen failed: {s}", .{@tagName(@as(std.posix.E, @enumFromInt(-@as(isize, @bitCast(listen_rc)))))});
         return error.ListenFailed;
     }
+
+    venv.ensureVenv();
 
     std.log.info("sandboxd listening on :2024", .{});
 
