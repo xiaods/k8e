@@ -175,16 +175,25 @@ kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
 
 ### Step 4 — Download Sandbox CLI & Connect Your AI Agent
 
-Download the standalone sandbox CLI and install the skill into your agent:
+Download the standalone sandbox CLI, authenticate, and install the skill into your agent:
 
 ```bash
 # Download sandbox CLI (~44MB)
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
 
+# Create an API key on the server
+k8e sandbox-apikey create my-agent
+# → {"name":"my-agent","key":"k8e-abc123..."}
+
+# Authenticate and obtain an mTLS client certificate
+./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... login
+
 # Install the skill
 ./k8e-sandbox-cli-linux-amd64 install-skill all
 ```
+
+> **Local usage:** If you're on the same machine as the K8E server, the CLI auto-discovers TLS certs and no login is needed — skip straight to `install-skill`.
 
 Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
 
@@ -288,9 +297,8 @@ curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli
 chmod +x k8e-sandbox-cli-linux-amd64
 
 # 2. Authenticate and obtain an mTLS client certificate
-./k8e-sandbox-cli-linux-amd64 login \
-  --endpoint <server-ip>:50051 \
-  --apikey k8e-abc123...
+#    Note: --endpoint and --apikey are global flags, placed before the subcommand
+./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... login
 
 # 3. Install the skill
 ./k8e-sandbox-cli-linux-amd64 install-skill all
@@ -384,10 +392,13 @@ The CLI auto-discovers the local cluster via TLS. For remote clusters, use `k8e-
 
 ```bash
 # Remote cluster: log in once (creates ~/.k8e/sandbox/{client.crt,client.key,ca.crt})
-k8e-sandbox-cli login --endpoint 10.0.0.1:50051 --apikey k8e-abc123...
+k8e-sandbox-cli --endpoint 10.0.0.1:50051 --apikey k8e-abc123... login
 
 # After login, subsequent commands work without --apikey:
 k8e-sandbox-cli run "echo hello"
+
+# Or via environment variables:
+K8E_SANDBOX_ENDPOINT=10.0.0.1:50051 K8E_SANDBOX_APIKEY=k8e-abc123... k8e-sandbox-cli login
 
 # Override endpoint per-command:
 K8E_SANDBOX_ENDPOINT=10.0.0.2:50051 k8e-sandbox-cli run "echo hello"

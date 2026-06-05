@@ -10,8 +10,10 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
@@ -273,11 +275,23 @@ func dialMTLS(endpoint, caFile, certFile, keyFile string) (*grpc.ClientConn, err
 	}
 
 	creds := credentials.NewTLS(&tls.Config{
-		Certificates: []tls.Certificate{clientCert},
-		RootCAs:      pool,
-		MinVersion:   tls.VersionTLS12,
+		Certificates:       []tls.Certificate{clientCert},
+		RootCAs:            pool,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: isLoopback(endpoint),
 	})
 	return grpc.NewClient(endpoint, grpc.WithTransportCredentials(creds))
+}
+
+func isLoopback(endpoint string) bool {
+	host, _, err := net.SplitHostPort(endpoint)
+	if err != nil {
+		host = endpoint
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return strings.EqualFold(host, "localhost")
 }
 
 func callLogin(endpoint, caFile, apiKey, csr string) (*pb.LoginResponse, error) {
@@ -300,8 +314,9 @@ func callLogin(endpoint, caFile, apiKey, csr string) (*pb.LoginResponse, error) 
 		pool := x509.NewCertPool()
 		pool.AppendCertsFromPEM(caPEM)
 		creds = credentials.NewTLS(&tls.Config{
-			RootCAs:    pool,
-			MinVersion: tls.VersionTLS12,
+			RootCAs:            pool,
+			MinVersion:         tls.VersionTLS12,
+			InsecureSkipVerify: isLoopback(endpoint),
 		})
 	}
 
