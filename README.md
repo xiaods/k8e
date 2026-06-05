@@ -41,10 +41,8 @@ curl -sfL https://k8e.sh/install.sh | sh -
 | 4 | [🚀 Quick Start](#-quick-start) |
 | 5 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup) |
 | 6 | [🤖 Sandbox CLI](#-sandbox-cli) |
-| 7 | [🐍 Python Client SDK](#-python-client-sdk) |
-| 8 | [🟦 TypeScript Client SDK](#-typescript-client-sdk) |
-| 9 | [🖥️ Advanced Installation](#️-advanced-installation) |
-| 9 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
+| 7 | [🖥️ Advanced Installation](#️-advanced-installation) |
+| 8 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
 | 9 | [🤝 Contributing](#-contributing) |
 | 10 | [🙏 Acknowledgments](#-acknowledgments) |
 
@@ -282,16 +280,17 @@ k8e sandbox-apikey create my-agent
 # → {"name":"my-agent","key":"k8e-abc123..."}
 ```
 
-**On the client**, download the standalone CLI and install the skill:
+**On the client**, download the standalone CLI, log in, and install the skill:
 
 ```bash
 # 1. Download the platform-specific binary (~44MB)
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
 
-# 2. Point to your K8E gateway with the API key
-export K8E_SANDBOX_ENDPOINT=<server-ip>:50051
-export K8E_SANDBOX_APIKEY=k8e-abc123...
+# 2. Authenticate and obtain an mTLS client certificate
+./k8e-sandbox-cli-linux-amd64 login \
+  --endpoint <server-ip>:50051 \
+  --apikey k8e-abc123...
 
 # 3. Install the skill
 ./k8e-sandbox-cli-linux-amd64 install-skill all
@@ -309,6 +308,7 @@ The agent executes `k8e-sandbox-cli run` automatically — no session management
 
 | Command | Description |
 |---|---|
+| `k8e-sandbox-cli login` | Authenticate to gateway and obtain mTLS client certificate |
 | `k8e-sandbox-cli run <code>` | Run code or shell command (auto-creates/manages session) |
 | `k8e-sandbox-cli status` | Check sandbox service availability and current session |
 | `k8e-sandbox-cli create` | Create a new session (custom runtime, egress, manifest, git-repo) |
@@ -380,12 +380,17 @@ k8e-sandbox-cli run "echo hello" --tenant my-project
 
 ### Configuration Overrides
 
-The CLI auto-discovers the local cluster via TLS. Override when needed:
+The CLI auto-discovers the local cluster via TLS. For remote clusters, use `k8e-sandbox-cli login` once to set up mTLS credentials. Override when needed:
 
 ```bash
-K8E_SANDBOX_ENDPOINT=10.0.0.1:50051 k8e-sandbox-cli run "echo hello"
-K8E_SANDBOX_CERT=/path/to/ca.crt k8e-sandbox-cli run "echo hello"
-k8e-sandbox-cli run "echo hello" --tenant my-project
+# Remote cluster: log in once (creates ~/.k8e/sandbox/{client.crt,client.key,ca.crt})
+k8e-sandbox-cli login --endpoint 10.0.0.1:50051 --apikey k8e-abc123...
+
+# After login, subsequent commands work without --apikey:
+k8e-sandbox-cli run "echo hello"
+
+# Override endpoint per-command:
+K8E_SANDBOX_ENDPOINT=10.0.0.2:50051 k8e-sandbox-cli run "echo hello"
 ```
 
 ---
