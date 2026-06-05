@@ -311,7 +311,7 @@ pub fn build(b: *std.Build) !void {
     all_step.dependOn(runc_step);
     all_step.dependOn(cni_step);
     all_step.dependOn(sandboxd_step);
-    try addSandboxCLIBuild(b, all_step);
+    try addSandboxCLIBuild(b, all_step, vi);
     // hcsshim is Windows-only; only include on Windows hosts
     if (builtin.os.tag == .windows) {
         all_step.dependOn(hcsshim_step);
@@ -385,7 +385,7 @@ fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo) ![]const u8 {
     return std.mem.join(allocator, " ", &parts);
 }
 
-fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step) !void {
+fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step, v: VersionInfo) !void {
     const cli_step = b.step("sandboxcli", "Build cross-platform sandbox CLI binary");
     const cli_targets = [_]struct { goos: []const u8, goarch: []const u8, ext: []const u8 }{
         .{ .goos = "linux", .goarch = "amd64", .ext = "" },
@@ -395,13 +395,19 @@ fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step) !void {
         .{ .goos = "windows", .goarch = "amd64", .ext = ".exe" },
     };
 
+    const commit_short = if (v.commit.len >= 8) v.commit[0..8] else v.commit;
+    const ldflags = b.fmt(
+        "-s -w -X {s}/pkg/version.Version={s} -X {s}/pkg/version.GitCommit={s}",
+        .{ PKG, v.version, PKG, commit_short },
+    );
+
     for (cli_targets) |t| {
         const out_name = b.fmt("bin/k8e-sandbox-cli-{s}-{s}{s}", .{ t.goos, t.goarch, t.ext });
         const out_path = b.getInstallPath(.bin, out_name);
 
         const go_build = b.addSystemCommand(&[_][]const u8{
             "go", "build",
-            "-ldflags", "-s -w",
+            "-ldflags", ldflags,
             "-o", out_path,
             "./cmd/sandboxcli/",
         });
