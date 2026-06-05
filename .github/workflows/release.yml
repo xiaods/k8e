@@ -57,26 +57,8 @@ jobs:
 
   # ── Sandbox CLI: cross-platform binaries ──────────────────────────────
   build-sandbox-cli:
-    name: Build sandbox-cli (${{ matrix.target }})
+    name: Build sandbox-cli
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - target: linux-amd64
-            goos: linux
-            goarch: amd64
-          - target: linux-arm64
-            goos: linux
-            goarch: arm64
-          - target: darwin-amd64
-            goos: darwin
-            goarch: amd64
-          - target: darwin-arm64
-            goos: darwin
-            goarch: arm64
-          - target: windows-amd64
-            goos: windows
-            goarch: amd64
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -84,20 +66,37 @@ jobs:
           go-version-file: go.mod
           check-latest: true
           cache-dependency-path: go.sum
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
       - name: Build sandbox-cli
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
-        run: |
-          EXT=""
-          if [ "${{ matrix.goos }}" = "windows" ]; then EXT=".exe"; fi
-          go build -ldflags="-s -w" -o "k8e-sandbox-cli-${{ matrix.target }}${EXT}" ./cmd/sandboxcli/
-      - name: Upload artifacts
+        run: zig build sandboxcli
+      - name: Upload linux-amd64
         uses: actions/upload-artifact@v5
         with:
-          name: sandbox-cli-${{ matrix.target }}
-          path: k8e-sandbox-cli-${{ matrix.target }}*
+          name: sandbox-cli-linux-amd64
+          path: zig-out/bin/k8e-sandbox-cli-linux-amd64
+      - name: Upload linux-arm64
+        uses: actions/upload-artifact@v5
+        with:
+          name: sandbox-cli-linux-arm64
+          path: zig-out/bin/k8e-sandbox-cli-linux-arm64
+      - name: Upload darwin-amd64
+        uses: actions/upload-artifact@v5
+        with:
+          name: sandbox-cli-darwin-amd64
+          path: zig-out/bin/k8e-sandbox-cli-darwin-amd64
+      - name: Upload darwin-arm64
+        uses: actions/upload-artifact@v5
+        with:
+          name: sandbox-cli-darwin-arm64
+          path: zig-out/bin/k8e-sandbox-cli-darwin-arm64
+      - name: Upload windows-amd64
+        uses: actions/upload-artifact@v5
+        with:
+          name: sandbox-cli-windows-amd64
+          path: zig-out/bin/k8e-sandbox-cli-windows-amd64.exe
 
   # ── Sandbox container image ───────────────────────────────────────────
   build-sandbox-image:
