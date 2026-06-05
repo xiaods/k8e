@@ -14,46 +14,45 @@ All code execution goes through `k8e-sandbox-cli` — never run code directly on
 
 ## Pre-flight
 
-Before any sandbox operation, check that the required environment variables are set:
+Before any sandbox operation, check that the CLI is authenticated to the gateway:
 
 ```bash
-if [ -z "$K8E_SANDBOX_ENDPOINT" ] || [ -z "$K8E_SANDBOX_APIKEY" ]; then
-  echo "⚠ Sandbox not configured. Please provide:"
-  echo "  export K8E_SANDBOX_ENDPOINT=<your-public-ip>:50051"
-  echo "  export K8E_SANDBOX_APIKEY=<your-api-key>"
+# Local mode (on the K8E server) — auto-discovery, no login needed
+# Remote mode — check for valid mTLS certificate
+if ! k8e-sandbox-cli status 2>/dev/null | jq -e .available >/dev/null 2>&1; then
+  echo "⚠ Sandbox not reachable. For remote access, log in first:"
+  echo "  k8e-sandbox-cli login --endpoint <server-ip>:50051 --apikey <your-api-key>"
   exit 1
 fi
 ```
 
-**If either variable is missing**, stop immediately and ask the user:
+**If the sandbox is unreachable**, ask the user:
 
-> "I need your K8E sandbox credentials to run code securely:
->   `K8E_SANDBOX_ENDPOINT` — the server address (e.g. `<your-public-ip>:50051`)
->   `K8E_SANDBOX_APIKEY` — your API key (get it from the server: `k8e sandbox-apikey create my-agent`)"
+> "I need K8E sandbox access to run code securely. For a remote cluster, provide:
+>   - The server address (e.g. `<server-ip>:50051`)
+>   - Your API key (get it from the server: `k8e sandbox-apikey create my-agent`)
+>
+> I'll run `k8e-sandbox-cli login --endpoint <server-ip>:50051 --apikey <your-key>` to set up mTLS credentials."
 
-Do NOT proceed with any code execution until both are set.
+After a successful login, credentials are cached in `~/.k8e/sandbox/` (client.crt, client.key, ca.crt) and auto-renewed — no need to set environment variables per session.
 
-## TLS Certificate Setup (REQUIRED for remote access)
+## mTLS Setup (remote access)
 
-**Before using the sandbox from a remote client**, the server admin MUST add the public IP to the TLS certificate. Without this, every connection will fail with:
+The sandbox gateway uses **mTLS with dynamically-issued client certificates**. First-time setup:
 
-```
-tls: failed to verify certificate: x509: certificate is valid for 127.0.0.1, ::1, ..., not <PUBLIC_IP>
-```
-
-**Fix** — on the server, add to `/etc/k8e/config.yaml`:
-
-```yaml
-tls-san:
-  - <your-public-ip>
+```bash
+# Obtain a client certificate (valid 30 days, auto-renewed)
+k8e-sandbox-cli login --endpoint <server-ip>:50051 --apikey k8e-abc123...
 ```
 
-Then restart: `systemctl restart k8e`
+Credentials are cached in `~/.k8e/sandbox/` and auto-renew when expiring within 7 days. No API key env vars needed after the initial login.
 
-**If you see the TLS certificate error above**:
-1. Tell the user: "The server TLS certificate does not include the public IP. Run `k8e sandbox-apikey create` on the server and add `tls-san` to `/etc/k8e/config.yaml`, then restart k8e."
-2. Delete the local cert cache: `rm -f ~/.k8e/sandbox/ca.crt`
-3. Retry — the CLI will use TOFU (Trust-On-First-Use) as a temporary fallback.
+If the server's IP/hostname changes, the cached CA cert will no longer match. Clear the cache and log in again:
+
+```bash
+rm -f ~/.k8e/sandbox/ca.crt ~/.k8e/sandbox/client.crt ~/.k8e/sandbox/client.key
+k8e-sandbox-cli login --endpoint <new-ip>:50051 --apikey <your-key>
+```
 
 ## Environment
 
@@ -75,10 +74,11 @@ chmod +x k8e-sandbox-cli-linux-amd64
 # On the K8E server node, auto-discovery works automatically
 ./k8e-sandbox-cli-linux-amd64 run "echo hello"
 
-# From a remote client, set the gateway endpoint and API key
+# From a remote client, log in once (obtains mTLS client certificate)
 # (Get the API key from the server: k8e sandbox-apikey create my-agent)
-export K8E_SANDBOX_ENDPOINT=<your-public-ip>:50051
-export K8E_SANDBOX_APIKEY=k8e-abc123...
+./k8e-sandbox-cli-linux-amd64 login --endpoint <your-public-ip>:50051 --apikey k8e-abc123...
+
+# After login, subsequent commands work without --apikey:
 ./k8e-sandbox-cli-linux-amd64 run "echo hello"
 ```
 
@@ -86,6 +86,7 @@ export K8E_SANDBOX_APIKEY=k8e-abc123...
 
 | Command | Purpose | Key flags |
 |---------|---------|-----------|
+| `k8e-sandbox-cli login` | Authenticate and obtain mTLS cert (remote access) | `--apikey`, `--endpoint`, `--device-name` |
 | `k8e-sandbox-cli run <code>` | Execute code or shell command | `--lang python\|bash\|node\|ts`, `--session-id`, `--tenant`, `--timeout 30`, `--raw` |
 | `k8e-sandbox-cli status` | Check service + current session | — |
 | `k8e-sandbox-cli create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--manifest`, `--git-repo` |
@@ -221,7 +222,9 @@ k8e-sandbox-cli read $SID /workspace/result.json --raw
 
 | Exit code | Cause | Action |
 |-----------|-------|--------|
-| 2 (TLS) | `not <IP>` in error | Server TLS SAN missing. Add `tls-san` + restart k8e. Clear `~/.k8e/sandbox/ca.crt` and retry. |
+| 2 | `client certificate required` | Remote access requires mTLS. Run `k8e-sandbox-cli login --endpoint <ip>:50051 --apikey <key>`. |
+| 2 | `certificate has been revoked` | API key was deleted. Obtain a new key and re-login. |
+| 2 | `tls: failed to verify certificate` | Server cert or CA mismatch. Clear `~/.k8e/sandbox/ca.crt` and re-login. |
 | 2 | Sandbox service unreachable | Check `k8e-sandbox-cli status`, ensure gateway is running |
 | 1 | Command failed / session not found | Parse error message from JSON; create new session if expired |
 | 8 (ResourceExhausted) | `warm pool full` | All sandbox pods are in use. Wait for an active session to finish, or add more server memory. |
