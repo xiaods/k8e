@@ -107,9 +107,7 @@ pub fn handleRead(allocator: std.mem.Allocator, client_fd: i32, query: []const u
 }
 
 pub fn handleList(allocator: std.mem.Allocator, client_fd: i32, query: []const u8) !void {
-    const since_str = extractQueryParam(query, "since");
-    const since: i64 = if (since_str) |s| std.fmt.parseInt(i64, s, 10) catch 0 else 0;
-
+    _ = query;
     var entries = std.array_list.Managed(FileEntry).init(allocator);
     defer {
         for (entries.items) |e| allocator.free(e.path);
@@ -126,7 +124,6 @@ pub fn handleList(allocator: std.mem.Allocator, client_fd: i32, query: []const u
     for (entries.items) |e| {
         if (!first) try json_buf.append(',');
         first = false;
-        if (e.modified < since) continue;
         const escaped = try exec.jsonEscape(allocator, e.path);
         defer allocator.free(escaped);
         const item = try std.fmt.allocPrint(allocator, "{{\"path\":\"{s}\",\"modified\":{d}}}", .{ escaped, e.modified });

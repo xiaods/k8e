@@ -31,6 +31,12 @@ RUN npm install -g tsx typescript
 # Upgrade pip
 RUN pip install --no-cache-dir --upgrade pip
 
+# Python venv — default Python environment for all sandbox workloads.
+# PATH points to /workspace/.venv so pip install goes to the writable workspace volume.
+RUN python -m venv /workspace/.venv
+ENV PATH="/workspace/.venv/bin:$PATH" \
+    VIRTUAL_ENV="/workspace/.venv"
+
 # /workspace is the shared agent filesystem (PVC-mounted at runtime)
 RUN mkdir -p /workspace
 WORKDIR /workspace

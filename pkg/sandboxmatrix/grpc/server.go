@@ -427,7 +427,7 @@ func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.L
 	if err != nil {
 		return nil, err
 	}
-	resp, err := sandboxdGet(ctx, podIP, fmt.Sprintf("/files/list?since=%d", req.Since))
+	resp, err := sandboxdGet(ctx, podIP, "/files/list")
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd list: %v", err)
 	}
@@ -538,9 +538,19 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 	}
 	podIP, _, _ := unstructured.NestedString(u.Object, "status", "podIP")
 	if podIP != "" {
+		// Verify the pod still exists — it may have been deleted externally.
+		pods, err := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSessionID + "=" + sessionID,
+		})
+		if err == nil && len(pods.Items) == 0 {
+			return "", status.Errorf(codes.NotFound, "session %s pod no longer exists", sessionID)
+		}
 		return podIP, nil
 	}
-	// pod just created — poll until IP is assigned (up to 60s, exponential backoff)
+	return s.pollForPodIP(ctx, sessionID)
+}
+
+func (s *Server) pollForPodIP(ctx context.Context, sessionID string) (string, error) {
 	wait := 1 * time.Second
 	maxWait := 5 * time.Second
 	for i := 0; i < 12; i++ {

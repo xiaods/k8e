@@ -300,6 +300,8 @@ func isSessionExpired(err error) bool {
 		return true
 	case codes.FailedPrecondition:
 		return true
+	case codes.Unavailable:
+		return true
 	}
 	return false
 }
@@ -569,9 +571,6 @@ func ListCommand() cli.Command {
 		Name:      "list",
 		Usage:     "List files in the sandbox /workspace",
 		ArgsUsage: "<session-id>",
-		Flags: []cli.Flag{
-			cli.Int64Flag{Name: "since", Usage: "Unix timestamp; only show files modified since"},
-		},
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().First()
 			if sid == "" {
@@ -585,7 +584,7 @@ func ListCommand() cli.Command {
 			defer client.Close()
 
 			resp, err := client.SandboxServiceClient.ListFiles(context.Background(), &pb.ListFilesRequest{
-				SessionId: sid, Since: ctx.Int64("since"),
+				SessionId: sid,
 			})
 			if err != nil {
 				return printErrorExit("list: "+err.Error(), 1)

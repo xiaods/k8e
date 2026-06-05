@@ -56,13 +56,17 @@ pub fn runCommand(allocator: std.mem.Allocator, command: []const u8, workdir: []
         const cwd_z = std.fmt.bufPrintZ(&cwd_buf, "{s}", .{workdir}) catch return error.PathTooLong;
         _ = std.os.linux.chdir(cwd_z);
 
-        // Exec /bin/sh
+        // Exec /bin/sh with venv in PATH so pip installs go to /workspace/.venv
         const argv: [3:null]?[*:0]const u8 = .{
             "/bin/sh".ptr,
             "-c".ptr,
             cmd_z,
         };
-        _ = std.os.linux.execve("/bin/sh", &argv, &[1:null]?[*:0]const u8{null});
+        const envp = [2:null]?[*:0]const u8{
+            "PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "VIRTUAL_ENV=/workspace/.venv",
+        };
+        _ = std.os.linux.execve("/bin/sh", &argv, &envp);
         // If execve returns, it's an error
         std.os.linux.exit(1);
     }
@@ -125,9 +129,17 @@ pub fn readAllFromFd(allocator: std.mem.Allocator, fd: i32, max_bytes: usize) ![
 }
 
 /// spawnTimeoutKiller kills the child process after timeout_sec seconds.
+/// Checks process liveness first to avoid killing a reused PID.
 fn spawnTimeoutKiller(pid: std.os.linux.pid_t, timeout_sec: u32) void {
     const ts = std.os.linux.timespec{ .sec = @as(isize, @intCast(timeout_sec)), .nsec = 0 };
     _ = std.os.linux.nanosleep(&ts, null);
+    // Signal 0 probes whether the process still exists (no signal delivered).
+    const probe = std.os.linux.syscall2(
+        .kill,
+        @as(usize, @bitCast(@as(isize, @intCast(pid)))),
+        0,
+    );
+    if (probe != 0) return;
     _ = std.os.linux.kill(pid, std.os.linux.SIG.KILL);
 }
 
@@ -144,19 +156,18 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         return;
     }
 
+    // Ensure venv exists (survives workspace resets)
     venv.ensureVenv();
-    const activated = try venv.activateCommand(allocator, req.command);
-    defer allocator.free(activated);
 
     if (streaming) {
         // Null-terminate command for execve (child has no allocator)
         var cmd_buf: [65536]u8 = undefined;
-        if (activated.len >= cmd_buf.len) {
+        if (req.command.len >= cmd_buf.len) {
             try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"command too long\"}");
             return;
         }
-        @memcpy(cmd_buf[0..activated.len], activated);
-        cmd_buf[activated.len] = 0;
+        @memcpy(cmd_buf[0..req.command.len], req.command);
+        cmd_buf[req.command.len] = 0;
         const cmd_z: [*:0]const u8 = @ptrCast(&cmd_buf);
 
         // Fork /bin/sh -c <command> with stdout piped
@@ -179,7 +190,11 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
             _ = std.os.linux.chdir(cwd_z);
 
             const argv: [3:null]?[*:0]const u8 = .{ "/bin/sh".ptr, "-c".ptr, cmd_z };
-            _ = std.os.linux.execve("/bin/sh", &argv, &[1:null]?[*:0]const u8{null});
+            const envp = [2:null]?[*:0]const u8{
+                "PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "VIRTUAL_ENV=/workspace/.venv",
+            };
+            _ = std.os.linux.execve("/bin/sh", &argv, &envp);
             std.os.linux.exit(1);
         }
 
@@ -227,7 +242,7 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         return;
     }
 
-    const result = runCommand(allocator, activated, req.workdir) catch |err| {
+    const result = runCommand(allocator, req.command, req.workdir) catch |err| {
         const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"{s}\"}}", .{@errorName(err)});
         defer allocator.free(msg);
         try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", msg);

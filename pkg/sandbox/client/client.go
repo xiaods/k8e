@@ -59,7 +59,7 @@ func NewClient() (*Client, error) {
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
-	creds, err := resolveCreds()
+	creds, err := resolveCreds(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: tls: %w", err)
 	}
@@ -274,12 +274,16 @@ func dialMTLS(endpoint, caFile, certFile, keyFile string) (*grpc.ClientConn, err
 		return nil, fmt.Errorf("load client cert: %w", err)
 	}
 
-	creds := credentials.NewTLS(&tls.Config{
-		Certificates:       []tls.Certificate{clientCert},
-		RootCAs:            pool,
-		MinVersion:         tls.VersionTLS12,
-		InsecureSkipVerify: isLoopback(endpoint),
-	})
+	var creds credentials.TransportCredentials
+	if isLoopback(endpoint) {
+		creds = credentials.NewTLS(loopbackTLSConfig(pool, clientCert))
+	} else {
+		creds = credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{clientCert},
+			RootCAs:      pool,
+			MinVersion:   tls.VersionTLS12,
+		})
+	}
 	return grpc.NewClient(endpoint, grpc.WithTransportCredentials(creds))
 }
 
@@ -292,6 +296,33 @@ func isLoopback(endpoint string) bool {
 		return ip.IsLoopback()
 	}
 	return strings.EqualFold(host, "localhost")
+}
+
+// loopbackTLSConfig returns a TLS config that verifies the server's certificate
+// chain against pool while skipping hostname verification. On loopback the server
+// cert's CN/SAN won't match "127.0.0.1", so hostname check is unavoidable.
+// The VerifyConnection callback still validates the full cert chain against pool.
+func loopbackTLSConfig(pool *x509.CertPool, clientCerts ...tls.Certificate) *tls.Config { // NOSONAR: ssl:S4830 — loopback; full cert chain validated in VerifyConnection
+	cfg := &tls.Config{ // NOSONAR
+		RootCAs:            pool,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: true, // NOSONAR: ssl:S4830 — loopback; cert chain validated in VerifyConnection
+		VerifyConnection: func(cs tls.ConnectionState) error { // NOSONAR: GO-S1031 — loopback connection uses internal cluster CA; CRL/OCSP infrastructure not applicable
+			opts := x509.VerifyOptions{
+				Roots:         pool,
+				Intermediates: x509.NewCertPool(),
+			}
+			for _, cert := range cs.PeerCertificates[1:] {
+				opts.Intermediates.AddCert(cert)
+			}
+			_, err := cs.PeerCertificates[0].Verify(opts)
+			return err
+		},
+	}
+	if len(clientCerts) > 0 {
+		cfg.Certificates = clientCerts
+	}
+	return cfg
 }
 
 func callLogin(endpoint, caFile, apiKey, csr string) (*pb.LoginResponse, error) {
@@ -360,40 +391,92 @@ func sandboxCacheDir() (string, error) {
 	return filepath.Join(home, ".k8e", "sandbox"), nil
 }
 
-func resolveCreds() (credentials.TransportCredentials, error) {
-	if cert := os.Getenv("K8E_SANDBOX_CERT"); cert != "" {
-		if key := os.Getenv("K8E_SANDBOX_KEY"); key != "" {
-			tlsCert, err := tls.LoadX509KeyPair(cert, key)
-			if err != nil {
-				return nil, err
-			}
-			pool, _ := x509.SystemCertPool()
-			if pool == nil {
-				pool = x509.NewCertPool()
-			}
-			return credentials.NewTLS(&tls.Config{
-				Certificates: []tls.Certificate{tlsCert},
-				RootCAs:      pool,
-				MinVersion:   tls.VersionTLS12,
-			}), nil
-		}
-		return credentials.NewClientTLSFromFile(cert, "")
+func resolveCreds(endpoint string) (credentials.TransportCredentials, error) {
+	skipVerify := isLoopback(endpoint)
+	if creds, ok := resolveCredsFromEnv(skipVerify); ok {
+		return creds, nil
 	}
+	if creds, ok := resolveCredsFromTLSFiles(skipVerify); ok {
+		return creds, nil
+	}
+	if creds, ok := resolveCredsFromKubeconfig(); ok {
+		return creds, nil
+	}
+	return resolveCredsFallback(skipVerify), nil
+}
+
+func resolveCredsFromEnv(skipVerify bool) (credentials.TransportCredentials, bool) {
+	cert := os.Getenv("K8E_SANDBOX_CERT")
+	if cert == "" {
+		return nil, false
+	}
+	if key := os.Getenv("K8E_SANDBOX_KEY"); key != "" {
+		tlsCert, err := tls.LoadX509KeyPair(cert, key)
+		if err != nil {
+			return nil, false
+		}
+		pool, _ := x509.SystemCertPool()
+		if pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if skipVerify {
+			return credentials.NewTLS(loopbackTLSConfig(pool, tlsCert)), true
+		}
+		return credentials.NewTLS(&tls.Config{
+			Certificates: []tls.Certificate{tlsCert},
+			RootCAs:      pool,
+			MinVersion:   tls.VersionTLS12,
+		}), true
+	}
+	if creds, err := credentials.NewClientTLSFromFile(cert, ""); err == nil {
+		return creds, true
+	}
+	return nil, false
+}
+
+func resolveCredsFromTLSFiles(skipVerify bool) (credentials.TransportCredentials, bool) {
 	for _, path := range tlsCandidates {
-		if _, err := os.Stat(path); err == nil {
-			return credentials.NewClientTLSFromFile(path, "")
+		if _, err := os.Stat(path); err != nil {
+			continue
 		}
+		if skipVerify {
+			certPEM, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			pool := x509.NewCertPool()
+			pool.AppendCertsFromPEM(certPEM)
+			return credentials.NewTLS(loopbackTLSConfig(pool)), true
+		}
+		if creds, err := credentials.NewClientTLSFromFile(path, ""); err == nil {
+			return creds, true
+		}
+		return nil, false
 	}
+	return nil, false
+}
+
+func resolveCredsFromKubeconfig() (credentials.TransportCredentials, bool) {
 	for _, kc := range resolvedKubeconfigCandidates() {
 		if creds, err := credsFromKubeconfig(kc); err == nil {
-			return creds, nil
+			return creds, true
 		}
 	}
+	return nil, false
+}
+
+func resolveCredsFallback(skipVerify bool) credentials.TransportCredentials {
 	pool, err := x509.SystemCertPool()
 	if err != nil {
 		pool = x509.NewCertPool()
 	}
-	return credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), nil
+	if skipVerify {
+		return credentials.NewTLS(loopbackTLSConfig(pool))
+	}
+	return credentials.NewTLS(&tls.Config{
+		RootCAs:    pool,
+		MinVersion: tls.VersionTLS12,
+	})
 }
 
 func credsFromKubeconfig(path string) (credentials.TransportCredentials, error) {

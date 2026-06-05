@@ -644,7 +644,6 @@ func (x *ReadFileResponse) GetContent() string {
 type ListFilesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Since         int64                  `protobuf:"varint,2,opt,name=since,proto3" json:"since,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -684,13 +683,6 @@ func (x *ListFilesRequest) GetSessionId() string {
 		return x.SessionId
 	}
 	return ""
-}
-
-func (x *ListFilesRequest) GetSince() int64 {
-	if x != nil {
-		return x.Since
-	}
-	return 0
 }
 
 type ListFilesResponse struct {
@@ -1506,11 +1498,10 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\",\n" +
 	"\x10ReadFileResponse\x12\x18\n" +
-	"\acontent\x18\x01 \x01(\tR\acontent\"G\n" +
+	"\acontent\x18\x01 \x01(\tR\acontent\"1\n" +
 	"\x10ListFilesRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
-	"\x05since\x18\x02 \x01(\x03R\x05since\"@\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"@\n" +
 	"\x11ListFilesResponse\x12+\n" +
 	"\x05files\x18\x01 \x03(\v2\x15.sandbox.v1.FileEntryR\x05files\";\n" +
 	"\tFileEntry\x12\x12\n" +
