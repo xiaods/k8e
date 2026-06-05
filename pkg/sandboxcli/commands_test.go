@@ -22,10 +22,10 @@ func TestIsSessionExpired_grpcFailedPrecondition(t *testing.T) {
 	}
 }
 
-func TestIsSessionExpired_grpcUnavailableNotNoPodIP(t *testing.T) {
+func TestIsSessionExpired_grpcUnavailable(t *testing.T) {
 	err := status.Error(codes.Unavailable, "sandboxd exec: connection refused")
-	if isSessionExpired(err) {
-		t.Error("expected false for gRPC Unavailable (not no pod IP)")
+	if !isSessionExpired(err) {
+		t.Error("expected true for gRPC Unavailable")
 	}
 }
 
