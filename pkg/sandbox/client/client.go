@@ -307,7 +307,7 @@ func loopbackTLSConfig(pool *x509.CertPool, clientCerts ...tls.Certificate) *tls
 		RootCAs:            pool,
 		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true, // NOSONAR: ssl:S4830 — loopback; cert chain validated in VerifyConnection
-		VerifyConnection: func(cs tls.ConnectionState) error {
+		VerifyConnection: func(cs tls.ConnectionState) error { // NOSONAR: GO-S1031 — loopback connection uses internal cluster CA; CRL/OCSP infrastructure not applicable
 			opts := x509.VerifyOptions{
 				Roots:         pool,
 				Intermediates: x509.NewCertPool(),
