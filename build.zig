@@ -402,7 +402,7 @@ fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step, v: VersionInfo) 
     );
 
     for (cli_targets) |t| {
-        const out_name = b.fmt("bin/k8e-sandbox-cli-{s}-{s}{s}", .{ t.goos, t.goarch, t.ext });
+        const out_name = b.fmt("k8e-sandbox-cli-{s}-{s}{s}", .{ t.goos, t.goarch, t.ext });
         const out_path = b.getInstallPath(.bin, out_name);
 
         const go_build = b.addSystemCommand(&[_][]const u8{
