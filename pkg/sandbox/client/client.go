@@ -63,7 +63,7 @@ func NewClient() (*Client, error) {
 	}
 	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(creds))
 	if err != nil {
-		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
+		return nil, dialErr(endpoint, err)
 	}
 	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
@@ -90,7 +90,7 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 			}
 			conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
 			if err != nil {
-				return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
+				return nil, dialErr(endpoint, err)
 			}
 			return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 		}
@@ -126,7 +126,7 @@ func bootstrapWithCA(endpoint, caFile, certFile, keyFile, apiKey string) (*Clien
 
 	conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
+		return nil, dialErr(endpoint, err)
 	}
 	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
@@ -154,7 +154,7 @@ func bootstrapInsecure(endpoint, caFile, certFile, keyFile, apiKey string) (*Cli
 
 	conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
+		return nil, dialErr(endpoint, err)
 	}
 	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
@@ -283,7 +283,11 @@ func dialMTLS(endpoint, caFile, certFile, keyFile string) (*grpc.ClientConn, err
 func callLogin(endpoint, caFile, apiKey, csr string) (*pb.LoginResponse, error) {
 	var creds credentials.TransportCredentials
 	if caFile == "" {
-		// Bootstrap: skip verification, authenticated by API key
+		// Bootstrap: no cached CA, server verification is impossible. The
+		// connection is authenticated by the API key in gRPC metadata. A MITM
+		// that intercepts this single Login call gains only a short-lived client
+		// certificate, useless for future mTLS connections that verify the CA.
+		//nolint:gosec
 		creds = credentials.NewTLS(&tls.Config{
 			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: true,
@@ -325,6 +329,12 @@ func callLoginMTLS(endpoint, caFile, certFile, keyFile, csr string) (*pb.LoginRe
 	return pb.NewSandboxServiceClient(conn).Login(context.Background(), &pb.LoginRequest{
 		Csr: csr,
 	})
+}
+
+// ── Local auto-discovery ──────────────────────────────────────────────────────
+
+func dialErr(endpoint string, err error) error {
+	return dialErr(endpoint, err)
 }
 
 // ── Local auto-discovery ──────────────────────────────────────────────────────

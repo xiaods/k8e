@@ -64,14 +64,15 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	orch := sandboxgrpc.NewOrchestrator(k8s, dyn)
 	go runGCLoop(ctx, orch, cfg.Namespace)
 
-	srv := sandboxgrpc.NewServer(k8s, dyn,
-		tlsDir+"/sandbox-ca.crt",
-		tlsDir+"/sandbox-ca.key",
-		tlsDir+"/sandbox-server.crt",
-		tlsDir+"/sandbox-server.key",
-		cfg.GRPCPort,
-		false, // localAuth=false for server-mode
-	)
+	srv := sandboxgrpc.NewServer(sandboxgrpc.ServerConfig{
+		K8s:            k8s,
+		Dyn:            dyn,
+		CACertFile:     tlsDir + "/sandbox-ca.crt",
+		CAKeyFile:      tlsDir + "/sandbox-ca.key",
+		ServerCertFile: tlsDir + "/sandbox-server.crt",
+		ServerKeyFile:  tlsDir + "/sandbox-server.key",
+		GRPCPort:       cfg.GRPCPort,
+	})
 	go func() {
 		if err := srv.Start(ctx); err != nil {
 			logrus.Errorf("sandbox gRPC gateway: %v", err)

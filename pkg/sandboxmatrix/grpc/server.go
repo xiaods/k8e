@@ -97,6 +97,18 @@ func sanitizePipPackage(raw string) (string, error) {
 	return raw, nil
 }
 
+// ServerConfig holds the configuration for a sandbox gRPC Server.
+type ServerConfig struct {
+	K8s            kubernetes.Interface
+	Dyn            dynamic.Interface
+	CACertFile     string
+	CAKeyFile      string
+	ServerCertFile string
+	ServerKeyFile  string
+	GRPCPort       int
+	LocalAuth      bool // allow loopback connections without client cert
+}
+
 // Server implements the SandboxService gRPC interface.
 type Server struct {
 	pb.UnimplementedSandboxServiceServer
@@ -117,22 +129,23 @@ type Server struct {
 	rateLimiter    *ratelimit.Limiter
 }
 
-func NewServer(k8s kubernetes.Interface, dyn dynamic.Interface, caCertFile, caKeyFile, serverCertFile, serverKeyFile string, grpcPort int, localAuth bool) *Server {
-	if grpcPort == 0 {
-		grpcPort = 50051
+func NewServer(cfg ServerConfig) *Server {
+	port := cfg.GRPCPort
+	if port == 0 {
+		port = 50051
 	}
 	s := &Server{
-		k8s:            k8s,
-		dyn:            dyn,
-		lisAddr:        fmt.Sprintf("0.0.0.0:%d", grpcPort),
-		caCertFile:     caCertFile,
-		caKeyFile:      caKeyFile,
-		serverCertFile: serverCertFile,
-		serverKeyFile:  serverKeyFile,
-		localAuth:      localAuth,
+		k8s:            cfg.K8s,
+		dyn:            cfg.Dyn,
+		lisAddr:        fmt.Sprintf("0.0.0.0:%d", port),
+		caCertFile:     cfg.CACertFile,
+		caKeyFile:      cfg.CAKeyFile,
+		serverCertFile: cfg.ServerCertFile,
+		serverKeyFile:  cfg.ServerKeyFile,
+		localAuth:      cfg.LocalAuth,
 		rateLimiter:    ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
 	}
-	s.orch = NewOrchestrator(k8s, dyn)
+	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
 	return s
 }
 
