@@ -427,7 +427,7 @@ func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.L
 	if err != nil {
 		return nil, err
 	}
-	resp, err := sandboxdGet(ctx, podIP, fmt.Sprintf("/files/list?since=%d", req.Since))
+	resp, err := sandboxdGet(ctx, podIP, "/files/list")
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd list: %v", err)
 	}

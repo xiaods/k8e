@@ -59,7 +59,7 @@ func NewClient() (*Client, error) {
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
-	creds, err := resolveCreds()
+	creds, err := resolveCreds(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: tls: %w", err)
 	}
@@ -360,7 +360,8 @@ func sandboxCacheDir() (string, error) {
 	return filepath.Join(home, ".k8e", "sandbox"), nil
 }
 
-func resolveCreds() (credentials.TransportCredentials, error) {
+func resolveCreds(endpoint string) (credentials.TransportCredentials, error) {
+	skipVerify := isLoopback(endpoint)
 	if cert := os.Getenv("K8E_SANDBOX_CERT"); cert != "" {
 		if key := os.Getenv("K8E_SANDBOX_KEY"); key != "" {
 			tlsCert, err := tls.LoadX509KeyPair(cert, key)
@@ -372,15 +373,29 @@ func resolveCreds() (credentials.TransportCredentials, error) {
 				pool = x509.NewCertPool()
 			}
 			return credentials.NewTLS(&tls.Config{
-				Certificates: []tls.Certificate{tlsCert},
-				RootCAs:      pool,
-				MinVersion:   tls.VersionTLS12,
+				Certificates:       []tls.Certificate{tlsCert},
+				RootCAs:            pool,
+				MinVersion:         tls.VersionTLS12,
+				InsecureSkipVerify: skipVerify,
 			}), nil
 		}
 		return credentials.NewClientTLSFromFile(cert, "")
 	}
 	for _, path := range tlsCandidates {
 		if _, err := os.Stat(path); err == nil {
+			if skipVerify {
+				certPEM, err := os.ReadFile(path)
+				if err != nil {
+					continue
+				}
+				pool := x509.NewCertPool()
+				pool.AppendCertsFromPEM(certPEM)
+				return credentials.NewTLS(&tls.Config{
+					RootCAs:            pool,
+					MinVersion:         tls.VersionTLS12,
+					InsecureSkipVerify: true,
+				}), nil
+			}
 			return credentials.NewClientTLSFromFile(path, "")
 		}
 	}
@@ -393,7 +408,11 @@ func resolveCreds() (credentials.TransportCredentials, error) {
 	if err != nil {
 		pool = x509.NewCertPool()
 	}
-	return credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}), nil
+	return credentials.NewTLS(&tls.Config{
+		RootCAs:            pool,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: skipVerify,
+	}), nil
 }
 
 func credsFromKubeconfig(path string) (credentials.TransportCredentials, error) {

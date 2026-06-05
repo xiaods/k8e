@@ -64,7 +64,7 @@ message WriteFileResponse { bool ok = 1; }
 message ReadFileRequest  { string session_id = 1; string path = 2; }
 message ReadFileResponse { string content    = 1; }
 
-message ListFilesRequest  { string session_id = 1; int64 since = 2; }
+message ListFilesRequest  { string session_id = 1; }
 message ListFilesResponse { repeated FileEntry files = 1; }
 message FileEntry         { string path = 1; int64 modified = 2; }
 
