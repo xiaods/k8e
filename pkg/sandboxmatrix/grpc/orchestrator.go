@@ -732,7 +732,11 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 					},
 					"toPorts": []interface{}{
 						map[string]interface{}{
-							"ports": []interface{}{map[string]interface{}{"port": "53", "protocol": "ANY"}},
+							"ports": []interface{}{map[string]interface{}{"port": "53", "protocol": "UDP"}},
+							"rules": map[string]interface{}{"dns": []interface{}{map[string]interface{}{"matchPattern": "*"}}},
+						},
+						map[string]interface{}{
+							"ports": []interface{}{map[string]interface{}{"port": "53", "protocol": "TCP"}},
 						},
 					},
 				},
