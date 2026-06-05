@@ -302,7 +302,7 @@ func isLoopback(endpoint string) bool {
 // chain against pool while skipping hostname verification. On loopback the server
 // cert's CN/SAN won't match "127.0.0.1", so hostname check is unavoidable.
 // The VerifyConnection callback still validates the full cert chain against pool.
-func loopbackTLSConfig(pool *x509.CertPool, clientCerts ...tls.Certificate) *tls.Config {
+func loopbackTLSConfig(pool *x509.CertPool, clientCerts ...tls.Certificate) *tls.Config { // NOSONAR: ssl:S4830 — loopback; full cert chain validated in VerifyConnection
 	cfg := &tls.Config{
 		RootCAs:            pool,
 		MinVersion:         tls.VersionTLS12,

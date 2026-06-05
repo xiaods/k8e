@@ -547,7 +547,10 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 		}
 		return podIP, nil
 	}
-	// pod just created — poll until IP is assigned (up to 60s, exponential backoff)
+	return s.pollForPodIP(ctx, sessionID)
+}
+
+func (s *Server) pollForPodIP(ctx context.Context, sessionID string) (string, error) {
 	wait := 1 * time.Second
 	maxWait := 5 * time.Second
 	for i := 0; i < 12; i++ {
