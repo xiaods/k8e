@@ -57,8 +57,7 @@ var (
 
 	defaultAllowedHosts = []string{
 		"pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
-		"github.com", "raw.githubusercontent.com", "objects.githubusercontent.com",
-		"crates.io", "static.crates.io",
+		"objects.githubusercontent.com", "github.com", "raw.githubusercontent.com",
 	}
 )
 

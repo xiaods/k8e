@@ -1,5 +1,6 @@
 const std = @import("std");
 const main = @import("main.zig");
+const venv = @import("venv.zig");
 
 const ExecRequest = struct {
     command: []const u8 = "",
@@ -143,15 +144,19 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         return;
     }
 
+    venv.ensureVenv();
+    const activated = try venv.activateCommand(allocator, req.command);
+    defer allocator.free(activated);
+
     if (streaming) {
         // Null-terminate command for execve (child has no allocator)
         var cmd_buf: [65536]u8 = undefined;
-        if (req.command.len >= cmd_buf.len) {
+        if (activated.len >= cmd_buf.len) {
             try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"command too long\"}");
             return;
         }
-        @memcpy(cmd_buf[0..req.command.len], req.command);
-        cmd_buf[req.command.len] = 0;
+        @memcpy(cmd_buf[0..activated.len], activated);
+        cmd_buf[activated.len] = 0;
         const cmd_z: [*:0]const u8 = @ptrCast(&cmd_buf);
 
         // Fork /bin/sh -c <command> with stdout piped
@@ -222,7 +227,7 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         return;
     }
 
-    const result = runCommand(allocator, req.command, req.workdir) catch |err| {
+    const result = runCommand(allocator, activated, req.workdir) catch |err| {
         const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"{s}\"}}", .{@errorName(err)});
         defer allocator.free(msg);
         try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", msg);

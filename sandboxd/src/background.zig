@@ -1,6 +1,7 @@
 const std = @import("std");
 const main = @import("main.zig");
 const exec = @import("exec.zig");
+const venv = @import("venv.zig");
 
 const BG_DIR = "/workspace/.k8e_bg";
 
@@ -57,11 +58,14 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
     // Explicit env: a sane PATH (covers python:/usr/local/bin and node) plus the
     // run dir and command the wrapper reads. K8E_BG_CMD/K8E_BG_DIR carry the user
     // command and target dir so they need no shell quoting in BG_WRAPPER.
-    const path_env: [*:0]const u8 = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+    const path_env: [*:0]const u8 = "PATH=/workspace/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
     const envp = [3:null]?[*:0]const u8{ path_env, dir_env.ptr, cmd_env.ptr };
 
     const wrapper_z: [*:0]const u8 = BG_WRAPPER;
     const argv = [3:null]?[*:0]const u8{ "/bin/sh".ptr, "-c".ptr, wrapper_z };
+
+    // Ensure venv exists before running background command.
+    venv.ensureVenv();
 
     const pid = std.os.linux.fork();
     if (pid == 0) {
