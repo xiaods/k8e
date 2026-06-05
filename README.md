@@ -364,7 +364,8 @@ for i in range(10):
     print(i)
 EOF
 
-# Default egress allows pypi.org, github.com, npmjs.org — auto-mode works for pip installs
+# Default egress: pypi.org, files.pythonhosted.org, registry.npmjs.org,
+#   objects.githubusercontent.com, github.com, raw.githubusercontent.com
 SID=$(k8e-sandbox-cli create | jq -r .session_id)
 k8e-sandbox-cli write $SID /workspace/script.py <<'PYEOF'
 import pandas as pd
