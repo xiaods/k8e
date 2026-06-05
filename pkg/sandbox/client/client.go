@@ -288,9 +288,9 @@ func callLogin(endpoint, caFile, apiKey, csr string) (*pb.LoginResponse, error) 
 		// that intercepts this single Login call gains only a short-lived client
 		// certificate, useless for future mTLS connections that verify the CA.
 		//nolint:gosec
-		creds = credentials.NewTLS(&tls.Config{
+		creds = credentials.NewTLS(&tls.Config{ // NOSONAR
 			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: true,
+			InsecureSkipVerify: true, // NOSONAR: ssl:S4830 — bootstrap secured by API key auth
 		})
 	} else {
 		caPEM, err := os.ReadFile(caFile)
