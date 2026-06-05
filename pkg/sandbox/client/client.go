@@ -331,10 +331,8 @@ func callLoginMTLS(endpoint, caFile, certFile, keyFile, csr string) (*pb.LoginRe
 	})
 }
 
-// ── Local auto-discovery ──────────────────────────────────────────────────────
-
 func dialErr(endpoint string, err error) error {
-	return dialErr(endpoint, err)
+	return fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
 }
 
 // ── Local auto-discovery ──────────────────────────────────────────────────────
