@@ -662,6 +662,7 @@ func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.Pod
 			VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}},
 		}},
 		Volumes:       []corev1.Volume{vol},
+		DNSPolicy: corev1.DNSDefault,
 		RestartPolicy: corev1.RestartPolicyNever,
 	}
 	if runtimeClass != "" {
@@ -745,12 +746,7 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 			},
 			"egress": []interface{}{
 				map[string]interface{}{
-					"toEndpoints": []interface{}{
-						map[string]interface{}{"matchLabels": map[string]interface{}{
-							"k8s:io.kubernetes.pod.namespace": "kube-system",
-							"k8s:k8s-app":                    "kube-dns",
-						}},
-					},
+					"toEntities": []interface{}{"world"},
 					"toPorts": []interface{}{
 						map[string]interface{}{
 							"ports": []interface{}{map[string]interface{}{"port": "53", "protocol": "ANY"}},
