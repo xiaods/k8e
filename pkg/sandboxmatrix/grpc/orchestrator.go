@@ -616,9 +616,10 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("sandbox-%s", sessionID),
-			Namespace: sandboxNS,
-			Labels:    map[string]string{labelState: stateActive, labelSessionID: sessionID},
+			Name:        fmt.Sprintf("sandbox-%s", sessionID),
+			Namespace:   sandboxNS,
+			Labels:      map[string]string{labelState: stateActive, labelSessionID: sessionID},
+			Annotations: GvisorAnnotations(runtimeClass),
 		},
 		Spec: sandboxPodSpec(runtimeClass, pvcName, cpu, memory),
 	}
@@ -671,6 +672,17 @@ func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.Pod
 
 func boolPtr(b bool) *bool { return &b }
 
+// GvisorAnnotations returns pod annotations required for gVisor to work with
+// Cilium eBPF. The default netstack mode processes network in userspace,
+// bypassing Cilium's eBPF programs attached to veth pairs. Host network mode
+// forwards syscalls to the pod's kernel network namespace instead.
+func GvisorAnnotations(runtimeClass string) map[string]string {
+	if runtimeClass == "gvisor" {
+		return map[string]string{"gvisor.dev/network": "host"}
+	}
+	return nil
+}
+
 // ensureWorkspacePVC creates a PVC for the session workspace if it doesn't exist.
 func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string) (string, error) {
 	pvcName := "workspace-" + sessionID
@@ -720,6 +732,16 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 		"spec": map[string]interface{}{
 			"endpointSelector": map[string]interface{}{
 				"matchLabels": map[string]interface{}{labelSessionID: session.Name},
+			},
+			"ingress": []interface{}{
+				map[string]interface{}{
+					"fromEntities": []interface{}{"host"},
+					"toPorts": []interface{}{
+						map[string]interface{}{
+							"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
+						},
+					},
+				},
 			},
 			"egress": []interface{}{
 				map[string]interface{}{

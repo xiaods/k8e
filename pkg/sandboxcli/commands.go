@@ -73,8 +73,12 @@ func ensureSession(client *client.Client, ctx *cli.Context) (string, bool, error
 		return sid, false, nil
 	}
 
+	var hosts []string
+	if raw := ctx.String("allowed-hosts"); raw != "" {
+		hosts = strings.Split(raw, ",")
+	}
 	resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
-		TenantId: ctx.String("tenant"), RuntimeClass: "gvisor",
+		TenantId: ctx.String("tenant"), RuntimeClass: "gvisor", AllowedHosts: hosts,
 	})
 	if err != nil {
 		return "", false, fmt.Errorf("create session: %w", err)
@@ -159,6 +163,7 @@ func RunCommand() cli.Command {
 			cli.StringFlag{Name: "git-repo", Usage: "Git repo to clone (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
 			cli.StringFlag{Name: "git-path", Value: "repo", Usage: "Destination path for --git-repo"},
+			cli.StringFlag{Name: "allowed-hosts", Usage: "Comma-separated FQDN egress allowlist (only when auto-creating session)"},
 		},
 		Action: runAction,
 	}
