@@ -715,14 +715,6 @@ func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string)
 }
 
 func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxSession) error {
-	hosts := session.Spec.AllowedHosts
-	if len(hosts) == 0 {
-		hosts = defaultAllowedHosts
-	}
-	fqdns := make([]interface{}, len(hosts))
-	for i, h := range hosts {
-		fqdns[i] = map[string]interface{}{"matchName": h}
-	}
 	obj := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cilium.io/v2",
 		"kind":       "CiliumNetworkPolicy",
@@ -753,18 +745,17 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 						},
 					},
 				},
-				map[string]interface{}{
-					"toFQDNs": fqdns,
-					"toPorts": []interface{}{
-						map[string]interface{}{
-							"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
+					map[string]interface{}{
+						"toEntities": []interface{}{"world"},
+						"toPorts": []interface{}{
+							map[string]interface{}{
+								"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
+							},
 						},
 					},
 				},
 			},
-		},
-	}}
-
+		}}
 	name := fmt.Sprintf("sandbox-session-%s", session.Name)
 	_, err := o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Get(ctx, name, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
