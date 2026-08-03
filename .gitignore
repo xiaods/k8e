@@ -31,6 +31,9 @@ __pycache__
 .zig-cache
 zig-out
 .claude/*
+/.codex/
+/.loopx/
+/.agents/
 /server
 /sandbox-cli
 /sandboxcli
