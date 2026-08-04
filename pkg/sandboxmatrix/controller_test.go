@@ -1,10 +1,15 @@
 package sandboxmatrix
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	sandboxgrpc "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 )
 
 func defaultCfg() config.SandboxConfig {
@@ -15,6 +20,65 @@ func defaultCfg() config.SandboxConfig {
 		DefaultMemory:  "512Mi",
 		GRPCPort:       50051,
 		Namespace:      "sandbox-matrix",
+	}
+}
+
+func TestRecycleUnhealthyWarmPods(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	// Failed warm pod (sandboxd exited; RestartPolicy Never) — must be recycled.
+	failed := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "warm-failed", Namespace: ns, Labels: map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm}},
+		Status:     corev1.PodStatus{Phase: corev1.PodFailed},
+	}
+	// Running warm pod stuck not-ready past the boot budget — must be recycled.
+	stale := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "warm-stale",
+			Namespace:         ns,
+			Labels:            map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	// Fresh not-ready warm pod — still within boot budget, keep.
+	fresh := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "warm-fresh",
+			Namespace:         ns,
+			Labels:            map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
+			CreationTimestamp: metav1.Now(),
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	// Healthy warm pod — keep.
+	healthy := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "warm-healthy", Namespace: ns, Labels: map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm}},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+
+	for _, p := range []*corev1.Pod{failed, stale, fresh, healthy} {
+		if _, err := k8s.CoreV1().Pods(ns).Create(ctx, p, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seed pod %s: %v", p.Name, err)
+		}
+	}
+
+	recycleUnhealthyWarmPods(ctx, k8s, ns)
+
+	for _, name := range []string{"warm-failed", "warm-stale"} {
+		if _, err := k8s.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			t.Errorf("expected %s to be recycled", name)
+		}
+	}
+	for _, name := range []string{"warm-fresh", "warm-healthy"} {
+		if _, err := k8s.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{}); err != nil {
+			t.Errorf("expected %s to survive: %v", name, err)
+		}
 	}
 }
 

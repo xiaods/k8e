@@ -2,11 +2,13 @@ package grpc
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -75,6 +77,81 @@ func setSessionExpiry(t *testing.T, o *Orchestrator, sessName, expiresAt string)
 	st["expiresAt"] = expiresAt
 	st["phase"] = "Active"
 	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}) //nolint:errcheck
+}
+
+// warmTestPod builds a Running warm pod fixture for claim-path tests.
+func warmTestPod(name, ip string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   sandboxNS,
+			Labels:      map[string]string{labelState: stateWarm},
+			Annotations: map[string]string{},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "sandbox", Ports: []corev1.ContainerPort{{ContainerPort: 2024}}}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: ip},
+	}
+}
+
+func TestSandboxPodSpec_IncludesHealthProbes(t *testing.T) {
+	spec := SandboxPodSpec("gvisor", "", "500m", "512Mi", sandboxImage)
+	c := spec.Containers[0]
+	if c.StartupProbe == nil || c.ReadinessProbe == nil {
+		t.Fatal("expected startup + readiness probes on sandbox container")
+	}
+	for name, probe := range map[string]*corev1.Probe{"startup": c.StartupProbe, "readiness": c.ReadinessProbe} {
+		if probe.TCPSocket == nil || probe.TCPSocket.Port.IntValue() != 2024 {
+			t.Errorf("%s probe should TCP-check :2024, got %+v", name, probe)
+		}
+	}
+}
+
+func TestClaimWarmPod_PrefersReadyPod(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool {
+		return pod.Annotations["test-healthy"] == "yes"
+	}
+
+	ready := warmTestPod("warm-ready", "10.0.0.2")
+	ready.Annotations["test-healthy"] = "yes"
+	notReady := warmTestPod("warm-notready", "10.0.0.3")
+
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, ready, metav1.CreateOptions{})    //nolint:errcheck
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, notReady, metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "claim-ready")
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, sess.Status.PodName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get claimed pod: %v", err)
+	}
+	if pod.Name != "warm-ready" {
+		t.Fatalf("expected warm-ready to be claimed, got %s", pod.Name)
+	}
+	if pod.Labels[labelState] != stateActive {
+		t.Fatalf("expected claimed pod state=active, got %s", pod.Labels[labelState])
+	}
+	if pod.Labels[labelSessionID] != "claim-ready" {
+		t.Fatalf("expected session label on claimed pod, got %v", pod.Labels)
+	}
+}
+
+func TestClaimWarmPod_FallsBackToColdStart(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return false }
+
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, warmTestPod("warm-unhealthy", "10.0.0.2"), metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "claim-cold")
+	if strings.HasPrefix(sess.Status.PodName, "warm-") {
+		t.Fatalf("expected cold-start pod, got warm pod %s", sess.Status.PodName)
+	}
+	if !strings.HasPrefix(sess.Status.PodName, "sandbox-") {
+		t.Fatalf("expected sandbox-* cold-start pod name, got %s", sess.Status.PodName)
+	}
 }
 
 func TestCreateSession_GeneratesID(t *testing.T) {

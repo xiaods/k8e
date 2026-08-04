@@ -8,6 +8,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -112,7 +113,51 @@ func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynam
 	for _, pool := range pools.Items {
 		reconcileSinglePool(ctx, k8s, pool, maxPods, cfg)
 	}
+	recycleUnhealthyWarmPods(ctx, k8s, cfg.Namespace)
 	updateSandboxMatrixStatus(ctx, k8s, dyn, cfg)
+}
+
+// recycleUnhealthyWarmPodAfter is how long a Running warm pod may stay not-ready
+// (sandboxd not serving on :2024) before the reconciler recycles it so a fresh
+// pod is created in its place.
+const recycleUnhealthyWarmPodAfter = 5 * time.Minute
+
+// recycleUnhealthyWarmPods deletes warm pods whose sandboxd is not serving:
+// Failed pods (container exited; RestartPolicy Never leaves the pod Failed) and
+// Running pods stuck without the Ready condition for longer than
+// recycleUnhealthyWarmPodAfter. The reconciler recreates them on the next tick,
+// keeping the pool at target without burning memory on dead pods.
+func recycleUnhealthyWarmPods(ctx context.Context, k8s kubernetes.Interface, namespace string) {
+	pods, err := k8s.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: sandboxgrpc.LabelState + "=" + sandboxgrpc.StateWarm,
+	})
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase == corev1.PodFailed {
+			logrus.Infof("sandbox-matrix: recycle failed warm pod %s", pod.Name)
+			deleteWarmPod(ctx, k8s, namespace, pod.Name)
+			continue
+		}
+		if pod.Status.Phase != corev1.PodRunning || sandboxgrpc.PodReadyCondition(pod) {
+			continue
+		}
+		if now.Sub(pod.CreationTimestamp.Time) < recycleUnhealthyWarmPodAfter {
+			continue // still within the boot budget (image pull + sandboxd start)
+		}
+		logrus.Infof("sandbox-matrix: recycle warm pod %s (sandboxd not ready for %v)",
+			pod.Name, now.Sub(pod.CreationTimestamp.Time).Round(time.Second))
+		deleteWarmPod(ctx, k8s, namespace, pod.Name)
+	}
+}
+
+func deleteWarmPod(ctx context.Context, k8s kubernetes.Interface, namespace, name string) {
+	if err := k8s.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		logrus.Warnf("sandbox-matrix: recycle delete %s: %v", name, err)
+	}
 }
 
 // reconcileSinglePool ensures one WarmPool CRD's target is met within capacity limits.

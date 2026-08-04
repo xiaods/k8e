@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"google.golang.org/grpc/codes"
@@ -77,10 +80,51 @@ type Orchestrator struct {
 	mu          sync.Mutex
 	approvals   map[string]*pendingApproval
 	runRegistry map[string]string // run_id → session_id
+
+	// warmPodHealthCheck decides whether a warm pod's sandboxd is actually ready to
+	// serve on :2024 before the pod is claimed for a session. Overridable in tests.
+	warmPodHealthCheck func(ctx context.Context, pod *corev1.Pod) bool
 }
 
 func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestrator {
-	return &Orchestrator{k8s: k8s, dynamic: dyn, approvals: make(map[string]*pendingApproval), runRegistry: make(map[string]string)}
+	return &Orchestrator{
+		k8s:                k8s,
+		dynamic:            dyn,
+		approvals:          make(map[string]*pendingApproval),
+		runRegistry:        make(map[string]string),
+		warmPodHealthCheck: defaultWarmPodHealthCheck,
+	}
+}
+
+// defaultWarmPodHealthCheck reports whether a warm pod's sandboxd is actually
+// serving on :2024. It requires the kubelet Ready condition (driven by the TCP
+// readiness probe on the sandbox container) plus a direct TCP dial to close the
+// small race between kubelet marking the pod ready and sandboxd accepting sockets.
+func defaultWarmPodHealthCheck(ctx context.Context, pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {
+		return false
+	}
+	if !PodReadyCondition(pod) {
+		return false
+	}
+	dialer := &net.Dialer{Timeout: 1500 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(sandboxdPort)))
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+// PodReadyCondition returns true when the pod's Ready condition is True.
+// Exported for use by the sandboxmatrix controller (warm pod recycling).
+func PodReadyCondition(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultTTL is used when the session has no explicit TTL (0 = no expiry).
@@ -600,7 +644,10 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 		if err == nil {
 			for i := range warm.Items {
 				pod := &warm.Items[i]
-				if pod.Status.Phase != corev1.PodRunning {
+				// Only claim warm pods whose sandboxd is actually serving on :2024.
+				// A Running pod may still be booting sandboxd, or sandboxd may have
+				// died silently; claiming either one makes the first Exec fail.
+				if !o.warmPodHealthCheck(ctx, pod) {
 					continue
 				}
 				// atomic claim: use resourceVersion for optimistic locking
@@ -647,11 +694,20 @@ func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.Pod
 	} else {
 		vol.VolumeSource = corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
 	}
+	// TCP health probes on :2024: kubelet reflects sandboxd readiness in the pod's
+	// Ready condition, which the warm-pool claim path and the recycling controller
+	// both rely on. StartupProbe gives a slow image pull / sandboxd boot a budget
+	// before readiness starts counting failures.
+	probe := &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(sandboxdPort)},
+		},
+	}
 	spec := corev1.PodSpec{
 		Containers: []corev1.Container{{
 			Name:  "sandbox",
 			Image: image,
-			Ports: []corev1.ContainerPort{{ContainerPort: 2024}},
+			Ports: []corev1.ContainerPort{{ContainerPort: sandboxdPort}},
 			Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse(cpu),
@@ -660,9 +716,20 @@ func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.Pod
 			},
 			SecurityContext: &corev1.SecurityContext{ReadOnlyRootFilesystem: boolPtr(true)},
 			VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}},
+			StartupProbe: &corev1.Probe{
+				ProbeHandler:     probe.ProbeHandler,
+				PeriodSeconds:    2,
+				FailureThreshold: 30, // up to ~60s budget for sandboxd boot
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler:     probe.ProbeHandler,
+				PeriodSeconds:    5,
+				TimeoutSeconds:   2,
+				FailureThreshold: 3,
+			},
 		}},
 		Volumes:       []corev1.Volume{vol},
-		DNSPolicy: corev1.DNSDefault,
+		DNSPolicy:     corev1.DNSDefault,
 		RestartPolicy: corev1.RestartPolicyNever,
 	}
 	if runtimeClass != "" {
