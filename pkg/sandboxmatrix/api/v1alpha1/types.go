@@ -40,8 +40,11 @@ type RateLimitSpec struct {
 }
 
 type SandboxMatrixStatus struct {
-	ReadyWarmCount int `json:"readyWarmCount,omitempty"`
-	ActiveSessions int `json:"activeSessions,omitempty"`
+	ReadyWarmCount    int   `json:"readyWarmCount,omitempty"`
+	ActiveSessions    int   `json:"activeSessions,omitempty"`
+	ClaimedFromWarm   int64 `json:"claimedFromWarm,omitempty"`
+	ColdStarts        int64 `json:"coldStarts,omitempty"`
+	AvgClaimLatencyMs int64 `json:"avgClaimLatencyMs,omitempty"`
 }
 
 // +genclient

@@ -53,6 +53,9 @@ spec:
               activeSessions: {type: integer}
               maxPods: {type: integer}
               totalPods: {type: integer}
+              claimedFromWarm: {type: integer}
+              coldStarts: {type: integer}
+              avgClaimLatencyMs: {type: integer}
     subresources:
       status: {}
     additionalPrinterColumns:

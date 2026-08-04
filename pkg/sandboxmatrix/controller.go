@@ -61,10 +61,6 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	// refillTrigger wakes the warm pool reconciler immediately after a warm pod
 	// claim, instead of waiting up to 10s for the next poll tick.
 	refillTrigger := make(chan struct{}, 1)
-	go runWarmPoolReconciler(ctx, k8s, dyn, cfg, refillTrigger)
-	go runResettingDetector(ctx, k8s, cfg.Namespace)
-	go runIdlePodReaper(ctx, k8s, dyn, cfg)
-
 	orch := sandboxgrpc.NewOrchestrator(k8s, dyn)
 	orch.OnWarmClaim = func() {
 		select {
@@ -72,6 +68,10 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		default: // already a refill pending
 		}
 	}
+	go runWarmPoolReconciler(ctx, k8s, dyn, cfg, refillTrigger, orch)
+	go runResettingDetector(ctx, k8s, cfg.Namespace)
+	go runIdlePodReaper(ctx, k8s, dyn, cfg)
+
 	go runGCLoop(ctx, orch, cfg.Namespace)
 
 	srv := sandboxgrpc.NewServer(sandboxgrpc.ServerConfig{
@@ -100,7 +100,7 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	return nil
 }
 
-func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig, refill <-chan struct{}) {
+func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig, refill <-chan struct{}, orch *sandboxgrpc.Orchestrator) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -109,14 +109,14 @@ func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dy
 			return
 		case <-refill:
 			// A session just claimed a warm pod; refill before the next tick.
-			reconcileWarmPools(ctx, k8s, dyn, cfg)
+			reconcileWarmPools(ctx, k8s, dyn, cfg, orch)
 		case <-ticker.C:
-			reconcileWarmPools(ctx, k8s, dyn, cfg)
+			reconcileWarmPools(ctx, k8s, dyn, cfg, orch)
 		}
 	}
 }
 
-func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig) {
+func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig, orch *sandboxgrpc.Orchestrator) {
 	pools, err := dyn.Resource(warmPoolGVR).Namespace(cfg.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return
@@ -126,7 +126,7 @@ func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynam
 		reconcileSinglePool(ctx, k8s, pool, maxPods, cfg)
 	}
 	recycleUnhealthyWarmPods(ctx, k8s, cfg.Namespace)
-	updateSandboxMatrixStatus(ctx, k8s, dyn, cfg)
+	updateSandboxMatrixStatus(ctx, k8s, dyn, cfg, orch)
 }
 
 // recycleUnhealthyWarmPodAfter is how long a Running warm pod may stay not-ready
@@ -261,7 +261,7 @@ func computeMaxPods(ctx context.Context, k8s kubernetes.Interface, cfg config.Sa
 	return available / perPodMem.Value()
 }
 
-func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig) {
+func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig, orch *sandboxgrpc.Orchestrator) {
 	matrices, err := dyn.Resource(localMatrixGVR).Namespace(cfg.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil || len(matrices.Items) == 0 {
 		return
@@ -280,6 +280,11 @@ func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dy
 	maxPods := computeMaxPods(ctx, k8s, cfg)
 	totalPods := int64(len(warmPods.Items) + len(activePods.Items))
 
+	claimedWarm, coldStarts, avgLatency := int64(0), int64(0), int64(0)
+	if orch != nil {
+		claimedWarm, coldStarts, avgLatency = orch.Metrics()
+	}
+
 	matrix := matrices.Items[0].DeepCopy()
 	if matrix.Object["status"] == nil {
 		matrix.Object["status"] = map[string]interface{}{}
@@ -289,6 +294,9 @@ func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dy
 	status["activeSessions"] = int64(len(activePods.Items))
 	status["maxPods"] = maxPods
 	status["totalPods"] = totalPods
+	status["claimedFromWarm"] = claimedWarm
+	status["coldStarts"] = coldStarts
+	status["avgClaimLatencyMs"] = avgLatency
 	dyn.Resource(localMatrixGVR).Namespace(cfg.Namespace).UpdateStatus(ctx, matrix, metav1.UpdateOptions{}) //nolint:errcheck
 }
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -93,6 +94,12 @@ type Orchestrator struct {
 	// warm pod. The sandboxmatrix controller wires it to an immediate pool refill
 	// instead of waiting for the next reconcile tick.
 	OnWarmClaim func()
+
+	// claim accounting for the SandboxMatrix status surface.
+	claimedFromWarm     atomic.Int64
+	coldStarts          atomic.Int64
+	claimLatencyTotalMs atomic.Int64
+	claimCount          atomic.Int64
 }
 
 func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestrator {
@@ -138,6 +145,31 @@ func PodReadyCondition(pod *corev1.Pod) bool {
 
 // defaultTTL is used when the session has no explicit TTL (0 = no expiry).
 const defaultTTL = 0
+
+// Metrics returns warm-claim vs cold-start counters and the average pod
+// acquisition latency in milliseconds. Used to surface pool hit rate and
+// startup behavior in the SandboxMatrix status.
+func (o *Orchestrator) Metrics() (claimedFromWarm, coldStarts, avgClaimLatencyMs int64) {
+	claimedFromWarm = o.claimedFromWarm.Load()
+	coldStarts = o.coldStarts.Load()
+	total := o.claimLatencyTotalMs.Load()
+	n := o.claimCount.Load()
+	if n > 0 {
+		avgClaimLatencyMs = total / n
+	}
+	return
+}
+
+// recordClaim updates claim metrics after a successful pod acquisition.
+func (o *Orchestrator) recordClaim(start time.Time, warm bool) {
+	o.claimLatencyTotalMs.Add(time.Since(start).Milliseconds())
+	o.claimCount.Add(1)
+	if warm {
+		o.claimedFromWarm.Add(1)
+	} else {
+		o.coldStarts.Add(1)
+	}
+}
 
 func (o *Orchestrator) CreateSession(ctx context.Context, req *pb.CreateSessionRequest) (*sandboxv1.SandboxSession, error) {
 	matrixHosts, ttl, cpu, memory := o.getMatrixConfig(ctx)
@@ -643,6 +675,7 @@ func (o *Orchestrator) updateSessionStatus(ctx context.Context, session *sandbox
 }
 
 func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeClass, pvcName, cpu, memory string) (*corev1.Pod, error) {
+	start := time.Now()
 	// Only ephemeral sessions (no PVC) may adopt a warm pod: warm pods boot with an
 	// EmptyDir volume, and a running pod's volumes cannot be changed to mount a
 	// session PVC. Persistent sessions therefore cold-start with the PVC attached.
@@ -671,6 +704,7 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 				pod.Labels[labelSessionID] = sessionID
 				updated, uerr := o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{})
 				if uerr == nil {
+					o.recordClaim(start, true)
 					// Pool just shrank by one: ask the controller to refill now.
 					if o.OnWarmClaim != nil {
 						o.OnWarmClaim()
@@ -694,7 +728,11 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 		},
 		Spec: sandboxPodSpec(runtimeClass, pvcName, cpu, memory),
 	}
-	return o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, pod, metav1.CreateOptions{})
+	created, cerr := o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, pod, metav1.CreateOptions{})
+	if cerr == nil {
+		o.recordClaim(start, false)
+	}
+	return created, cerr
 }
 
 func sandboxPodSpec(runtimeClass, pvcName, cpu, memory string) corev1.PodSpec {

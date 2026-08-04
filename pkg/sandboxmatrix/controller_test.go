@@ -124,7 +124,7 @@ func TestWarmPoolReconciler_RefillTrigger(t *testing.T) {
 	refill <- struct{}{}
 	done := make(chan struct{})
 	go func() {
-		runWarmPoolReconciler(ctx, k8s, dyn, defaultCfg(), refill)
+		runWarmPoolReconciler(ctx, k8s, dyn, defaultCfg(), refill, nil)
 		close(done)
 	}()
 
@@ -147,6 +147,45 @@ func TestWarmPoolReconciler_RefillTrigger(t *testing.T) {
 	}
 	if len(pods.Items) == 0 {
 		t.Fatal("expected refill trigger to create a warm pod immediately")
+	}
+}
+
+func TestUpdateSandboxMatrixStatus_WritesMetrics(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrix"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrixList"}, &unstructured.UnstructuredList{})
+	listKinds := map[schema.GroupVersionResource]string{
+		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}: "SandboxMatrixList",
+	}
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	matrix := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": sandboxgrpc.SandboxAPIGroup + "/v1alpha1",
+		"kind":       "SandboxMatrix",
+		"metadata":   map[string]interface{}{"name": "default", "namespace": ns},
+	}}
+	if _, err := dyn.Resource(localMatrixGVR).Namespace(ns).Create(ctx, matrix, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create matrix CR: %v", err)
+	}
+
+	orch := sandboxgrpc.NewOrchestrator(k8s, dyn)
+	updateSandboxMatrixStatus(ctx, k8s, dyn, defaultCfg(), orch)
+
+	got, err := dyn.Resource(localMatrixGVR).Namespace(ns).Get(ctx, "default", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get matrix: %v", err)
+	}
+	status, ok := got.Object["status"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected status on matrix CR")
+	}
+	for _, field := range []string{"claimedFromWarm", "coldStarts", "avgClaimLatencyMs", "readyWarmCount", "activeSessions", "maxPods", "totalPods"} {
+		if _, present := status[field]; !present {
+			t.Errorf("expected status field %s to be written", field)
+		}
 	}
 }
 

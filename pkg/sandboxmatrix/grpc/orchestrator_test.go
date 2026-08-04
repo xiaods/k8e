@@ -247,6 +247,36 @@ func TestColdStart_NoRefillSignal(t *testing.T) {
 	}
 }
 
+func TestClaimMetrics_WarmVsCold(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	// Fake clients don't filter by label selector, so also require state=warm
+	// here; otherwise the second (cold) claim would re-adopt the claimed pod.
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool {
+		return pod.Labels[labelState] == stateWarm
+	}
+
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, warmTestPod("warm-metric", "10.0.0.9"), metav1.CreateOptions{}) //nolint:errcheck
+
+	mustCreateSession(t, o, "metric-warm")
+	claimed, cold, avg := o.Metrics()
+	if claimed != 1 || cold != 0 {
+		t.Fatalf("after warm claim expected warm=1 cold=0, got %d/%d", claimed, cold)
+	}
+	if avg < 0 {
+		t.Fatalf("expected non-negative avg claim latency, got %d", avg)
+	}
+
+	mustCreateSession(t, o, "metric-cold")
+	claimed, cold, avg = o.Metrics()
+	if claimed != 1 || cold != 1 {
+		t.Fatalf("after cold start expected warm=1 cold=1, got %d/%d", claimed, cold)
+	}
+	if avg < 0 {
+		t.Fatalf("expected non-negative avg claim latency, got %d", avg)
+	}
+}
+
 func TestCreateSession_GeneratesID(t *testing.T) {
 	o := newTestOrchestrator()
 	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{})
