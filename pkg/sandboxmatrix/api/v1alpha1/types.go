@@ -74,6 +74,17 @@ type SandboxSessionStatus struct {
 	WorkspacePVC string        `json:"workspacePVC,omitempty"`
 	CreatedAt    *metav1.Time  `json:"createdAt,omitempty"`
 	ExpiresAt    *metav1.Time  `json:"expiresAt,omitempty"`
+	// ExposedPorts tracks the preview routes currently published for this
+	// session. Session GC and DestroySession revoke every entry.
+	ExposedPorts []ExposedPort `json:"exposedPorts,omitempty"`
+}
+
+// ExposedPort is a published preview route for one session port.
+type ExposedPort struct {
+	Port      int32        `json:"port,omitempty"`
+	TTL       int32        `json:"ttl,omitempty"`
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+	URL       string       `json:"url,omitempty"`
 }
 
 type SandboxPhase string

@@ -6,15 +6,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/sandbox/client"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
-	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
 const errSessionNotFound = "not found"
@@ -158,7 +159,7 @@ func RunCommand() cli.Command {
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},
 			cli.BoolFlag{Name: "background", Usage: "Submit asynchronously, return run_id immediately"},
-		cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
+			cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
 			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-repo", Usage: "Git repo to clone (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
@@ -340,13 +341,13 @@ func StatusCommand() cli.Command {
 			defer client.Close()
 
 			// lightweight probe
-		_, err := client.SandboxServiceClient.DestroySession(context.Background(),
-			&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
-		available := err == nil || strings.Contains(err.Error(), errSessionNotFound)
-		errMsg := ""
-		if !available && err != nil {
-			errMsg = err.Error()
-		}
+			_, err := client.SandboxServiceClient.DestroySession(context.Background(),
+				&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
+			available := err == nil || strings.Contains(err.Error(), errSessionNotFound)
+			errMsg := ""
+			if !available && err != nil {
+				errMsg = err.Error()
+			}
 
 			sid, tid := "", ""
 			if state, _ := loadState("default"); state != nil && state.SessionID != "" {
@@ -929,8 +930,8 @@ func printBenchmarkResults(results map[string][]time.Duration) {
 	fmt.Fprintln(os.Stderr, "═══ Benchmark Results ═══")
 
 	sections := []struct {
-		title  string
-		keys   []string
+		title string
+		keys  []string
 	}{
 		{"Cold Start (no warm pool)", []string{"cold_create", "cold_exec", "cold_total"}},
 		{"Warm Claim (from pool)", []string{"warm_create", "warm_exec", "warm_total"}},
@@ -981,6 +982,87 @@ func PollCommand() cli.Command {
 				"stderr":    resp.Stderr,
 				"exit_code": resp.ExitCode,
 			})
+			return nil
+		},
+	}
+}
+
+// ── ExposeCommand ──────────────────────────────────────────────────────────
+
+func ExposeCommand() cli.Command {
+	return cli.Command{
+		Name:      "expose",
+		Usage:     "Publish a session port through a signed, time-limited preview URL",
+		ArgsUsage: "<session-id> <port>",
+		Flags: []cli.Flag{
+			cli.IntFlag{Name: "ttl", Usage: "Preview URL lifetime in seconds (default: session TTL)"},
+		},
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().Get(0)
+			portRaw := ctx.Args().Get(1)
+			if sid == "" || portRaw == "" {
+				return printErrorExit("usage: k8e-sandbox-cli expose <session-id> <port> [--ttl <seconds>]", 1)
+			}
+			port, err := strconv.Atoi(portRaw)
+			if err != nil || port <= 0 || port > 65535 {
+				return printErrorExit("invalid port: "+portRaw, 1)
+			}
+
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			resp, err := client.SandboxServiceClient.ExposePort(context.Background(), &pb.ExposePortRequest{
+				SessionId:  sid,
+				Port:       int32(port),
+				TtlSeconds: int32(ctx.Int("ttl")),
+			})
+			if err != nil {
+				return printErrorExit("expose: "+err.Error(), 1)
+			}
+			printJSON(map[string]any{
+				"url":        resp.Url,
+				"expires_at": resp.ExpiresAt,
+			})
+			return nil
+		},
+	}
+}
+
+// ── UnexposeCommand ────────────────────────────────────────────────────────
+
+func UnexposeCommand() cli.Command {
+	return cli.Command{
+		Name:      "unexpose",
+		Usage:     "Revoke a preview route (Service + Ingress) for a session port",
+		ArgsUsage: "<session-id> <port>",
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().Get(0)
+			portRaw := ctx.Args().Get(1)
+			if sid == "" || portRaw == "" {
+				return printErrorExit("usage: k8e-sandbox-cli unexpose <session-id> <port>", 1)
+			}
+			port, err := strconv.Atoi(portRaw)
+			if err != nil || port <= 0 || port > 65535 {
+				return printErrorExit("invalid port: "+portRaw, 1)
+			}
+
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			resp, err := client.SandboxServiceClient.UnexposePort(context.Background(), &pb.UnexposePortRequest{
+				SessionId: sid,
+				Port:      int32(port),
+			})
+			if err != nil {
+				return printErrorExit("unexpose: "+err.Error(), 1)
+			}
+			printJSON(map[string]any{"ok": resp.Ok, "session_id": sid, "port": port})
 			return nil
 		},
 	}

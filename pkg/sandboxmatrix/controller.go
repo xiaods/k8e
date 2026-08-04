@@ -3,6 +3,7 @@ package sandboxmatrix
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strconv"
 	"sync"
@@ -49,6 +50,16 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	if cfg.Namespace == "" {
 		cfg.Namespace = "sandbox-matrix"
 	}
+	// Preview verify endpoint reachable from the Ingress controller. Defaults to
+	// the loopback of this node, which is correct for single-node/hostNetwork
+	// deployments; multi-node deployments must set K8E_SANDBOX_PREVIEW_VERIFY_URL
+	// to a URL the Ingress controller can reach.
+	if cfg.PreviewPort == 0 {
+		cfg.PreviewPort = 50052
+	}
+	if cfg.PreviewVerifyURL == "" {
+		cfg.PreviewVerifyURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.PreviewPort)
+	}
 
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
@@ -84,6 +95,13 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		ServerCertFile: tlsDir + "/sandbox-server.crt",
 		ServerKeyFile:  tlsDir + "/sandbox-server.key",
 		GRPCPort:       cfg.GRPCPort,
+		Preview: sandboxgrpc.PreviewConfig{
+			Domain:        cfg.PreviewDomain,
+			IngressClass:  cfg.PreviewIngressClass,
+			VerifyBaseURL: cfg.PreviewVerifyURL,
+		},
+		PreviewKeyFile:  tlsDir + "/sandbox-preview.key",
+		PreviewHTTPPort: cfg.PreviewPort,
 	})
 	go func() {
 		if err := srv.Start(ctx); err != nil {
@@ -463,6 +481,8 @@ func gcExpiredSessions(ctx context.Context, orch *sandboxgrpc.Orchestrator, name
 			}
 		}
 	}
+	// Sweep preview routes whose session disappeared through another path.
+	orch.ReconcilePreviewOrphans(ctx)
 }
 
 // podReleasedAtAnnotation records when a pod was released back to warm pool.

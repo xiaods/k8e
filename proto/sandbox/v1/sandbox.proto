@@ -1,6 +1,6 @@
 syntax = "proto3";
 package sandbox.v1;
-option go_package = "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb";
+option go_package = "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1";
 
 service SandboxService {
   rpc CreateSession(CreateSessionRequest)   returns (CreateSessionResponse);
@@ -20,6 +20,10 @@ service SandboxService {
   rpc Login(LoginRequest) returns (LoginResponse);
   // PollRun checks the status of a background execution.
   rpc PollRun(PollRunRequest)               returns (PollRunResponse);
+  // ExposePort publishes a session port through a signed, time-limited preview URL.
+  rpc ExposePort(ExposePortRequest)         returns (ExposePortResponse);
+  // UnexposePort revokes a preview route (Service + Ingress) immediately.
+  rpc UnexposePort(UnexposePortRequest)     returns (UnexposePortResponse);
 }
 
 message CreateSessionRequest {
@@ -117,3 +121,16 @@ message PollRunResponse {
   string stderr    = 4;
   int32  exit_code = 5;
 }
+
+message ExposePortRequest {
+  string session_id   = 1;
+  int32  port         = 2;
+  int32  ttl_seconds  = 3;  // override the default (session TTL); 0 = session TTL
+}
+message ExposePortResponse {
+  string url        = 1;
+  int64  expires_at = 2;  // unix seconds
+}
+
+message UnexposePortRequest  { string session_id = 1; int32 port = 2; }
+message UnexposePortResponse { bool ok = 1; }

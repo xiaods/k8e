@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"github.com/xiaods/k8e/pkg/sandboxmatrix/ratelimit"
-	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -107,26 +107,32 @@ type ServerConfig struct {
 	ServerKeyFile  string
 	GRPCPort       int
 	LocalAuth      bool // allow loopback connections without client cert
+	// Preview configures the signed preview-URL feature (expose/unexpose).
+	Preview         PreviewConfig
+	PreviewKeyFile  string // HMAC key path; generated on first use when empty
+	PreviewHTTPPort int    // HTTP listener for /preview/verify (Ingress auth callback)
 }
 
 // Server implements the SandboxService gRPC interface.
 type Server struct {
 	pb.UnimplementedSandboxServiceServer
-	k8s            kubernetes.Interface
-	dyn            dynamic.Interface
-	orch           *Orchestrator
-	lisAddr        string
-	caCertFile     string
-	caKeyFile      string
-	serverCertFile string
-	serverKeyFile  string
-	caCert         *x509.Certificate
-	caKey          *ecdsa.PrivateKey
-	apiKeys        map[string]string // name → key for validation
-	issuedStore    *issuedCertStore
-	revocList      *RevocationList
-	localAuth      bool
-	rateLimiter    *ratelimit.Limiter
+	k8s             kubernetes.Interface
+	dyn             dynamic.Interface
+	orch            *Orchestrator
+	lisAddr         string
+	caCertFile      string
+	caKeyFile       string
+	serverCertFile  string
+	serverKeyFile   string
+	caCert          *x509.Certificate
+	caKey           *ecdsa.PrivateKey
+	apiKeys         map[string]string // name → key for validation
+	issuedStore     *issuedCertStore
+	revocList       *RevocationList
+	localAuth       bool
+	rateLimiter     *ratelimit.Limiter
+	preview         *previewEngine
+	previewHTTPPort int
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -135,17 +141,23 @@ func NewServer(cfg ServerConfig) *Server {
 		port = 50051
 	}
 	s := &Server{
-		k8s:            cfg.K8s,
-		dyn:            cfg.Dyn,
-		lisAddr:        fmt.Sprintf("0.0.0.0:%d", port),
-		caCertFile:     cfg.CACertFile,
-		caKeyFile:      cfg.CAKeyFile,
-		serverCertFile: cfg.ServerCertFile,
-		serverKeyFile:  cfg.ServerKeyFile,
-		localAuth:      cfg.LocalAuth,
-		rateLimiter:    ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
+		k8s:             cfg.K8s,
+		dyn:             cfg.Dyn,
+		lisAddr:         fmt.Sprintf("0.0.0.0:%d", port),
+		caCertFile:      cfg.CACertFile,
+		caKeyFile:       cfg.CAKeyFile,
+		serverCertFile:  cfg.ServerCertFile,
+		serverKeyFile:   cfg.ServerKeyFile,
+		localAuth:       cfg.LocalAuth,
+		rateLimiter:     ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
+		previewHTTPPort: cfg.PreviewHTTPPort,
 	}
 	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
+	if err := s.orch.InitPreview(cfg.Preview, cfg.PreviewKeyFile); err != nil {
+		logrus.Warnf("sandbox gRPC: preview engine disabled: %v", err)
+	} else {
+		s.preview = s.orch.PreviewEngine()
+	}
 	return s
 }
 
@@ -282,6 +294,35 @@ func (s *Server) Start(ctx context.Context) error {
 	gs := grpc.NewServer(opts...)
 	pb.RegisterSandboxServiceServer(gs, s)
 	logrus.Infof("sandbox gRPC gateway listening on %s", s.lisAddr)
+
+	// Preview verify HTTP endpoint consumed by the Ingress external-auth
+	// annotation (auth-url). The token in the URL is the credential, so this
+	// endpoint intentionally has no mTLS.
+	if s.preview != nil {
+		pPort := s.previewHTTPPort
+		if pPort == 0 {
+			pPort = 50052
+		}
+		pLis, perr := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", pPort))
+		if perr != nil {
+			logrus.Warnf("sandbox preview verify listener: %v (preview URLs will 502)", perr)
+		} else {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/preview/verify", s.preview.ServePreviewVerify)
+			pSrv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+			logrus.Infof("sandbox preview verify listening on 0.0.0.0:%d", pPort)
+			go func() {
+				<-ctx.Done()
+				pSrv.Shutdown(context.Background()) //nolint:errcheck
+			}()
+			go func() {
+				if err := pSrv.Serve(pLis); err != nil && err != http.ErrServerClosed {
+					logrus.Warnf("sandbox preview verify server: %v", err)
+				}
+			}()
+		}
+	}
+
 	go func() {
 		<-ctx.Done()
 		gs.GracefulStop()
@@ -305,6 +346,21 @@ func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionReque
 		return nil, status.Errorf(codes.Internal, "destroy session: %v", err)
 	}
 	return &pb.DestroySessionResponse{Ok: true}, nil
+}
+
+func (s *Server) ExposePort(ctx context.Context, req *pb.ExposePortRequest) (*pb.ExposePortResponse, error) {
+	url, expiresAt, err := s.orch.ExposePort(ctx, req.SessionId, req.Port, req.TtlSeconds)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.ExposePortResponse{Url: url, ExpiresAt: expiresAt}, nil
+}
+
+func (s *Server) UnexposePort(ctx context.Context, req *pb.UnexposePortRequest) (*pb.UnexposePortResponse, error) {
+	if err := s.orch.UnexposePort(ctx, req.SessionId, req.Port); err != nil {
+		return nil, err
+	}
+	return &pb.UnexposePortResponse{Ok: true}, nil
 }
 
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
@@ -417,7 +473,9 @@ func (s *Server) ReadFile(ctx context.Context, req *pb.ReadFileRequest) (*pb.Rea
 		return nil, status.Errorf(codes.Unavailable, "sandboxd read: %v", err)
 	}
 	defer resp.Body.Close()
-	var result struct{ Content string `json:"content"` }
+	var result struct {
+		Content string `json:"content"`
+	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	return &pb.ReadFileResponse{Content: result.Content}, nil
 }

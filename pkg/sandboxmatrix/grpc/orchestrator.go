@@ -8,11 +8,16 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/sirupsen/logrus"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,11 +27,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
-	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
 const (
@@ -70,8 +73,8 @@ var (
 )
 
 type pendingApproval struct {
-	action   string
-	approved chan bool
+	action    string
+	approved  chan bool
 	createdAt time.Time
 }
 
@@ -85,6 +88,7 @@ type Orchestrator struct {
 	mu          sync.Mutex
 	approvals   map[string]*pendingApproval
 	runRegistry map[string]string // run_id → session_id
+	preview     *previewEngine    // preview token/verify engine; nil until InitPreview
 
 	// warmPodHealthCheck decides whether a warm pod's sandboxd is actually ready to
 	// serve on :2024 before the pod is claimed for a session. Overridable in tests.
@@ -341,6 +345,14 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 	// 1. Delete CNP
 	o.deleteCNP(ctx, session)
 
+	// 1b. Revoke every outstanding preview route (Service + Ingress) for the
+	// session. This is what makes session GC tear down previews too — the GC
+	// path funnels through DestroySession.
+	o.deletePreviewResources(ctx, sessionID)
+	if o.preview != nil {
+		o.preview.RevokeSession(sessionID)
+	}
+
 	// 2. Find the pod by session-id label and reset its workspace
 	podIP, podName := o.findPodBySession(ctx, sessionID)
 	if podIP == "" && session.Status.PodName != "" {
@@ -572,7 +584,9 @@ func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command st
 	}
 	defer resp.Body.Close()
 
-	var result struct{ Status string `json:"status"` }
+	var result struct {
+		Status string `json:"status"`
+	}
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	o.mu.Lock()
@@ -626,7 +640,324 @@ func (o *Orchestrator) RebuildRunRegistry(ctx context.Context, namespace string)
 	}
 }
 
-// getPodIPBySession returns the pod IP for a session, polling if needed.
+// defaultPreviewTTL is the token TTL used when neither the request nor the
+// session carries an expiry (session TTL unset).
+const defaultPreviewTTL = 3600
+
+// PreviewEngine exposes the engine to tests and the server.
+func (o *Orchestrator) PreviewEngine() *previewEngine {
+	return o.preview
+}
+
+// InitPreview wires the preview engine (token mint/verify + config) onto the
+// orchestrator. Safe to call once at startup; the engine keeps a persisted key.
+func (o *Orchestrator) InitPreview(cfg PreviewConfig, keyFile string) error {
+	if o.preview != nil {
+		return nil
+	}
+	e, err := newPreviewEngine(o.k8s, o.dynamic, cfg, keyFile)
+	if err != nil {
+		return err
+	}
+	o.preview = e
+	return nil
+}
+
+// ExposePort publishes a session port through a Service + Ingress and mints a
+// signed, time-limited preview token. Re-exposing the same (session, port)
+// reuses the existing Service/Ingress route and issues a fresh token.
+func (o *Orchestrator) ExposePort(ctx context.Context, sessionID string, port int32, ttlSeconds int32) (string, int64, error) {
+	if o.preview == nil {
+		return "", 0, status.Errorf(codes.FailedPrecondition, "preview not configured on this gateway")
+	}
+	if port <= 0 || port > 65535 {
+		return "", 0, status.Errorf(codes.InvalidArgument, "port %d out of range", port)
+	}
+	session, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return "", 0, status.Errorf(codes.NotFound, "session %s not found", sessionID)
+	}
+	if session.Status.Phase != sandboxv1.SandboxPhaseActive {
+		return "", 0, status.Errorf(codes.FailedPrecondition, "session %s not active (phase %s)", sessionID, session.Status.Phase)
+	}
+	if session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(time.Now()) {
+		return "", 0, status.Errorf(codes.FailedPrecondition, "session %s expired", sessionID)
+	}
+
+	// Token TTL: explicit request TTL wins; otherwise follow the session TTL;
+	// fall back to the default when the session never expires.
+	ttl := int64(ttlSeconds)
+	if ttl <= 0 {
+		ttl = defaultPreviewTTL
+		if session.Status.ExpiresAt != nil {
+			ttl = int64(time.Until(session.Status.ExpiresAt.Time).Seconds())
+			if ttl <= 0 {
+				return "", 0, status.Errorf(codes.FailedPrecondition, "session %s has no remaining TTL", sessionID)
+			}
+		}
+	}
+
+	// The Service selects the session pod by label; a live pod is required for a
+	// working preview.
+	if _, podName := o.findPodBySession(ctx, sessionID); podName == "" {
+		return "", 0, status.Errorf(codes.FailedPrecondition, "session %s pod unavailable", sessionID)
+	}
+
+	name := previewResourceName(sessionID, port)
+	reused := true
+	_, err = o.k8s.CoreV1().Services(sandboxNS).Get(ctx, name, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		if _, err = o.k8s.CoreV1().Services(sandboxNS).Create(ctx, previewService(name, sessionID, port), metav1.CreateOptions{}); err != nil {
+			return "", 0, status.Errorf(codes.Internal, "create preview Service: %v", err)
+		}
+		reused = false
+	} else if err != nil {
+		return "", 0, status.Errorf(codes.Internal, "get preview Service: %v", err)
+	}
+
+	ing, err := o.k8s.NetworkingV1().Ingresses(sandboxNS).Get(ctx, name, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		ing = previewIngress(name, sessionID, port, o.preview.cfg)
+		if ing, err = o.k8s.NetworkingV1().Ingresses(sandboxNS).Create(ctx, ing, metav1.CreateOptions{}); err != nil {
+			return "", 0, status.Errorf(codes.Internal, "create preview Ingress: %v", err)
+		}
+		reused = false
+	} else if err != nil {
+		return "", 0, status.Errorf(codes.Internal, "get preview Ingress: %v", err)
+	}
+
+	token, err := o.preview.mintToken(sessionID, port, ttl)
+	if err != nil {
+		return "", 0, status.Errorf(codes.Internal, "mint preview token: %v", err)
+	}
+	expiresAt := time.Now().Add(time.Duration(ttl) * time.Second).Unix()
+	url := previewURL(o.preview.cfg, sessionID, port, token)
+
+	if err := o.upsertExposedPort(ctx, session, port, int32(ttl), expiresAt, url); err != nil {
+		return "", 0, status.Errorf(codes.Internal, "record exposed port: %v", err)
+	}
+	if err := o.applyCNP(ctx, session); err != nil {
+		return "", 0, status.Errorf(codes.Internal, "update network policy: %v", err)
+	}
+
+	if reused {
+		logrus.Infof("sandbox: reused preview route %s for session %s port %d (fresh token)", name, sessionID, port)
+	} else {
+		logrus.Infof("sandbox: exposed session %s port %d via %s", sessionID, port, url)
+	}
+	return url, expiresAt, nil
+}
+
+// UnexposePort removes the Service + Ingress for (session, port) immediately
+// and revokes outstanding tokens. The URL stops serving (403 at verify).
+func (o *Orchestrator) UnexposePort(ctx context.Context, sessionID string, port int32) error {
+	session, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return status.Errorf(codes.NotFound, "session %s not found", sessionID)
+	}
+	name := previewResourceName(sessionID, port)
+	if err := o.k8s.CoreV1().Services(sandboxNS).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		return status.Errorf(codes.Internal, "delete preview Service: %v", err)
+	}
+	if err := o.k8s.NetworkingV1().Ingresses(sandboxNS).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		return status.Errorf(codes.Internal, "delete preview Ingress: %v", err)
+	}
+
+	ports := session.Status.ExposedPorts[:0]
+	for _, ep := range session.Status.ExposedPorts {
+		if ep.Port != port {
+			ports = append(ports, ep)
+		}
+	}
+	session.Status.ExposedPorts = ports
+	if err := o.updateSessionStatusErr(ctx, session); err != nil {
+		return status.Errorf(codes.Internal, "update session status: %v", err)
+	}
+	if err := o.applyCNP(ctx, session); err != nil {
+		return status.Errorf(codes.Internal, "update network policy: %v", err)
+	}
+	if o.preview != nil {
+		o.preview.RevokePort(sessionID, port)
+	}
+	logrus.Infof("sandbox: unexposed session %s port %d (route %s removed)", sessionID, port, name)
+	return nil
+}
+
+// upsertExposedPort records or refreshes one port in the session status and
+// persists the updated status.
+func (o *Orchestrator) upsertExposedPort(ctx context.Context, session *sandboxv1.SandboxSession, port, ttl int32, expiresAt int64, url string) error {
+	found := false
+	for i := range session.Status.ExposedPorts {
+		if session.Status.ExposedPorts[i].Port == port {
+			session.Status.ExposedPorts[i].TTL = ttl
+			session.Status.ExposedPorts[i].ExpiresAt = &metav1.Time{Time: time.Unix(expiresAt, 0)}
+			session.Status.ExposedPorts[i].URL = url
+			found = true
+			break
+		}
+	}
+	if !found {
+		session.Status.ExposedPorts = append(session.Status.ExposedPorts, sandboxv1.ExposedPort{
+			Port:      port,
+			TTL:       ttl,
+			ExpiresAt: &metav1.Time{Time: time.Unix(expiresAt, 0)},
+			URL:       url,
+		})
+	}
+	return o.updateSessionStatusErr(ctx, session)
+}
+
+// previewResourceName builds the stable Service/Ingress name for a preview
+// route. Session IDs are sanitized to DNS-1123 (lowercase, dashes).
+func previewResourceName(sessionID string, port int32) string {
+	san := strings.ToLower(sessionID)
+	san = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			return r
+		case r == '.':
+			return '-'
+		default:
+			return '-'
+		}
+	}, san)
+	san = strings.Trim(san, "-")
+	if len(san) > 40 {
+		san = san[:40]
+	}
+	if san == "" {
+		san = "sess"
+	}
+	return fmt.Sprintf("preview-%s-%d", san, port)
+}
+
+// previewService builds the ClusterIP Service selecting the session pod by the
+// sandbox.k8e.io/session-id label.
+func previewService(name, sessionID string, port int32) *corev1.Service {
+	return &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: sandboxNS,
+			Labels: map[string]string{
+				labelSessionID: sessionID,
+				previewLabel:   previewLabelValue,
+			},
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{labelSessionID: sessionID},
+			Ports: []corev1.ServicePort{{
+				Name:       "preview",
+				Port:       port,
+				TargetPort: intstr.FromInt32(port),
+				Protocol:   corev1.ProtocolTCP,
+			}},
+		},
+	}
+}
+
+// previewIngress builds the Ingress routing /p/<sid>/<port>/ with nginx
+// external-auth pointing at the gateway /preview/verify endpoint. The path is
+// rewritten so the in-sandbox app sees the request at /.
+func previewIngress(name, sessionID string, port int32, cfg PreviewConfig) *networkingv1.Ingress {
+	path := fmt.Sprintf("/p/%s/%d/(.*)", sessionID, port)
+	rewrite := "/$1"
+	ing := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: sandboxNS,
+			Labels: map[string]string{
+				labelSessionID: sessionID,
+				previewLabel:   previewLabelValue,
+			},
+			Annotations: map[string]string{
+				"nginx.ingress.kubernetes.io/auth-url":       strings.TrimSuffix(cfg.VerifyBaseURL, "/") + "/preview/verify",
+				"nginx.ingress.kubernetes.io/rewrite-target": rewrite,
+			},
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &cfg.IngressClass,
+			Rules: []networkingv1.IngressRule{{
+				Host: cfg.Domain,
+				IngressRuleValue: networkingv1.IngressRuleValue{
+					HTTP: &networkingv1.HTTPIngressRuleValue{
+						Paths: []networkingv1.HTTPIngressPath{{
+							Path:     path,
+							PathType: pathTypePtr(networkingv1.PathTypeImplementationSpecific),
+							Backend: networkingv1.IngressBackend{
+								Service: &networkingv1.IngressServiceBackend{
+									Name: name,
+									Port: networkingv1.ServiceBackendPort{Number: port},
+								},
+							},
+						}},
+					},
+				},
+			}},
+		},
+	}
+	return ing
+}
+
+func pathTypePtr(p networkingv1.PathType) *networkingv1.PathType { return &p }
+
+// previewURL builds the user-facing preview URL for a minted token.
+func previewURL(cfg PreviewConfig, sessionID string, port int32, token string) string {
+	scheme := "https"
+	return fmt.Sprintf("%s://%s/p/%s/%d/%s/", scheme, cfg.Domain, sessionID, port, token)
+}
+
+// deletePreviewResources removes every preview Service/Ingress owned by the
+// session (label selector). Used by DestroySession and session GC.
+func (o *Orchestrator) deletePreviewResources(ctx context.Context, sessionID string) {
+	sel := labelSessionID + "=" + sessionID + "," + previewLabel + "=" + previewLabelValue
+	services, err := o.k8s.CoreV1().Services(sandboxNS).List(ctx, metav1.ListOptions{LabelSelector: sel})
+	if err == nil {
+		for i := range services.Items {
+			_ = o.k8s.CoreV1().Services(sandboxNS).Delete(ctx, services.Items[i].Name, metav1.DeleteOptions{})
+		}
+	}
+	ingresses, err := o.k8s.NetworkingV1().Ingresses(sandboxNS).List(ctx, metav1.ListOptions{LabelSelector: sel})
+	if err == nil {
+		for i := range ingresses.Items {
+			_ = o.k8s.NetworkingV1().Ingresses(sandboxNS).Delete(ctx, ingresses.Items[i].Name, metav1.DeleteOptions{})
+		}
+	}
+}
+
+// ReconcilePreviewOrphans deletes preview Services/Ingresses whose session no
+// longer exists as an Active SandboxSession CRD. This covers sessions removed
+// by anything other than DestroySession (e.g. CRD deletion, operator cleanup).
+func (o *Orchestrator) ReconcilePreviewOrphans(ctx context.Context) {
+	sel := previewLabel + "=" + previewLabelValue
+	services, err := o.k8s.CoreV1().Services(sandboxNS).List(ctx, metav1.ListOptions{LabelSelector: sel})
+	if err == nil {
+		for i := range services.Items {
+			if sid := services.Items[i].Labels[labelSessionID]; sid != "" && !o.sessionActive(ctx, sid) {
+				logrus.Infof("sandbox: sweeping orphan preview Service %s (session %s gone)", services.Items[i].Name, sid)
+				_ = o.k8s.CoreV1().Services(sandboxNS).Delete(ctx, services.Items[i].Name, metav1.DeleteOptions{})
+			}
+		}
+	}
+	ingresses, err := o.k8s.NetworkingV1().Ingresses(sandboxNS).List(ctx, metav1.ListOptions{LabelSelector: sel})
+	if err == nil {
+		for i := range ingresses.Items {
+			if sid := ingresses.Items[i].Labels[labelSessionID]; sid != "" && !o.sessionActive(ctx, sid) {
+				logrus.Infof("sandbox: sweeping orphan preview Ingress %s (session %s gone)", ingresses.Items[i].Name, sid)
+				_ = o.k8s.NetworkingV1().Ingresses(sandboxNS).Delete(ctx, ingresses.Items[i].Name, metav1.DeleteOptions{})
+			}
+		}
+	}
+}
+
+// sessionActive reports whether the session CRD exists in the Active phase.
+func (o *Orchestrator) sessionActive(ctx context.Context, sessionID string) bool {
+	s, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return false
+	}
+	return s.Status.Phase == sandboxv1.SandboxPhaseActive
+}
+
 func (o *Orchestrator) getPodIPBySession(ctx context.Context, sessionID string) (string, error) {
 	session, err := o.getSession(ctx, sessionID)
 	if err != nil {
@@ -672,6 +1003,16 @@ func (o *Orchestrator) updateSessionStatus(ctx context.Context, session *sandbox
 		return
 	}
 	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{})
+}
+
+// updateSessionStatusErr is updateSessionStatus with error propagation.
+func (o *Orchestrator) updateSessionStatusErr(ctx context.Context, session *sandboxv1.SandboxSession) error {
+	u, err := sessionToUnstructured(session)
+	if err != nil {
+		return err
+	}
+	_, err = o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{})
+	return err
 }
 
 func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeClass, pvcName, cpu, memory string) (*corev1.Pod, error) {
@@ -844,6 +1185,13 @@ func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string)
 }
 
 func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxSession) error {
+	// Ingress from the host (k8e server / Ingress controller) and from gateway
+	// pods. Port 2024 is the sandboxd control channel; exposed preview ports are
+	// added dynamically as the session publishes them.
+	hostPorts := []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}}
+	for _, ep := range session.Status.ExposedPorts {
+		hostPorts = append(hostPorts, map[string]interface{}{"port": strconv.Itoa(int(ep.Port)), "protocol": "TCP"})
+	}
 	obj := &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cilium.io/v2",
 		"kind":       "CiliumNetworkPolicy",
@@ -860,7 +1208,7 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 					"fromEntities": []interface{}{"host"},
 					"toPorts": []interface{}{
 						map[string]interface{}{
-							"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
+							"ports": hostPorts,
 						},
 					},
 				},
@@ -888,17 +1236,17 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 						},
 					},
 				},
-					map[string]interface{}{
-						"toEntities": []interface{}{"world"},
-						"toPorts": []interface{}{
-							map[string]interface{}{
-								"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
-							},
+				map[string]interface{}{
+					"toEntities": []interface{}{"world"},
+					"toPorts": []interface{}{
+						map[string]interface{}{
+							"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
 						},
 					},
 				},
 			},
-		}}
+		},
+	}}
 	name := fmt.Sprintf("sandbox-session-%s", session.Name)
 	_, err := o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Get(ctx, name, metav1.GetOptions{})
 	if errors.IsNotFound(err) {

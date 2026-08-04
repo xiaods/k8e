@@ -4,7 +4,7 @@
 // 	protoc        v7.35.0
 // source: sandbox/v1/sandbox.proto
 
-package pb
+package v1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
@@ -1445,6 +1445,214 @@ func (x *PollRunResponse) GetExitCode() int32 {
 	return 0
 }
 
+type ExposePortRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	TtlSeconds    int32                  `protobuf:"varint,3,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"` // override the default (session TTL); 0 = session TTL
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExposePortRequest) Reset() {
+	*x = ExposePortRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExposePortRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExposePortRequest) ProtoMessage() {}
+
+func (x *ExposePortRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExposePortRequest.ProtoReflect.Descriptor instead.
+func (*ExposePortRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ExposePortRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ExposePortRequest) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *ExposePortRequest) GetTtlSeconds() int32 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
+}
+
+type ExposePortResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	ExpiresAt     int64                  `protobuf:"varint,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"` // unix seconds
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExposePortResponse) Reset() {
+	*x = ExposePortResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExposePortResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExposePortResponse) ProtoMessage() {}
+
+func (x *ExposePortResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExposePortResponse.ProtoReflect.Descriptor instead.
+func (*ExposePortResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ExposePortResponse) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *ExposePortResponse) GetExpiresAt() int64 {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return 0
+}
+
+type UnexposePortRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnexposePortRequest) Reset() {
+	*x = UnexposePortRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnexposePortRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnexposePortRequest) ProtoMessage() {}
+
+func (x *UnexposePortRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnexposePortRequest.ProtoReflect.Descriptor instead.
+func (*UnexposePortRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *UnexposePortRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *UnexposePortRequest) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+type UnexposePortResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnexposePortResponse) Reset() {
+	*x = UnexposePortResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnexposePortResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnexposePortResponse) ProtoMessage() {}
+
+func (x *UnexposePortResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnexposePortResponse.ProtoReflect.Descriptor instead.
+func (*UnexposePortResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *UnexposePortResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
 var File_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
 
 const file_sandbox_v1_sandbox_proto_rawDesc = "" +
@@ -1556,7 +1764,23 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x16\n" +
 	"\x06stdout\x18\x03 \x01(\tR\x06stdout\x12\x16\n" +
 	"\x06stderr\x18\x04 \x01(\tR\x06stderr\x12\x1b\n" +
-	"\texit_code\x18\x05 \x01(\x05R\bexitCode2\xe9\a\n" +
+	"\texit_code\x18\x05 \x01(\x05R\bexitCode\"g\n" +
+	"\x11ExposePortRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1f\n" +
+	"\vttl_seconds\x18\x03 \x01(\x05R\n" +
+	"ttlSeconds\"E\n" +
+	"\x12ExposePortResponse\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\x03R\texpiresAt\"H\n" +
+	"\x13UnexposePortRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\x05R\x04port\"&\n" +
+	"\x14UnexposePortResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok2\x89\t\n" +
 	"\x0eSandboxService\x12T\n" +
 	"\rCreateSession\x12 .sandbox.v1.CreateSessionRequest\x1a!.sandbox.v1.CreateSessionResponse\x12W\n" +
 	"\x0eDestroySession\x12!.sandbox.v1.DestroySessionRequest\x1a\".sandbox.v1.DestroySessionResponse\x129\n" +
@@ -1572,7 +1796,10 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\rConfirmAction\x12 .sandbox.v1.ConfirmActionRequest\x1a!.sandbox.v1.ConfirmActionResponse\x12T\n" +
 	"\rApproveAction\x12 .sandbox.v1.ApproveActionRequest\x1a!.sandbox.v1.ApproveActionResponse\x12<\n" +
 	"\x05Login\x12\x18.sandbox.v1.LoginRequest\x1a\x19.sandbox.v1.LoginResponse\x12B\n" +
-	"\aPollRun\x12\x1a.sandbox.v1.PollRunRequest\x1a\x1b.sandbox.v1.PollRunResponseB1Z/github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pbb\x06proto3"
+	"\aPollRun\x12\x1a.sandbox.v1.PollRunRequest\x1a\x1b.sandbox.v1.PollRunResponse\x12K\n" +
+	"\n" +
+	"ExposePort\x12\x1d.sandbox.v1.ExposePortRequest\x1a\x1e.sandbox.v1.ExposePortResponse\x12Q\n" +
+	"\fUnexposePort\x12\x1f.sandbox.v1.UnexposePortRequest\x1a .sandbox.v1.UnexposePortResponseB<Z:github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1b\x06proto3"
 
 var (
 	file_sandbox_v1_sandbox_proto_rawDescOnce sync.Once
@@ -1586,7 +1813,7 @@ func file_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 	return file_sandbox_v1_sandbox_proto_rawDescData
 }
 
-var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*CreateSessionRequest)(nil),   // 0: sandbox.v1.CreateSessionRequest
 	(*CreateSessionResponse)(nil),  // 1: sandbox.v1.CreateSessionResponse
@@ -1614,6 +1841,10 @@ var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*LoginResponse)(nil),          // 23: sandbox.v1.LoginResponse
 	(*PollRunRequest)(nil),         // 24: sandbox.v1.PollRunRequest
 	(*PollRunResponse)(nil),        // 25: sandbox.v1.PollRunResponse
+	(*ExposePortRequest)(nil),      // 26: sandbox.v1.ExposePortRequest
+	(*ExposePortResponse)(nil),     // 27: sandbox.v1.ExposePortResponse
+	(*UnexposePortRequest)(nil),    // 28: sandbox.v1.UnexposePortRequest
+	(*UnexposePortResponse)(nil),   // 29: sandbox.v1.UnexposePortResponse
 }
 var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	13, // 0: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
@@ -1630,21 +1861,25 @@ var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	20, // 11: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
 	22, // 12: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
 	24, // 13: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
-	1,  // 14: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
-	3,  // 15: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
-	5,  // 16: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
-	6,  // 17: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
-	8,  // 18: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
-	10, // 19: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
-	12, // 20: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
-	15, // 21: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
-	17, // 22: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
-	19, // 23: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
-	21, // 24: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	23, // 25: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
-	25, // 26: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
-	14, // [14:27] is the sub-list for method output_type
-	1,  // [1:14] is the sub-list for method input_type
+	26, // 14: sandbox.v1.SandboxService.ExposePort:input_type -> sandbox.v1.ExposePortRequest
+	28, // 15: sandbox.v1.SandboxService.UnexposePort:input_type -> sandbox.v1.UnexposePortRequest
+	1,  // 16: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
+	3,  // 17: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
+	5,  // 18: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
+	6,  // 19: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
+	8,  // 20: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
+	10, // 21: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
+	12, // 22: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
+	15, // 23: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
+	17, // 24: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
+	19, // 25: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
+	21, // 26: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
+	23, // 27: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
+	25, // 28: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
+	27, // 29: sandbox.v1.SandboxService.ExposePort:output_type -> sandbox.v1.ExposePortResponse
+	29, // 30: sandbox.v1.SandboxService.UnexposePort:output_type -> sandbox.v1.UnexposePortResponse
+	16, // [16:31] is the sub-list for method output_type
+	1,  // [1:16] is the sub-list for method input_type
 	1,  // [1:1] is the sub-list for extension type_name
 	1,  // [1:1] is the sub-list for extension extendee
 	0,  // [0:1] is the sub-list for field type_name
@@ -1661,7 +1896,7 @@ func file_sandbox_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   26,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

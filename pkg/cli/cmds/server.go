@@ -111,6 +111,10 @@ type Server struct {
 	SandboxDefaultMemory    string
 	SandboxGRPCPort         int
 	SandboxNamespace        string
+	SandboxPreviewDomain    string
+	SandboxIngressClass     string
+	SandboxPreviewVerifyURL string
+	SandboxPreviewPort      int
 }
 
 var (
@@ -573,6 +577,33 @@ var ServerFlags = []cli.Flag{
 		Value:       "sandbox-matrix",
 		Destination: &ServerConfig.SandboxNamespace,
 		EnvVar:      "K8E_SANDBOX_NAMESPACE",
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-preview-domain",
+		Usage:       "(sandbox) Wildcard host preview URLs live under (e.g. preview.k8e.local)",
+		Value:       "preview.k8e.local",
+		Destination: &ServerConfig.SandboxPreviewDomain,
+		EnvVar:      "K8E_SANDBOX_PREVIEW_DOMAIN",
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-ingress-class",
+		Usage:       "(sandbox) Ingress class for preview Ingresses",
+		Value:       "nginx",
+		Destination: &ServerConfig.SandboxIngressClass,
+		EnvVar:      "K8E_SANDBOX_INGRESS_CLASS",
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-preview-verify-url",
+		Usage:       "(sandbox) Base URL the Ingress controller uses to reach the gateway /preview/verify (default http://127.0.0.1:<preview-port>)",
+		Destination: &ServerConfig.SandboxPreviewVerifyURL,
+		EnvVar:      "K8E_SANDBOX_PREVIEW_VERIFY_URL",
+	},
+	&cli.IntFlag{
+		Name:        "sandbox-preview-port",
+		Usage:       "(sandbox) HTTP listen port for /preview/verify (Ingress auth callback)",
+		Value:       50052,
+		Destination: &ServerConfig.SandboxPreviewPort,
+		EnvVar:      "K8E_SANDBOX_PREVIEW_PORT",
 	},
 
 	// Hidden/Deprecated flags below

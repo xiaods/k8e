@@ -41,6 +41,8 @@ func main() {
 		sandboxcli.PollCommand(),
 		sandboxcli.BenchmarkCommand(),
 		sandboxcli.InstallSkillCommand(),
+		sandboxcli.ExposeCommand(),
+		sandboxcli.UnexposeCommand(),
 	}
 
 	if err := app.Run(os.Args); err != nil {

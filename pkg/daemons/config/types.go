@@ -196,6 +196,16 @@ type SandboxConfig struct {
 	DefaultMemory  string
 	GRPCPort       int
 	Namespace      string
+	// PreviewDomain is the wildcard host preview URLs live under
+	// (e.g. preview.k8e.local).
+	PreviewDomain string
+	// PreviewIngressClass is the ingressClassName for preview Ingresses.
+	PreviewIngressClass string
+	// PreviewVerifyURL is the base URL the Ingress controller uses to reach the
+	// gateway /preview/verify endpoint (e.g. http://127.0.0.1:50052).
+	PreviewVerifyURL string
+	// PreviewPort is the HTTP listener port for /preview/verify.
+	PreviewPort int
 }
 
 type Control struct {

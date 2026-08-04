@@ -151,12 +151,16 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.EncryptSecrets = cfg.EncryptSecrets
 	serverConfig.ControlConfig.DisableSandboxMatrix = cfg.DisableSandboxMatrix
 	serverConfig.ControlConfig.SandboxConfig = config.SandboxConfig{
-		DefaultRuntime: cfg.SandboxDefaultRuntime,
-		DefaultImage:   cfg.SandboxDefaultImage,
-		DefaultCPU:     cfg.SandboxDefaultCPU,
-		DefaultMemory:  cfg.SandboxDefaultMemory,
-		GRPCPort:       cfg.SandboxGRPCPort,
-		Namespace:      cfg.SandboxNamespace,
+		DefaultRuntime:      cfg.SandboxDefaultRuntime,
+		DefaultImage:        cfg.SandboxDefaultImage,
+		DefaultCPU:          cfg.SandboxDefaultCPU,
+		DefaultMemory:       cfg.SandboxDefaultMemory,
+		GRPCPort:            cfg.SandboxGRPCPort,
+		Namespace:           cfg.SandboxNamespace,
+		PreviewDomain:       cfg.SandboxPreviewDomain,
+		PreviewIngressClass: cfg.SandboxIngressClass,
+		PreviewVerifyURL:    cfg.SandboxPreviewVerifyURL,
+		PreviewPort:         cfg.SandboxPreviewPort,
 	}
 	serverConfig.ControlConfig.EtcdExposeMetrics = cfg.EtcdExposeMetrics
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots

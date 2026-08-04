@@ -4,7 +4,7 @@
 // - protoc             v7.35.0
 // source: sandbox/v1/sandbox.proto
 
-package pb
+package v1
 
 import (
 	context "context"
@@ -32,6 +32,8 @@ const (
 	SandboxService_ApproveAction_FullMethodName  = "/sandbox.v1.SandboxService/ApproveAction"
 	SandboxService_Login_FullMethodName          = "/sandbox.v1.SandboxService/Login"
 	SandboxService_PollRun_FullMethodName        = "/sandbox.v1.SandboxService/PollRun"
+	SandboxService_ExposePort_FullMethodName     = "/sandbox.v1.SandboxService/ExposePort"
+	SandboxService_UnexposePort_FullMethodName   = "/sandbox.v1.SandboxService/UnexposePort"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -55,6 +57,10 @@ type SandboxServiceClient interface {
 	Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error)
 	// PollRun checks the status of a background execution.
 	PollRun(ctx context.Context, in *PollRunRequest, opts ...grpc.CallOption) (*PollRunResponse, error)
+	// ExposePort publishes a session port through a signed, time-limited preview URL.
+	ExposePort(ctx context.Context, in *ExposePortRequest, opts ...grpc.CallOption) (*ExposePortResponse, error)
+	// UnexposePort revokes a preview route (Service + Ingress) immediately.
+	UnexposePort(ctx context.Context, in *UnexposePortRequest, opts ...grpc.CallOption) (*UnexposePortResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -204,6 +210,26 @@ func (c *sandboxServiceClient) PollRun(ctx context.Context, in *PollRunRequest, 
 	return out, nil
 }
 
+func (c *sandboxServiceClient) ExposePort(ctx context.Context, in *ExposePortRequest, opts ...grpc.CallOption) (*ExposePortResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExposePortResponse)
+	err := c.cc.Invoke(ctx, SandboxService_ExposePort_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) UnexposePort(ctx context.Context, in *UnexposePortRequest, opts ...grpc.CallOption) (*UnexposePortResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnexposePortResponse)
+	err := c.cc.Invoke(ctx, SandboxService_UnexposePort_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -225,6 +251,10 @@ type SandboxServiceServer interface {
 	Login(context.Context, *LoginRequest) (*LoginResponse, error)
 	// PollRun checks the status of a background execution.
 	PollRun(context.Context, *PollRunRequest) (*PollRunResponse, error)
+	// ExposePort publishes a session port through a signed, time-limited preview URL.
+	ExposePort(context.Context, *ExposePortRequest) (*ExposePortResponse, error)
+	// UnexposePort revokes a preview route (Service + Ingress) immediately.
+	UnexposePort(context.Context, *UnexposePortRequest) (*UnexposePortResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -273,6 +303,12 @@ func (UnimplementedSandboxServiceServer) Login(context.Context, *LoginRequest) (
 }
 func (UnimplementedSandboxServiceServer) PollRun(context.Context, *PollRunRequest) (*PollRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PollRun not implemented")
+}
+func (UnimplementedSandboxServiceServer) ExposePort(context.Context, *ExposePortRequest) (*ExposePortResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExposePort not implemented")
+}
+func (UnimplementedSandboxServiceServer) UnexposePort(context.Context, *UnexposePortRequest) (*UnexposePortResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnexposePort not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -522,6 +558,42 @@ func _SandboxService_PollRun_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_ExposePort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExposePortRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).ExposePort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_ExposePort_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).ExposePort(ctx, req.(*ExposePortRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_UnexposePort_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnexposePortRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).UnexposePort(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_UnexposePort_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).UnexposePort(ctx, req.(*UnexposePortRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -576,6 +648,14 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PollRun",
 			Handler:    _SandboxService_PollRun_Handler,
+		},
+		{
+			MethodName: "ExposePort",
+			Handler:    _SandboxService_ExposePort_Handler,
+		},
+		{
+			MethodName: "UnexposePort",
+			Handler:    _SandboxService_UnexposePort_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

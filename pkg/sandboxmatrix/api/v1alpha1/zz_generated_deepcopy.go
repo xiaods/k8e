@@ -111,6 +111,30 @@ func (in *SandboxSessionStatus) DeepCopyInto(out *SandboxSessionStatus) {
 		t := in.ExpiresAt.DeepCopy()
 		out.ExpiresAt = t
 	}
+	if in.ExposedPorts != nil {
+		in, out := &in.ExposedPorts, &out.ExposedPorts
+		*out = make([]ExposedPort, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
+}
+
+func (in *ExposedPort) DeepCopyInto(out *ExposedPort) {
+	*out = *in
+	if in.ExpiresAt != nil {
+		t := in.ExpiresAt.DeepCopy()
+		out.ExpiresAt = t
+	}
+}
+
+func (in *ExposedPort) DeepCopy() *ExposedPort {
+	if in == nil {
+		return nil
+	}
+	out := new(ExposedPort)
+	in.DeepCopyInto(out)
+	return out
 }
 func (in *SandboxSessionList) DeepCopy() *SandboxSessionList {
 	if in == nil {

@@ -102,6 +102,8 @@ chmod +x k8e-sandbox-cli-linux-amd64
 | `k8e-sandbox-cli snapshot restore <name>` | Create session from saved snapshot | `--runtime`, `--tenant` |
 | `k8e-sandbox-cli snapshot list` | List saved snapshots | — |
 | `k8e-sandbox-cli snapshot delete <name>` | Delete a snapshot | — |
+| `k8e-sandbox-cli expose <sid> <port>` | Publish a session port as a signed preview URL | `--ttl <seconds>` (default: session TTL) |
+| `k8e-sandbox-cli unexpose <sid> <port>` | Revoke a preview route immediately | — |
 | `k8e-sandbox-cli install-skill [claude\|codex\|pi\|all]` | Install this skill into agent config | — |
 
 ```
@@ -140,6 +142,29 @@ Default allowed hosts (kernel-level Cilium eBPF enforcement):
 `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`
 
 Override with `--allowed-hosts` on `create`. Everything else blocked.
+
+## Preview URLs (expose / unexpose)
+
+Serve a process listening inside a sandbox through a signed, time-limited URL:
+
+```
+k8e-sandbox-cli expose <session-id> <port> [--ttl <seconds>]
+# → {"url":"https://preview.<domain>/p/<sid>/<port>/<token>/","expires_at":...}
+```
+
+- Default TTL follows the session TTL; `--ttl` overrides it (expiry enforced at the
+gateway `/preview/verify` — the URL 403s after it passes).
+- Revoke explicitly: `k8e-sandbox-cli unexpose <sid> <port>` removes the Service +
+Ingress immediately; the URL stops serving (routes 404 once the Ingress is gone,
+and any token still reaching verify gets 403).
+- Re-exposing the same `(sid, port)` reuses the route and mints a fresh token.
+- `destroy` and session GC revoke every outstanding preview route/token for the
+session automatically.
+- The preview host, ingress class and verify endpoint are operator knobs on the
+server: `--sandbox-preview-domain`, `--sandbox-ingress-class`,
+`--sandbox-preview-verify-url`, `--sandbox-preview-port`. The Ingress controller
+must be deployed and reach the gateway's `/preview/verify` endpoint, and TLS for
+the preview host must terminate before the Ingress (operator's choice).
 
 ## Typical Scenarios
 
@@ -217,6 +242,17 @@ k8e-sandbox-cli snapshot save $SID my-analysis
 SID=$(k8e-sandbox-cli snapshot restore my-analysis | jq -r .session_id)
 k8e-sandbox-cli read $SID /workspace/result.json --raw
 ```
+
+### Scenario 8: Expose a service preview
+
+```
+1. k8e-sandbox-cli run "python3 -m http.server 8080 --bind 0.0.0.0" --session-id $SID --background
+2. URL=$(k8e-sandbox-cli expose $SID 8080 --ttl 3600 | jq -r .url)
+   # share the URL — the token in the path is the credential
+3. k8e-sandbox-cli unexpose $SID 8080   # revoke immediately
+```
+
+Destroying the session (or session GC) revokes all outstanding preview routes.
 
 ## Error reference
 
