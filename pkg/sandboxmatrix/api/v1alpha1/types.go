@@ -103,6 +103,16 @@ type SandboxWarmPoolSpec struct {
 	TemplateRef  corev1.LocalObjectReference `json:"templateRef,omitempty"`
 	Size         int                         `json:"size,omitempty"`
 	RuntimeClass string                      `json:"runtimeClass,omitempty"`
+	// MinSize is the adaptive lower bound for the pool target. Defaults to Size.
+	// Only meaningful when MaxSize > Size (adaptive mode).
+	MinSize int `json:"minSize,omitempty"`
+	// MaxSize is the adaptive upper bound for the pool target. When set above
+	// Size, the pool grows toward MaxSize on cold-start bursts (recent demand)
+	// and decays back toward MinSize once demand subsides.
+	MaxSize int `json:"maxSize,omitempty"`
+	// IdleTTLSeconds overrides the warm-pod idle reaping TTL for pods created
+	// from this pool. Defaults to SandboxMatrix.sessionTTL * 2 when unset.
+	IdleTTLSeconds int `json:"idleTTLSeconds,omitempty"`
 }
 
 type SandboxWarmPoolStatus struct {

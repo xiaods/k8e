@@ -8,6 +8,7 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	sandboxgrpc "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -87,9 +88,122 @@ func TestRecycleUnhealthyWarmPods(t *testing.T) {
 }
 
 func TestNewWarmPod_RuntimeClassLabel(t *testing.T) {
-	pod := newWarmPod(defaultCfg(), "kata")
+	pod := newWarmPod(defaultCfg(), "kata", 0)
 	if pod.Labels[sandboxgrpc.LabelRuntimeClass] != "kata" {
 		t.Fatalf("expected runtime-class label kata, got %v", pod.Labels)
+	}
+}
+
+func TestNewWarmPod_IdleTTLAnnotation(t *testing.T) {
+	pod := newWarmPod(defaultCfg(), "gvisor", 300)
+	if pod.Annotations[podIdleTTLAnnotation] != "300" {
+		t.Fatalf("expected idle-ttl annotation 300, got %v", pod.Annotations)
+	}
+	plain := newWarmPod(defaultCfg(), "gvisor", 0)
+	if _, present := plain.Annotations[podIdleTTLAnnotation]; present {
+		t.Fatal("expected no idle-ttl annotation when TTL unset")
+	}
+}
+
+func TestAdaptiveTarget(t *testing.T) {
+	cases := []struct {
+		name                        string
+		size, min, max, boost, want int64
+	}{
+		{"static no max", 2, 0, 0, 5, 2},
+		{"static max equals size", 2, 0, 2, 5, 2},
+		{"grow on burst", 2, 0, 8, 5, 5},
+		{"bounded by max", 2, 0, 4, 9, 4},
+		{"shrink to min", 2, 2, 8, 0, 2},
+		{"min floor", 2, 3, 8, 0, 3},
+		{"default size one", 0, 0, 5, 0, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := adaptiveTarget(tc.size, tc.min, tc.max, tc.boost); got != tc.want {
+				t.Fatalf("adaptiveTarget(%d,%d,%d,%d) = %d, want %d", tc.size, tc.min, tc.max, tc.boost, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWarmDemand_GrowAndDecay(t *testing.T) {
+	now := time.Now()
+	d := &warmDemand{lastObserved: now}
+
+	if got := d.observe(now, 0); got != 0 {
+		t.Fatalf("no cold starts: want 0, got %d", got)
+	}
+	if got := d.observe(now, 3); got != 3 {
+		t.Fatalf("burst of 3: want 3, got %d", got)
+	}
+	if got := d.observe(now.Add(time.Minute), 3); got != 3 {
+		t.Fatalf("no new cold starts within window: want 3, got %d", got)
+	}
+	if got := d.observe(now.Add(6*time.Minute), 3); got != 0 {
+		t.Fatalf("window elapsed without new cold starts: want decay to 0, got %d", got)
+	}
+	// a later burst restarts from the accumulated baseline
+	if got := d.observe(now.Add(7*time.Minute), 5); got != 2 {
+		t.Fatalf("new burst after decay: want 2, got %d", got)
+	}
+}
+
+func TestComputeMaxPods_MultiNodeAndCPU(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+
+	for _, name := range []string{"node-a", "node-b"} {
+		node := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+				corev1.ResourceMemory: resource.MustParse("4Gi"),
+				corev1.ResourceCPU:    resource.MustParse("2"),
+			}},
+		}
+		if _, err := k8s.CoreV1().Nodes().Create(ctx, node, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("create node %s: %v", name, err)
+		}
+	}
+
+	cfg := defaultCfg() // 500m CPU, 512Mi memory per pod
+	// memCap = 2*4Gi*0.9/512Mi = 14; cpuCap = 2*2000m*0.9/500m = 7 → min = 7
+	if got := computeMaxPods(ctx, k8s, cfg); got != 7 {
+		t.Fatalf("expected min(mem, cpu) capacity = 7, got %d", got)
+	}
+}
+
+func TestComputeMaxPods_NoNodes(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	if got := computeMaxPods(ctx, k8s, defaultCfg()); got != 0 {
+		t.Fatalf("expected 0 (no limit) without nodes, got %d", got)
+	}
+}
+
+func TestReapIfIdle_UsesPodTTLOverride(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "warm-ttl",
+			Namespace: ns,
+			Annotations: map[string]string{
+				podIdleTTLAnnotation:    "1",
+				podReleasedAtAnnotation: time.Now().Add(-2 * time.Second).UTC().Format(time.RFC3339),
+			},
+		},
+	}
+	if _, err := k8s.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create pod: %v", err)
+	}
+
+	// default TTL is long (3600s), but the pod annotation overrides it to 1s
+	reapIfIdle(ctx, k8s, ns, pod, 3600, time.Now())
+	if _, err := k8s.CoreV1().Pods(ns).Get(ctx, "warm-ttl", metav1.GetOptions{}); err == nil {
+		t.Fatal("expected pod to be reaped by its per-pod TTL override")
 	}
 }
 

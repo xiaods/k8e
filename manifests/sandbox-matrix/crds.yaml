@@ -146,6 +146,9 @@ spec:
             properties:
               size: {type: integer}
               runtimeClass: {type: string}
+              minSize: {type: integer}
+              maxSize: {type: integer}
+              idleTTLSeconds: {type: integer}
               templateRef:
                 type: object
                 properties:
