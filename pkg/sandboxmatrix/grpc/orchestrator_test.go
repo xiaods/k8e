@@ -2,11 +2,13 @@ package grpc
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -75,6 +77,204 @@ func setSessionExpiry(t *testing.T, o *Orchestrator, sessName, expiresAt string)
 	st["expiresAt"] = expiresAt
 	st["phase"] = "Active"
 	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}) //nolint:errcheck
+}
+
+// warmTestPod builds a Running warm pod fixture for claim-path tests.
+// The pod is labeled with runtimeClass "gvisor" (the session default).
+func warmTestPod(name, ip string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: sandboxNS,
+			Labels: map[string]string{
+				labelState:        stateWarm,
+				labelRuntimeClass: "gvisor",
+			},
+			Annotations: map[string]string{},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "sandbox", Ports: []corev1.ContainerPort{{ContainerPort: 2024}}}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: ip},
+	}
+}
+
+func TestSandboxPodSpec_IncludesHealthProbes(t *testing.T) {
+	spec := SandboxPodSpec("gvisor", "", "500m", "512Mi", sandboxImage)
+	c := spec.Containers[0]
+	if c.StartupProbe == nil || c.ReadinessProbe == nil {
+		t.Fatal("expected startup + readiness probes on sandbox container")
+	}
+	for name, probe := range map[string]*corev1.Probe{"startup": c.StartupProbe, "readiness": c.ReadinessProbe} {
+		if probe.TCPSocket == nil || probe.TCPSocket.Port.IntValue() != 2024 {
+			t.Errorf("%s probe should TCP-check :2024, got %+v", name, probe)
+		}
+	}
+}
+
+func TestClaimWarmPod_PrefersReadyPod(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool {
+		return pod.Annotations["test-healthy"] == "yes"
+	}
+
+	ready := warmTestPod("warm-ready", "10.0.0.2")
+	ready.Annotations["test-healthy"] = "yes"
+	notReady := warmTestPod("warm-notready", "10.0.0.3")
+
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, ready, metav1.CreateOptions{})    //nolint:errcheck
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, notReady, metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "claim-ready")
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, sess.Status.PodName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get claimed pod: %v", err)
+	}
+	if pod.Name != "warm-ready" {
+		t.Fatalf("expected warm-ready to be claimed, got %s", pod.Name)
+	}
+	if pod.Labels[labelState] != stateActive {
+		t.Fatalf("expected claimed pod state=active, got %s", pod.Labels[labelState])
+	}
+	if pod.Labels[labelSessionID] != "claim-ready" {
+		t.Fatalf("expected session label on claimed pod, got %v", pod.Labels)
+	}
+}
+
+func TestClaimWarmPod_FallsBackToColdStart(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return false }
+
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, warmTestPod("warm-unhealthy", "10.0.0.2"), metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "claim-cold")
+	if strings.HasPrefix(sess.Status.PodName, "warm-") {
+		t.Fatalf("expected cold-start pod, got warm pod %s", sess.Status.PodName)
+	}
+	if !strings.HasPrefix(sess.Status.PodName, "sandbox-") {
+		t.Fatalf("expected sandbox-* cold-start pod name, got %s", sess.Status.PodName)
+	}
+}
+
+func TestClaimWarmPod_RuntimeClassMismatchSkipped(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+
+	kata := warmTestPod("warm-kata", "10.0.0.4")
+	kata.Labels[labelRuntimeClass] = "kata"
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, kata, metav1.CreateOptions{}) //nolint:errcheck
+
+	// session defaults to gvisor — the kata warm pod must not be adopted
+	sess := mustCreateSession(t, o, "rt-mismatch")
+	if strings.HasPrefix(sess.Status.PodName, "warm-") {
+		t.Fatalf("expected cold-start (runtime-mismatched warm pod must not be claimed), got %s", sess.Status.PodName)
+	}
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, "warm-kata", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get kata pod: %v", err)
+	}
+	if pod.Labels[labelState] != stateWarm {
+		t.Fatalf("kata warm pod should stay warm, got state %s", pod.Labels[labelState])
+	}
+	// cold-start pod records the session runtime
+	cold, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, sess.Status.PodName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get cold pod: %v", err)
+	}
+	if cold.Labels[labelRuntimeClass] != "gvisor" {
+		t.Fatalf("expected cold-start pod runtime label gvisor, got %v", cold.Labels)
+	}
+}
+
+func TestClaimWarmPod_RuntimeClassMatchClaimed(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+
+	gv := warmTestPod("warm-gv", "10.0.0.5")
+	kata := warmTestPod("warm-kata2", "10.0.0.6")
+	kata.Labels[labelRuntimeClass] = "kata"
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, gv, metav1.CreateOptions{})  //nolint:errcheck
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, kata, metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "rt-match")
+	if sess.Status.PodName != "warm-gv" {
+		t.Fatalf("expected gvisor warm pod claimed, got %s", sess.Status.PodName)
+	}
+}
+
+func TestClaimWarmPod_LegacyPodWithoutRuntimeLabel(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+
+	legacy := warmTestPod("warm-legacy", "10.0.0.7")
+	delete(legacy.Labels, labelRuntimeClass)
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, legacy, metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "rt-legacy")
+	if sess.Status.PodName != "warm-legacy" {
+		t.Fatalf("expected legacy warm pod (no runtime label) claimed, got %s", sess.Status.PodName)
+	}
+}
+
+func TestClaimWarmPod_TriggersRefillSignal(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+	claims := 0
+	o.OnWarmClaim = func() { claims++ }
+
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, warmTestPod("warm-refill", "10.0.0.8"), metav1.CreateOptions{}) //nolint:errcheck
+	mustCreateSession(t, o, "refill-warm")
+	if claims != 1 {
+		t.Fatalf("expected 1 refill signal after warm claim, got %d", claims)
+	}
+}
+
+func TestColdStart_NoRefillSignal(t *testing.T) {
+	o := newTestOrchestrator()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return false }
+	claims := 0
+	o.OnWarmClaim = func() { claims++ }
+
+	mustCreateSession(t, o, "refill-cold")
+	if claims != 0 {
+		t.Fatalf("expected no refill signal for cold start, got %d", claims)
+	}
+}
+
+func TestClaimMetrics_WarmVsCold(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	// Fake clients don't filter by label selector, so also require state=warm
+	// here; otherwise the second (cold) claim would re-adopt the claimed pod.
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool {
+		return pod.Labels[labelState] == stateWarm
+	}
+
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, warmTestPod("warm-metric", "10.0.0.9"), metav1.CreateOptions{}) //nolint:errcheck
+
+	mustCreateSession(t, o, "metric-warm")
+	claimed, cold, avg := o.Metrics()
+	if claimed != 1 || cold != 0 {
+		t.Fatalf("after warm claim expected warm=1 cold=0, got %d/%d", claimed, cold)
+	}
+	if avg < 0 {
+		t.Fatalf("expected non-negative avg claim latency, got %d", avg)
+	}
+
+	mustCreateSession(t, o, "metric-cold")
+	claimed, cold, avg = o.Metrics()
+	if claimed != 1 || cold != 1 {
+		t.Fatalf("after cold start expected warm=1 cold=1, got %d/%d", claimed, cold)
+	}
+	if avg < 0 {
+		t.Fatalf("expected non-negative avg claim latency, got %d", avg)
+	}
 }
 
 func TestCreateSession_GeneratesID(t *testing.T) {

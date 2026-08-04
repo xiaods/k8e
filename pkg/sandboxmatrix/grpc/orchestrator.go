@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -16,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"google.golang.org/grpc/codes"
@@ -31,23 +35,27 @@ const (
 	sandboxAPIGroup   = SandboxAPIGroup
 	sandboxAPIVersion = SandboxAPIGroup + "/v1alpha1"
 
-	maxDepth       = 1
-	sandboxNS      = "sandbox-matrix"
-	labelState     = "sandbox.k8e.io/state"
-	labelSessionID = "sandbox.k8e.io/session-id"
-	stateWarm      = "warm"
-	stateActive    = "active"
+	maxDepth          = 1
+	sandboxNS         = "sandbox-matrix"
+	labelState        = "sandbox.k8e.io/state"
+	labelSessionID    = "sandbox.k8e.io/session-id"
+	labelRuntimeClass = "sandbox.k8e.io/runtime-class"
+	stateWarm         = "warm"
+	stateActive       = "active"
 
 	// LabelState is the pod label key for sandbox state (warm/active).
-	LabelState     = labelState
+	LabelState = labelState
 	// StateWarm marks a pod as a pre-warmed sandbox.
-	StateWarm      = stateWarm
+	StateWarm = stateWarm
 	// StateActive marks a pod as an active sandbox session.
-	StateActive    = stateActive
+	StateActive = stateActive
 	// StateResetting marks a pod that is being reset before returning to warm pool.
 	StateResetting = "resetting"
 
-	sandboxImage   = "ghcr.io/xiaods/k8e-sandbox:latest"
+	// LabelRuntimeClass records the runtime a sandbox pod was booted with, so warm
+	// pods are only claimed by sessions requesting the same RuntimeClass.
+	LabelRuntimeClass = labelRuntimeClass
+	sandboxImage      = "ghcr.io/xiaods/k8e-sandbox:latest"
 )
 
 var (
@@ -77,14 +85,91 @@ type Orchestrator struct {
 	mu          sync.Mutex
 	approvals   map[string]*pendingApproval
 	runRegistry map[string]string // run_id → session_id
+
+	// warmPodHealthCheck decides whether a warm pod's sandboxd is actually ready to
+	// serve on :2024 before the pod is claimed for a session. Overridable in tests.
+	warmPodHealthCheck func(ctx context.Context, pod *corev1.Pod) bool
+
+	// OnWarmClaim, when non-nil, is invoked after a session successfully claims a
+	// warm pod. The sandboxmatrix controller wires it to an immediate pool refill
+	// instead of waiting for the next reconcile tick.
+	OnWarmClaim func()
+
+	// claim accounting for the SandboxMatrix status surface.
+	claimedFromWarm     atomic.Int64
+	coldStarts          atomic.Int64
+	claimLatencyTotalMs atomic.Int64
+	claimCount          atomic.Int64
 }
 
 func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestrator {
-	return &Orchestrator{k8s: k8s, dynamic: dyn, approvals: make(map[string]*pendingApproval), runRegistry: make(map[string]string)}
+	return &Orchestrator{
+		k8s:                k8s,
+		dynamic:            dyn,
+		approvals:          make(map[string]*pendingApproval),
+		runRegistry:        make(map[string]string),
+		warmPodHealthCheck: defaultWarmPodHealthCheck,
+	}
+}
+
+// defaultWarmPodHealthCheck reports whether a warm pod's sandboxd is actually
+// serving on :2024. It requires the kubelet Ready condition (driven by the TCP
+// readiness probe on the sandbox container) plus a direct TCP dial to close the
+// small race between kubelet marking the pod ready and sandboxd accepting sockets.
+func defaultWarmPodHealthCheck(ctx context.Context, pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {
+		return false
+	}
+	if !PodReadyCondition(pod) {
+		return false
+	}
+	dialer := &net.Dialer{Timeout: 1500 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(sandboxdPort)))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// PodReadyCondition returns true when the pod's Ready condition is True.
+// Exported for use by the sandboxmatrix controller (warm pod recycling).
+func PodReadyCondition(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultTTL is used when the session has no explicit TTL (0 = no expiry).
 const defaultTTL = 0
+
+// Metrics returns warm-claim vs cold-start counters and the average pod
+// acquisition latency in milliseconds. Used to surface pool hit rate and
+// startup behavior in the SandboxMatrix status.
+func (o *Orchestrator) Metrics() (claimedFromWarm, coldStarts, avgClaimLatencyMs int64) {
+	claimedFromWarm = o.claimedFromWarm.Load()
+	coldStarts = o.coldStarts.Load()
+	total := o.claimLatencyTotalMs.Load()
+	n := o.claimCount.Load()
+	if n > 0 {
+		avgClaimLatencyMs = total / n
+	}
+	return
+}
+
+// recordClaim updates claim metrics after a successful pod acquisition.
+func (o *Orchestrator) recordClaim(start time.Time, warm bool) {
+	o.claimLatencyTotalMs.Add(time.Since(start).Milliseconds())
+	o.claimCount.Add(1)
+	if warm {
+		o.claimedFromWarm.Add(1)
+	} else {
+		o.coldStarts.Add(1)
+	}
+}
 
 func (o *Orchestrator) CreateSession(ctx context.Context, req *pb.CreateSessionRequest) (*sandboxv1.SandboxSession, error) {
 	matrixHosts, ttl, cpu, memory := o.getMatrixConfig(ctx)
@@ -590,6 +675,7 @@ func (o *Orchestrator) updateSessionStatus(ctx context.Context, session *sandbox
 }
 
 func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeClass, pvcName, cpu, memory string) (*corev1.Pod, error) {
+	start := time.Now()
 	// Only ephemeral sessions (no PVC) may adopt a warm pod: warm pods boot with an
 	// EmptyDir volume, and a running pod's volumes cannot be changed to mount a
 	// session PVC. Persistent sessions therefore cold-start with the PVC attached.
@@ -600,7 +686,17 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 		if err == nil {
 			for i := range warm.Items {
 				pod := &warm.Items[i]
-				if pod.Status.Phase != corev1.PodRunning {
+				// Only claim warm pods whose sandboxd is actually serving on :2024.
+				// A Running pod may still be booting sandboxd, or sandboxd may have
+				// died silently; claiming either one makes the first Exec fail.
+				if !o.warmPodHealthCheck(ctx, pod) {
+					continue
+				}
+				// A warm pod booted with a different RuntimeClass must not be adopted:
+				// gVisor vs Kata have different isolation/network semantics. Pods
+				// created before the runtime label existed (no label) stay claimable
+				// by any runtime for backward compatibility.
+				if rc := pod.Labels[labelRuntimeClass]; rc != "" && rc != runtimeClass {
 					continue
 				}
 				// atomic claim: use resourceVersion for optimistic locking
@@ -608,6 +704,11 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 				pod.Labels[labelSessionID] = sessionID
 				updated, uerr := o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{})
 				if uerr == nil {
+					o.recordClaim(start, true)
+					// Pool just shrank by one: ask the controller to refill now.
+					if o.OnWarmClaim != nil {
+						o.OnWarmClaim()
+					}
 					return updated, nil
 				}
 				// conflict means another request claimed it first — try next warm pod
@@ -616,14 +717,22 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        fmt.Sprintf("sandbox-%s", sessionID),
-			Namespace:   sandboxNS,
-			Labels:      map[string]string{labelState: stateActive, labelSessionID: sessionID},
+			Name:      fmt.Sprintf("sandbox-%s", sessionID),
+			Namespace: sandboxNS,
+			Labels: map[string]string{
+				labelState:        stateActive,
+				labelSessionID:    sessionID,
+				labelRuntimeClass: runtimeClass,
+			},
 			Annotations: GvisorAnnotations(runtimeClass),
 		},
 		Spec: sandboxPodSpec(runtimeClass, pvcName, cpu, memory),
 	}
-	return o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, pod, metav1.CreateOptions{})
+	created, cerr := o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, pod, metav1.CreateOptions{})
+	if cerr == nil {
+		o.recordClaim(start, false)
+	}
+	return created, cerr
 }
 
 func sandboxPodSpec(runtimeClass, pvcName, cpu, memory string) corev1.PodSpec {
@@ -647,11 +756,20 @@ func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.Pod
 	} else {
 		vol.VolumeSource = corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
 	}
+	// TCP health probes on :2024: kubelet reflects sandboxd readiness in the pod's
+	// Ready condition, which the warm-pool claim path and the recycling controller
+	// both rely on. StartupProbe gives a slow image pull / sandboxd boot a budget
+	// before readiness starts counting failures.
+	probe := &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(sandboxdPort)},
+		},
+	}
 	spec := corev1.PodSpec{
 		Containers: []corev1.Container{{
 			Name:  "sandbox",
 			Image: image,
-			Ports: []corev1.ContainerPort{{ContainerPort: 2024}},
+			Ports: []corev1.ContainerPort{{ContainerPort: sandboxdPort}},
 			Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse(cpu),
@@ -660,9 +778,20 @@ func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.Pod
 			},
 			SecurityContext: &corev1.SecurityContext{ReadOnlyRootFilesystem: boolPtr(true)},
 			VolumeMounts:    []corev1.VolumeMount{{Name: "workspace", MountPath: "/workspace"}},
+			StartupProbe: &corev1.Probe{
+				ProbeHandler:     probe.ProbeHandler,
+				PeriodSeconds:    2,
+				FailureThreshold: 30, // up to ~60s budget for sandboxd boot
+			},
+			ReadinessProbe: &corev1.Probe{
+				ProbeHandler:     probe.ProbeHandler,
+				PeriodSeconds:    5,
+				TimeoutSeconds:   2,
+				FailureThreshold: 3,
+			},
 		}},
 		Volumes:       []corev1.Volume{vol},
-		DNSPolicy: corev1.DNSDefault,
+		DNSPolicy:     corev1.DNSDefault,
 		RestartPolicy: corev1.RestartPolicyNever,
 	}
 	if runtimeClass != "" {

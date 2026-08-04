@@ -53,6 +53,9 @@ spec:
               activeSessions: {type: integer}
               maxPods: {type: integer}
               totalPods: {type: integer}
+              claimedFromWarm: {type: integer}
+              coldStarts: {type: integer}
+              avgClaimLatencyMs: {type: integer}
     subresources:
       status: {}
     additionalPrinterColumns:
@@ -143,6 +146,9 @@ spec:
             properties:
               size: {type: integer}
               runtimeClass: {type: string}
+              minSize: {type: integer}
+              maxSize: {type: integer}
+              idleTTLSeconds: {type: integer}
               templateRef:
                 type: object
                 properties:
