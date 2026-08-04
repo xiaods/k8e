@@ -735,6 +735,20 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 						},
 					},
 				},
+				map[string]interface{}{
+					"fromEndpoints": []interface{}{
+						map[string]interface{}{
+							"matchLabels": map[string]interface{}{
+								"app": "sandbox-grpc-gateway",
+							},
+						},
+					},
+					"toPorts": []interface{}{
+						map[string]interface{}{
+							"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
+						},
+					},
+				},
 			},
 			"egress": []interface{}{
 				map[string]interface{}{
