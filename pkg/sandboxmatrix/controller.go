@@ -58,11 +58,20 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		return err
 	}
 
-	go runWarmPoolReconciler(ctx, k8s, dyn, cfg)
+	// refillTrigger wakes the warm pool reconciler immediately after a warm pod
+	// claim, instead of waiting up to 10s for the next poll tick.
+	refillTrigger := make(chan struct{}, 1)
+	go runWarmPoolReconciler(ctx, k8s, dyn, cfg, refillTrigger)
 	go runResettingDetector(ctx, k8s, cfg.Namespace)
 	go runIdlePodReaper(ctx, k8s, dyn, cfg)
 
 	orch := sandboxgrpc.NewOrchestrator(k8s, dyn)
+	orch.OnWarmClaim = func() {
+		select {
+		case refillTrigger <- struct{}{}:
+		default: // already a refill pending
+		}
+	}
 	go runGCLoop(ctx, orch, cfg.Namespace)
 
 	srv := sandboxgrpc.NewServer(sandboxgrpc.ServerConfig{
@@ -91,13 +100,16 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	return nil
 }
 
-func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig) {
+func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig, refill <-chan struct{}) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-refill:
+			// A session just claimed a warm pod; refill before the next tick.
+			reconcileWarmPools(ctx, k8s, dyn, cfg)
 		case <-ticker.C:
 			reconcileWarmPools(ctx, k8s, dyn, cfg)
 		}

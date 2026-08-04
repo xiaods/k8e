@@ -9,6 +9,10 @@ import (
 	sandboxgrpc "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -86,6 +90,63 @@ func TestNewWarmPod_RuntimeClassLabel(t *testing.T) {
 	pod := newWarmPod(defaultCfg(), "kata")
 	if pod.Labels[sandboxgrpc.LabelRuntimeClass] != "kata" {
 		t.Fatalf("expected runtime-class label kata, got %v", pod.Labels)
+	}
+}
+
+func TestWarmPoolReconciler_RefillTrigger(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxWarmPool"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxWarmPoolList"}, &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrix"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrixList"}, &unstructured.UnstructuredList{})
+	listKinds := map[schema.GroupVersionResource]string{
+		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxwarmpools"}: "SandboxWarmPoolList",
+		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}:  "SandboxMatrixList",
+	}
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	pool := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": sandboxgrpc.SandboxAPIGroup + "/v1alpha1",
+		"kind":       "SandboxWarmPool",
+		"metadata":   map[string]interface{}{"name": "default", "namespace": ns},
+		"spec":       map[string]interface{}{"size": int64(2), "runtimeClass": "gvisor"},
+	}}
+	if _, err := dyn.Resource(warmPoolGVR).Namespace(ns).Create(ctx, pool, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create warm pool CR: %v", err)
+	}
+
+	refill := make(chan struct{}, 1)
+	refill <- struct{}{}
+	done := make(chan struct{})
+	go func() {
+		runWarmPoolReconciler(ctx, k8s, dyn, defaultCfg(), refill)
+		close(done)
+	}()
+
+	// The refill signal must trigger a reconcile that creates the warm pod
+	// without waiting for the 10s tick.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		pods, _ := k8s.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+		if len(pods.Items) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	pods, err := k8s.CoreV1().Pods(ns).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list pods: %v", err)
+	}
+	if len(pods.Items) == 0 {
+		t.Fatal("expected refill trigger to create a warm pod immediately")
 	}
 }
 

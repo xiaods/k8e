@@ -221,6 +221,32 @@ func TestClaimWarmPod_LegacyPodWithoutRuntimeLabel(t *testing.T) {
 	}
 }
 
+func TestClaimWarmPod_TriggersRefillSignal(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+	claims := 0
+	o.OnWarmClaim = func() { claims++ }
+
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, warmTestPod("warm-refill", "10.0.0.8"), metav1.CreateOptions{}) //nolint:errcheck
+	mustCreateSession(t, o, "refill-warm")
+	if claims != 1 {
+		t.Fatalf("expected 1 refill signal after warm claim, got %d", claims)
+	}
+}
+
+func TestColdStart_NoRefillSignal(t *testing.T) {
+	o := newTestOrchestrator()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return false }
+	claims := 0
+	o.OnWarmClaim = func() { claims++ }
+
+	mustCreateSession(t, o, "refill-cold")
+	if claims != 0 {
+		t.Fatalf("expected no refill signal for cold start, got %d", claims)
+	}
+}
+
 func TestCreateSession_GeneratesID(t *testing.T) {
 	o := newTestOrchestrator()
 	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{})

@@ -88,6 +88,11 @@ type Orchestrator struct {
 	// warmPodHealthCheck decides whether a warm pod's sandboxd is actually ready to
 	// serve on :2024 before the pod is claimed for a session. Overridable in tests.
 	warmPodHealthCheck func(ctx context.Context, pod *corev1.Pod) bool
+
+	// OnWarmClaim, when non-nil, is invoked after a session successfully claims a
+	// warm pod. The sandboxmatrix controller wires it to an immediate pool refill
+	// instead of waiting for the next reconcile tick.
+	OnWarmClaim func()
 }
 
 func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestrator {
@@ -666,6 +671,10 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 				pod.Labels[labelSessionID] = sessionID
 				updated, uerr := o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{})
 				if uerr == nil {
+					// Pool just shrank by one: ask the controller to refill now.
+					if o.OnWarmClaim != nil {
+						o.OnWarmClaim()
+					}
 					return updated, nil
 				}
 				// conflict means another request claimed it first — try next warm pod
