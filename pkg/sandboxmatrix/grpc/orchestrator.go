@@ -128,7 +128,7 @@ func defaultWarmPodHealthCheck(ctx context.Context, pod *corev1.Pod) bool {
 	if err != nil {
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 

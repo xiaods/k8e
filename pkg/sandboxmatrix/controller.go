@@ -247,7 +247,9 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool uns
 			break
 		}
 		pod := newWarmPod(cfg, runtimeClass, idleTTL)
-		k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+		if _, err := k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+			logrus.Debugf("sandbox-matrix: create warm pod: %v", err)
+		}
 	}
 }
 
