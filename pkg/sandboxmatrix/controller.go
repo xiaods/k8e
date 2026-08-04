@@ -333,49 +333,63 @@ func computeMaxPods(ctx context.Context, k8s kubernetes.Interface, cfg config.Sa
 	if err != nil || len(nodes.Items) == 0 {
 		return 0
 	}
-
-	var totalMem, totalCPU int64
-	for i := range nodes.Items {
-		node := &nodes.Items[i]
-		if mem := node.Status.Allocatable.Memory(); mem != nil {
-			totalMem += mem.Value()
-		}
-		if cpu := node.Status.Allocatable.Cpu(); cpu != nil {
-			totalCPU += cpu.MilliValue() // millicores
-		}
-	}
+	totalMem, totalCPU := sumNodeAllocatable(nodes.Items)
 	if totalMem == 0 && totalCPU == 0 {
 		return 0
 	}
+	perPodMem, perPodCPU := perPodResources(cfg)
+	memCap := capacityFor(totalMem, perPodMem.Value())
+	cpuCap := capacityFor(totalCPU, perPodCPU.MilliValue())
+	return tighterCapacity(memCap, cpuCap)
+}
 
-	perPodMem := resource.MustParse(cfg.DefaultMemory)
-	if perPodMem.IsZero() {
-		perPodMem = resource.MustParse("512Mi")
+// sumNodeAllocatable sums allocatable memory (bytes) and CPU (millicores)
+// across nodes.
+func sumNodeAllocatable(nodes []corev1.Node) (mem, cpu int64) {
+	for i := range nodes {
+		if m := nodes[i].Status.Allocatable.Memory(); m != nil {
+			mem += m.Value()
+		}
+		if c := nodes[i].Status.Allocatable.Cpu(); c != nil {
+			cpu += c.MilliValue()
+		}
 	}
-	perPodCPU := resource.MustParse(cfg.DefaultCPU)
-	if perPodCPU.IsZero() {
-		perPodCPU = resource.MustParse("500m")
-	}
+	return
+}
 
-	memCap := int64(0)
-	if totalMem > 0 && !perPodMem.IsZero() {
-		memCap = totalMem * 9 / 10 / perPodMem.Value()
+// perPodResources returns the per-sandbox resource limits from config,
+// falling back to the documented defaults when unset.
+func perPodResources(cfg config.SandboxConfig) (mem, cpu resource.Quantity) {
+	mem = resource.MustParse(cfg.DefaultMemory)
+	if mem.IsZero() {
+		mem = resource.MustParse("512Mi")
 	}
-	cpuCap := int64(0)
-	if totalCPU > 0 && !perPodCPU.IsZero() {
-		cpuCap = totalCPU * 9 / 10 / perPodCPU.MilliValue()
+	cpu = resource.MustParse(cfg.DefaultCPU)
+	if cpu.IsZero() {
+		cpu = resource.MustParse("500m")
 	}
+	return
+}
 
-	if memCap == 0 {
-		return cpuCap
+// capacityFor computes how many sandbox pods fit within an allocatable total
+// with a 10% buffer. Returns 0 when the total or per-pod divisor is missing.
+func capacityFor(total, divisor int64) int64 {
+	if total <= 0 || divisor <= 0 {
+		return 0
 	}
-	if cpuCap == 0 {
-		return memCap
+	return total * 9 / 10 / divisor
+}
+
+// tighterCapacity returns the smaller non-zero bound; when only one bound is
+// known, that one wins.
+func tighterCapacity(a, b int64) int64 {
+	if a == 0 {
+		return b
 	}
-	if memCap < cpuCap {
-		return memCap
+	if b == 0 || a < b {
+		return a
 	}
-	return cpuCap
+	return b
 }
 
 func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig, orch *sandboxgrpc.Orchestrator) {
