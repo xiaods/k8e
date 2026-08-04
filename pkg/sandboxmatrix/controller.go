@@ -219,8 +219,11 @@ func newWarmPod(cfg config.SandboxConfig, runtimeClass string) *corev1.Pod {
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "sandbox-warm-",
 			Namespace:    cfg.Namespace,
-			Labels:       map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
-			Annotations:  sandboxgrpc.GvisorAnnotations(runtimeClass),
+			Labels: map[string]string{
+				sandboxgrpc.LabelState:        sandboxgrpc.StateWarm,
+				sandboxgrpc.LabelRuntimeClass: runtimeClass,
+			},
+			Annotations: sandboxgrpc.GvisorAnnotations(runtimeClass),
 		},
 		Spec: warmPodSpec(runtimeClass, cfg),
 	}

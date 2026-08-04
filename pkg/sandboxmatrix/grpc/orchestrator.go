@@ -34,23 +34,27 @@ const (
 	sandboxAPIGroup   = SandboxAPIGroup
 	sandboxAPIVersion = SandboxAPIGroup + "/v1alpha1"
 
-	maxDepth       = 1
-	sandboxNS      = "sandbox-matrix"
-	labelState     = "sandbox.k8e.io/state"
-	labelSessionID = "sandbox.k8e.io/session-id"
-	stateWarm      = "warm"
-	stateActive    = "active"
+	maxDepth          = 1
+	sandboxNS         = "sandbox-matrix"
+	labelState        = "sandbox.k8e.io/state"
+	labelSessionID    = "sandbox.k8e.io/session-id"
+	labelRuntimeClass = "sandbox.k8e.io/runtime-class"
+	stateWarm         = "warm"
+	stateActive       = "active"
 
 	// LabelState is the pod label key for sandbox state (warm/active).
-	LabelState     = labelState
+	LabelState = labelState
 	// StateWarm marks a pod as a pre-warmed sandbox.
-	StateWarm      = stateWarm
+	StateWarm = stateWarm
 	// StateActive marks a pod as an active sandbox session.
-	StateActive    = stateActive
+	StateActive = stateActive
 	// StateResetting marks a pod that is being reset before returning to warm pool.
 	StateResetting = "resetting"
 
-	sandboxImage   = "ghcr.io/xiaods/k8e-sandbox:latest"
+	// LabelRuntimeClass records the runtime a sandbox pod was booted with, so warm
+	// pods are only claimed by sessions requesting the same RuntimeClass.
+	LabelRuntimeClass = labelRuntimeClass
+	sandboxImage      = "ghcr.io/xiaods/k8e-sandbox:latest"
 )
 
 var (
@@ -650,6 +654,13 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 				if !o.warmPodHealthCheck(ctx, pod) {
 					continue
 				}
+				// A warm pod booted with a different RuntimeClass must not be adopted:
+				// gVisor vs Kata have different isolation/network semantics. Pods
+				// created before the runtime label existed (no label) stay claimable
+				// by any runtime for backward compatibility.
+				if rc := pod.Labels[labelRuntimeClass]; rc != "" && rc != runtimeClass {
+					continue
+				}
 				// atomic claim: use resourceVersion for optimistic locking
 				pod.Labels[labelState] = stateActive
 				pod.Labels[labelSessionID] = sessionID
@@ -663,9 +674,13 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        fmt.Sprintf("sandbox-%s", sessionID),
-			Namespace:   sandboxNS,
-			Labels:      map[string]string{labelState: stateActive, labelSessionID: sessionID},
+			Name:      fmt.Sprintf("sandbox-%s", sessionID),
+			Namespace: sandboxNS,
+			Labels: map[string]string{
+				labelState:        stateActive,
+				labelSessionID:    sessionID,
+				labelRuntimeClass: runtimeClass,
+			},
 			Annotations: GvisorAnnotations(runtimeClass),
 		},
 		Spec: sandboxPodSpec(runtimeClass, pvcName, cpu, memory),

@@ -82,6 +82,13 @@ func TestRecycleUnhealthyWarmPods(t *testing.T) {
 	}
 }
 
+func TestNewWarmPod_RuntimeClassLabel(t *testing.T) {
+	pod := newWarmPod(defaultCfg(), "kata")
+	if pod.Labels[sandboxgrpc.LabelRuntimeClass] != "kata" {
+		t.Fatalf("expected runtime-class label kata, got %v", pod.Labels)
+	}
+}
+
 func TestWarmPodSpec_RuntimeClass(t *testing.T) {
 	spec := warmPodSpec("gvisor", defaultCfg())
 	if spec.RuntimeClassName == nil || *spec.RuntimeClassName != "gvisor" {

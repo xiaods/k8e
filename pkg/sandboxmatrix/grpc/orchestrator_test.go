@@ -80,12 +80,16 @@ func setSessionExpiry(t *testing.T, o *Orchestrator, sessName, expiresAt string)
 }
 
 // warmTestPod builds a Running warm pod fixture for claim-path tests.
+// The pod is labeled with runtimeClass "gvisor" (the session default).
 func warmTestPod(name, ip string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Namespace:   sandboxNS,
-			Labels:      map[string]string{labelState: stateWarm},
+			Name:      name,
+			Namespace: sandboxNS,
+			Labels: map[string]string{
+				labelState:        stateWarm,
+				labelRuntimeClass: "gvisor",
+			},
 			Annotations: map[string]string{},
 		},
 		Spec: corev1.PodSpec{
@@ -151,6 +155,69 @@ func TestClaimWarmPod_FallsBackToColdStart(t *testing.T) {
 	}
 	if !strings.HasPrefix(sess.Status.PodName, "sandbox-") {
 		t.Fatalf("expected sandbox-* cold-start pod name, got %s", sess.Status.PodName)
+	}
+}
+
+func TestClaimWarmPod_RuntimeClassMismatchSkipped(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+
+	kata := warmTestPod("warm-kata", "10.0.0.4")
+	kata.Labels[labelRuntimeClass] = "kata"
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, kata, metav1.CreateOptions{}) //nolint:errcheck
+
+	// session defaults to gvisor — the kata warm pod must not be adopted
+	sess := mustCreateSession(t, o, "rt-mismatch")
+	if strings.HasPrefix(sess.Status.PodName, "warm-") {
+		t.Fatalf("expected cold-start (runtime-mismatched warm pod must not be claimed), got %s", sess.Status.PodName)
+	}
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, "warm-kata", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get kata pod: %v", err)
+	}
+	if pod.Labels[labelState] != stateWarm {
+		t.Fatalf("kata warm pod should stay warm, got state %s", pod.Labels[labelState])
+	}
+	// cold-start pod records the session runtime
+	cold, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, sess.Status.PodName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get cold pod: %v", err)
+	}
+	if cold.Labels[labelRuntimeClass] != "gvisor" {
+		t.Fatalf("expected cold-start pod runtime label gvisor, got %v", cold.Labels)
+	}
+}
+
+func TestClaimWarmPod_RuntimeClassMatchClaimed(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+
+	gv := warmTestPod("warm-gv", "10.0.0.5")
+	kata := warmTestPod("warm-kata2", "10.0.0.6")
+	kata.Labels[labelRuntimeClass] = "kata"
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, gv, metav1.CreateOptions{})  //nolint:errcheck
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, kata, metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "rt-match")
+	if sess.Status.PodName != "warm-gv" {
+		t.Fatalf("expected gvisor warm pod claimed, got %s", sess.Status.PodName)
+	}
+}
+
+func TestClaimWarmPod_LegacyPodWithoutRuntimeLabel(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+
+	legacy := warmTestPod("warm-legacy", "10.0.0.7")
+	delete(legacy.Labels, labelRuntimeClass)
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, legacy, metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "rt-legacy")
+	if sess.Status.PodName != "warm-legacy" {
+		t.Fatalf("expected legacy warm pod (no runtime label) claimed, got %s", sess.Status.PodName)
 	}
 }
 
