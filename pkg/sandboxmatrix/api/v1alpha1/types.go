@@ -60,11 +60,14 @@ type SandboxSession struct {
 }
 
 type SandboxSessionSpec struct {
-	TenantID        string   `json:"tenantID,omitempty"`
-	AllowedHosts    []string `json:"allowedHosts,omitempty"`
-	RuntimeClass    string   `json:"runtimeClass,omitempty"`
-	ParentSessionID string   `json:"parentSessionID,omitempty"`
-	Depth           int      `json:"depth,omitempty"`
+	TenantID        string            `json:"tenantID,omitempty"`
+	AllowedHosts    []string          `json:"allowedHosts,omitempty"`
+	RuntimeClass    string            `json:"runtimeClass,omitempty"`
+	ParentSessionID string            `json:"parentSessionID,omitempty"`
+	Depth           int               `json:"depth,omitempty"`
+	// Env is a non-sensitive map of environment variables applied at exec time
+	// (not baked into the pod spec) so warm-pool pods remain reusable.
+	Env map[string]string `json:"env,omitempty"`
 }
 
 type SandboxSessionStatus struct {

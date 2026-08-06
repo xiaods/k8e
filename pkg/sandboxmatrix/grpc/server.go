@@ -290,6 +290,9 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) CreateSession(ctx context.Context, req *pb.CreateSessionRequest) (*pb.CreateSessionResponse, error) {
+	if err := validateSessionEnv(req.Env); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "env: %v", err)
+	}
 	if err := s.orch.CheckCapacity(ctx); err != nil {
 		return nil, err
 	}
@@ -310,7 +313,8 @@ func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionReque
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
 	// Background mode: submit async, return run_id immediately
 	if req.Background {
-		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir)
+		env := s.getSessionEnv(ctx, req.SessionId)
+		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir, env)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "background submit: %v", err)
 		}
@@ -330,7 +334,8 @@ func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecRespons
 		workdir = "/workspace"
 	}
 
-	body := map[string]any{"command": req.Command, "timeout": timeout, "workdir": workdir}
+	env := s.getSessionEnv(ctx, req.SessionId)
+	body := sandboxdExecBody(req.Command, timeout, workdir, env)
 	httpCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout+5)*time.Second)
 	defer cancel()
 
@@ -362,7 +367,8 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 	if workdir == "" {
 		workdir = "/workspace"
 	}
-	body := map[string]any{"command": req.Command, "timeout": timeout, "workdir": workdir}
+	env := s.getSessionEnv(stream.Context(), req.SessionId)
+	body := sandboxdExecBody(req.Command, timeout, workdir, env)
 	httpCtx, cancel := context.WithTimeout(stream.Context(), time.Duration(timeout+5)*time.Second)
 	defer cancel()
 
@@ -387,6 +393,28 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 			return status.Errorf(codes.Internal, "stream read: %v", err)
 		}
 	}
+}
+
+// getSessionEnv returns the non-sensitive env map stored on the SandboxSession CR.
+// Returns nil when absent. On lookup failure it logs a warning and returns nil so
+// exec still proceeds with sandboxd defaults (P1-1: no longer a silent drop).
+func (s *Server) getSessionEnv(ctx context.Context, sessionID string) map[string]string {
+	u, err := s.dyn.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessionID, metav1.GetOptions{})
+	if err != nil {
+		logrus.WithError(err).WithField("session_id", sessionID).
+			Warn("sandbox gRPC: failed to load session env; continuing with sandboxd defaults")
+		return nil
+	}
+	env, found, err := unstructured.NestedStringMap(u.Object, "spec", "env")
+	if err != nil {
+		logrus.WithError(err).WithField("session_id", sessionID).
+			Warn("sandbox gRPC: session env field unreadable; continuing with sandboxd defaults")
+		return nil
+	}
+	if !found || len(env) == 0 {
+		return nil
+	}
+	return env
 }
 
 func (s *Server) WriteFile(ctx context.Context, req *pb.WriteFileRequest) (*pb.WriteFileResponse, error) {

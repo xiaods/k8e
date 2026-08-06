@@ -38,6 +38,78 @@ test "jsonEscape: empty string" {
     try std.testing.expectEqualStrings("", out);
 }
 
+// --- buildEnvp tests ---
+
+test "buildEnvp: defaults only" {
+    const allocator = std.testing.allocator;
+    var env = try exec.buildEnvp(allocator, .{ .null = {} }, &.{});
+    defer env.deinit();
+    try std.testing.expect(env.entries.len >= 2);
+    var saw_path = false;
+    var saw_venv = false;
+    for (env.entries) |e| {
+        if (std.mem.startsWith(u8, e, "PATH=")) saw_path = true;
+        if (std.mem.startsWith(u8, e, "VIRTUAL_ENV=")) saw_venv = true;
+    }
+    try std.testing.expect(saw_path);
+    try std.testing.expect(saw_venv);
+}
+
+test "buildEnvp: user env merges and overrides" {
+    const allocator = std.testing.allocator;
+    var obj: std.json.ObjectMap = .empty;
+    defer obj.deinit(allocator);
+    try obj.put(allocator, "FOO", .{ .string = "bar" });
+    try obj.put(allocator, "PATH", .{ .string = "/custom/bin" });
+    var env = try exec.buildEnvp(allocator, .{ .object = obj }, &.{});
+    defer env.deinit();
+    var saw_foo = false;
+    var path_val: ?[]const u8 = null;
+    for (env.entries) |e| {
+        if (std.mem.eql(u8, e, "FOO=bar")) saw_foo = true;
+        if (std.mem.startsWith(u8, e, "PATH=")) path_val = e;
+    }
+    try std.testing.expect(saw_foo);
+    try std.testing.expectEqualStrings("PATH=/custom/bin", path_val.?);
+}
+
+test "buildEnvp: from parsed JSON body env field" {
+    const allocator = std.testing.allocator;
+    const body =
+        \\{"command":"true","env":{"FOO":"bar","BAZ":"qux"}}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{ .allocate = .alloc_always });
+    defer parsed.deinit();
+    const env_val: std.json.Value = parsed.value.object.get("env") orelse .null;
+    var env = try exec.buildEnvp(allocator, env_val, &.{});
+    defer env.deinit();
+    var saw_foo = false;
+    var saw_baz = false;
+    for (env.entries) |e| {
+        if (std.mem.eql(u8, e, "FOO=bar")) saw_foo = true;
+        if (std.mem.eql(u8, e, "BAZ=qux")) saw_baz = true;
+    }
+    try std.testing.expect(saw_foo);
+    try std.testing.expect(saw_baz);
+}
+
+test "buildEnvp: extra pairs forced for background" {
+    const allocator = std.testing.allocator;
+    var env = try exec.buildEnvp(allocator, .{ .null = {} }, &.{
+        .{ "K8E_BG_DIR", "/workspace/.k8e_bg/r1" },
+        .{ "K8E_BG_CMD", "sleep 1" },
+    });
+    defer env.deinit();
+    var saw_dir = false;
+    var saw_cmd = false;
+    for (env.entries) |e| {
+        if (std.mem.eql(u8, e, "K8E_BG_DIR=/workspace/.k8e_bg/r1")) saw_dir = true;
+        if (std.mem.eql(u8, e, "K8E_BG_CMD=sleep 1")) saw_cmd = true;
+    }
+    try std.testing.expect(saw_dir);
+    try std.testing.expect(saw_cmd);
+}
+
 // --- runCommand tests (exercises posix.waitpid path) ---
 
 test "runCommand: echo stdout" {
@@ -46,6 +118,17 @@ test "runCommand: echo stdout" {
     defer result.deinit(allocator);
     try std.testing.expectEqualStrings("hello\n", result.stdout);
     try std.testing.expectEqualStrings("", result.stderr);
+    try std.testing.expectEqual(@as(i32, 0), result.exit_code);
+}
+
+test "runCommandWithEnv: injects FOO" {
+    const allocator = std.testing.allocator;
+    var obj: std.json.ObjectMap = .empty;
+    defer obj.deinit(allocator);
+    try obj.put(allocator, "FOO", .{ .string = "bar" });
+    const result = try exec.runCommandWithEnv(allocator, "echo -n \"$FOO\"", "/tmp", .{ .object = obj });
+    defer result.deinit(allocator);
+    try std.testing.expectEqualStrings("bar", result.stdout);
     try std.testing.expectEqual(@as(i32, 0), result.exit_code);
 }
 

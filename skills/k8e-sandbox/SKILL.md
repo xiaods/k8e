@@ -89,7 +89,7 @@ chmod +x k8e-sandbox-cli-linux-amd64
 | `k8e-sandbox-cli login` | Authenticate and obtain mTLS cert (remote access) | `--apikey`, `--endpoint`, `--device-name` |
 | `k8e-sandbox-cli run <code>` | Execute code or shell command | `--lang python\|bash\|node\|ts`, `--session-id`, `--tenant`, `--timeout 30`, `--raw` |
 | `k8e-sandbox-cli status` | Check service + current session | — |
-| `k8e-sandbox-cli create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--manifest`, `--git-repo` |
+| `k8e-sandbox-cli create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--env KEY=VAL` (repeatable, non-sensitive), `--manifest`, `--git-repo` |
 | `k8e-sandbox-cli destroy <sid>` | Destroy session | — |
 | `k8e-sandbox-cli write <sid> <path>` | Write file to /workspace | content via stdin, `--mode w\|a` |
 | `k8e-sandbox-cli read <sid> <path>` | Read file from /workspace | `--raw` (plain text output) |
@@ -184,6 +184,18 @@ Same auto-session reused across both calls.
 2. k8e-sandbox-cli run "curl -s https://api.example.com/data" --session-id $SID
 3. k8e-sandbox-cli destroy $SID
 ```
+
+### Scenario 4b: Session env (non-sensitive)
+
+Env is stored on the session and applied at **every exec** (warm-pool safe — not baked into the pod).
+
+```
+1. SID=$(k8e-sandbox-cli create --env LOG_LEVEL=debug --env PYTHONPATH=/workspace/lib | jq -r .session_id)
+2. k8e-sandbox-cli run 'echo $LOG_LEVEL' --session-id $SID   # → debug
+3. k8e-sandbox-cli destroy $SID
+```
+
+⚠️ **Red line:** `--env` is for non-sensitive config only. Values are stored in plaintext on the SandboxSession CRD. Use secret-ref injection (issue #485) for API keys and tokens — never put secrets in `--env`.
 
 ### Scenario 5: Parallel sub-agents
 

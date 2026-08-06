@@ -17,7 +17,7 @@ const BG_WRAPPER = "trap 'rc=$?; printf %s \"$rc\" > \"$K8E_BG_DIR/exit_code\"' 
 /// POST /exec/background
 /// Body: {"command": "...", "run_id": "...", "timeout": 300, "workdir": "/workspace"}
 pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []const u8) !void {
-    const parsed = std.json.parseFromSlice(BgSubmitRequest, allocator, body, .{ .ignore_unknown_fields = true }) catch {
+    const parsed = std.json.parseFromSlice(BgSubmitRequest, allocator, body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch {
         try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid json\"}");
         return;
     };
@@ -48,17 +48,13 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
         }
     }
 
-    // Build argv/envp in the parent so the post-fork child can execve without allocating.
-    const dir_env = try std.fmt.allocPrintSentinel(allocator, "K8E_BG_DIR={s}", .{run_dir}, 0);
-    defer allocator.free(dir_env);
-    const cmd_env = try std.fmt.allocPrintSentinel(allocator, "K8E_BG_CMD={s}", .{req.command}, 0);
-    defer allocator.free(cmd_env);
-
-    // Explicit env: a sane PATH (covers python:/usr/local/bin and node) plus the
-    // run dir and command the wrapper reads. K8E_BG_CMD/K8E_BG_DIR carry the user
-    // command and target dir so they need no shell quoting in BG_WRAPPER.
-    const path_env: [*:0]const u8 = "PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-    const envp = [3:null]?[*:0]const u8{ path_env, dir_env.ptr, cmd_env.ptr };
+    // Build envp in the parent so the post-fork child can execve without allocating.
+    // Defaults (PATH/VIRTUAL_ENV) + session env + K8E_BG_* for the wrapper.
+    var env_build = try exec.buildEnvp(allocator, req.env, &.{
+        .{ "K8E_BG_DIR", run_dir },
+        .{ "K8E_BG_CMD", req.command },
+    });
+    defer env_build.deinit();
 
     const wrapper_z: [*:0]const u8 = BG_WRAPPER;
     const argv = [3:null]?[*:0]const u8{ "/bin/sh".ptr, "-c".ptr, wrapper_z };
@@ -93,7 +89,7 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
             _ = std.os.linux.close(@intCast(pid_fd));
         }
 
-        _ = std.os.linux.execve("/bin/sh", &argv, &envp);
+        _ = std.os.linux.execve("/bin/sh", &argv, env_build.envpPtr());
         std.os.linux.exit(1);
     }
 
@@ -168,6 +164,8 @@ const BgSubmitRequest = struct {
     run_id: []const u8 = "",
     timeout: u32 = 0,
     workdir: []const u8 = "/workspace",
+    // Optional object of string->string; applied at exec time with K8E_BG_* extras.
+    env: std.json.Value = .{ .null = {} },
 };
 
 // readFileZ reads up to max bytes from a null-terminated path via raw syscalls,

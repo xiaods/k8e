@@ -88,7 +88,7 @@ export K8E_SANDBOX_APIKEY=k8e-abc123...
 |---------|---------|-----------|
 | `k8e-sandbox-cli run <code>` | Execute code or shell command | `--lang python\|bash\|node\|ts`, `--session-id`, `--tenant`, `--timeout 30`, `--raw` |
 | `k8e-sandbox-cli status` | Check service + current session | — |
-| `k8e-sandbox-cli create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--manifest`, `--git-repo` |
+| `k8e-sandbox-cli create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--env KEY=VAL` (repeatable, non-sensitive), `--manifest`, `--git-repo` |
 | `k8e-sandbox-cli destroy <sid>` | Destroy session | — |
 | `k8e-sandbox-cli write <sid> <path>` | Write file to /workspace | content via stdin, `--mode w\|a` |
 | `k8e-sandbox-cli read <sid> <path>` | Read file from /workspace | `--raw` (plain text output) |

@@ -269,6 +269,9 @@ func (o *Orchestrator) getMatrixConfig(ctx context.Context) (allowedHosts []stri
 }
 
 func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateSessionRequest, ttl int, matrixDefaultHosts []string, matrixCPU, matrixMemory string) (*sandboxv1.SandboxSession, error) {
+	if err := validateSessionEnv(req.Env); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "env: %v", err)
+	}
 	sessionID := req.SessionId
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
@@ -292,6 +295,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 			AllowedHosts: allowedHosts,
 			RuntimeClass: runtimeClass,
 			Depth:        0,
+			Env:          req.Env,
 		},
 	}
 	if err := o.createSession(ctx, session); err != nil {
@@ -452,6 +456,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 			RuntimeClass:    parent.Spec.RuntimeClass,
 			ParentSessionID: req.ParentSessionId,
 			Depth:           parent.Spec.Depth + 1,
+			Env:             parent.Spec.Env,
 		},
 	}
 	if err := o.createSession(ctx, child); err != nil {
@@ -552,16 +557,15 @@ func (o *Orchestrator) StartApprovalGC(ctx context.Context) {
 }
 
 // ExecBackground submits a background command to the sandboxd and registers the run_id.
-func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command string, timeout int32, workdir string) (string, error) {
+// env is the session's non-sensitive environment map (applied at exec time).
+func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command string, timeout int32, workdir string, env map[string]string) (string, error) {
 	podIP, err := o.getPodIPBySession(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
 
 	runID := fmt.Sprintf("%s-bg-%d", sessionID, time.Now().UnixNano())
-	body, _ := json.Marshal(map[string]any{
-		"command": command, "run_id": runID, "timeout": timeout, "workdir": workdir,
-	})
+	body, _ := json.Marshal(sandboxdBackgroundBody(command, runID, timeout, workdir, env))
 
 	url := fmt.Sprintf("http://%s:%d/exec/background", podIP, 2024)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))

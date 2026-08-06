@@ -2,10 +2,15 @@ const std = @import("std");
 const main = @import("main.zig");
 const venv = @import("venv.zig");
 
+const default_path_value = "/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const default_venv_value = "/workspace/.venv";
+
 const ExecRequest = struct {
     command: []const u8 = "",
     timeout: u32 = 30,
     workdir: []const u8 = "/workspace",
+    // Optional object of string->string; absent/null means defaults only.
+    env: std.json.Value = .{ .null = {} },
 };
 
 pub const ExecResult = struct {
@@ -19,15 +24,95 @@ pub const ExecResult = struct {
     }
 };
 
+/// Owned envp for execve: null-terminated pointer list + owned KEY=VAL strings.
+pub const EnvBuild = struct {
+    allocator: std.mem.Allocator,
+    /// Pointers for execve; last entry is null. Length is entry_count+1.
+    ptrs: []?[*:0]const u8,
+    entries: [][:0]u8,
+
+    pub fn deinit(self: *EnvBuild) void {
+        for (self.entries) |e| self.allocator.free(e);
+        self.allocator.free(self.entries);
+        self.allocator.free(self.ptrs);
+        self.* = undefined;
+    }
+
+    pub fn envpPtr(self: *const EnvBuild) [*:null]?[*:0]const u8 {
+        return @ptrCast(self.ptrs.ptr);
+    }
+};
+
+/// buildEnvp merges sandbox defaults (PATH, VIRTUAL_ENV) with optional user env.
+/// User keys override defaults. extra_pairs are forced last (e.g. K8E_BG_* for background).
+pub fn buildEnvp(
+    allocator: std.mem.Allocator,
+    user_env: std.json.Value,
+    extra_pairs: []const struct { []const u8, []const u8 },
+) !EnvBuild {
+    var map = std.StringHashMap([]const u8).init(allocator);
+    defer map.deinit();
+
+    try map.put("PATH", default_path_value);
+    try map.put("VIRTUAL_ENV", default_venv_value);
+
+    if (user_env == .object) {
+        var it = user_env.object.iterator();
+        while (it.next()) |entry| {
+            if (entry.key_ptr.*.len == 0) continue;
+            if (entry.value_ptr.* != .string) continue;
+            try map.put(entry.key_ptr.*, entry.value_ptr.*.string);
+        }
+    }
+
+    for (extra_pairs) |pair| {
+        try map.put(pair[0], pair[1]);
+    }
+
+    const n = map.count();
+    var entries = try allocator.alloc([:0]u8, n);
+    var filled: usize = 0;
+    errdefer {
+        for (entries[0..filled]) |e| allocator.free(e);
+        allocator.free(entries);
+    }
+    var ptrs = try allocator.alloc(?[*:0]const u8, n + 1);
+    errdefer allocator.free(ptrs);
+
+    var i: usize = 0;
+    var mit = map.iterator();
+    while (mit.next()) |e| : (i += 1) {
+        const kv = try std.fmt.allocPrintSentinel(allocator, "{s}={s}", .{ e.key_ptr.*, e.value_ptr.* }, 0);
+        entries[i] = kv;
+        ptrs[i] = kv.ptr;
+        filled = i + 1;
+    }
+    ptrs[n] = null;
+
+    return EnvBuild{
+        .allocator = allocator,
+        .ptrs = ptrs,
+        .entries = entries,
+    };
+}
+
 /// runCommand spawns /bin/sh -c <command> in workdir and returns stdout/stderr.
-/// Uses raw fork/exec with pipe-based I/O.
+/// Uses raw fork/exec with pipe-based I/O. user_env is a JSON value (object or null).
 pub fn runCommand(allocator: std.mem.Allocator, command: []const u8, workdir: []const u8) !ExecResult {
+    return runCommandWithEnv(allocator, command, workdir, .{ .null = {} });
+}
+
+pub fn runCommandWithEnv(allocator: std.mem.Allocator, command: []const u8, workdir: []const u8, user_env: std.json.Value) !ExecResult {
     // Null-terminate command for execve (child has no allocator)
     var cmd_buf: [65536]u8 = undefined;
     if (command.len >= cmd_buf.len) return error.CommandTooLong;
     @memcpy(cmd_buf[0..command.len], command);
     cmd_buf[command.len] = 0;
     const cmd_z: [*:0]const u8 = @ptrCast(&cmd_buf);
+
+    var env_build = try buildEnvp(allocator, user_env, &.{});
+    defer env_build.deinit();
+
     var stdout_pipe: [2]i32 = undefined;
     var stderr_pipe: [2]i32 = undefined;
     if (std.os.linux.pipe2(&stdout_pipe, std.os.linux.O{ .CLOEXEC = true }) < 0) {
@@ -56,17 +141,13 @@ pub fn runCommand(allocator: std.mem.Allocator, command: []const u8, workdir: []
         const cwd_z = std.fmt.bufPrintZ(&cwd_buf, "{s}", .{workdir}) catch return error.PathTooLong;
         _ = std.os.linux.chdir(cwd_z);
 
-        // Exec /bin/sh with venv in PATH so pip installs go to /workspace/.venv
+        // Exec /bin/sh with merged env (defaults + session env)
         const argv: [3:null]?[*:0]const u8 = .{
             "/bin/sh".ptr,
             "-c".ptr,
             cmd_z,
         };
-        const envp = [2:null]?[*:0]const u8{
-            "PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-            "VIRTUAL_ENV=/workspace/.venv",
-        };
-        _ = std.os.linux.execve("/bin/sh", &argv, &envp);
+        _ = std.os.linux.execve("/bin/sh", &argv, env_build.envpPtr());
         // If execve returns, it's an error
         std.os.linux.exit(1);
     }
@@ -144,7 +225,7 @@ fn spawnTimeoutKiller(pid: std.os.linux.pid_t, timeout_sec: u32) void {
 }
 
 pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8, streaming: bool) !void {
-    const parsed = std.json.parseFromSlice(ExecRequest, allocator, body, .{ .ignore_unknown_fields = true }) catch {
+    const parsed = std.json.parseFromSlice(ExecRequest, allocator, body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch {
         try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid json\"}");
         return;
     };
@@ -170,6 +251,12 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         cmd_buf[req.command.len] = 0;
         const cmd_z: [*:0]const u8 = @ptrCast(&cmd_buf);
 
+        var env_build = buildEnvp(allocator, req.env, &.{}) catch {
+            try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", "{\"error\":\"env build failed\"}");
+            return;
+        };
+        defer env_build.deinit();
+
         // Fork /bin/sh -c <command> with stdout piped
         var stdout_pipe: [2]i32 = undefined;
         if (std.os.linux.pipe2(&stdout_pipe, std.os.linux.O{ .CLOEXEC = true }) < 0) {
@@ -190,11 +277,7 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
             _ = std.os.linux.chdir(cwd_z);
 
             const argv: [3:null]?[*:0]const u8 = .{ "/bin/sh".ptr, "-c".ptr, cmd_z };
-            const envp = [2:null]?[*:0]const u8{
-                "PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-                "VIRTUAL_ENV=/workspace/.venv",
-            };
-            _ = std.os.linux.execve("/bin/sh", &argv, &envp);
+            _ = std.os.linux.execve("/bin/sh", &argv, env_build.envpPtr());
             std.os.linux.exit(1);
         }
 
@@ -242,7 +325,7 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         return;
     }
 
-    const result = runCommand(allocator, req.command, req.workdir) catch |err| {
+    const result = runCommandWithEnv(allocator, req.command, req.workdir, req.env) catch |err| {
         const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"{s}\"}}", .{@errorName(err)});
         defer allocator.free(msg);
         try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", msg);

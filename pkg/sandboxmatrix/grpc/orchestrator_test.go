@@ -355,6 +355,28 @@ func TestCreateSession_AllowedHosts(t *testing.T) {
 	}
 }
 
+func TestCreateSession_Env(t *testing.T) {
+	o := newTestOrchestrator()
+	sess, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{
+		SessionId: "env-test",
+		Env:       map[string]string{"FOO": "bar", "BAZ": "qux"},
+	})
+	if err != nil {
+		t.Fatalf(msgUnexpected, err)
+	}
+	if sess.Spec.Env["FOO"] != "bar" || sess.Spec.Env["BAZ"] != "qux" {
+		t.Fatalf("unexpected env: %v", sess.Spec.Env)
+	}
+	// Round-trip through getSession (unstructured conversion) must preserve env.
+	got, err := o.getSession(context.Background(), "env-test")
+	if err != nil {
+		t.Fatalf("getSession: %v", err)
+	}
+	if got.Spec.Env["FOO"] != "bar" || got.Spec.Env["BAZ"] != "qux" {
+		t.Fatalf("env lost on getSession round-trip: %v", got.Spec.Env)
+	}
+}
+
 func TestCreateSession_ExpiresAt_WithTTL(t *testing.T) {
 	o := newTestOrchestrator()
 	// seed a SandboxMatrix with sessionTTL=3600
