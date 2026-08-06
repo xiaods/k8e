@@ -6,6 +6,8 @@ user-invocable: true
 
 # K8E Sandbox
 
+**What this is:** a **vendor-neutral sandbox tool service** for AI agents. Any harness (Claude Code, Codex, Cursor, custom agents) calls the same CLI/gRPC contract to run untrusted code in isolation. K8E does **not** own the model loop, tool selection, or memory — it only executes.
+
 All code execution goes through `k8e-sandbox-cli` — never run code directly on the host. Each session is a gVisor/Kata/Firecracker-isolated pod with kernel-level egress enforcement. Mistakes can't damage the host.
 
 **Trigger keywords (English):** "run this", "execute", "test it", "install X", "check if this works", "analyze this data"
