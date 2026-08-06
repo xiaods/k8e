@@ -251,7 +251,9 @@ func runAction(ctx *cli.Context) error {
 	}
 
 	cmd := buildCommand(lang, code)
-	req := &pb.ExecRequest{SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace"}
+	req := &pb.ExecRequest{
+		SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace", Language: lang,
+	}
 	return runExec(cli, ctx, req, sid, needsFinalize, raw)
 }
 
@@ -322,7 +324,16 @@ func runJSON(client *client.Client, req *pb.ExecRequest, sid string, needsFinali
 	if needsFinalize {
 		_ = finalizeState(tenant, sid)
 	}
-	printJSON(map[string]any{"stdout": resp.Stdout, "stderr": resp.Stderr, "exit_code": resp.ExitCode, "session_id": sid})
+	printJSON(map[string]any{
+		"stdout":      resp.Stdout,
+		"stderr":      resp.Stderr,
+		"exit_code":   resp.ExitCode,
+		"session_id":  sid,
+		"status":      resp.Status,
+		"duration_ms": resp.DurationMs,
+		"truncated":   resp.Truncated,
+		"language":    resp.Language,
+	})
 	return nil
 }
 
@@ -378,6 +389,7 @@ func CreateCommand() cli.Command {
 			cli.StringFlag{Name: "allowed-hosts", Usage: "Comma-separated FQDN egress allowlist"},
 			cli.StringFlag{Name: "session-id", Usage: "Custom session ID"},
 			cli.StringSliceFlag{Name: "env", Usage: "Non-sensitive env KEY=VAL (repeatable); applied at exec time"},
+			cli.StringSliceFlag{Name: "secret", Usage: "Secret ref ENV_VAR=secretName:key (repeatable); resolved at exec time"},
 			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest YAML file"},
 			cli.StringFlag{Name: "git-repo", Usage: "Git repository URL to clone (shortcut)"},
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
@@ -399,6 +411,10 @@ func CreateCommand() cli.Command {
 			if envErr != nil {
 				return printErrorExit(envErr.Error(), 1)
 			}
+			secretRefs, secErr := parseSecretFlags(ctx.StringSlice("secret"))
+			if secErr != nil {
+				return printErrorExit(secErr.Error(), 1)
+			}
 
 			resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
 				SessionId:    ctx.String("session-id"),
@@ -406,6 +422,7 @@ func CreateCommand() cli.Command {
 				RuntimeClass: ctx.String("runtime"),
 				AllowedHosts: hosts,
 				Env:          env,
+				SecretRefs:   secretRefs,
 			})
 			if err != nil {
 				return printErrorExit("create session: "+err.Error(), 2)
@@ -456,6 +473,96 @@ func parseEnvFlags(items []string) (map[string]string, error) {
 		out[k] = v
 	}
 	return out, nil
+}
+
+// parseSecretFlags converts --secret ENV_VAR=secretName:key into SecretRef messages.
+func parseSecretFlags(items []string) ([]*pb.SecretRef, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	out := make([]*pb.SecretRef, 0, len(items))
+	for _, item := range items {
+		envVar, rest, ok := strings.Cut(item, "=")
+		if !ok || envVar == "" {
+			return nil, fmt.Errorf("invalid --secret %q, expected ENV_VAR=secretName:key", item)
+		}
+		secretName, key, ok := strings.Cut(rest, ":")
+		if !ok || secretName == "" || key == "" {
+			return nil, fmt.Errorf("invalid --secret %q, expected ENV_VAR=secretName:key", item)
+		}
+		out = append(out, &pb.SecretRef{EnvVar: envVar, SecretName: secretName, Key: key})
+	}
+	return out, nil
+}
+
+// GetCommand fetches a single session from the gateway.
+func GetCommand() cli.Command {
+	return cli.Command{
+		Name:      "get",
+		Usage:     "Get sandbox session details (phase, runtime, env keys — never secret values)",
+		ArgsUsage: "<session-id>",
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().First()
+			if sid == "" {
+				return printErrorExit("session-id required", 1)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+			resp, err := client.SandboxServiceClient.GetSession(context.Background(), &pb.GetSessionRequest{SessionId: sid})
+			if err != nil {
+				return printErrorExit("get session: "+err.Error(), 2)
+			}
+			printJSON(sessionViewJSON(resp))
+			return nil
+		},
+	}
+}
+
+// SessionsCommand lists sessions visible to the gateway.
+func SessionsCommand() cli.Command {
+	return cli.Command{
+		Name:  "sessions",
+		Usage: "List sandbox sessions (default: Active only)",
+		Flags: []cli.Flag{
+			cli.StringFlag{Name: "phase", Value: "Active", Usage: "Filter phase, or 'all'"},
+		},
+		Action: func(ctx *cli.Context) error {
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+			resp, err := client.SandboxServiceClient.ListSessions(context.Background(), &pb.ListSessionsRequest{
+				Phase: ctx.String("phase"),
+			})
+			if err != nil {
+				return printErrorExit("list sessions: "+err.Error(), 2)
+			}
+			list := make([]any, 0, len(resp.Sessions))
+			for _, s := range resp.Sessions {
+				list = append(list, sessionViewJSON(s))
+			}
+			printJSON(map[string]any{"sessions": list})
+			return nil
+		},
+	}
+}
+
+func sessionViewJSON(s *pb.GetSessionResponse) map[string]any {
+	return map[string]any{
+		"session_id":       s.SessionId,
+		"phase":            s.Phase,
+		"runtime_class":    s.RuntimeClass,
+		"pod_ip":           s.PodIp,
+		"tenant_id":        s.TenantId,
+		"expires_at":       s.ExpiresAt,
+		"env_keys":         s.EnvKeys,
+		"secret_env_vars":  s.SecretEnvVars,
+		"background_runs":  s.BackgroundRuns,
+	}
 }
 
 // resolveManifest builds a Manifest from --manifest, --git-repo flags, or returns nil.
@@ -999,11 +1106,13 @@ func PollCommand() cli.Command {
 				return printErrorExit("poll: "+err.Error(), 1)
 			}
 			printJSON(map[string]any{
-				"run_id":    resp.RunId,
-				"status":    resp.Status,
-				"stdout":    resp.Stdout,
-				"stderr":    resp.Stderr,
-				"exit_code": resp.ExitCode,
+				"run_id":      resp.RunId,
+				"status":      resp.Status,
+				"stdout":      resp.Stdout,
+				"stderr":      resp.Stderr,
+				"exit_code":   resp.ExitCode,
+				"duration_ms": resp.DurationMs,
+				"truncated":   resp.Truncated,
 			})
 			return nil
 		},

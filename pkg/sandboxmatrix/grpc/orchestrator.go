@@ -287,6 +287,9 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	if len(allowedHosts) == 0 && len(matrixDefaultHosts) > 0 {
 		allowedHosts = matrixDefaultHosts
 	}
+	if err := validateSecretRefs(req.SecretRefs); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "secret_refs: %v", err)
+	}
 	session := &sandboxv1.SandboxSession{
 		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
 		ObjectMeta: metav1.ObjectMeta{Name: sessionID, Namespace: sandboxNS},
@@ -296,6 +299,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 			RuntimeClass: runtimeClass,
 			Depth:        0,
 			Env:          req.Env,
+			SecretRefs:   pbSecretRefsToAPI(req.SecretRefs),
 		},
 	}
 	if err := o.createSession(ctx, session); err != nil {
@@ -413,18 +417,44 @@ func (o *Orchestrator) releasePod(ctx context.Context, podName string) {
 
 // ListActiveSessions returns all Active SandboxSessions in the given namespace.
 func (o *Orchestrator) ListActiveSessions(ctx context.Context, namespace string) ([]*sandboxv1.SandboxSession, error) {
+	return o.listSessions(ctx, namespace, string(sandboxv1.SandboxPhaseActive))
+}
+
+// listSessions returns sessions in namespace filtered by phase.
+// phase empty or "Active" → Active only; "all" → every phase.
+func (o *Orchestrator) listSessions(ctx context.Context, namespace, phase string) ([]*sandboxv1.SandboxSession, error) {
 	list, err := o.dynamic.Resource(sessionGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
+	wantAll := phase == "all"
+	if phase == "" {
+		phase = string(sandboxv1.SandboxPhaseActive)
+	}
 	var result []*sandboxv1.SandboxSession
 	for i := range list.Items {
 		s, err := unstructuredToSession(&list.Items[i])
-		if err == nil && s.Status.Phase == sandboxv1.SandboxPhaseActive {
+		if err != nil {
+			continue
+		}
+		if wantAll || string(s.Status.Phase) == phase {
 			result = append(result, s)
 		}
 	}
 	return result, nil
+}
+
+// countBackgroundRuns returns how many run_registry entries point at sessionID.
+func (o *Orchestrator) countBackgroundRuns(sessionID string) int32 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var n int32
+	for _, sid := range o.runRegistry {
+		if sid == sessionID {
+			n++
+		}
+	}
+	return n
 }
 
 func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentRequest) (*pb.RunSubAgentResponse, error) {
@@ -457,6 +487,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 			ParentSessionID: req.ParentSessionId,
 			Depth:           parent.Spec.Depth + 1,
 			Env:             parent.Spec.Env,
+			SecretRefs:      append([]sandboxv1.SecretRef(nil), parent.Spec.SecretRefs...),
 		},
 	}
 	if err := o.createSession(ctx, child); err != nil {

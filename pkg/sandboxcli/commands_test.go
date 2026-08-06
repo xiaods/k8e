@@ -28,6 +28,22 @@ func TestParseEnvFlags(t *testing.T) {
 	}
 }
 
+func TestParseSecretFlags(t *testing.T) {
+	got, err := parseSecretFlags([]string{"API_KEY=llm-secret:token", "DB=db-sec:password"})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if len(got) != 2 || got[0].EnvVar != "API_KEY" || got[0].SecretName != "llm-secret" || got[0].Key != "token" {
+		t.Fatalf("got %+v", got)
+	}
+	if _, err := parseSecretFlags([]string{"BAD"}); err == nil {
+		t.Fatal("expected error")
+	}
+	if _, err := parseSecretFlags([]string{"X=noseparator"}); err == nil {
+		t.Fatal("expected error for missing colon")
+	}
+}
+
 func TestIsSessionExpired_grpcNotFound(t *testing.T) {
 	err := status.Error(codes.NotFound, "session sess-abc not found")
 	if !isSessionExpired(err) {

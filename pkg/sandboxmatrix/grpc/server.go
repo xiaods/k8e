@@ -293,6 +293,9 @@ func (s *Server) CreateSession(ctx context.Context, req *pb.CreateSessionRequest
 	if err := validateSessionEnv(req.Env); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "env: %v", err)
 	}
+	if err := validateSecretRefs(req.SecretRefs); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "secret_refs: %v", err)
+	}
 	if err := s.orch.CheckCapacity(ctx); err != nil {
 		return nil, err
 	}
@@ -301,6 +304,33 @@ func (s *Server) CreateSession(ctx context.Context, req *pb.CreateSessionRequest
 		return nil, status.Errorf(codes.Internal, "create session: %v", err)
 	}
 	return &pb.CreateSessionResponse{SessionId: session.Name, PodIp: session.Status.PodIP}, nil
+}
+
+func (s *Server) GetSession(ctx context.Context, req *pb.GetSessionRequest) (*pb.GetSessionResponse, error) {
+	if req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id required")
+	}
+	sess, err := s.orch.getSession(ctx, req.SessionId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "session %s not found", req.SessionId)
+	}
+	return sessionToProtoView(sess, s.orch.countBackgroundRuns(req.SessionId)), nil
+}
+
+func (s *Server) ListSessions(ctx context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
+	phase := req.Phase
+	if phase == "" {
+		phase = string(sandboxv1.SandboxPhaseActive)
+	}
+	sessions, err := s.orch.listSessions(ctx, sandboxNS, phase)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list sessions: %v", err)
+	}
+	out := make([]*pb.GetSessionResponse, 0, len(sessions))
+	for _, sess := range sessions {
+		out = append(out, sessionToProtoView(sess, s.orch.countBackgroundRuns(sess.Name)))
+	}
+	return &pb.ListSessionsResponse{Sessions: out}, nil
 }
 
 func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionRequest) (*pb.DestroySessionResponse, error) {
@@ -313,12 +343,17 @@ func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionReque
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
 	// Background mode: submit async, return run_id immediately
 	if req.Background {
-		env := s.getSessionEnv(ctx, req.SessionId)
+		env, envErr := s.resolveSessionEnv(ctx, req.SessionId)
+		if envErr != nil {
+			return nil, envErr
+		}
 		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir, env)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "background submit: %v", err)
 		}
-		return &pb.ExecResponse{RunId: runID, Status: "started", SessionId: req.SessionId}, nil
+		return &pb.ExecResponse{
+			RunId: runID, Status: execStatusStarted, SessionId: req.SessionId, Language: req.Language,
+		}, nil
 	}
 
 	podIP, err := s.getPodIP(ctx, req.SessionId)
@@ -334,24 +369,48 @@ func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecRespons
 		workdir = "/workspace"
 	}
 
-	env := s.getSessionEnv(ctx, req.SessionId)
+	env, envErr := s.resolveSessionEnv(ctx, req.SessionId)
+	if envErr != nil {
+		return nil, envErr
+	}
 	body := sandboxdExecBody(req.Command, timeout, workdir, env)
+	start := time.Now()
 	httpCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout+5)*time.Second)
 	defer cancel()
 
 	resp, err := sandboxdPost(httpCtx, podIP, "/exec", body)
+	elapsed := time.Since(start).Milliseconds()
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd exec: %v", err)
 	}
 	defer resp.Body.Close()
 
 	var result struct {
-		Stdout   string `json:"stdout"`
-		Stderr   string `json:"stderr"`
-		ExitCode int32  `json:"exit_code"`
+		Stdout     string `json:"stdout"`
+		Stderr     string `json:"stderr"`
+		ExitCode   int32  `json:"exit_code"`
+		DurationMs int64  `json:"duration_ms"`
+		Truncated  bool   `json:"truncated"`
+		TimedOut   bool   `json:"timed_out"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return &pb.ExecResponse{Stdout: result.Stdout, Stderr: result.Stderr, ExitCode: result.ExitCode}, nil
+	duration := result.DurationMs
+	if duration <= 0 {
+		duration = elapsed
+	}
+	// Prefer sandboxd truncation flag; also mark if streams hit gateway-side cap observation.
+	truncated := result.Truncated || len(result.Stdout) >= maxExecOutputBytes || len(result.Stderr) >= maxExecOutputBytes
+	timedOut := result.TimedOut || (timeout > 0 && duration >= int64(timeout)*1000 && result.ExitCode != 0)
+	return &pb.ExecResponse{
+		Stdout:     result.Stdout,
+		Stderr:     result.Stderr,
+		ExitCode:   result.ExitCode,
+		SessionId:  req.SessionId,
+		Status:     classifyExecStatus(timedOut, false),
+		DurationMs: duration,
+		Truncated:  truncated,
+		Language:   req.Language,
+	}, nil
 }
 
 func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecStreamServer) error {
@@ -367,7 +426,10 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 	if workdir == "" {
 		workdir = "/workspace"
 	}
-	env := s.getSessionEnv(stream.Context(), req.SessionId)
+	env, envErr := s.resolveSessionEnv(stream.Context(), req.SessionId)
+	if envErr != nil {
+		return envErr
+	}
 	body := sandboxdExecBody(req.Command, timeout, workdir, env)
 	httpCtx, cancel := context.WithTimeout(stream.Context(), time.Duration(timeout+5)*time.Second)
 	defer cancel()
@@ -395,26 +457,58 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 	}
 }
 
-// getSessionEnv returns the non-sensitive env map stored on the SandboxSession CR.
-// Returns nil when absent. On lookup failure it logs a warning and returns nil so
-// exec still proceeds with sandboxd defaults (P1-1: no longer a silent drop).
+// resolveSessionEnv loads non-sensitive env and resolves secret_refs from K8s Secrets.
+// Secret resolution failures return a gRPC error (fail closed for secrets).
+func (s *Server) resolveSessionEnv(ctx context.Context, sessionID string) (map[string]string, error) {
+	sess, err := s.orch.getSession(ctx, sessionID)
+	if err != nil {
+		logrus.WithError(err).WithField("session_id", sessionID).
+			Warn("sandbox gRPC: failed to load session for env; continuing with sandboxd defaults")
+		return nil, nil
+	}
+	var out map[string]string
+	if len(sess.Spec.Env) > 0 {
+		out = make(map[string]string, len(sess.Spec.Env)+len(sess.Spec.SecretRefs))
+		for k, v := range sess.Spec.Env {
+			out[k] = v
+		}
+	}
+	if len(sess.Spec.SecretRefs) == 0 {
+		return out, nil
+	}
+	if out == nil {
+		out = make(map[string]string, len(sess.Spec.SecretRefs))
+	}
+	for _, ref := range sess.Spec.SecretRefs {
+		val, rerr := s.readSecretKey(ctx, ref.SecretName, ref.Key)
+		if rerr != nil {
+			return nil, status.Errorf(codes.FailedPrecondition,
+				"secret_ref %s/%s for env %s: %v", ref.SecretName, ref.Key, ref.EnvVar, rerr)
+		}
+		out[ref.EnvVar] = val
+	}
+	return out, nil
+}
+
+// getSessionEnv is a best-effort non-secret env load (tests / legacy helpers).
 func (s *Server) getSessionEnv(ctx context.Context, sessionID string) map[string]string {
-	u, err := s.dyn.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessionID, metav1.GetOptions{})
+	env, err := s.resolveSessionEnv(ctx, sessionID)
 	if err != nil {
-		logrus.WithError(err).WithField("session_id", sessionID).
-			Warn("sandbox gRPC: failed to load session env; continuing with sandboxd defaults")
-		return nil
-	}
-	env, found, err := unstructured.NestedStringMap(u.Object, "spec", "env")
-	if err != nil {
-		logrus.WithError(err).WithField("session_id", sessionID).
-			Warn("sandbox gRPC: session env field unreadable; continuing with sandboxd defaults")
-		return nil
-	}
-	if !found || len(env) == 0 {
 		return nil
 	}
 	return env
+}
+
+func (s *Server) readSecretKey(ctx context.Context, secretName, key string) (string, error) {
+	sec, err := s.k8s.CoreV1().Secrets(sandboxNS).Get(ctx, secretName, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	raw, ok := sec.Data[key]
+	if !ok {
+		return "", fmt.Errorf("key %q not found in secret %q", key, secretName)
+	}
+	return string(raw), nil
 }
 
 func (s *Server) WriteFile(ctx context.Context, req *pb.WriteFileRequest) (*pb.WriteFileResponse, error) {
