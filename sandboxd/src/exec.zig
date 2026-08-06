@@ -13,10 +13,16 @@ const ExecRequest = struct {
     env: std.json.Value = .{ .null = {} },
 };
 
+// max_stdout_bytes / max_stderr_bytes: capture caps (~1 MiB agent-facing policy).
+const max_stdout_bytes: usize = 1 * 1024 * 1024;
+const max_stderr_bytes: usize = 1 * 1024 * 1024;
+
 pub const ExecResult = struct {
     stdout: []u8,
     stderr: []u8,
     exit_code: i32,
+    duration_ms: i64 = 0,
+    truncated: bool = false,
 
     pub fn deinit(self: ExecResult, allocator: std.mem.Allocator) void {
         allocator.free(self.stdout);
@@ -124,6 +130,9 @@ pub fn runCommandWithEnv(allocator: std.mem.Allocator, command: []const u8, work
         return error.PipeFailed;
     }
 
+    var ts_start: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts_start);
+
     const pid = std.os.linux.fork();
     if (pid == 0) {
         // Child process
@@ -156,9 +165,11 @@ pub fn runCommandWithEnv(allocator: std.mem.Allocator, command: []const u8, work
     _ = std.os.linux.close(stdout_pipe[1]); // close write end
     _ = std.os.linux.close(stderr_pipe[1]); // close write end
 
-    const stdout = readAllFromFd(allocator, stdout_pipe[0], 10 * 1024 * 1024) catch
+    var stdout_trunc = false;
+    var stderr_trunc = false;
+    const stdout = readAllFromFdTrunc(allocator, stdout_pipe[0], max_stdout_bytes, &stdout_trunc) catch
         allocator.dupe(u8, "") catch @panic("oom");
-    const stderr = readAllFromFd(allocator, stderr_pipe[0], 1 * 1024 * 1024) catch
+    const stderr = readAllFromFdTrunc(allocator, stderr_pipe[0], max_stderr_bytes, &stderr_trunc) catch
         allocator.dupe(u8, "") catch @panic("oom");
 
     _ = std.os.linux.close(stdout_pipe[0]);
@@ -180,10 +191,31 @@ pub fn runCommandWithEnv(allocator: std.mem.Allocator, command: []const u8, work
         break :blk 0;
     };
 
-    return ExecResult{ .stdout = stdout, .stderr = stderr, .exit_code = exit_code };
+    var ts_end: std.os.linux.timespec = undefined;
+    _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts_end);
+    const duration_ms: i64 = blk: {
+        const sec = ts_end.sec - ts_start.sec;
+        const nsec = ts_end.nsec - ts_start.nsec;
+        break :blk @as(i64, @intCast(sec)) * 1000 + @divTrunc(@as(i64, @intCast(nsec)), 1_000_000);
+    };
+
+    return ExecResult{
+        .stdout = stdout,
+        .stderr = stderr,
+        .exit_code = exit_code,
+        .duration_ms = if (duration_ms < 0) 0 else duration_ms,
+        .truncated = stdout_trunc or stderr_trunc,
+    };
 }
 
 pub fn readAllFromFd(allocator: std.mem.Allocator, fd: i32, max_bytes: usize) ![]u8 {
+    var trunc = false;
+    return readAllFromFdTrunc(allocator, fd, max_bytes, &trunc);
+}
+
+/// readAllFromFdTrunc reads up to max_bytes; sets *truncated when more data was available.
+pub fn readAllFromFdTrunc(allocator: std.mem.Allocator, fd: i32, max_bytes: usize, truncated: *bool) ![]u8 {
+    truncated.* = false;
     var buf = try allocator.alloc(u8, max_bytes);
     errdefer allocator.free(buf);
     var total: usize = 0;
@@ -197,6 +229,15 @@ pub fn readAllFromFd(allocator: std.mem.Allocator, fd: i32, max_bytes: usize) ![
         if (n == 0) break;
         @memcpy(buf[total..][0..@as(usize, @intCast(n))], tmp[0..@as(usize, @intCast(n))]);
         total += @as(usize, @intCast(n));
+    }
+    if (total >= max_bytes) {
+        // Drain remainder so the writer does not block; mark truncated.
+        var drain: [4096]u8 = undefined;
+        while (true) {
+            const n = std.os.linux.read(fd, &drain, drain.len);
+            if (n <= 0) break;
+            truncated.* = true;
+        }
     }
     // Shrink to exact size so DebugAllocator canary check passes
     if (allocator.resize(buf, total)) {
@@ -338,9 +379,10 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
     const stderr_json = try jsonEscape(allocator, result.stderr);
     defer allocator.free(stderr_json);
 
+    const trunc_lit: []const u8 = if (result.truncated) "true" else "false";
     const resp = try std.fmt.allocPrint(allocator,
-        "{{\"stdout\":\"{s}\",\"stderr\":\"{s}\",\"exit_code\":{d}}}",
-        .{ stdout_json, stderr_json, result.exit_code });
+        "{{\"stdout\":\"{s}\",\"stderr\":\"{s}\",\"exit_code\":{d},\"duration_ms\":{d},\"truncated\":{s}}}",
+        .{ stdout_json, stderr_json, result.exit_code, result.duration_ms, trunc_lit });
     defer allocator.free(resp);
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }

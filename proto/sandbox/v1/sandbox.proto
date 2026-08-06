@@ -4,6 +4,8 @@ option go_package = "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;
 
 service SandboxService {
   rpc CreateSession(CreateSessionRequest)   returns (CreateSessionResponse);
+  rpc GetSession(GetSessionRequest)         returns (GetSessionResponse);
+  rpc ListSessions(ListSessionsRequest)     returns (ListSessionsResponse);
   rpc DestroySession(DestroySessionRequest) returns (DestroySessionResponse);
   rpc Exec(ExecRequest)                     returns (ExecResponse);
   rpc ExecStream(ExecRequest)               returns (stream ExecStreamResponse);
@@ -22,6 +24,14 @@ service SandboxService {
   rpc PollRun(PollRunRequest)               returns (PollRunResponse);
 }
 
+// SecretRef references a key in a same-namespace K8s Secret. Values are resolved
+// at exec time only and never stored on the SandboxSession CRD (#505 / KIP-12 B).
+message SecretRef {
+  string secret_name = 1; // K8s Secret name
+  string key         = 2; // key within Secret.data
+  string env_var     = 3; // environment variable name injected into the process
+}
+
 message CreateSessionRequest {
   string          session_id     = 1;
   string          tenant_id      = 2;
@@ -30,10 +40,31 @@ message CreateSessionRequest {
   // Non-sensitive environment variables persisted on the SandboxSession and
   // applied at exec time so warm-pool pods stay reusable (KIP-12 Part B / #483).
   map<string, string> env        = 5;
+  repeated SecretRef  secret_refs = 6;
 }
 message CreateSessionResponse {
   string session_id = 1;
   string pod_ip     = 2;
+}
+
+message GetSessionRequest  { string session_id = 1; }
+message GetSessionResponse {
+  string          session_id     = 1;
+  string          phase          = 2;
+  string          runtime_class  = 3;
+  string          pod_ip         = 4;
+  string          tenant_id      = 5;
+  int64           expires_at     = 6; // unix seconds; 0 if none
+  repeated string env_keys       = 7; // keys only, never values
+  repeated string secret_env_vars = 8; // env_var names from secret_refs only
+  int32           background_runs = 9; // active entries known to gateway registry
+}
+
+message ListSessionsRequest {
+  string phase = 1; // empty = Active only; "all" = every phase
+}
+message ListSessionsResponse {
+  repeated GetSessionResponse sessions = 1;
 }
 
 message DestroySessionRequest  { string session_id = 1; }
@@ -45,14 +76,19 @@ message ExecRequest {
   int32  timeout    = 3;
   string workdir    = 4;
   bool   background = 5;  // submit asynchronously, return run_id immediately
+  string language   = 6;  // optional hint: python|bash|node|ts (observability)
 }
 message ExecResponse {
-  string stdout    = 1;
-  string stderr    = 2;
-  int32  exit_code = 3;
-  string session_id = 4;
-  string run_id    = 5;  // set when background=true
-  string status    = 6;  // "started" when background=true
+  string stdout      = 1;
+  string stderr      = 2;
+  int32  exit_code   = 3;
+  string session_id  = 4;
+  string run_id      = 5;  // set when background=true
+  // started|running|completed|timed_out|failed
+  string status      = 6;
+  int64  duration_ms = 7;  // wall-clock ms for this execution (0 if unknown/started)
+  bool   truncated   = 8;  // stdout and/or stderr hit size cap
+  string language    = 9;  // echoed from request when set
 }
 message ExecStreamResponse { string chunk = 1; }
 
@@ -114,9 +150,12 @@ message LoginResponse {
 
 message PollRunRequest  { string run_id = 1; }
 message PollRunResponse {
-  string run_id    = 1;
-  string status    = 2;  // started | running | completed | failed | timed_out
-  string stdout    = 3;
-  string stderr    = 4;
-  int32  exit_code = 5;
+  string run_id      = 1;
+  // started|running|completed|failed|timed_out|not_found
+  string status      = 2;
+  string stdout      = 3;
+  string stderr      = 4;
+  int32  exit_code   = 5;
+  int64  duration_ms = 6;
+  bool   truncated   = 7;
 }

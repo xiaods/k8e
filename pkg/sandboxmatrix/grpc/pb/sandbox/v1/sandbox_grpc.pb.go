@@ -20,6 +20,8 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	SandboxService_CreateSession_FullMethodName  = "/sandbox.v1.SandboxService/CreateSession"
+	SandboxService_GetSession_FullMethodName     = "/sandbox.v1.SandboxService/GetSession"
+	SandboxService_ListSessions_FullMethodName   = "/sandbox.v1.SandboxService/ListSessions"
 	SandboxService_DestroySession_FullMethodName = "/sandbox.v1.SandboxService/DestroySession"
 	SandboxService_Exec_FullMethodName           = "/sandbox.v1.SandboxService/Exec"
 	SandboxService_ExecStream_FullMethodName     = "/sandbox.v1.SandboxService/ExecStream"
@@ -39,6 +41,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SandboxServiceClient interface {
 	CreateSession(ctx context.Context, in *CreateSessionRequest, opts ...grpc.CallOption) (*CreateSessionResponse, error)
+	GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*GetSessionResponse, error)
+	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
 	DestroySession(ctx context.Context, in *DestroySessionRequest, opts ...grpc.CallOption) (*DestroySessionResponse, error)
 	Exec(ctx context.Context, in *ExecRequest, opts ...grpc.CallOption) (*ExecResponse, error)
 	ExecStream(ctx context.Context, in *ExecRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecStreamResponse], error)
@@ -69,6 +73,26 @@ func (c *sandboxServiceClient) CreateSession(ctx context.Context, in *CreateSess
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreateSessionResponse)
 	err := c.cc.Invoke(ctx, SandboxService_CreateSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*GetSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSessionResponse)
+	err := c.cc.Invoke(ctx, SandboxService_GetSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSessionsResponse)
+	err := c.cc.Invoke(ctx, SandboxService_ListSessions_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -209,6 +233,8 @@ func (c *sandboxServiceClient) PollRun(ctx context.Context, in *PollRunRequest, 
 // for forward compatibility.
 type SandboxServiceServer interface {
 	CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error)
+	GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error)
+	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
 	DestroySession(context.Context, *DestroySessionRequest) (*DestroySessionResponse, error)
 	Exec(context.Context, *ExecRequest) (*ExecResponse, error)
 	ExecStream(*ExecRequest, grpc.ServerStreamingServer[ExecStreamResponse]) error
@@ -237,6 +263,12 @@ type UnimplementedSandboxServiceServer struct{}
 
 func (UnimplementedSandboxServiceServer) CreateSession(context.Context, *CreateSessionRequest) (*CreateSessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateSession not implemented")
+}
+func (UnimplementedSandboxServiceServer) GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSession not implemented")
+}
+func (UnimplementedSandboxServiceServer) ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSessions not implemented")
 }
 func (UnimplementedSandboxServiceServer) DestroySession(context.Context, *DestroySessionRequest) (*DestroySessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DestroySession not implemented")
@@ -309,6 +341,42 @@ func _SandboxService_CreateSession_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SandboxServiceServer).CreateSession(ctx, req.(*CreateSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_GetSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).GetSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_GetSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).GetSession(ctx, req.(*GetSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_ListSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).ListSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_ListSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).ListSessions(ctx, req.(*ListSessionsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -532,6 +600,14 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateSession",
 			Handler:    _SandboxService_CreateSession_Handler,
+		},
+		{
+			MethodName: "GetSession",
+			Handler:    _SandboxService_GetSession_Handler,
+		},
+		{
+			MethodName: "ListSessions",
+			Handler:    _SandboxService_ListSessions_Handler,
 		},
 		{
 			MethodName: "DestroySession",

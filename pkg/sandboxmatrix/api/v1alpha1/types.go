@@ -59,6 +59,14 @@ type SandboxSession struct {
 	Status SandboxSessionStatus `json:"status,omitempty"`
 }
 
+// SecretRef references a key in a same-namespace K8s Secret. Only the reference
+// is stored on the CRD; values are resolved at exec time (#505 / KIP-12 B).
+type SecretRef struct {
+	SecretName string `json:"secretName,omitempty"`
+	Key        string `json:"key,omitempty"`
+	EnvVar     string `json:"envVar,omitempty"`
+}
+
 type SandboxSessionSpec struct {
 	TenantID        string            `json:"tenantID,omitempty"`
 	AllowedHosts    []string          `json:"allowedHosts,omitempty"`
@@ -68,6 +76,8 @@ type SandboxSessionSpec struct {
 	// Env is a non-sensitive map of environment variables applied at exec time
 	// (not baked into the pod spec) so warm-pool pods remain reusable.
 	Env map[string]string `json:"env,omitempty"`
+	// SecretRefs are resolved from K8s Secrets at exec time; values are never stored here.
+	SecretRefs []SecretRef `json:"secretRefs,omitempty"`
 }
 
 type SandboxSessionStatus struct {

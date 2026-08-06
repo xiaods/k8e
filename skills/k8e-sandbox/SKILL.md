@@ -91,7 +91,9 @@ chmod +x k8e-sandbox-cli-linux-amd64
 | `k8e-sandbox-cli login` | Authenticate and obtain mTLS cert (remote access) | `--apikey`, `--endpoint`, `--device-name` |
 | `k8e-sandbox-cli run <code>` | Execute code or shell command | `--lang python\|bash\|node\|ts`, `--session-id`, `--tenant`, `--timeout 30`, `--raw` |
 | `k8e-sandbox-cli status` | Check service + current session | — |
-| `k8e-sandbox-cli create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--env KEY=VAL` (repeatable, non-sensitive), `--manifest`, `--git-repo` |
+| `k8e-sandbox-cli create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--env KEY=VAL` (non-sensitive), `--secret ENV=secret:key` (exec-time resolve), `--manifest`, `--git-repo` |
+| `k8e-sandbox-cli get <sid>` | Session introspection | phase, runtime, env keys / secret env names (never values) |
+| `k8e-sandbox-cli sessions` | List sessions | `--phase Active\|all` |
 | `k8e-sandbox-cli destroy <sid>` | Destroy session | — |
 | `k8e-sandbox-cli write <sid> <path>` | Write file to /workspace | content via stdin, `--mode w\|a` |
 | `k8e-sandbox-cli read <sid> <path>` | Read file from /workspace | `--raw` (plain text output) |
@@ -123,7 +125,7 @@ Code source: argument > stdin. Language default: `bash`.
 
 | Mode | Behavior | Output | Exit code |
 |------|----------|--------|-----------|
-| Default (JSON) | Wait for completion | `{"stdout":"...","stderr":"...","exit_code":0,"session_id":"sess-xxx"}` | match command |
+| Default (JSON) | Wait for completion | `{"stdout","stderr","exit_code","session_id","status","duration_ms","truncated","language"}` | match command |
 | `--raw` | Stream in real-time | plain text to stdout | match command |
 
 ## Session lifecycle
@@ -197,7 +199,7 @@ Env is stored on the session and applied at **every exec** (warm-pool safe — n
 3. k8e-sandbox-cli destroy $SID
 ```
 
-⚠️ **Red line:** `--env` is for non-sensitive config only. Values are stored in plaintext on the SandboxSession CRD. Use secret-ref injection (issue #485) for API keys and tokens — never put secrets in `--env`.
+⚠️ **Red line:** `--env` is for non-sensitive config only. Values are stored in plaintext on the SandboxSession CRD. Use `--secret ENV_VAR=secretName:key` for API keys/tokens (resolved at exec time from K8s Secrets; never stored on the CRD).
 
 ### Scenario 5: Parallel sub-agents
 

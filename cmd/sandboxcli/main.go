@@ -30,6 +30,8 @@ func main() {
 		sandboxcli.RunCommand(),
 		sandboxcli.StatusCommand(),
 		sandboxcli.CreateCommand(),
+		sandboxcli.GetCommand(),
+		sandboxcli.SessionsCommand(),
 		sandboxcli.DestroyCommand(),
 		sandboxcli.WriteCommand(),
 		sandboxcli.ReadCommand(),

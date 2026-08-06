@@ -95,6 +95,18 @@ func (in *SandboxSession) DeepCopyInto(out *SandboxSession) {
 	in.Spec.DeepCopyInto(&out.Spec)
 	in.Status.DeepCopyInto(&out.Status)
 }
+func (in *SecretRef) DeepCopyInto(out *SecretRef) {
+	*out = *in
+}
+func (in *SecretRef) DeepCopy() *SecretRef {
+	if in == nil {
+		return nil
+	}
+	out := new(SecretRef)
+	in.DeepCopyInto(out)
+	return out
+}
+
 func (in *SandboxSessionSpec) DeepCopyInto(out *SandboxSessionSpec) {
 	*out = *in
 	if in.AllowedHosts != nil {
@@ -105,6 +117,10 @@ func (in *SandboxSessionSpec) DeepCopyInto(out *SandboxSessionSpec) {
 		for k, v := range in.Env {
 			out.Env[k] = v
 		}
+	}
+	if in.SecretRefs != nil {
+		out.SecretRefs = make([]SecretRef, len(in.SecretRefs))
+		copy(out.SecretRefs, in.SecretRefs)
 	}
 }
 func (in *SandboxSessionStatus) DeepCopyInto(out *SandboxSessionStatus) {
