@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -25,27 +26,10 @@ func validateSessionEnv(env map[string]string) error {
 	}
 	total := 0
 	for k, v := range env {
-		if k == "" {
-			return fmt.Errorf("empty key")
+		if err := validateSessionEnvEntry(k, v); err != nil {
+			return err
 		}
-		if !utf8.ValidString(k) || !utf8.ValidString(v) {
-			return fmt.Errorf("key %q: non-utf8 key or value", k)
-		}
-		if containsNUL(k) || containsNUL(v) {
-			return fmt.Errorf("key %q: NUL byte not allowed in key or value", k)
-		}
-		if containsByte(k, '=') {
-			return fmt.Errorf("key %q: '=' not allowed in env key", k)
-		}
-		kb := len(k)
-		vb := len(v)
-		if kb > maxSessionEnvKeyBytes {
-			return fmt.Errorf("key %q: too long (%d bytes, max %d)", k, kb, maxSessionEnvKeyBytes)
-		}
-		if vb > maxSessionEnvValueBytes {
-			return fmt.Errorf("key %q: value too long (%d bytes, max %d)", k, vb, maxSessionEnvValueBytes)
-		}
-		total += kb + vb
+		total += len(k) + len(v)
 		if total > maxSessionEnvTotalBytes {
 			return fmt.Errorf("total size exceeds %d bytes", maxSessionEnvTotalBytes)
 		}
@@ -53,45 +37,47 @@ func validateSessionEnv(env map[string]string) error {
 	return nil
 }
 
-func containsNUL(s string) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0 {
-			return true
-		}
+func validateSessionEnvEntry(k, v string) error {
+	if k == "" {
+		return fmt.Errorf("empty key")
 	}
-	return false
-}
-
-func containsByte(s string, b byte) bool {
-	for i := 0; i < len(s); i++ {
-		if s[i] == b {
-			return true
-		}
+	if !utf8.ValidString(k) || !utf8.ValidString(v) {
+		return fmt.Errorf("key %q: non-utf8 key or value", k)
 	}
-	return false
+	if strings.IndexByte(k, 0) >= 0 || strings.IndexByte(v, 0) >= 0 {
+		return fmt.Errorf("key %q: NUL byte not allowed in key or value", k)
+	}
+	if strings.Contains(k, "=") {
+		return fmt.Errorf("key %q: '=' not allowed in env key", k)
+	}
+	if len(k) > maxSessionEnvKeyBytes {
+		return fmt.Errorf("key %q: too long (%d bytes, max %d)", k, len(k), maxSessionEnvKeyBytes)
+	}
+	if len(v) > maxSessionEnvValueBytes {
+		return fmt.Errorf("key %q: value too long (%d bytes, max %d)", k, len(v), maxSessionEnvValueBytes)
+	}
+	return nil
 }
 
 // sandboxdExecBody builds the JSON body for sandboxd /exec and /exec/stream.
 // env is omitted when empty so older sandboxd builds stay compatible.
 func sandboxdExecBody(command string, timeout int32, workdir string, env map[string]string) map[string]any {
-	body := map[string]any{
-		"command": command,
-		"timeout": timeout,
-		"workdir": workdir,
-	}
-	if len(env) > 0 {
-		body["env"] = env
-	}
-	return body
+	return sandboxdRequestBody(command, "", timeout, workdir, env)
 }
 
 // sandboxdBackgroundBody builds the JSON body for sandboxd /exec/background.
 func sandboxdBackgroundBody(command, runID string, timeout int32, workdir string, env map[string]string) map[string]any {
+	return sandboxdRequestBody(command, runID, timeout, workdir, env)
+}
+
+func sandboxdRequestBody(command, runID string, timeout int32, workdir string, env map[string]string) map[string]any {
 	body := map[string]any{
 		"command": command,
-		"run_id":  runID,
 		"timeout": timeout,
 		"workdir": workdir,
+	}
+	if runID != "" {
+		body["run_id"] = runID
 	}
 	if len(env) > 0 {
 		body["env"] = env
