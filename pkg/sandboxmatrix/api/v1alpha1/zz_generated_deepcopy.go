@@ -100,6 +100,12 @@ func (in *SandboxSessionSpec) DeepCopyInto(out *SandboxSessionSpec) {
 	if in.AllowedHosts != nil {
 		out.AllowedHosts = append([]string{}, in.AllowedHosts...)
 	}
+	if in.Env != nil {
+		out.Env = make(map[string]string, len(in.Env))
+		for k, v := range in.Env {
+			out.Env[k] = v
+		}
+	}
 }
 func (in *SandboxSessionStatus) DeepCopyInto(out *SandboxSessionStatus) {
 	*out = *in

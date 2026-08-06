@@ -99,6 +99,9 @@ spec:
               runtimeClass: {type: string}
               parentSessionID: {type: string}
               depth: {type: integer}
+              env:
+                type: object
+                additionalProperties: {type: string}
           status:
             type: object
             properties:

@@ -8,6 +8,26 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestParseEnvFlags(t *testing.T) {
+	got, err := parseEnvFlags([]string{"FOO=bar", "BAZ=qux"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["FOO"] != "bar" || got["BAZ"] != "qux" {
+		t.Fatalf("unexpected map: %v", got)
+	}
+	if _, err := parseEnvFlags([]string{"NOEQUALS"}); err == nil {
+		t.Fatal("expected error for missing '='")
+	}
+	if _, err := parseEnvFlags([]string{"=novalue"}); err == nil {
+		t.Fatal("expected error for empty key")
+	}
+	nilMap, err := parseEnvFlags(nil)
+	if err != nil || nilMap != nil {
+		t.Fatalf("expected nil map for empty input, got %v err=%v", nilMap, err)
+	}
+}
+
 func TestIsSessionExpired_grpcNotFound(t *testing.T) {
 	err := status.Error(codes.NotFound, "session sess-abc not found")
 	if !isSessionExpired(err) {

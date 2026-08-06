@@ -310,7 +310,8 @@ func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionReque
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
 	// Background mode: submit async, return run_id immediately
 	if req.Background {
-		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir)
+		env := s.getSessionEnv(ctx, req.SessionId)
+		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir, env)
 		if err != nil {
 			return nil, status.Errorf(codes.Internal, "background submit: %v", err)
 		}
@@ -331,6 +332,9 @@ func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecRespons
 	}
 
 	body := map[string]any{"command": req.Command, "timeout": timeout, "workdir": workdir}
+	if env := s.getSessionEnv(ctx, req.SessionId); len(env) > 0 {
+		body["env"] = env
+	}
 	httpCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout+5)*time.Second)
 	defer cancel()
 
@@ -363,6 +367,9 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 		workdir = "/workspace"
 	}
 	body := map[string]any{"command": req.Command, "timeout": timeout, "workdir": workdir}
+	if env := s.getSessionEnv(stream.Context(), req.SessionId); len(env) > 0 {
+		body["env"] = env
+	}
 	httpCtx, cancel := context.WithTimeout(stream.Context(), time.Duration(timeout+5)*time.Second)
 	defer cancel()
 
@@ -387,6 +394,20 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 			return status.Errorf(codes.Internal, "stream read: %v", err)
 		}
 	}
+}
+
+// getSessionEnv returns the non-sensitive env map stored on the SandboxSession CR.
+// Returns nil when absent or on lookup failure (exec proceeds with sandboxd defaults).
+func (s *Server) getSessionEnv(ctx context.Context, sessionID string) map[string]string {
+	u, err := s.dyn.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessionID, metav1.GetOptions{})
+	if err != nil {
+		return nil
+	}
+	env, _, _ := unstructured.NestedStringMap(u.Object, "spec", "env")
+	if len(env) == 0 {
+		return nil
+	}
+	return env
 }
 
 func (s *Server) WriteFile(ctx context.Context, req *pb.WriteFileRequest) (*pb.WriteFileResponse, error) {

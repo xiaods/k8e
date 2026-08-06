@@ -377,6 +377,7 @@ func CreateCommand() cli.Command {
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant identifier"},
 			cli.StringFlag{Name: "allowed-hosts", Usage: "Comma-separated FQDN egress allowlist"},
 			cli.StringFlag{Name: "session-id", Usage: "Custom session ID"},
+			cli.StringSliceFlag{Name: "env", Usage: "Non-sensitive env KEY=VAL (repeatable); applied at exec time"},
 			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest YAML file"},
 			cli.StringFlag{Name: "git-repo", Usage: "Git repository URL to clone (shortcut)"},
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
@@ -394,11 +395,17 @@ func CreateCommand() cli.Command {
 				hosts = strings.Split(raw, ",")
 			}
 
+			env, envErr := parseEnvFlags(ctx.StringSlice("env"))
+			if envErr != nil {
+				return printErrorExit(envErr.Error(), 1)
+			}
+
 			resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
 				SessionId:    ctx.String("session-id"),
 				TenantId:     ctx.String("tenant"),
 				RuntimeClass: ctx.String("runtime"),
 				AllowedHosts: hosts,
+				Env:          env,
 			})
 			if err != nil {
 				return printErrorExit("create session: "+err.Error(), 2)
@@ -432,6 +439,23 @@ func CreateCommand() cli.Command {
 			return nil
 		},
 	}
+}
+
+// parseEnvFlags converts repeatable --env KEY=VAL flags into a map.
+// Empty input returns nil (no env field on the CreateSession request).
+func parseEnvFlags(items []string) (map[string]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(items))
+	for _, item := range items {
+		k, v, ok := strings.Cut(item, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("invalid --env %q, expected KEY=VAL", item)
+		}
+		out[k] = v
+	}
+	return out, nil
 }
 
 // resolveManifest builds a Manifest from --manifest, --git-repo flags, or returns nil.

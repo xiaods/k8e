@@ -1,6 +1,6 @@
 syntax = "proto3";
 package sandbox.v1;
-option go_package = "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb";
+option go_package = "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pb";
 
 service SandboxService {
   rpc CreateSession(CreateSessionRequest)   returns (CreateSessionResponse);
@@ -27,6 +27,9 @@ message CreateSessionRequest {
   string          tenant_id      = 2;
   repeated string allowed_hosts  = 3;
   string          runtime_class  = 4;
+  // Non-sensitive environment variables persisted on the SandboxSession and
+  // applied at exec time so warm-pool pods stay reusable (KIP-12 Part B / #483).
+  map<string, string> env        = 5;
 }
 message CreateSessionResponse {
   string session_id = 1;
