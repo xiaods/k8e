@@ -269,6 +269,9 @@ func (o *Orchestrator) getMatrixConfig(ctx context.Context) (allowedHosts []stri
 }
 
 func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateSessionRequest, ttl int, matrixDefaultHosts []string, matrixCPU, matrixMemory string) (*sandboxv1.SandboxSession, error) {
+	if err := validateSessionEnv(req.Env); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "env: %v", err)
+	}
 	sessionID := req.SessionId
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
@@ -562,13 +565,7 @@ func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command st
 	}
 
 	runID := fmt.Sprintf("%s-bg-%d", sessionID, time.Now().UnixNano())
-	bodyMap := map[string]any{
-		"command": command, "run_id": runID, "timeout": timeout, "workdir": workdir,
-	}
-	if len(env) > 0 {
-		bodyMap["env"] = env
-	}
-	body, _ := json.Marshal(bodyMap)
+	body, _ := json.Marshal(sandboxdBackgroundBody(command, runID, timeout, workdir, env))
 
 	url := fmt.Sprintf("http://%s:%d/exec/background", podIP, 2024)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
