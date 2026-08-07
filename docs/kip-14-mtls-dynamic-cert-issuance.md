@@ -350,7 +350,7 @@ k8e sandbox run "echo hello"
 | `pkg/sandboxcli/login.go`（新增）| `LoginCommand()` 实现：`k8e sandbox login --apikey --endpoint [--device-name]` |
 | `cmd/sandboxcli/main.go` | 新增 `login` 子命令注册（或仅靠 `sandboxcli` 内部注册） |
 | `pkg/cli/cmds/sandbox.go` | 注册 `login` 子命令 |
-| `skills/k8e-sandbox/SKILL.md` | 文档化 `k8e sandbox login` 流程 |
+| `pkg/sandboxcli/skills/k8e-sandbox/SKILL.md` | 文档化 `k8e sandbox login` 流程 |
 
 ## 相关 KIP
 

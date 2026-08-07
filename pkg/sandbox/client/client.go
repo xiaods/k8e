@@ -59,6 +59,10 @@ func NewClient() (*Client, error) {
 	if endpoint == "" {
 		endpoint = defaultEndpoint
 	}
+	return newLocalClient(endpoint)
+}
+
+func newLocalClient(endpoint string) (*Client, error) {
 	creds, err := resolveCreds(endpoint)
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: tls: %w", err)
@@ -76,7 +80,13 @@ func NewClient() (*Client, error) {
 // with automatic lazy renewal.
 func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 	if apiKey == "" {
-		return NewClient()
+		if endpoint == "" {
+			return NewClient()
+		}
+		if isLoopback(endpoint) {
+			return newLocalClient(endpoint)
+		}
+		return newClientWithCachedCerts(endpoint)
 	}
 	cacheDir, _ := sandboxCacheDir()
 	caFile := filepath.Join(cacheDir, "ca.crt")
@@ -103,6 +113,34 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 
 	// Path 3: no CA → insecure bootstrap, get both CA and client cert
 	return bootstrapInsecure(endpoint, caFile, certFile, keyFile, apiKey)
+}
+
+// newClientWithCachedCerts reuses the mTLS certificate material stored by a
+// previous login/connect for the same remote endpoint.
+func newClientWithCachedCerts(endpoint string) (*Client, error) {
+	cacheDir, err := sandboxCacheDir()
+	if err != nil {
+		return nil, fmt.Errorf("sandbox client: resolve cache dir: %w", err)
+	}
+	caFile := filepath.Join(cacheDir, "ca.crt")
+	certFile := filepath.Join(cacheDir, "client.crt")
+	keyFile := filepath.Join(cacheDir, "client.key")
+
+	if _, err := os.Stat(caFile); err != nil {
+		return nil, fmt.Errorf("sandbox client: no cached CA for %s; run connect or login with --apikey", endpoint)
+	}
+	if !certValid(certFile) {
+		return nil, fmt.Errorf("sandbox client: cached client certificate for %s is missing or expired; reconnect with --apikey", endpoint)
+	}
+	if certExpiringSoon(certFile, 7) {
+		renewClientCert(endpoint, caFile, certFile, keyFile)
+	}
+
+	conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
+	if err != nil {
+		return nil, dialErr(endpoint, err)
+	}
+	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
 
 func (c *Client) Close() error { return c.conn.Close() }

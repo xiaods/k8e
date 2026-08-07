@@ -122,7 +122,7 @@ handleExec(req):
 | `sandboxd/src/exec.zig` | `ExecRequest` 新增 `env: map<string,string>`（如 KIP-12 所述）；新增 `buildExecEnv()` 合并三层 env；`handleExec` / `runCommand` 构建并传入 envp；`handleExec` 新增懒 venv 创建逻辑（python/pip 前缀检测 + stat + `python3 -m venv`） |
 | `pkg/sandboxmatrix/grpc/server.go` | `PipInstall` 可简化——移除手动 `pip install` 拼接，改用通用 exec 路径即可，venv 激活由 sandboxd 保证 |
 | `sandbox/Dockerfile` | 无需变更（基础镜像保持干净） |
-| `skills/k8e-sandbox/SKILL.md` | 文档化：`pip install` / `npm install` 自动隔离到 `/workspace` |
+| `pkg/sandboxcli/skills/k8e-sandbox/SKILL.md` | 文档化：`pip install` / `npm install` 自动隔离到 `/workspace` |
 
 ### 边界处理
 

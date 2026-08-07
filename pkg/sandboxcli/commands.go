@@ -11,10 +11,10 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/sandbox/client"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
-	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
 const errSessionNotFound = "not found"
@@ -22,10 +22,18 @@ const errSessionNotFound = "not found"
 // ErrSessionGone is returned when a sandbox session has expired or been destroyed.
 var ErrSessionGone = errors.New("sandbox session expired or destroyed")
 
-// newClientFromCtx creates a gRPC client using endpoint/apikey from global flags.
+// newClientFromCtx creates a gRPC client using endpoint/apikey from global flags,
+// falling back to the connection config saved by `connect`.
 func newClientFromCtx(ctx *cli.Context) (*client.Client, *ExitError) {
-	endpoint := ctx.GlobalString("endpoint")
-	apikey := ctx.GlobalString("apikey")
+	endpoint := strings.TrimSpace(ctx.GlobalString("endpoint"))
+	apikey := strings.TrimSpace(ctx.GlobalString("apikey"))
+
+	// Prefer flags/env; else use persisted connect config.
+	if endpoint == "" {
+		if cfg, err := LoadConnectionConfig(); err == nil && cfg != nil && cfg.Endpoint != "" {
+			endpoint = cfg.Endpoint
+		}
+	}
 
 	var c *client.Client
 	var err error
@@ -158,7 +166,7 @@ func RunCommand() cli.Command {
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},
 			cli.BoolFlag{Name: "background", Usage: "Submit asynchronously, return run_id immediately"},
-		cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
+			cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
 			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-repo", Usage: "Git repo to clone (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
@@ -351,13 +359,13 @@ func StatusCommand() cli.Command {
 			defer client.Close()
 
 			// lightweight probe
-		_, err := client.SandboxServiceClient.DestroySession(context.Background(),
-			&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
-		available := err == nil || strings.Contains(err.Error(), errSessionNotFound)
-		errMsg := ""
-		if !available && err != nil {
-			errMsg = err.Error()
-		}
+			_, err := client.SandboxServiceClient.DestroySession(context.Background(),
+				&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
+			available := err == nil || strings.Contains(err.Error(), errSessionNotFound)
+			errMsg := ""
+			if !available && err != nil {
+				errMsg = err.Error()
+			}
 
 			sid, tid := "", ""
 			if state, _ := loadState("default"); state != nil && state.SessionID != "" {
@@ -553,15 +561,15 @@ func SessionsCommand() cli.Command {
 
 func sessionViewJSON(s *pb.GetSessionResponse) map[string]any {
 	return map[string]any{
-		"session_id":       s.SessionId,
-		"phase":            s.Phase,
-		"runtime_class":    s.RuntimeClass,
-		"pod_ip":           s.PodIp,
-		"tenant_id":        s.TenantId,
-		"expires_at":       s.ExpiresAt,
-		"env_keys":         s.EnvKeys,
-		"secret_env_vars":  s.SecretEnvVars,
-		"background_runs":  s.BackgroundRuns,
+		"session_id":      s.SessionId,
+		"phase":           s.Phase,
+		"runtime_class":   s.RuntimeClass,
+		"pod_ip":          s.PodIp,
+		"tenant_id":       s.TenantId,
+		"expires_at":      s.ExpiresAt,
+		"env_keys":        s.EnvKeys,
+		"secret_env_vars": s.SecretEnvVars,
+		"background_runs": s.BackgroundRuns,
 	}
 }
 
@@ -1060,8 +1068,8 @@ func printBenchmarkResults(results map[string][]time.Duration) {
 	fmt.Fprintln(os.Stderr, "═══ Benchmark Results ═══")
 
 	sections := []struct {
-		title  string
-		keys   []string
+		title string
+		keys  []string
 	}{
 		{"Cold Start (no warm pool)", []string{"cold_create", "cold_exec", "cold_total"}},
 		{"Warm Claim (from pool)", []string{"warm_create", "warm_exec", "warm_total"}},
@@ -1114,26 +1122,6 @@ func PollCommand() cli.Command {
 				"duration_ms": resp.DurationMs,
 				"truncated":   resp.Truncated,
 			})
-			return nil
-		},
-	}
-}
-
-// ── InstallSkillCommand ────────────────────────────────────────────────────
-
-func InstallSkillCommand() cli.Command {
-	return cli.Command{
-		Name:      "install-skill",
-		Usage:     "Install K8E sandbox skill into AI agent config",
-		ArgsUsage: "[claude|codex|pi|all]",
-		Action: func(ctx *cli.Context) error {
-			target := ctx.Args().First()
-			if target == "" {
-				target = "all"
-			}
-			if err := InstallSkill(target); err != nil {
-				return printErrorExit(err.Error(), 1)
-			}
 			return nil
 		},
 	}

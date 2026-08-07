@@ -33,9 +33,16 @@ func LoginCommand() cli.Command {
 			}
 			c.Close()
 
+			// Persist endpoint so later CLI calls (and connect --skip-skill re-runs)
+			// reuse the same remote gateway without re-passing flags.
+			if err := SaveConnectionConfig(&ConnectionConfig{Mode: "remote", Endpoint: endpoint}); err != nil {
+				fmt.Fprintf(os.Stderr, "⚠ could not save connection config: %v\n", err)
+			}
+
 			fmt.Fprintf(os.Stderr, "✓ Logged in to %s\n", endpoint)
 			fmt.Fprintf(os.Stderr, "  Credentials stored in ~/.k8e/sandbox/\n")
 			fmt.Fprintf(os.Stderr, "  Certificate valid for 30 days (auto-renewed on use)\n")
+			fmt.Fprintf(os.Stderr, "  Tip: use 'k8e-sandbox-cli connect' to also install /k8e-sandbox skills\n")
 			return nil
 		},
 	}
