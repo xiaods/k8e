@@ -169,7 +169,7 @@ k8e sandbox run "python3 /workspace/stage2.py" --session-id $SID
 | `pkg/sandboxcli/snapshot.go` | 新文件：快照 save/restore/list/delete 逻辑 |
 | `pkg/sandboxcli/commands.go` | 新增 `SnapshotCommand()` 命令组 |
 | `pkg/cli/cmds/sandbox.go` | sandbox 命令组注册 snapshot 子命令 |
-| `skills/k8e-sandbox/SKILL.md` | 新增 snapshot 使用示例 |
+| `pkg/sandboxcli/skills/k8e-sandbox/SKILL.md` | 新增 snapshot 使用示例 |
 
 ## 相关 KIP
 

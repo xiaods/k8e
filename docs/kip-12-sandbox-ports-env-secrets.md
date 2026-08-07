@@ -185,7 +185,7 @@ exec:    gateway 读取 session 的 env + secret_refs
 | `pkg/sandboxcli/commands.go` | 新增 `expose`/`unexpose` 命令；`create` 增 `--env`、`--secret` flag |
 | `pkg/cli/cmds/sandbox.go` | 注册 `expose`/`unexpose` 子命令 |
 | 部署清单 / RBAC | gateway SA：`get` Secrets、`create`/`delete` Services 与 Ingresses |
-| `skills/k8e-sandbox/SKILL.md` | 文档化 expose 预览与 env/secret 用法 + 敏感值红线 |
+| `pkg/sandboxcli/skills/k8e-sandbox/SKILL.md` | 文档化 expose 预览与 env/secret 用法 + 敏感值红线 |
 
 ## 相关 KIP
 

@@ -54,7 +54,7 @@ The repository is organized as a **Zig-based Go project**:
 ├── proto/sandbox/v1/              # Protobuf definitions for sandbox gRPC service
 ├── sandbox/                       # Sandbox container runtime shim (sandboxd)
 ├── sandboxd/                      # Runtime daemon in Zig (exec, files, networking)
-│── skills/k8e-sandbox/            # SKILL.md for agent CLI integration
+│── pkg/sandboxcli/skills/k8e-sandbox/  # Embedded SKILL.md (installed via connect)
 └── tests/unit.go                  # Test helper utilities
 ```
 

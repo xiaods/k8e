@@ -36,7 +36,7 @@ This is a single-context repo:
 │   ├── server/                  # Control plane daemon
 │   ├── agent/                   # Agent daemon (kubelet + containerd)
 │   └── ...
-├── skills/k8e-sandbox/         # SKILL.md for agent CLI integration
+├── pkg/sandboxcli/skills/k8e-sandbox/  # Embedded SKILL.md (installed via connect)
 ├── sandbox/                     # Sandbox container runtime shim
 └── sandboxd/                    # Runtime daemon (Zig)
 ```
