@@ -126,7 +126,7 @@ KIP-16 acceptance criterion #1 (each P0/P1 matrix row gets a GitHub issue):
 | Matrix row | Issue | Status |
 |---|---|---|
 | M10 allowed_hosts enforcement (P0) | [#510](https://github.com/xiaods/k8e/issues/510) | open — needs design decision (toFQDNs / egress proxy / API removal) |
-| M2 layerstack snapshot layer (P1) | [#511](https://github.com/xiaods/k8e/issues/511) | **slice 1 shipped** — real mtimes + `ListFiles(since)` diff foundation; CAS layerstore + delta layers remain |
+| M2 layerstack snapshot layer (P1) | [#511](https://github.com/xiaods/k8e/issues/511) | **slices 1–3 shipped** — mtimes + ListFiles(since) (#515); CAS layerstore (#516); zstd-compressed layers (#521); wire delta + autosquash remain |
 | M4 PTY transcript + windowed replay (P1) | [#512](https://github.com/xiaods/k8e/issues/512) | **Wave 3: shipped** — file-backed transcript + GetTranscript RPC + `log` CLI (transcript window semantics; PTY master variant deferred) |
 | M5 observability (P1) | [#513](https://github.com/xiaods/k8e/issues/513) | **slice 1+2 shipped** — Prometheus collector (#517) + sandboxd NDJSON event stream (#518); query endpoint + process topology remain |
 | M1 workspace-session reuse (P1) | [#514](https://github.com/xiaods/k8e/issues/514) | open |
