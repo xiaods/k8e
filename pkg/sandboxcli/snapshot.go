@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/sandboxlayer"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
@@ -36,6 +37,17 @@ func snapshotMetaPath(name string) string {
 
 func snapshotTarPath(name string) string {
 	return filepath.Join(snapshotDir(name), "workspace.tar.gz")
+}
+
+// snapshotStore opens the content-addressed layer store backing snapshots
+// (KIP-16 M2 / issue #511). Layers are stored under <dataDir>/layers and are
+// deduplicated by sha256; each snapshot's manifest leases its layers from GC.
+func snapshotStore() (*sandboxlayer.Store, error) {
+	dir, err := dataDir()
+	if err != nil {
+		return nil, err
+	}
+	return sandboxlayer.New(filepath.Join(dir, snapshotDirName, ".layers"))
 }
 
 // ── SnapshotCommand ─────────────────────────────────────────────────────────
@@ -109,6 +121,20 @@ func snapshotSaveCommand() cli.Command {
 			}
 			if err := os.WriteFile(snapshotTarPath(name), []byte(readResp.Content), 0644); err != nil {
 				return printErrorExit("write snapshot: "+err.Error(), 2)
+			}
+
+			// 4b. Content-address the payload into the layer store and lease it
+			// via a manifest (KIP-16 M2: dedup + GC lease).
+			store, storeErr := snapshotStore()
+			if storeErr != nil {
+				return printErrorExit("open layer store: "+storeErr.Error(), 2)
+			}
+			digest, putErr := store.Put([]byte(readResp.Content))
+			if putErr != nil {
+				return printErrorExit("store snapshot layer: "+putErr.Error(), 2)
+			}
+			if err := store.SaveManifest(name, []string{digest}); err != nil {
+				return printErrorExit("store snapshot manifest: "+err.Error(), 2)
 			}
 
 			// 5. Write metadata
@@ -202,10 +228,21 @@ func snapshotRestoreCommand() cli.Command {
 				return printErrorExit("snapshot metadata corrupted: "+name, 2)
 			}
 
-			// 2. Read tar.gz
-			tarData, err := os.ReadFile(snapshotTarPath(name))
-			if err != nil {
-				return printErrorExit("snapshot data not found: "+name, 2)
+			// 2. Read snapshot payload. Prefer the content-addressed layer store
+			// (KIP-16 M2); fall back to the legacy tar file for old snapshots.
+			var tarData []byte
+			if store, err := snapshotStore(); err == nil {
+				if m, err := store.LoadManifest(name); err == nil && len(m.Layers) == 1 {
+					if content, err := store.Get(m.Layers[0]); err == nil {
+						tarData = content
+					}
+				}
+			}
+			if tarData == nil {
+				tarData, err = os.ReadFile(snapshotTarPath(name))
+				if err != nil {
+					return printErrorExit("snapshot data not found: "+name, 2)
+				}
 			}
 
 			// 3. Create new session
@@ -281,6 +318,13 @@ func snapshotDeleteCommand() cli.Command {
 			dir := snapshotDir(name)
 			if err := os.RemoveAll(dir); err != nil {
 				return printErrorExit("delete snapshot: "+err.Error(), 2)
+			}
+
+			// Release the manifest lease so GC can reclaim the layers
+			// (KIP-16 M2 lease-driven GC).
+			if store, err := snapshotStore(); err == nil {
+				_ = store.DeleteManifest(name)
+				_, _ = store.GC()
 			}
 			printJSON(map[string]any{"ok": true})
 			return nil
