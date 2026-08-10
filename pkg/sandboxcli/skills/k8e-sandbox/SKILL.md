@@ -86,14 +86,23 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli connect --skill-only` | Re-install this skill only (no gateway dial) |
 | `k8e-sandbox-cli login` | Remote mTLS only (no skill install) |
 | `k8e-sandbox-cli status` | Gateway + session probe |
-| `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--raw`, `--session-id`, `--tenant`) |
+| `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--raw`, `--session-id`, `--tenant`, `--background`) |
 | `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`) |
-| `k8e-sandbox-cli write/read/list` | Workspace files |
+| `k8e-sandbox-cli get <sid>` | Session introspection (phase, runtime, env keys) |
+| `k8e-sandbox-cli sessions` | List sessions |
+| `k8e-sandbox-cli write/read/list` | Workspace files; `list --since <ts>` for changed-file diff |
 | `k8e-sandbox-cli log <sid>` | Replay exec transcript | `--offset`, `--limit`, `--follow` |
 | `k8e-sandbox-cli events <sid>` | Read daemon NDJSON event stream | `--limit` |
 | `k8e-sandbox-cli ps <sid>` | List processes in the sandbox pod | pid, comm, state |
 | `k8e-sandbox-cli poll <run-id>` | Poll a background run | |
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child session (shares parent's pod + workspace — no new pod) |
+
+| `k8e-sandbox-cli subagent <parent-sid>` | Spawn child session (shares parent pod + workspace) |
+| `k8e-sandbox-cli confirm <sid> <action>` | Gate destructive action on human approval |
+| `k8e-sandbox-cli approve <aid>` | Approve a pending confirm | `--reject` |
+| `k8e-sandbox-cli snapshot save/restore/list/delete` | Content-addressed snapshots | `save --remote`, `restore --base <snap>` |
+| `k8e-sandbox-cli benchmark` | Warm-pool latency metrics | `--pool-size`, `--iterations` |
+| `k8e-sandbox-cli catalog` | Emit machine-readable command surface (SDK generation) | |
 | `k8e-sandbox-cli destroy <sid>` | Tear down session |
 
 Default run output is JSON: `stdout`, `stderr`, `exit_code`, `session_id`. Use `--raw` to stream text.
