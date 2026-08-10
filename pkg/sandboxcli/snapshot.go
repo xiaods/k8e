@@ -50,6 +50,19 @@ func snapshotStore() (*sandboxlayer.Store, error) {
 	return sandboxlayer.New(filepath.Join(dir, snapshotDirName, ".layers"))
 }
 
+// readSnapshotPayload loads a snapshot's payload bytes: from the content-
+// addressed layer store when present, otherwise from the legacy tar file.
+func readSnapshotPayload(name string) ([]byte, error) {
+	if store, err := snapshotStore(); err == nil {
+		if m, err := store.LoadManifest(name); err == nil && len(m.Layers) == 1 {
+			if content, err := store.Get(m.Layers[0]); err == nil {
+				return content, nil
+			}
+		}
+	}
+	return os.ReadFile(snapshotTarPath(name))
+}
+
 // ── SnapshotCommand ─────────────────────────────────────────────────────────
 
 func SnapshotCommand() cli.Command {
@@ -230,19 +243,9 @@ func snapshotRestoreCommand() cli.Command {
 
 			// 2. Read snapshot payload. Prefer the content-addressed layer store
 			// (KIP-16 M2); fall back to the legacy tar file for old snapshots.
-			var tarData []byte
-			if store, err := snapshotStore(); err == nil {
-				if m, err := store.LoadManifest(name); err == nil && len(m.Layers) == 1 {
-					if content, err := store.Get(m.Layers[0]); err == nil {
-						tarData = content
-					}
-				}
-			}
-			if tarData == nil {
-				tarData, err = os.ReadFile(snapshotTarPath(name))
-				if err != nil {
-					return printErrorExit("snapshot data not found: "+name, 2)
-				}
+			tarData, err := readSnapshotPayload(name)
+			if err != nil {
+				return printErrorExit("snapshot data not found: "+name, 2)
 			}
 
 			// 3. Create new session
