@@ -85,6 +85,7 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		ServerKeyFile:  tlsDir + "/sandbox-server.key",
 		GRPCPort:       cfg.GRPCPort,
 		LayerStoreDir:  cfg.LayerStoreDir,
+		FQDNEnabled:    cfg.CiliumDNSProxyEnabled,
 	})
 	go func() {
 		if err := srv.Start(ctx); err != nil {

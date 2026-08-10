@@ -838,7 +838,7 @@ func TestBuildSessionCNP_PerSessionPolicy(t *testing.T) {
 	sess.Name = "cnp-test"
 	sess.Namespace = sandboxNS
 
-	obj := buildSessionCNP(sess)
+	obj := buildSessionCNP(sess, false)
 	if obj.GetAPIVersion() != "cilium.io/v2" || obj.GetKind() != "CiliumNetworkPolicy" {
 		t.Fatalf("unexpected GVK: %s/%s", obj.GetAPIVersion(), obj.GetKind())
 	}
@@ -890,7 +890,7 @@ func TestBuildSessionCNP_NamespaceScoped(t *testing.T) {
 	sess.Name = "cnp-ns"
 	sess.Namespace = "team-a"
 
-	obj := buildSessionCNP(sess)
+	obj := buildSessionCNP(sess, false)
 	if obj.GetNamespace() != "team-a" {
 		t.Fatalf("expected CNP in session namespace, got %s", obj.GetNamespace())
 	}
@@ -946,5 +946,60 @@ func TestRunSubAgent_DestroyChildLeavesParentPod(t *testing.T) {
 	}
 	if pod.Labels[labelSessionID] != "parent-shared" {
 		t.Fatalf("parent pod session label must be intact, got %v", pod.Labels)
+	}
+}
+
+// TestBuildSessionCNP_FQDNEnforced verifies that with FQDN egress enabled and
+// allowedHosts set, the HTTPS egress becomes scoped toFQDNs instead of blanket
+// world (KIP-16 M10 / issue #510).
+func TestBuildSessionCNP_FQDNEnforced(t *testing.T) {
+	sess := &sandboxv1.SandboxSession{}
+	sess.Name = "cnp-fqdn"
+	sess.Namespace = sandboxNS
+	sess.Spec.AllowedHosts = []string{"pypi.org", "github.com"}
+
+	obj := buildSessionCNP(sess, true)
+	spec := obj.Object["spec"].(map[string]interface{})
+	egress := spec["egress"].([]interface{})
+	if len(egress) != 2 {
+		t.Fatalf("expected 2 egress rules (dns + fqdn), got %d", len(egress))
+	}
+	// Second rule must be toFQDNs, not toEntities world.
+	rule := egress[1].(map[string]interface{})
+	if _, hasFQDNs := rule["toFQDNs"]; !hasFQDNs {
+		t.Fatalf("expected toFQDNs rule, got %v", rule)
+	}
+	if _, hasWorld := rule["toEntities"]; hasWorld {
+		t.Fatal("FQDN rule must not use toEntities")
+	}
+	fqdns := rule["toFQDNs"].([]interface{})
+	if len(fqdns) != 2 {
+		t.Fatalf("expected 2 FQDN matches, got %d", len(fqdns))
+	}
+	names := map[string]bool{}
+	for _, f := range fqdns {
+		names[f.(map[string]interface{})["matchName"].(string)] = true
+	}
+	if !names["pypi.org"] || !names["github.com"] {
+		t.Fatalf("unexpected FQDN matches: %v", names)
+	}
+}
+
+// TestBuildSessionCNP_FQDNNoHosts verifies FQDN mode with no allowedHosts keeps
+// blanket world egress (nothing to scope to).
+func TestBuildSessionCNP_FQDNNoHosts(t *testing.T) {
+	sess := &sandboxv1.SandboxSession{}
+	sess.Name = "cnp-fqdn-empty"
+	sess.Namespace = sandboxNS
+
+	obj := buildSessionCNP(sess, true)
+	spec := obj.Object["spec"].(map[string]interface{})
+	egress := spec["egress"].([]interface{})
+	rule := egress[1].(map[string]interface{})
+	if _, hasFQDNs := rule["toFQDNs"]; hasFQDNs {
+		t.Fatal("no allowedHosts -> no toFQDNs rule")
+	}
+	if _, hasWorld := rule["toEntities"]; !hasWorld {
+		t.Fatal("expected blanket world fallback")
 	}
 }
