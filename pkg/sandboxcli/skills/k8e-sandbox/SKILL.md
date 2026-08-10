@@ -88,6 +88,7 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli status` | Gateway + session probe |
 | `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--raw`, `--session-id`, `--tenant`) |
 | `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`) |
+| `k8e-sandbox-cli snapshot save <sid> <name> [--remote]` | Save workspace snapshot (optionally publish to gateway registry) |
 | `k8e-sandbox-cli write/read/list` | Workspace files |
 | `k8e-sandbox-cli log <sid>` | Replay exec transcript | `--offset`, `--limit`, `--follow` |
 | `k8e-sandbox-cli events <sid>` | Read daemon NDJSON event stream | `--limit` |

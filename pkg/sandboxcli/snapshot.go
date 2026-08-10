@@ -68,6 +68,25 @@ func storeSnapshotLayer(name string, content []byte) error {
 	return nil
 }
 
+// publishSnapshotRemote publishes a snapshot's manifest (layer list) to the
+// gateway's server-side layer registry (KIP-16 M2 / issue #511). The gateway
+// returns FailedPrecondition when the registry is not enabled server-side.
+func publishSnapshotRemote(client *sandboxclient.Client, name string) error {
+	store, err := snapshotStore()
+	if err != nil {
+		return err
+	}
+	m, err := store.LoadManifest(name)
+	if err != nil {
+		return fmt.Errorf("local manifest for %s: %w", name, err)
+	}
+	_, err = client.SandboxServiceClient.SnapshotPut(context.Background(), &pb.SnapshotPutRequest{
+		Name:   name,
+		Layers: m.Layers,
+	})
+	return err
+}
+
 // splitAllowedHosts splits a comma-separated egress allowlist, returning nil
 // for an empty input.
 func splitAllowedHosts(raw string) []string {
@@ -141,6 +160,9 @@ func snapshotSaveCommand() cli.Command {
 		Name:      "save",
 		Usage:     "Save the workspace of a session as a named snapshot",
 		ArgsUsage: "<session-id> <name>",
+		Flags: []cli.Flag{
+			cli.BoolFlag{Name: "remote", Usage: "Also publish the manifest to the gateway's server-side layer registry (KIP-16 M2)"},
+		},
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().Get(0)
 			name := ctx.Args().Get(1)
@@ -200,6 +222,14 @@ func snapshotSaveCommand() cli.Command {
 				return printErrorExit(err.Error(), 2)
 			}
 
+			// 4c. Optionally publish to the gateway's server-side layer registry.
+			if ctx.Bool("remote") {
+				if err := publishSnapshotRemote(client, name); err != nil {
+					return printErrorExit("publish remote: "+err.Error(), 2)
+				}
+				fmt.Fprintf(os.Stderr, "[k8e-sandbox] published snapshot %s to gateway registry\n", name)
+			}
+
 			// 5. Write metadata
 			meta := SnapshotMeta{
 				Name:      name,
@@ -228,8 +258,14 @@ func snapshotSaveCommand() cli.Command {
 func snapshotListCommand() cli.Command {
 	return cli.Command{
 		Name:  "list",
-		Usage: "List saved snapshots",
+		Usage: "List saved snapshots (--remote: gateway registry)",
+		Flags: []cli.Flag{
+			cli.BoolFlag{Name: "remote", Usage: "List from the gateway's server-side layer registry"},
+		},
 		Action: func(ctx *cli.Context) error {
+			if ctx.Bool("remote") {
+				return snapshotListRemote(ctx)
+			}
 			dir, _ := dataDir()
 			base := filepath.Join(dir, snapshotDirName)
 			entries, err := os.ReadDir(base)
@@ -263,6 +299,22 @@ func snapshotListCommand() cli.Command {
 			return nil
 		},
 	}
+}
+
+// snapshotListRemote lists snapshot manifests from the gateway's server-side
+// layer registry (KIP-16 M2 / issue #511).
+func snapshotListRemote(ctx *cli.Context) error {
+	client, exitErr := newClientFromCtx(ctx)
+	if exitErr != nil {
+		return exitErr
+	}
+	defer client.Close()
+	resp, err := client.SandboxServiceClient.SnapshotList(context.Background(), &pb.SnapshotListRequest{})
+	if err != nil {
+		return printErrorExit("snapshot list --remote: "+err.Error(), 1)
+	}
+	printJSON(map[string]any{"snapshots": resp.Names})
+	return nil
 }
 
 func snapshotRestoreCommand() cli.Command {
