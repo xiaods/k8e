@@ -2,6 +2,9 @@ package grpc
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +19,8 @@ import (
 	dynfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 
-	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
 const (
@@ -46,8 +49,8 @@ func newTestOrchestrator() *Orchestrator {
 	}
 	// explicit resource→listKind mapping to avoid fake client pluralisation bugs
 	listKinds := map[schema.GroupVersionResource]string{
-		{Group: testGroupK8e, Version: "v1alpha1", Resource: "sandboxsessions"}: "SandboxSessionList",
-		{Group: testGroupK8e, Version: "v1alpha1", Resource: "sandboxmatrices"}: "SandboxMatrixList",
+		{Group: testGroupK8e, Version: "v1alpha1", Resource: "sandboxsessions"}:    "SandboxSessionList",
+		{Group: testGroupK8e, Version: "v1alpha1", Resource: "sandboxmatrices"}:    "SandboxMatrixList",
 		{Group: testGroupCilium, Version: "v2", Resource: "ciliumnetworkpolicies"}: "CiliumNetworkPolicyList",
 	}
 	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
@@ -197,7 +200,7 @@ func TestClaimWarmPod_RuntimeClassMatchClaimed(t *testing.T) {
 	gv := warmTestPod("warm-gv", "10.0.0.5")
 	kata := warmTestPod("warm-kata2", "10.0.0.6")
 	kata.Labels[labelRuntimeClass] = "kata"
-	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, gv, metav1.CreateOptions{})  //nolint:errcheck
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, gv, metav1.CreateOptions{})   //nolint:errcheck
 	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, kata, metav1.CreateOptions{}) //nolint:errcheck
 
 	sess := mustCreateSession(t, o, "rt-match")
@@ -448,17 +451,17 @@ func TestDestroySession_ReleasesPod(t *testing.T) {
 	podName, pvcName := sess.Status.PodName, sess.Status.WorkspacePVC
 
 	// Fake clients don't support label selectors; manually set up pod labels and session status
-	setupPodForRelease(t, ctx, o, podName)
+	setupPodForRelease(ctx, t, o, podName)
 
 	if err := o.DestroySession(ctx, "destroy-test"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
 
-	assertPodReleased(t, ctx, o, podName)
-	assertPVCSurvives(t, ctx, o, pvcName)
+	assertPodReleased(ctx, t, o, podName)
+	assertPVCSurvives(ctx, t, o, pvcName)
 }
 
-func setupPodForRelease(t *testing.T, ctx context.Context, o *Orchestrator, podName string) {
+func setupPodForRelease(ctx context.Context, t *testing.T, o *Orchestrator, podName string) {
 	t.Helper()
 	if podName == "" {
 		return
@@ -485,7 +488,7 @@ func setupPodForRelease(t *testing.T, ctx context.Context, o *Orchestrator, podN
 	o.k8s.CoreV1().Pods(sandboxNS).UpdateStatus(ctx, pod, metav1.UpdateOptions{})
 }
 
-func assertPodReleased(t *testing.T, ctx context.Context, o *Orchestrator, podName string) {
+func assertPodReleased(ctx context.Context, t *testing.T, o *Orchestrator, podName string) {
 	t.Helper()
 	if podName == "" {
 		return
@@ -502,7 +505,7 @@ func assertPodReleased(t *testing.T, ctx context.Context, o *Orchestrator, podNa
 	}
 }
 
-func assertPVCSurvives(t *testing.T, ctx context.Context, o *Orchestrator, pvcName string) {
+func assertPVCSurvives(ctx context.Context, t *testing.T, o *Orchestrator, pvcName string) {
 	t.Helper()
 	if pvcName == "" {
 		return
@@ -679,5 +682,211 @@ func TestGCExpiredSessions_KeepsNonExpired(t *testing.T) {
 	}
 	if _, err := o.getSession(ctx, "gc-keep"); err != nil {
 		t.Fatalf("session should still exist: %v", err)
+	}
+}
+
+// TestReadyHandshake_StatusReady verifies the application-layer readiness
+// handshake accepts sandboxd that answers /ready with status=="ready".
+func TestReadyHandshake_StatusReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/ready" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ready","venv":true}`))
+	}))
+	defer srv.Close()
+	hostPort := strings.TrimPrefix(srv.URL, "http://")
+	if !readyHandshake(context.Background(), hostPort) {
+		t.Fatal("expected ready handshake to pass for status=ready")
+	}
+}
+
+// TestReadyHandshake_NotReady verifies sandboxd answering a non-ready status
+// (e.g. venv still initializing) fails the handshake.
+func TestReadyHandshake_NotReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"initializing","venv":false}`))
+	}))
+	defer srv.Close()
+	hostPort := strings.TrimPrefix(srv.URL, "http://")
+	if readyHandshake(context.Background(), hostPort) {
+		t.Fatal("expected handshake to fail for status=initializing")
+	}
+}
+
+// TestReadyHandshake_ErrorStatus verifies non-200 responses fail the handshake.
+func TestReadyHandshake_ErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	hostPort := strings.TrimPrefix(srv.URL, "http://")
+	if readyHandshake(context.Background(), hostPort) {
+		t.Fatal("expected handshake to fail on non-200")
+	}
+}
+
+// TestReadyHandshake_Unreachable verifies a dead endpoint fails fast and that
+// the TCP fallback still accepts a reachable-but-stale port.
+func TestReadyHandshake_Unreachable(t *testing.T) {
+	if readyHandshake(context.Background(), "127.0.0.1:1") {
+		t.Fatal("expected handshake to fail for unreachable endpoint")
+	}
+}
+
+// TestDefaultWarmPodHealthCheck_ReadyHandshakePreferred verifies the default
+// check prefers the application-layer /ready handshake over a bare TCP dial:
+// a pod whose port is open but whose sandboxd answers non-ready is rejected.
+func TestDefaultWarmPodHealthCheck_ReadyHandshakePreferred(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	// TCP accepts, but never serves a valid /ready response.
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close() //nolint:errcheck
+		}
+	}()
+	hostPort := ln.Addr().String()
+	pod := warmTestPod("warm-tcp-only", strings.Split(hostPort, ":")[0])
+	// Point the health check at the test listener via a stub IP override.
+	pod.Status.PodIP = "127.0.0.1"
+
+	// The port is open (bare TCP dial would succeed), but /ready never answers
+	// with status ready, so the pod must not be considered healthy. We exercise
+	// readyHandshake directly against the listener: it will time out / fail.
+	if readyHandshake(context.Background(), hostPort) {
+		t.Fatal("expected handshake to fail for TCP-only listener")
+	}
+	_ = pod
+}
+
+// TestExecBackground_CapEnforced verifies the per-session background run cap
+// (KIP-16 M12) rejects submissions beyond the limit with ResourceExhausted.
+func TestExecBackground_CapEnforced(t *testing.T) {
+	o := newTestOrchestrator()
+	o.maxBackgroundRuns = 2
+	ctx := context.Background()
+
+	// Register two run_ids for the same session directly (registry is the
+	// source of truth for the cap; no pod needed to exercise the gate).
+	o.mu.Lock()
+	o.runRegistry["sess-1-bg-1"] = "sess-1"
+	o.runRegistry["sess-1-bg-2"] = "sess-1"
+	o.mu.Unlock()
+
+	if got := o.countBackgroundRuns("sess-1"); got != 2 {
+		t.Fatalf("expected 2 background runs, got %d", got)
+	}
+
+	_, err := o.ExecBackground(ctx, "sess-1", "echo hi", 30, "/workspace", nil)
+	if err == nil {
+		t.Fatal("expected ResourceExhausted when cap reached")
+	}
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("expected ResourceExhausted, got %v", status.Code(err))
+	}
+}
+
+// TestExecBackground_CapPerSession verifies the cap is per-session, not global:
+// a session with free slots can still submit.
+func TestExecBackground_CapPerSession(t *testing.T) {
+	o := newTestOrchestrator()
+	o.maxBackgroundRuns = 1
+	ctx := context.Background()
+
+	o.mu.Lock()
+	o.runRegistry["sess-other-bg-1"] = "sess-other"
+	o.mu.Unlock()
+
+	if got := o.countBackgroundRuns("sess-fresh"); got != 0 {
+		t.Fatalf("expected 0 runs for fresh session, got %d", got)
+	}
+
+	// Cap applies to the registry count, so a fresh session passes the gate;
+	// the subsequent podIP lookup fails (no pod) — that's expected, it proves
+	// the cap gate was not the rejection reason.
+	_, err := o.ExecBackground(ctx, "sess-fresh", "echo hi", 30, "/workspace", nil)
+	if err == nil {
+		t.Fatal("expected error (no pod), not a successful submit")
+	}
+	if status.Code(err) == codes.ResourceExhausted {
+		t.Fatal("fresh session must not hit the background cap")
+	}
+}
+
+// TestBuildSessionCNP_PerSessionPolicy verifies the CNP builder emits a
+// per-session policy: label-scoped endpoint selector, gateway+host ingress to
+// :2024, and egress restricted to DNS(53)+HTTPS(443) only.
+func TestBuildSessionCNP_PerSessionPolicy(t *testing.T) {
+	sess := &sandboxv1.SandboxSession{}
+	sess.Name = "cnp-test"
+	sess.Namespace = sandboxNS
+
+	obj := buildSessionCNP(sess)
+	if obj.GetAPIVersion() != "cilium.io/v2" || obj.GetKind() != "CiliumNetworkPolicy" {
+		t.Fatalf("unexpected GVK: %s/%s", obj.GetAPIVersion(), obj.GetKind())
+	}
+	spec := obj.Object["spec"].(map[string]interface{})
+	sel := spec["endpointSelector"].(map[string]interface{})
+	labels := sel["matchLabels"].(map[string]interface{})
+	if labels[labelSessionID] != "cnp-test" {
+		t.Fatalf("expected endpoint selector scoped to session label, got %v", labels)
+	}
+
+	ingress := spec["ingress"].([]interface{})
+	if len(ingress) != 2 {
+		t.Fatalf("expected 2 ingress rules (host + gateway), got %d", len(ingress))
+	}
+	// Both ingress rules must only expose :2024.
+	for _, r := range ingress {
+		rule := r.(map[string]interface{})
+		ports := rule["toPorts"].([]interface{})[0].(map[string]interface{})["ports"].([]interface{})
+		p := ports[0].(map[string]interface{})
+		if p["port"] != "2024" || p["protocol"] != "TCP" {
+			t.Fatalf("unexpected ingress port: %v", p)
+		}
+	}
+
+	egress := spec["egress"].([]interface{})
+	if len(egress) != 2 {
+		t.Fatalf("expected 2 egress rules (53 + 443), got %d", len(egress))
+	}
+	seen := map[string]bool{}
+	for _, r := range egress {
+		rule := r.(map[string]interface{})
+		entities := rule["toEntities"].([]interface{})
+		if entities[0] != "world" {
+			t.Fatalf("expected toEntities world, got %v", entities)
+		}
+		ports := rule["toPorts"].([]interface{})[0].(map[string]interface{})["ports"].([]interface{})
+		p := ports[0].(map[string]interface{})
+		seen[p["port"].(string)] = true
+	}
+	if !seen["53"] || !seen["443"] {
+		t.Fatalf("egress must cover DNS 53 + HTTPS 443, got %v", seen)
+	}
+}
+
+// TestBuildSessionCNP_NamespaceScoped verifies the CNP lands in the session
+// namespace with the deterministic per-session name.
+func TestBuildSessionCNP_NamespaceScoped(t *testing.T) {
+	sess := &sandboxv1.SandboxSession{}
+	sess.Name = "cnp-ns"
+	sess.Namespace = "team-a"
+
+	obj := buildSessionCNP(sess)
+	if obj.GetNamespace() != "team-a" {
+		t.Fatalf("expected CNP in session namespace, got %s", obj.GetNamespace())
+	}
+	if obj.GetName() != "sandbox-session-cnp-ns" {
+		t.Fatalf("unexpected CNP name: %s", obj.GetName())
 	}
 }

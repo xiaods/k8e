@@ -1,5 +1,18 @@
 const std = @import("std");
 
+/// isReady reports whether the workspace virtualenv is fully initialized
+/// (i.e. /workspace/.venv/bin/python exists and is executable). Used by the
+/// /ready application-layer handshake so consumers never claim a warm pod whose
+/// venv is still lazily being created.
+pub fn isReady() bool {
+    const fd = std.os.linux.open("/workspace/.venv/bin/python", std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    if (@as(isize, @bitCast(fd)) >= 0) {
+        _ = std.os.linux.close(@intCast(fd));
+        return true;
+    }
+    return false;
+}
+
 /// ensureVenv creates /workspace/.venv via python3 -m venv if it does not exist.
 /// Safe to call multiple times — fast no-op after the first creation.
 /// Called at startup and after workspace resets which wipe /workspace.

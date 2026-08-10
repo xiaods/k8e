@@ -285,6 +285,7 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		"%{SYSTEM_DEFAULT_REGISTRY_RAW}%": controlConfig.SystemDefaultRegistry,
 		"%{SYSTEM_DATA_DIR}%":             controlConfig.DataDir,
 		"%{CILIUM_VERSION}%":              version.CiliumChartVersion,
+		"%{CILIUM_DNS_PROXY_ENABLED}%":    strconv.FormatBool(controlConfig.CiliumDNSProxyEnabled),
 		"%{CLUSTER_CIDR}%":                util.JoinIPNets(controlConfig.ClusterIPRanges),
 		"%{CNI_BIN_DIR}%":                 "/opt/cni/bin",
 		"%{CNI_CONF_DIR}%":                "/etc/cni/net.d",

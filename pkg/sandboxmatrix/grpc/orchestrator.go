@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -22,11 +24,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
-	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
 const (
@@ -70,8 +70,8 @@ var (
 )
 
 type pendingApproval struct {
-	action   string
-	approved chan bool
+	action    string
+	approved  chan bool
 	createdAt time.Time
 }
 
@@ -100,6 +100,11 @@ type Orchestrator struct {
 	coldStarts          atomic.Int64
 	claimLatencyTotalMs atomic.Int64
 	claimCount          atomic.Int64
+
+	// maxBackgroundRuns caps concurrently-registered background runs per
+	// session. Matches the KIP-16 M12 recommendation (capped, reaped
+	// background execution) and KIP-15 G9 Perplexity parity.
+	maxBackgroundRuns int
 }
 
 func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestrator {
@@ -109,13 +114,18 @@ func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestra
 		approvals:          make(map[string]*pendingApproval),
 		runRegistry:        make(map[string]string),
 		warmPodHealthCheck: defaultWarmPodHealthCheck,
+		maxBackgroundRuns:  defaultMaxBackgroundRuns,
 	}
 }
 
 // defaultWarmPodHealthCheck reports whether a warm pod's sandboxd is actually
-// serving on :2024. It requires the kubelet Ready condition (driven by the TCP
-// readiness probe on the sandbox container) plus a direct TCP dial to close the
-// small race between kubelet marking the pod ready and sandboxd accepting sockets.
+// ready to serve on :2024 before the pod is claimed for a session. It requires
+// the kubelet Ready condition (driven by the TCP readiness probe on the sandbox
+// container) plus an application-layer readiness handshake: a bare TCP dial is
+// not a reliable readiness signal (the socket can be open before sandboxd
+// finished initialization), so we call sandboxd's /ready endpoint and require
+// status=="ready". The TCP dial is kept only as a fallback for sandboxd images
+// that predate the /ready endpoint.
 func defaultWarmPodHealthCheck(ctx context.Context, pod *corev1.Pod) bool {
 	if pod.Status.Phase != corev1.PodRunning || pod.Status.PodIP == "" {
 		return false
@@ -123,13 +133,48 @@ func defaultWarmPodHealthCheck(ctx context.Context, pod *corev1.Pod) bool {
 	if !PodReadyCondition(pod) {
 		return false
 	}
+	hostPort := net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(sandboxdPort))
+	if readyHandshake(ctx, hostPort) {
+		return true
+	}
+	// Fallback: older sandboxd images without /ready. Keep a short timeout.
 	dialer := &net.Dialer{Timeout: 1500 * time.Millisecond}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(sandboxdPort)))
+	conn, err := dialer.DialContext(ctx, "tcp", hostPort)
 	if err != nil {
 		return false
 	}
 	_ = conn.Close()
 	return true
+}
+
+// readyHandshake performs the application-layer readiness check against
+// sandboxd's /ready endpoint. It returns true only when sandboxd answers
+// 200 with status=="ready" (venv may still be initializing; a bare TCP dial
+// cannot tell).
+func readyHandshake(ctx context.Context, hostPort string) bool {
+	reqCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost,
+		"http://"+hostPort+"/ready", http.NoBody)
+	if err != nil {
+		return false
+	}
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false
+	}
+	return body.Status == "ready"
 }
 
 // PodReadyCondition returns true when the pod's Ready condition is True.
@@ -444,6 +489,10 @@ func (o *Orchestrator) listSessions(ctx context.Context, namespace, phase string
 	return result, nil
 }
 
+// defaultMaxBackgroundRuns is the default cap on concurrently registered
+// background runs per session.
+const defaultMaxBackgroundRuns = 5
+
 // countBackgroundRuns returns how many run_registry entries point at sessionID.
 func (o *Orchestrator) countBackgroundRuns(sessionID string) int32 {
 	o.mu.Lock()
@@ -598,13 +647,18 @@ func (o *Orchestrator) StartApprovalGC(ctx context.Context) {
 // ExecBackground submits a background command to the sandboxd and registers the run_id.
 // env is the session's non-sensitive environment map (applied at exec time).
 func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command string, timeout int32, workdir string, env map[string]string) (string, error) {
+	if o.countBackgroundRuns(sessionID) >= int32(o.maxBackgroundRuns) {
+		return "", status.Errorf(codes.ResourceExhausted,
+			"background run limit reached (%d active runs); poll or wait for completion before submitting more",
+			o.maxBackgroundRuns)
+	}
 	podIP, err := o.getPodIPBySession(ctx, sessionID)
 	if err != nil {
 		return "", err
 	}
 
 	runID := fmt.Sprintf("%s-bg-%d", sessionID, time.Now().UnixNano())
-	body, _ := json.Marshal(sandboxdBackgroundBody(command, runID, timeout, workdir, env))
+	body, _ := json.Marshal(sandboxdBackgroundBody(sessionID, command, runID, timeout, workdir, env))
 
 	url := fmt.Sprintf("http://%s:%d/exec/background", podIP, 2024)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -615,7 +669,9 @@ func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command st
 	}
 	defer resp.Body.Close()
 
-	var result struct{ Status string `json:"status"` }
+	var result struct {
+		Status string `json:"status"`
+	}
 	json.NewDecoder(resp.Body).Decode(&result)
 
 	o.mu.Lock()
@@ -887,7 +943,28 @@ func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string)
 }
 
 func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxSession) error {
-	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+	obj := buildSessionCNP(session)
+	name := fmt.Sprintf("sandbox-session-%s", session.Name)
+	_, err := o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Get(ctx, name, metav1.GetOptions{})
+	if errors.IsNotFound(err) {
+		_, err = o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Create(ctx, obj, metav1.CreateOptions{})
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	_, err = o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Update(ctx, obj, metav1.UpdateOptions{})
+	return err
+}
+
+// buildSessionCNP returns the per-session CiliumNetworkPolicy. Egress is kept
+// as toEntities:world limited to DNS (53) + HTTPS (443) — NOT narrowed via
+// toFQDNs by default: FQDN rules require the Cilium DNS proxy (L7), which was
+// enabled in 9f5b7f41 and reverted in 2b3bfb0a because it broke DNS in gVisor
+// pods. Operators who re-enable the DNS proxy (see manifests/cilium.yaml
+// dnsProxy.enabled) can tighten egress further; see KIP-16 M10 / issue #510.
+func buildSessionCNP(session *sandboxv1.SandboxSession) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cilium.io/v2",
 		"kind":       "CiliumNetworkPolicy",
 		"metadata": map[string]interface{}{
@@ -931,28 +1008,17 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 						},
 					},
 				},
-					map[string]interface{}{
-						"toEntities": []interface{}{"world"},
-						"toPorts": []interface{}{
-							map[string]interface{}{
-								"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
-							},
+				map[string]interface{}{
+					"toEntities": []interface{}{"world"},
+					"toPorts": []interface{}{
+						map[string]interface{}{
+							"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
 						},
 					},
 				},
 			},
-		}}
-	name := fmt.Sprintf("sandbox-session-%s", session.Name)
-	_, err := o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Get(ctx, name, metav1.GetOptions{})
-	if errors.IsNotFound(err) {
-		_, err = o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Create(ctx, obj, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	_, err = o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Update(ctx, obj, metav1.UpdateOptions{})
-	return err
+		},
+	}}
 }
 
 func (o *Orchestrator) deleteCNP(ctx context.Context, session *sandboxv1.SandboxSession) {

@@ -350,6 +350,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		serverConfig.ControlConfig.Skips["cilium"] = true
 		serverConfig.ControlConfig.Disables["cilium"] = true
 	}
+	serverConfig.ControlConfig.CiliumDNSProxyEnabled = cfg.CiliumDNSProxyEnabled
 
 	tlsMinVersionArg := getArgValueFromList("tls-min-version", serverConfig.ControlConfig.ExtraAPIArgs)
 	serverConfig.ControlConfig.MinTLSVersion = tlsMinVersionArg
