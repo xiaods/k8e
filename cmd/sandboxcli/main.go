@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	// Stage embedded skill files for install-skill command
+	// Stage embedded skill files for connect (agent harness install).
 	if err := sandboxcli.StageSkills(); err != nil {
 		logrus.Fatalf("Failed to stage skill files: %v", err)
 	}
@@ -26,6 +26,7 @@ func main() {
 		cli.StringFlag{Name: "apikey", EnvVar: "K8E_SANDBOX_APIKEY", Usage: "API key for remote cluster authentication"},
 	}
 	app.Commands = []cli.Command{
+		sandboxcli.ConnectCommand(),
 		sandboxcli.LoginCommand(),
 		sandboxcli.RunCommand(),
 		sandboxcli.StatusCommand(),
@@ -43,7 +44,6 @@ func main() {
 		sandboxcli.PollCommand(),
 		sandboxcli.LogCommand(),
 		sandboxcli.BenchmarkCommand(),
-		sandboxcli.InstallSkillCommand(),
 	}
 
 	if err := app.Run(os.Args); err != nil {

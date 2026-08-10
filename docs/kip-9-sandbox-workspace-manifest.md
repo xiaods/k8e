@@ -156,7 +156,7 @@ k8e sandbox run "python3 /workspace/analyze.py" --lang bash --manifest workspace
 |------|------|
 | `pkg/sandboxcli/manifest.go` | 新文件：YAML 解析 + materialization 逻辑 |
 | `pkg/sandboxcli/commands.go` | `create` 和 `run` 命令新增 `--manifest` flag |
-| `skills/k8e-sandbox/SKILL.md` | 新增 manifest 使用示例 |
+| `pkg/sandboxcli/skills/k8e-sandbox/SKILL.md` | 新增 manifest 使用示例 |
 
 ## 相关 KIP
 

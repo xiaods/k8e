@@ -22,10 +22,18 @@ const errSessionNotFound = "not found"
 // ErrSessionGone is returned when a sandbox session has expired or been destroyed.
 var ErrSessionGone = errors.New("sandbox session expired or destroyed")
 
-// newClientFromCtx creates a gRPC client using endpoint/apikey from global flags.
+// newClientFromCtx creates a gRPC client using endpoint/apikey from global flags,
+// falling back to the connection config saved by `connect`.
 func newClientFromCtx(ctx *cli.Context) (*client.Client, *ExitError) {
-	endpoint := ctx.GlobalString("endpoint")
-	apikey := ctx.GlobalString("apikey")
+	endpoint := strings.TrimSpace(ctx.GlobalString("endpoint"))
+	apikey := strings.TrimSpace(ctx.GlobalString("apikey"))
+
+	// Prefer flags/env; else use persisted connect config.
+	if endpoint == "" {
+		if cfg, err := LoadConnectionConfig(); err == nil && cfg != nil && cfg.Endpoint != "" {
+			endpoint = cfg.Endpoint
+		}
+	}
 
 	var c *client.Client
 	var err error
@@ -1122,7 +1130,6 @@ func PollCommand() cli.Command {
 		},
 	}
 }
-
 // ── LogCommand ─────────────────────────────────────────────────────────────
 
 func LogCommand() cli.Command {
@@ -1179,22 +1186,3 @@ func LogCommand() cli.Command {
 	}
 }
 
-// ── InstallSkillCommand ────────────────────────────────────────────────────
-
-func InstallSkillCommand() cli.Command {
-	return cli.Command{
-		Name:      "install-skill",
-		Usage:     "Install K8E sandbox skill into AI agent config",
-		ArgsUsage: "[claude|codex|pi|all]",
-		Action: func(ctx *cli.Context) error {
-			target := ctx.Args().First()
-			if target == "" {
-				target = "all"
-			}
-			if err := InstallSkill(target); err != nil {
-				return printErrorExit(err.Error(), 1)
-			}
-			return nil
-		},
-	}
-}

@@ -283,7 +283,7 @@ pkg/sandboxmatrix/grpc/server.go                         # 注册 ApproveAction
 pkg/sandboxmcp/install.go                                # 简化为仅 installAllSkills
 pkg/sandboxmcp/client.go                                 # 保留，被 sandboxcli 复用
 cmd/server/main.go                                       # 注册 sandbox 命令组 + 删 sandbox-mcp
-skills/k8e-sandbox/SKILL.md                              # 重写为 CLI 格式
+pkg/sandboxcli/skills/k8e-sandbox/SKILL.md               # 重写为 CLI 格式
 ```
 
 ## 实现任务
@@ -331,7 +331,7 @@ skills/k8e-sandbox/SKILL.md                              # 重写为 CLI 格式
 
 ### Task 6 — SKILL.md 重写
 
-`skills/k8e-sandbox/SKILL.md` 改为 CLI 格式：
+`pkg/sandboxcli/skills/k8e-sandbox/SKILL.md` 改为 CLI 格式：
 - 命令表格 + 使用示例
 - stdin/heredoc 文件写入
 - session 持久化（state 文件 + --tenant）

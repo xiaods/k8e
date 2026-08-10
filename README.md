@@ -186,14 +186,11 @@ chmod +x k8e-sandbox-cli-linux-amd64
 k8e sandbox-apikey create my-agent
 # → {"name":"my-agent","key":"k8e-abc123..."}
 
-# Authenticate and obtain an mTLS client certificate
-./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... login
-
-# Install the skill
-./k8e-sandbox-cli-linux-amd64 install-skill all
+# Connect: authenticate (mTLS) + install /k8e-sandbox skill into agent harnesses
+./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
 ```
 
-> **Local usage:** If you're on the same machine as the K8E server, the CLI auto-discovers TLS certs and no login is needed — skip straight to `install-skill`.
+> **Local usage:** If you're on the same machine as the K8E server, the CLI auto-discovers TLS certs — just run `k8e-sandbox-cli connect`.
 
 Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
 
@@ -296,27 +293,28 @@ k8e sandbox-apikey create my-agent
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
 
-# 2. Authenticate and obtain an mTLS client certificate
+# 2. Connect: mTLS auth + install /k8e-sandbox skill into Claude/Codex/Pi
 #    Note: --endpoint and --apikey are global flags, placed before the subcommand
-./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... login
-
-# 3. Install the skill
-./k8e-sandbox-cli-linux-amd64 install-skill all
+./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
 ```
 
 Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
 
-Then ask your agent naturally:
+Then in your agent harness:
 
-> "Run this Python snippet in a sandbox"
+```text
+/k8e-sandbox <goal>
+```
 
-The agent executes `k8e-sandbox-cli run` automatically — no session management needed.
+Or ask naturally: *"Run this Python snippet in a sandbox"* — the skill drives `k8e-sandbox-cli run`.
 
 ### Available Commands
 
 | Command | Description |
 |---|---|
-| `k8e-sandbox-cli login` | Authenticate to gateway and obtain mTLS client certificate |
+| `k8e-sandbox-cli connect` | Connect local/remote gateway and install `/k8e-sandbox` agent skill |
+| `k8e-sandbox-cli connect --skill-only` | Re-install agent skill only (no gateway dial) |
+| `k8e-sandbox-cli login` | Authenticate only (mTLS cert; no skill install) |
 | `k8e-sandbox-cli run <code>` | Run code or shell command (auto-creates/manages session) |
 | `k8e-sandbox-cli status` | Check sandbox service availability and current session |
 | `k8e-sandbox-cli create` | Create a new session (custom runtime, egress, manifest, git-repo) |
@@ -327,12 +325,11 @@ The agent executes `k8e-sandbox-cli run` automatically — no session management
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
 | `k8e-sandbox-cli confirm <sid> <action>` | Gate irreversible action on human approval |
 | `k8e-sandbox-cli approve <approval-id>` | Approve a pending confirm request |
-| `k8e-sandbox-cli install-skill <target>` | Install skill file for AI agent (claude/codex/pi/all) |
 | `k8e sandbox-apikey create <name>` | Create API key for remote sandbox access (server-side) |
 | `k8e sandbox-apikey list` | List API key names (server-side) |
 | `k8e sandbox-apikey delete <name>` | Delete an API key (server-side) |
 
-See [skills/k8e-sandbox/SKILL.md](skills/k8e-sandbox/SKILL.md) for full usage examples.
+See [pkg/sandboxcli/skills/k8e-sandbox/SKILL.md](pkg/sandboxcli/skills/k8e-sandbox/SKILL.md) for full usage examples.
 
 ### Quick Examples
 
