@@ -451,17 +451,17 @@ func TestDestroySession_ReleasesPod(t *testing.T) {
 	podName, pvcName := sess.Status.PodName, sess.Status.WorkspacePVC
 
 	// Fake clients don't support label selectors; manually set up pod labels and session status
-	setupPodForRelease(t, ctx, o, podName)
+	setupPodForRelease(ctx, t, o, podName)
 
 	if err := o.DestroySession(ctx, "destroy-test"); err != nil {
 		t.Fatalf("destroy: %v", err)
 	}
 
-	assertPodReleased(t, ctx, o, podName)
-	assertPVCSurvives(t, ctx, o, pvcName)
+	assertPodReleased(ctx, t, o, podName)
+	assertPVCSurvives(ctx, t, o, pvcName)
 }
 
-func setupPodForRelease(t *testing.T, ctx context.Context, o *Orchestrator, podName string) {
+func setupPodForRelease(ctx context.Context, t *testing.T, o *Orchestrator, podName string) {
 	t.Helper()
 	if podName == "" {
 		return
@@ -488,7 +488,7 @@ func setupPodForRelease(t *testing.T, ctx context.Context, o *Orchestrator, podN
 	o.k8s.CoreV1().Pods(sandboxNS).UpdateStatus(ctx, pod, metav1.UpdateOptions{})
 }
 
-func assertPodReleased(t *testing.T, ctx context.Context, o *Orchestrator, podName string) {
+func assertPodReleased(ctx context.Context, t *testing.T, o *Orchestrator, podName string) {
 	t.Helper()
 	if podName == "" {
 		return
@@ -505,7 +505,7 @@ func assertPodReleased(t *testing.T, ctx context.Context, o *Orchestrator, podNa
 	}
 }
 
-func assertPVCSurvives(t *testing.T, ctx context.Context, o *Orchestrator, pvcName string) {
+func assertPVCSurvives(ctx context.Context, t *testing.T, o *Orchestrator, pvcName string) {
 	t.Helper()
 	if pvcName == "" {
 		return

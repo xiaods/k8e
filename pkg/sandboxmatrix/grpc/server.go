@@ -276,17 +276,15 @@ func (s *Server) Start(ctx context.Context) error {
 	s.issuedStore = newIssuedCertStore(s.caCertFile[:strings.LastIndex(s.caCertFile, "/")] + "/sandbox-issued.json")
 	s.revocList = newRevocationList()
 
-	opts := []grpc.ServerOption{grpc.Creds(creds)}
-	// Raise the gRPC message size limits from the 4MiB default: snapshot
-	// restore / file payloads routinely exceed it (see KIP-16 M7).
-	opts = append(opts,
-		grpc.MaxRecvMsgSize(64*1024*1024),
-		grpc.MaxSendMsgSize(64*1024*1024),
-	)
-	opts = append(opts,
+	opts := []grpc.ServerOption{
+		grpc.Creds(creds),
+		// Raise the gRPC message size limits from the 4MiB default: snapshot
+		// restore / file payloads routinely exceed it (see KIP-16 M7).
+		grpc.MaxRecvMsgSize(64 * 1024 * 1024),
+		grpc.MaxSendMsgSize(64 * 1024 * 1024),
 		grpc.ChainUnaryInterceptor(s.rateLimiter.UnaryInterceptor, s.mTLSAuthInterceptor),
 		grpc.ChainStreamInterceptor(s.rateLimiter.StreamInterceptor, s.mTLSStreamInterceptor),
-	)
+	}
 	gs := grpc.NewServer(opts...)
 	pb.RegisterSandboxServiceServer(gs, s)
 	logrus.Infof("sandbox gRPC gateway listening on %s", s.lisAddr)
