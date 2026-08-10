@@ -29,9 +29,21 @@ func TestSnapshotStore_ContentAddressedDedup(t *testing.T) {
 	if d1 != d2 {
 		t.Fatalf("same content must dedup to same digest: %s vs %s", d1, d2)
 	}
-	size, _ := store.SizeBytes()
-	if size != int64(len(payload)) {
-		t.Fatalf("expected deduped storage %d bytes, got %d", len(payload), size)
+	// Dedup: exactly one on-disk layer file despite two Put calls.
+	entries, err := os.ReadDir(filepath.Join(dir, ".layers", "layers"))
+	if err != nil {
+		t.Fatalf("read layer dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected exactly 1 deduped layer file, got %d", len(entries))
+	}
+	// Round-trip intact (zstd stored, transparently decompressed).
+	got, err := store.Get(d1)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Fatal("zstd round-trip mismatch")
 	}
 }
 
