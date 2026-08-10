@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // Store is a content-addressed layer store rooted at dir.
@@ -45,8 +47,10 @@ func Digest(b []byte) string {
 }
 
 // Put stages content and publishes it atomically under its sha256. Idempotent:
-// publishing an existing digest is a no-op. The layer file is fsync'd before
-// rename so a crash never leaves a torn layer under the final name.
+// publishing an existing digest is a no-op. The layer is stored zstd-compressed
+// (content-addressed by the UNCOMPRESSED digest, like OCI registries) so
+// dedup works on content and disk usage stays compact. The file is fsync'd
+// before rename so a crash never leaves a torn layer under the final name.
 func (s *Store) Put(content []byte) (string, error) {
 	digest := Digest(content)
 	layerPath := s.layerPath(digest)
@@ -54,6 +58,7 @@ func (s *Store) Put(content []byte) (string, error) {
 		return digest, nil // already present
 	}
 
+	compressed := compress(content)
 	tmp, err := os.CreateTemp(s.stagingDir(), "layer-")
 	if err != nil {
 		return "", fmt.Errorf("layerstore stage: %w", err)
@@ -61,7 +66,7 @@ func (s *Store) Put(content []byte) (string, error) {
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // no-op after successful rename
 
-	if _, err := tmp.Write(content); err != nil {
+	if _, err := tmp.Write(compressed); err != nil {
 		tmp.Close() //nolint:errcheck
 		return "", fmt.Errorf("layerstore write: %w", err)
 	}
@@ -84,13 +89,13 @@ func (s *Store) Has(digest string) bool {
 	return err == nil
 }
 
-// Get returns the layer content for digest.
+// Get returns the (decompressed) layer content for digest.
 func (s *Store) Get(digest string) ([]byte, error) {
 	b, err := os.ReadFile(s.layerPath(digest))
 	if err != nil {
 		return nil, fmt.Errorf("layerstore get %s: %w", digest, err)
 	}
-	return b, nil
+	return decompress(b)
 }
 
 // Manifest is a content-addressed snapshot: an ordered list of layer digests
@@ -302,4 +307,31 @@ func trimExt(name string) string {
 		}
 	}
 	return name
+}
+
+// compress zstd-compresses layer content. The digest stays the sha256 of the
+// UNCOMPRESSED bytes so dedup is content-based (OCI-style).
+func compress(content []byte) []byte {
+	enc, err := zstd.NewWriter(nil)
+	if err != nil {
+		return content // never fail a store on compression
+	}
+	defer enc.Close()
+	return enc.EncodeAll(content, nil)
+}
+
+// decompress restores a layer stored zstd-compressed. Falls back to raw bytes
+// for layers written by older (uncompressed) versions.
+func decompress(b []byte) ([]byte, error) {
+	dec, err := zstd.NewReader(nil)
+	if err != nil {
+		return b, nil
+	}
+	defer dec.Close()
+	out, err := dec.DecodeAll(b, nil)
+	if err != nil {
+		// Not a valid zstd frame — treat as legacy uncompressed layer.
+		return b, nil
+	}
+	return out, nil
 }

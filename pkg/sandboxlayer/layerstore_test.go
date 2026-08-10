@@ -2,6 +2,7 @@ package sandboxlayer
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -197,8 +198,20 @@ func TestStore_SizeBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != 15 {
-		t.Fatalf("expected 15 bytes, got %d", total)
+	// Layers are zstd-compressed on disk (KIP-16 M2); SizeBytes sums the
+	// on-disk files, so it matches the actual layer directory.
+	entries, err := os.ReadDir(s.layerDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want int64
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil {
+			want += info.Size()
+		}
+	}
+	if total != want {
+		t.Fatalf("SizeBytes %d != on-disk %d", total, want)
 	}
 }
 
@@ -300,5 +313,52 @@ func TestStore_Autosquash_ReleasesOriginals(t *testing.T) {
 	m, _ := s.LoadManifest("snap-sq")
 	if !s.Has(m.Layers[0]) {
 		t.Fatal("consolidated layer must survive GC")
+	}
+}
+func TestStore_ZstdCompressedOnDisk(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	// Highly compressible payload: repeated text.
+	content := []byte(strings.Repeat("k8e-sandbox-layer-content-", 5000)) // ~125KB
+	d, err := s.Put(content)
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	got, err := s.Get(d)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatal("zstd round-trip mismatch")
+	}
+	info, err := os.Stat(s.layerPath(d))
+	if err != nil {
+		t.Fatalf("stat layer: %v", err)
+	}
+	if info.Size() >= int64(len(content)) {
+		t.Fatalf("expected compressed layer smaller than raw (%d >= %d)", info.Size(), len(content))
+	}
+}
+
+// TestStore_GetLegacyUncompressedLayer verifies decompress falls back to raw
+// bytes for layers written before zstd storage (backward compatibility).
+func TestStore_GetLegacyUncompressedLayer(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	legacy := []byte("legacy uncompressed layer content")
+	d := Digest(legacy)
+	if err := os.WriteFile(s.layerPath(d), legacy, 0o600); err != nil {
+		t.Fatalf("write legacy layer: %v", err)
+	}
+	got, err := s.Get(d)
+	if err != nil {
+		t.Fatalf("get legacy: %v", err)
+	}
+	if !bytes.Equal(got, legacy) {
+		t.Fatal("legacy layer fallback mismatch")
 	}
 }
