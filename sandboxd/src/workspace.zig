@@ -1,10 +1,28 @@
 const std = @import("std");
 const main = @import("main.zig");
 
-/// handleReset removes all files/dirs under /workspace using raw syscalls,
+/// handleReset removes all files/dirs under /workspace (or a scoped subdir
+/// when ?path=<sub> is given, KIP-16 M1 slice 2 — per-session isolation),
 /// then recreates the directory. POST /workspace/reset
-pub fn handleReset(allocator: std.mem.Allocator, client_fd: i32) !void {
+pub fn handleReset(allocator: std.mem.Allocator, client_fd: i32, query: []const u8) !void {
+    var scope: []const u8 = "";
+    var params = std.mem.splitScalar(u8, query, '&');
+    while (params.next()) |pair| {
+        var kv = std.mem.splitScalar(u8, pair, '=');
+        const key = kv.next() orelse continue;
+        const val = kv.next() orelse continue;
+        if (std.mem.eql(u8, key, "path")) {
+            scope = val;
+        }
+    }
+
+    // Scope root: /workspace or /workspace/<scope>.
     const workspace_path = "/workspace";
+    var scope_buf: [512]u8 = undefined;
+    const reset_root = if (scope.len > 0)
+        std.fmt.bufPrint(&scope_buf, "{s}/{s}", .{ workspace_path, scope }) catch workspace_path
+    else
+        workspace_path;
 
     // Collect all paths to delete by walking the directory
     var paths = std.array_list.Managed([]const u8).init(allocator);
@@ -12,10 +30,13 @@ pub fn handleReset(allocator: std.mem.Allocator, client_fd: i32) !void {
         for (paths.items) |p| allocator.free(p);
         paths.deinit();
     }
-    collectPaths(allocator, &paths, workspace_path, "") catch |err| {
+    const sub_prefix: []const u8 = if (scope.len > 0) scope else "";
+    collectPaths(allocator, &paths, reset_root, sub_prefix) catch |err| {
         if (err == error.FileNotFound or err == error.NotDir) {
-            // /workspace doesn't exist or is gone — recreate and return
-            _ = std.os.linux.mkdir(@ptrCast(workspace_path.ptr), 0o755);
+            // The reset root doesn't exist — recreate (or leave scoped absent)
+            if (scope.len == 0) {
+                _ = std.os.linux.mkdir(@ptrCast(workspace_path.ptr), 0o755);
+            }
             try sendOK(client_fd);
             return;
         }
@@ -27,7 +48,7 @@ pub fn handleReset(allocator: std.mem.Allocator, client_fd: i32) !void {
     while (i > 0) {
         i -= 1;
         const entry = paths.items[i];
-        const full_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ workspace_path, entry });
+        const full_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ reset_root, entry });
         defer allocator.free(full_path);
         const full_z = try allocator.dupeZ(u8, full_path);
         defer allocator.free(full_z);
@@ -36,8 +57,11 @@ pub fn handleReset(allocator: std.mem.Allocator, client_fd: i32) !void {
         _ = std.os.linux.unlink(full_z.ptr);
     }
 
-    // Recreate /workspace
-    _ = std.os.linux.mkdir(@ptrCast(workspace_path.ptr), 0o755);
+    // Recreate the reset root (only for the unscoped /workspace; scoped roots
+    // stay absent so the session appears fresh).
+    if (scope.len == 0) {
+        _ = std.os.linux.mkdir(@ptrCast(workspace_path.ptr), 0o755);
+    }
     try sendOK(client_fd);
 }
 

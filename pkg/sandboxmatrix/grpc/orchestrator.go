@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -405,7 +406,13 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 		}
 	}
 	if podIP != "" {
-		o.resetWorkspace(ctx, podIP)
+		// M1 slice 2: a session with a workspace scope resets only its own
+		// isolated subdir; unscoped sessions reset the whole /workspace.
+		if session.Status.WorkspaceScope != "" {
+			o.resetWorkspaceScope(ctx, podIP, session.Status.WorkspaceScope)
+		} else {
+			o.resetWorkspace(ctx, podIP)
+		}
 		// 3. Relabel pod: active → resetting, remove session-id
 		if podName != "" {
 			o.releasePod(ctx, podName)
@@ -430,6 +437,18 @@ func (o *Orchestrator) findPodBySession(ctx context.Context, sessionID string) (
 // resetWorkspace calls sandboxd's /workspace/reset endpoint and waits for completion.
 func (o *Orchestrator) resetWorkspace(ctx context.Context, podIP string) {
 	url := fmt.Sprintf("http://%s:2024/workspace/reset", podIP)
+	resetWorkspaceURL(ctx, url)
+}
+
+// resetWorkspaceScope resets only a session's isolated workspace subdirectory
+// (M1 slice 2, KIP-16 L1): sandboxd wipes /workspace/<scope> without touching
+// the parent's files.
+func (o *Orchestrator) resetWorkspaceScope(ctx context.Context, podIP, scope string) {
+	url := fmt.Sprintf("http://%s:2024/workspace/reset?path=%s", podIP, url.QueryEscape(scope))
+	resetWorkspaceURL(ctx, url)
+}
+
+func resetWorkspaceURL(ctx context.Context, url string) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody)
 	if err != nil {
 		return
@@ -559,6 +578,9 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 	child.Status.Phase = sandboxv1.SandboxPhaseActive
 	child.Status.PodIP = parent.Status.PodIP
 	child.Status.WorkspacePVC = parentPVC
+	// M1 slice 2: sub-agent gets an isolated workspace subdir so its files
+	// reset independently of the parent (KIP-16 L1 workspace-session semantics).
+	child.Status.WorkspaceScope = fmt.Sprintf(".sessions/%s", childID)
 	child.Status.CreatedAt = &metav1.Time{Time: time.Now()}
 	o.updateSessionStatus(ctx, child)
 

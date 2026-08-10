@@ -19,12 +19,12 @@ type SandboxMatrix struct {
 }
 
 type SandboxMatrixSpec struct {
-	WarmPoolSize        int                `json:"warmPoolSize,omitempty"`
-	RuntimeClass        string             `json:"runtimeClass,omitempty"`
-	SessionTTL          int                `json:"sessionTTL,omitempty"`
-	DefaultAllowedHosts []string           `json:"defaultAllowedHosts,omitempty"`
+	WarmPoolSize        int                 `json:"warmPoolSize,omitempty"`
+	RuntimeClass        string              `json:"runtimeClass,omitempty"`
+	SessionTTL          int                 `json:"sessionTTL,omitempty"`
+	DefaultAllowedHosts []string            `json:"defaultAllowedHosts,omitempty"`
 	ResourceLimits      corev1.ResourceList `json:"resourceLimits,omitempty"`
-	RateLimits          *RateLimitSpec     `json:"rateLimits,omitempty"`
+	RateLimits          *RateLimitSpec      `json:"rateLimits,omitempty"`
 }
 
 // RateLimitSpec configures per-tenant rate limiting.
@@ -68,11 +68,11 @@ type SecretRef struct {
 }
 
 type SandboxSessionSpec struct {
-	TenantID        string            `json:"tenantID,omitempty"`
-	AllowedHosts    []string          `json:"allowedHosts,omitempty"`
-	RuntimeClass    string            `json:"runtimeClass,omitempty"`
-	ParentSessionID string            `json:"parentSessionID,omitempty"`
-	Depth           int               `json:"depth,omitempty"`
+	TenantID        string   `json:"tenantID,omitempty"`
+	AllowedHosts    []string `json:"allowedHosts,omitempty"`
+	RuntimeClass    string   `json:"runtimeClass,omitempty"`
+	ParentSessionID string   `json:"parentSessionID,omitempty"`
+	Depth           int      `json:"depth,omitempty"`
 	// Env is a non-sensitive map of environment variables applied at exec time
 	// (not baked into the pod spec) so warm-pool pods remain reusable.
 	Env map[string]string `json:"env,omitempty"`
@@ -81,23 +81,27 @@ type SandboxSessionSpec struct {
 }
 
 type SandboxSessionStatus struct {
-	Phase        SandboxPhase  `json:"phase,omitempty"`
-	PodName      string        `json:"podName,omitempty"`
-	PodIP        string        `json:"podIP,omitempty"`
-	WorkspacePVC string        `json:"workspacePVC,omitempty"`
-	CreatedAt    *metav1.Time  `json:"createdAt,omitempty"`
-	ExpiresAt    *metav1.Time  `json:"expiresAt,omitempty"`
+	Phase        SandboxPhase `json:"phase,omitempty"`
+	PodName      string       `json:"podName,omitempty"`
+	PodIP        string       `json:"podIP,omitempty"`
+	WorkspacePVC string       `json:"workspacePVC,omitempty"`
+	// WorkspaceScope is the session's isolated workspace subdirectory under
+	// /workspace (M1 slice 2: sub-agents get `.sessions/<sid>` so their
+	// workspace resets independently of the parent).
+	WorkspaceScope string       `json:"workspaceScope,omitempty"`
+	CreatedAt      *metav1.Time `json:"createdAt,omitempty"`
+	ExpiresAt      *metav1.Time `json:"expiresAt,omitempty"`
 }
 
 type SandboxPhase string
 
 const (
-	SandboxPhaseWarm                 SandboxPhase = "Warm"
-	SandboxPhaseActive               SandboxPhase = "Active"
-	SandboxPhaseResetting            SandboxPhase = "Resetting"
-	SandboxPhaseTerminating          SandboxPhase = "Terminating"
-	SandboxPhaseBackgroundRunning    SandboxPhase = "BackgroundRunning"
-	SandboxPhaseBackgroundCompleted  SandboxPhase = "BackgroundCompleted"
+	SandboxPhaseWarm                SandboxPhase = "Warm"
+	SandboxPhaseActive              SandboxPhase = "Active"
+	SandboxPhaseResetting           SandboxPhase = "Resetting"
+	SandboxPhaseTerminating         SandboxPhase = "Terminating"
+	SandboxPhaseBackgroundRunning   SandboxPhase = "BackgroundRunning"
+	SandboxPhaseBackgroundCompleted SandboxPhase = "BackgroundCompleted"
 )
 
 // +genclient

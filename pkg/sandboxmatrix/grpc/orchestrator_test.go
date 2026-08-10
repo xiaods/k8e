@@ -600,6 +600,13 @@ func TestRunSubAgent_Success(t *testing.T) {
 	if child.Status.PodName != "" {
 		t.Fatalf("expected child to have no own PodName (shares parent pod), got %q", child.Status.PodName)
 	}
+	// M1 slice 2: child gets an isolated workspace scope for independent reset.
+	if child.Status.WorkspaceScope == "" {
+		t.Fatal("expected child to have an isolated WorkspaceScope")
+	}
+	if !strings.HasPrefix(child.Status.WorkspaceScope, ".sessions/") {
+		t.Fatalf("expected scope under .sessions/, got %q", child.Status.WorkspaceScope)
+	}
 }
 
 func TestRunSubAgent_NoParentPVC_FailedPrecondition(t *testing.T) {

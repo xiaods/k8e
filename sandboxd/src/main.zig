@@ -159,7 +159,7 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
     } else if (std.mem.eql(u8, path, "/exec/stream") and std.mem.eql(u8, method, "POST")) {
         try exec.handleExec(allocator, client_fd, body, true);
     } else if (std.mem.eql(u8, path, "/workspace/reset") and std.mem.eql(u8, method, "POST")) {
-        try workspace.handleReset(allocator, client_fd);
+        try workspace.handleReset(allocator, client_fd, query);
     } else if (std.mem.eql(u8, path, "/exec/background") and std.mem.eql(u8, method, "POST")) {
         try background.handleBgSubmit(allocator, client_fd, body);
     } else if (std.mem.startsWith(u8, path, "/exec/background/")) {
