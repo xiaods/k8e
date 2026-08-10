@@ -25,6 +25,24 @@ import (
 
 const defaultEndpoint = "127.0.0.1:50051"
 
+// maxCallRecvMsgSize / maxCallSendMsgSize raise the gRPC default 4MiB message
+// limit on the client side. Snapshot restore, file reads, and background run
+// results routinely exceed 4MiB (see KIP-16 M7); the gateway server already
+// raises its own limit to 64MiB.
+const maxCallRecvMsgSize = 64 * 1024 * 1024
+const maxCallSendMsgSize = 64 * 1024 * 1024
+
+// dialOpts returns the transport + message-size options shared by every client
+// dial site in this package.
+func dialOpts() []grpc.DialOption {
+	return []grpc.DialOption{
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(maxCallRecvMsgSize),
+			grpc.MaxCallSendMsgSize(maxCallSendMsgSize),
+		),
+	}
+}
+
 var tlsCandidates = []string{
 	"/var/lib/k8e/server/tls/serving-kube-apiserver.crt",
 	"/etc/k8e/tls/serving-kube-apiserver.crt",
@@ -63,7 +81,7 @@ func NewClient() (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: tls: %w", err)
 	}
-	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(endpoint, append(dialOpts(), grpc.WithTransportCredentials(creds))...)
 	if err != nil {
 		return nil, dialErr(endpoint, err)
 	}
@@ -284,7 +302,7 @@ func dialMTLS(endpoint, caFile, certFile, keyFile string) (*grpc.ClientConn, err
 			MinVersion:   tls.VersionTLS12,
 		})
 	}
-	return grpc.NewClient(endpoint, grpc.WithTransportCredentials(creds))
+	return grpc.NewClient(endpoint, append(dialOpts(), grpc.WithTransportCredentials(creds))...)
 }
 
 func isLoopback(endpoint string) bool {
@@ -351,7 +369,7 @@ func callLogin(endpoint, caFile, apiKey, csr string) (*pb.LoginResponse, error) 
 		})
 	}
 
-	conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(endpoint, append(dialOpts(), grpc.WithTransportCredentials(creds))...)
 	if err != nil {
 		return nil, err
 	}

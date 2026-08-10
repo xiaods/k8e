@@ -995,8 +995,10 @@ func (x *ReadFileResponse) GetContent() string {
 }
 
 type ListFilesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Return only files modified after this unix timestamp (0 = all).
+	Since         int64 `protobuf:"varint,2,opt,name=since,proto3" json:"since,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1036,6 +1038,13 @@ func (x *ListFilesRequest) GetSessionId() string {
 		return x.SessionId
 	}
 	return ""
+}
+
+func (x *ListFilesRequest) GetSince() int64 {
+	if x != nil {
+		return x.Since
+	}
+	return 0
 }
 
 type ListFilesResponse struct {
@@ -1815,6 +1824,153 @@ func (x *PollRunResponse) GetTruncated() bool {
 	return false
 }
 
+// GetTranscriptRequest reads a file-backed exec transcript window.
+type GetTranscriptRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// Byte offset to start reading from. 0 = start of transcript.
+	Offset int64 `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Max bytes to return in this window. 0 = server default (64 KiB).
+	Limit         int64 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTranscriptRequest) Reset() {
+	*x = GetTranscriptRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTranscriptRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTranscriptRequest) ProtoMessage() {}
+
+func (x *GetTranscriptRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTranscriptRequest.ProtoReflect.Descriptor instead.
+func (*GetTranscriptRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *GetTranscriptRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *GetTranscriptRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *GetTranscriptRequest) GetLimit() int64 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type GetTranscriptResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	SessionId       string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Output          string                 `protobuf:"bytes,2,opt,name=output,proto3" json:"output,omitempty"`                                           // window content, line-aligned
+	Offset          int64                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`                                          // absolute offset this window starts at
+	NextOffset      int64                  `protobuf:"varint,4,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`                // offset for the next window; == file size at EOF
+	TruncatedBefore bool                   `protobuf:"varint,5,opt,name=truncated_before,json=truncatedBefore,proto3" json:"truncated_before,omitempty"` // true when the window starts mid-file (lines were skipped)
+	Eof             bool                   `protobuf:"varint,6,opt,name=eof,proto3" json:"eof,omitempty"`                                                // true when next_offset reached the end of the transcript
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *GetTranscriptResponse) Reset() {
+	*x = GetTranscriptResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTranscriptResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTranscriptResponse) ProtoMessage() {}
+
+func (x *GetTranscriptResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTranscriptResponse.ProtoReflect.Descriptor instead.
+func (*GetTranscriptResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *GetTranscriptResponse) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *GetTranscriptResponse) GetOutput() string {
+	if x != nil {
+		return x.Output
+	}
+	return ""
+}
+
+func (x *GetTranscriptResponse) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *GetTranscriptResponse) GetNextOffset() int64 {
+	if x != nil {
+		return x.NextOffset
+	}
+	return 0
+}
+
+func (x *GetTranscriptResponse) GetTruncatedBefore() bool {
+	if x != nil {
+		return x.TruncatedBefore
+	}
+	return false
+}
+
+func (x *GetTranscriptResponse) GetEof() bool {
+	if x != nil {
+		return x.Eof
+	}
+	return false
+}
+
 var File_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
 
 const file_sandbox_v1_sandbox_proto_rawDesc = "" +
@@ -1903,10 +2059,11 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\",\n" +
 	"\x10ReadFileResponse\x12\x18\n" +
-	"\acontent\x18\x01 \x01(\tR\acontent\"1\n" +
+	"\acontent\x18\x01 \x01(\tR\acontent\"G\n" +
 	"\x10ListFilesRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"@\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05since\x18\x02 \x01(\x03R\x05since\"@\n" +
 	"\x11ListFilesResponse\x12+\n" +
 	"\x05files\x18\x01 \x03(\v2\x15.sandbox.v1.FileEntryR\x05files\";\n" +
 	"\tFileEntry\x12\x12\n" +
@@ -1964,7 +2121,21 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\texit_code\x18\x05 \x01(\x05R\bexitCode\x12\x1f\n" +
 	"\vduration_ms\x18\x06 \x01(\x03R\n" +
 	"durationMs\x12\x1c\n" +
-	"\ttruncated\x18\a \x01(\bR\ttruncated2\x89\t\n" +
+	"\ttruncated\x18\a \x01(\bR\ttruncated\"c\n" +
+	"\x14GetTranscriptRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\x03R\x05limit\"\xc4\x01\n" +
+	"\x15GetTranscriptResponse\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x16\n" +
+	"\x06output\x18\x02 \x01(\tR\x06output\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x03R\x06offset\x12\x1f\n" +
+	"\vnext_offset\x18\x04 \x01(\x03R\n" +
+	"nextOffset\x12)\n" +
+	"\x10truncated_before\x18\x05 \x01(\bR\x0ftruncatedBefore\x12\x10\n" +
+	"\x03eof\x18\x06 \x01(\bR\x03eof2\xdf\t\n" +
 	"\x0eSandboxService\x12T\n" +
 	"\rCreateSession\x12 .sandbox.v1.CreateSessionRequest\x1a!.sandbox.v1.CreateSessionResponse\x12K\n" +
 	"\n" +
@@ -1983,7 +2154,8 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\rConfirmAction\x12 .sandbox.v1.ConfirmActionRequest\x1a!.sandbox.v1.ConfirmActionResponse\x12T\n" +
 	"\rApproveAction\x12 .sandbox.v1.ApproveActionRequest\x1a!.sandbox.v1.ApproveActionResponse\x12<\n" +
 	"\x05Login\x12\x18.sandbox.v1.LoginRequest\x1a\x19.sandbox.v1.LoginResponse\x12B\n" +
-	"\aPollRun\x12\x1a.sandbox.v1.PollRunRequest\x1a\x1b.sandbox.v1.PollRunResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
+	"\aPollRun\x12\x1a.sandbox.v1.PollRunRequest\x1a\x1b.sandbox.v1.PollRunResponse\x12T\n" +
+	"\rGetTranscript\x12 .sandbox.v1.GetTranscriptRequest\x1a!.sandbox.v1.GetTranscriptResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
 
 var (
 	file_sandbox_v1_sandbox_proto_rawDescOnce sync.Once
@@ -1997,7 +2169,7 @@ func file_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 	return file_sandbox_v1_sandbox_proto_rawDescData
 }
 
-var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
+var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*SecretRef)(nil),              // 0: sandbox.v1.SecretRef
 	(*CreateSessionRequest)(nil),   // 1: sandbox.v1.CreateSessionRequest
@@ -2030,10 +2202,12 @@ var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*LoginResponse)(nil),          // 28: sandbox.v1.LoginResponse
 	(*PollRunRequest)(nil),         // 29: sandbox.v1.PollRunRequest
 	(*PollRunResponse)(nil),        // 30: sandbox.v1.PollRunResponse
-	nil,                            // 31: sandbox.v1.CreateSessionRequest.EnvEntry
+	(*GetTranscriptRequest)(nil),   // 31: sandbox.v1.GetTranscriptRequest
+	(*GetTranscriptResponse)(nil),  // 32: sandbox.v1.GetTranscriptResponse
+	nil,                            // 33: sandbox.v1.CreateSessionRequest.EnvEntry
 }
 var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
-	31, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
+	33, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
 	0,  // 1: sandbox.v1.CreateSessionRequest.secret_refs:type_name -> sandbox.v1.SecretRef
 	4,  // 2: sandbox.v1.ListSessionsResponse.sessions:type_name -> sandbox.v1.GetSessionResponse
 	18, // 3: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
@@ -2052,23 +2226,25 @@ var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	25, // 16: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
 	27, // 17: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
 	29, // 18: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
-	2,  // 19: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
-	4,  // 20: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
-	6,  // 21: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
-	8,  // 22: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
-	10, // 23: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
-	11, // 24: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
-	13, // 25: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
-	15, // 26: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
-	17, // 27: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
-	20, // 28: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
-	22, // 29: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
-	24, // 30: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
-	26, // 31: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	28, // 32: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
-	30, // 33: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
-	19, // [19:34] is the sub-list for method output_type
-	4,  // [4:19] is the sub-list for method input_type
+	31, // 19: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
+	2,  // 20: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
+	4,  // 21: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
+	6,  // 22: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
+	8,  // 23: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
+	10, // 24: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
+	11, // 25: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
+	13, // 26: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
+	15, // 27: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
+	17, // 28: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
+	20, // 29: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
+	22, // 30: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
+	24, // 31: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
+	26, // 32: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
+	28, // 33: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
+	30, // 34: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
+	32, // 35: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
+	20, // [20:36] is the sub-list for method output_type
+	4,  // [4:20] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -2085,7 +2261,7 @@ func file_sandbox_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   32,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

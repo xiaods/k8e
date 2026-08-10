@@ -257,6 +257,9 @@ type Control struct {
 	VModule                  string
 	DisableSandboxMatrix bool
 	SandboxConfig        SandboxConfig
+	// CiliumDNSProxyEnabled opts into the Cilium L7 DNS proxy (FQDN network
+	// policies). Off by default — see KIP-16 M10 / issue #510.
+	CiliumDNSProxyEnabled bool
 
 	BindAddress string
 	SANs        []string

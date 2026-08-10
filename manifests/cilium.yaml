@@ -23,4 +23,7 @@ spec:
     k8sServiceHost: "%{API_SERVER_HOST}%"
     k8sServicePort: "%{API_SERVER_PORT}%"
     dnsProxy:
-      enabled: false
+      # L7 DNS proxy enables toFQDNs egress policies. Off by default: it
+      # previously broke DNS in gVisor sandbox pods (see KIP-16 M10 / issue
+      # #510). Opt in with `k8e server --cilium-dns-proxy`.
+      enabled: %{CILIUM_DNS_PROXY_ENABLED}%

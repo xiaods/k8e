@@ -5,8 +5,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
 // Session env limits (KIP-12 / #483 hardening). Applied at CreateSession so
@@ -67,20 +67,21 @@ func validateSessionEnvEntry(k, v string) error {
 
 // sandboxdExecBody builds the JSON body for sandboxd /exec and /exec/stream.
 // env is omitted when empty so older sandboxd builds stay compatible.
-func sandboxdExecBody(command string, timeout int32, workdir string, env map[string]string) map[string]any {
-	return sandboxdRequestBody(command, "", timeout, workdir, env)
+func sandboxdExecBody(sessionID, command string, timeout int32, workdir string, env map[string]string) map[string]any {
+	return sandboxdRequestBody(sessionID, command, "", timeout, workdir, env)
 }
 
 // sandboxdBackgroundBody builds the JSON body for sandboxd /exec/background.
-func sandboxdBackgroundBody(command, runID string, timeout int32, workdir string, env map[string]string) map[string]any {
-	return sandboxdRequestBody(command, runID, timeout, workdir, env)
+func sandboxdBackgroundBody(sessionID, command, runID string, timeout int32, workdir string, env map[string]string) map[string]any {
+	return sandboxdRequestBody(sessionID, command, runID, timeout, workdir, env)
 }
 
-func sandboxdRequestBody(command, runID string, timeout int32, workdir string, env map[string]string) map[string]any {
+func sandboxdRequestBody(sessionID, command, runID string, timeout int32, workdir string, env map[string]string) map[string]any {
 	body := map[string]any{
-		"command": command,
-		"timeout": timeout,
-		"workdir": workdir,
+		"command":    command,
+		"timeout":    timeout,
+		"workdir":    workdir,
+		"session_id": sessionID,
 	}
 	if runID != "" {
 		body["run_id"] = runID
@@ -163,12 +164,12 @@ func sessionToProtoView(s *sandboxv1.SandboxSession, bgRuns int32) *pb.GetSessio
 		return nil
 	}
 	view := &pb.GetSessionResponse{
-		SessionId:       s.Name,
-		Phase:           string(s.Status.Phase),
-		RuntimeClass:    s.Spec.RuntimeClass,
-		PodIp:           s.Status.PodIP,
-		TenantId:        s.Spec.TenantID,
-		BackgroundRuns:  bgRuns,
+		SessionId:      s.Name,
+		Phase:          string(s.Status.Phase),
+		RuntimeClass:   s.Spec.RuntimeClass,
+		PodIp:          s.Status.PodIP,
+		TenantId:       s.Spec.TenantID,
+		BackgroundRuns: bgRuns,
 	}
 	if s.Status.ExpiresAt != nil {
 		view.ExpiresAt = s.Status.ExpiresAt.Unix()

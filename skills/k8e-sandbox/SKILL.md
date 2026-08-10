@@ -89,15 +89,17 @@ chmod +x k8e-sandbox-cli-linux-amd64
 | Command | Purpose | Key flags |
 |---------|---------|-----------|
 | `k8e-sandbox-cli login` | Authenticate and obtain mTLS cert (remote access) | `--apikey`, `--endpoint`, `--device-name` |
-| `k8e-sandbox-cli run <code>` | Execute code or shell command | `--lang python\|bash\|node\|ts`, `--session-id`, `--tenant`, `--timeout 30`, `--raw` |
+| `k8e-sandbox-cli run <code>` | Execute code or shell command (sync, or `--background` for async + `poll <run_id>`) | `--lang python\|bash\|node\|ts`, `--session-id`, `--tenant`, `--timeout 30`, `--raw`, `--background` |
 | `k8e-sandbox-cli status` | Check service + current session | — |
 | `k8e-sandbox-cli create` | New session (manual lifecycle) | `--runtime gvisor\|kata\|firecracker`, `--allowed-hosts`, `--env KEY=VAL` (non-sensitive), `--secret ENV=secret:key` (exec-time resolve), `--manifest`, `--git-repo` |
 | `k8e-sandbox-cli get <sid>` | Session introspection | phase, runtime, env keys / secret env names (never values) |
+| `k8e-sandbox-cli poll <run-id>` | Poll a background run for completion | returns `{status, exit_code, stdout, stderr}` |
+| `k8e-sandbox-cli log <sid>` | Replay a session's exec transcript (file-backed, windowed) | `--offset <bytes>`, `--limit <bytes>`, `--follow` |
 | `k8e-sandbox-cli sessions` | List sessions | `--phase Active\|all` |
 | `k8e-sandbox-cli destroy <sid>` | Destroy session | — |
 | `k8e-sandbox-cli write <sid> <path>` | Write file to /workspace | content via stdin, `--mode w\|a` |
 | `k8e-sandbox-cli read <sid> <path>` | Read file from /workspace | `--raw` (plain text output) |
-| `k8e-sandbox-cli list <sid>` | List workspace files | `--since <unix_ts>` |
+| `k8e-sandbox-cli list <sid>` | List workspace files (real mtimes) | `--since <unix_ts>` (changed-files diff) |
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child sandbox (depth 1) | shares parent /workspace PVC |
 | `k8e-sandbox-cli confirm <sid> <action>` | Gate destructive action on human approval | `--timeout 30`, `--no-wait` |
 | `k8e-sandbox-cli approve <approval-id>` | Approve pending confirm | `--reject`, `--reason` |
@@ -233,6 +235,35 @@ k8e-sandbox-cli snapshot save $SID my-analysis
 SID=$(k8e-sandbox-cli snapshot restore my-analysis | jq -r .session_id)
 k8e-sandbox-cli read $SID /workspace/result.json --raw
 ```
+
+### Scenario 8: Background execution + polling
+
+Long-running commands return immediately with a `run_id`; poll for completion:
+
+```
+# Submit asynchronously (returns run_id immediately)
+RUN=$(k8e-sandbox-cli run 'pip install pandas && python train.py' --background | jq -r .run_id)
+# ... do other work ...
+# Poll until done
+k8e-sandbox-cli poll $RUN
+```
+
+⚠️ **Background run cap:** each session allows at most 5 concurrently-registered background runs (KIP-16 M12). Submitting beyond the cap fails with `ResourceExhausted` (`background run limit reached`) — poll or wait for completion before submitting more. Cap is per-session, not global.
+
+### Scenario 9: Transcript replay (audit/debug)
+
+Every exec (sync or background) is recorded to a per-session, file-backed transcript in the sandbox. Replay it windowed and resume by offset:
+
+```
+# Full transcript of a session (windowed automatically)
+k8e-sandbox-cli log $SID
+# Last 4 KiB only
+k8e-sandbox-cli log $SID --offset $(( $(k8e-sandbox-cli get $SID | jq -r .transcript_bytes 2>/dev/null || echo 0) - 4096 ))
+# Follow new output (like tail -f)
+k8e-sandbox-cli log $SID --follow
+```
+
+Transcripts are bounded-memory (window reads from file, never resident) and survive workspace resets via the session pod.
 
 ## Error reference
 

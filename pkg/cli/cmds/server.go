@@ -69,6 +69,7 @@ type Server struct {
 	DisableHelmController    bool
 	DisableKubeProxy         bool
 	DisableCilium            bool
+	CiliumDNSProxyEnabled    bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
 	DisableETCD              bool
@@ -456,6 +457,11 @@ var ServerFlags = []cli.Flag{
 		Name:        "disable-cilium",
 		Usage:       "(networking) Disable embedded Cilium CNI",
 		Destination: &ServerConfig.DisableCilium,
+	},
+	&cli.BoolFlag{
+		Name:        "cilium-dns-proxy",
+		Usage:       "(networking) Enable Cilium DNS proxy (L7 FQDN policies). Off by default: the proxy previously broke DNS in gVisor sandbox pods (see KIP-16 M10 / issue #510).",
+		Destination: &ServerConfig.CiliumDNSProxyEnabled,
 	},
 	&cli.BoolFlag{
 		Name:        "disable-apiserver",

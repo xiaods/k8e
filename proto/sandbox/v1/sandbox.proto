@@ -22,6 +22,9 @@ service SandboxService {
   rpc Login(LoginRequest) returns (LoginResponse);
   // PollRun checks the status of a background execution.
   rpc PollRun(PollRunRequest)               returns (PollRunResponse);
+  // GetTranscript reads a bounded window of a session's exec transcript
+  // (file-backed, offset-resumable; KIP-16 M4 / issue #512).
+  rpc GetTranscript(GetTranscriptRequest)   returns (GetTranscriptResponse);
 }
 
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
@@ -103,7 +106,11 @@ message WriteFileResponse { bool ok = 1; }
 message ReadFileRequest  { string session_id = 1; string path = 2; }
 message ReadFileResponse { string content    = 1; }
 
-message ListFilesRequest  { string session_id = 1; }
+message ListFilesRequest  {
+  string session_id = 1;
+  // Return only files modified after this unix timestamp (0 = all).
+  int64  since      = 2;
+}
 message ListFilesResponse { repeated FileEntry files = 1; }
 message FileEntry         { string path = 1; int64 modified = 2; }
 
@@ -158,4 +165,21 @@ message PollRunResponse {
   int32  exit_code   = 5;
   int64  duration_ms = 6;
   bool   truncated   = 7;
+}
+
+// GetTranscriptRequest reads a file-backed exec transcript window.
+message GetTranscriptRequest {
+  string session_id = 1;
+  // Byte offset to start reading from. 0 = start of transcript.
+  int64  offset     = 2;
+  // Max bytes to return in this window. 0 = server default (64 KiB).
+  int64  limit      = 3;
+}
+message GetTranscriptResponse {
+  string session_id = 1;
+  string output     = 2;      // window content, line-aligned
+  int64  offset     = 3;      // absolute offset this window starts at
+  int64  next_offset = 4;     // offset for the next window; == file size at EOF
+  bool   truncated_before = 5; // true when the window starts mid-file (lines were skipped)
+  bool   eof        = 6;      // true when next_offset reached the end of the transcript
 }

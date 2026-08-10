@@ -11,10 +11,10 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/sandbox/client"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
-	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
 const errSessionNotFound = "not found"
@@ -158,7 +158,7 @@ func RunCommand() cli.Command {
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},
 			cli.BoolFlag{Name: "background", Usage: "Submit asynchronously, return run_id immediately"},
-		cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
+			cli.BoolFlag{Name: "raw", Usage: "Stream raw output (no JSON wrapper)"},
 			cli.StringFlag{Name: "manifest", Usage: "Path to workspace manifest (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-repo", Usage: "Git repo to clone (only when auto-creating session)"},
 			cli.StringFlag{Name: "git-ref", Value: "main", Usage: "Git ref for --git-repo"},
@@ -351,13 +351,13 @@ func StatusCommand() cli.Command {
 			defer client.Close()
 
 			// lightweight probe
-		_, err := client.SandboxServiceClient.DestroySession(context.Background(),
-			&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
-		available := err == nil || strings.Contains(err.Error(), errSessionNotFound)
-		errMsg := ""
-		if !available && err != nil {
-			errMsg = err.Error()
-		}
+			_, err := client.SandboxServiceClient.DestroySession(context.Background(),
+				&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
+			available := err == nil || strings.Contains(err.Error(), errSessionNotFound)
+			errMsg := ""
+			if !available && err != nil {
+				errMsg = err.Error()
+			}
 
 			sid, tid := "", ""
 			if state, _ := loadState("default"); state != nil && state.SessionID != "" {
@@ -553,15 +553,15 @@ func SessionsCommand() cli.Command {
 
 func sessionViewJSON(s *pb.GetSessionResponse) map[string]any {
 	return map[string]any{
-		"session_id":       s.SessionId,
-		"phase":            s.Phase,
-		"runtime_class":    s.RuntimeClass,
-		"pod_ip":           s.PodIp,
-		"tenant_id":        s.TenantId,
-		"expires_at":       s.ExpiresAt,
-		"env_keys":         s.EnvKeys,
-		"secret_env_vars":  s.SecretEnvVars,
-		"background_runs":  s.BackgroundRuns,
+		"session_id":      s.SessionId,
+		"phase":           s.Phase,
+		"runtime_class":   s.RuntimeClass,
+		"pod_ip":          s.PodIp,
+		"tenant_id":       s.TenantId,
+		"expires_at":      s.ExpiresAt,
+		"env_keys":        s.EnvKeys,
+		"secret_env_vars": s.SecretEnvVars,
+		"background_runs": s.BackgroundRuns,
 	}
 }
 
@@ -705,8 +705,11 @@ func ReadCommand() cli.Command {
 func ListCommand() cli.Command {
 	return cli.Command{
 		Name:      "list",
-		Usage:     "List files in the sandbox /workspace",
+		Usage:     "List files in the sandbox /workspace (real mtimes; --since for changed-files diff)",
 		ArgsUsage: "<session-id>",
+		Flags: []cli.Flag{
+			cli.Int64Flag{Name: "since", Usage: "only files modified after this unix timestamp (0 = all)"},
+		},
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().First()
 			if sid == "" {
@@ -721,6 +724,7 @@ func ListCommand() cli.Command {
 
 			resp, err := client.SandboxServiceClient.ListFiles(context.Background(), &pb.ListFilesRequest{
 				SessionId: sid,
+				Since:     ctx.Int64("since"),
 			})
 			if err != nil {
 				return printErrorExit("list: "+err.Error(), 1)
@@ -1060,8 +1064,8 @@ func printBenchmarkResults(results map[string][]time.Duration) {
 	fmt.Fprintln(os.Stderr, "═══ Benchmark Results ═══")
 
 	sections := []struct {
-		title  string
-		keys   []string
+		title string
+		keys  []string
 	}{
 		{"Cold Start (no warm pool)", []string{"cold_create", "cold_exec", "cold_total"}},
 		{"Warm Claim (from pool)", []string{"warm_create", "warm_exec", "warm_total"}},
@@ -1114,6 +1118,62 @@ func PollCommand() cli.Command {
 				"duration_ms": resp.DurationMs,
 				"truncated":   resp.Truncated,
 			})
+			return nil
+		},
+	}
+}
+
+// ── LogCommand ─────────────────────────────────────────────────────────────
+
+func LogCommand() cli.Command {
+	return cli.Command{
+		Name:      "log",
+		Usage:     "Replay a session's exec transcript (windowed, offset-resumable)",
+		ArgsUsage: "<session-id>",
+		Flags: []cli.Flag{
+			cli.Int64Flag{Name: "offset", Usage: "byte offset to start from (0 = start)"},
+			cli.Int64Flag{Name: "limit", Usage: "max bytes per window (0 = server default)"},
+			cli.BoolFlag{Name: "follow", Usage: "poll for new output until EOF is stable"},
+		},
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().First()
+			if sid == "" {
+				return printErrorExit("usage: k8e-sandbox-cli log <session-id>", 1)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			offset := ctx.Int64("offset")
+			follow := ctx.Bool("follow")
+			lastNext := int64(-1)
+			for {
+				resp, err := client.SandboxServiceClient.GetTranscript(context.Background(), &pb.GetTranscriptRequest{
+					SessionId: sid,
+					Offset:    offset,
+					Limit:     ctx.Int64("limit"),
+				})
+				if err != nil {
+					return printErrorExit("log: "+err.Error(), 1)
+				}
+				if resp.Output != "" {
+					fmt.Print(resp.Output)
+				}
+				offset = resp.NextOffset
+				if resp.Eof {
+					if !follow {
+						break
+					}
+					if lastNext == resp.NextOffset {
+						// No new output; brief pause then poll again.
+						time.Sleep(500 * time.Millisecond)
+					} else {
+						lastNext = resp.NextOffset
+					}
+				}
+			}
 			return nil
 		},
 	}

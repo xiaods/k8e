@@ -14,14 +14,15 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"github.com/xiaods/k8e/pkg/sandboxmatrix/ratelimit"
-	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -275,6 +276,12 @@ func (s *Server) Start(ctx context.Context) error {
 	s.revocList = newRevocationList()
 
 	opts := []grpc.ServerOption{grpc.Creds(creds)}
+	// Raise the gRPC message size limits from the 4MiB default: snapshot
+	// restore / file payloads routinely exceed it (see KIP-16 M7).
+	opts = append(opts,
+		grpc.MaxRecvMsgSize(64*1024*1024),
+		grpc.MaxSendMsgSize(64*1024*1024),
+	)
 	opts = append(opts,
 		grpc.ChainUnaryInterceptor(s.rateLimiter.UnaryInterceptor, s.mTLSAuthInterceptor),
 		grpc.ChainStreamInterceptor(s.rateLimiter.StreamInterceptor, s.mTLSStreamInterceptor),
@@ -373,7 +380,7 @@ func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecRespons
 	if envErr != nil {
 		return nil, envErr
 	}
-	body := sandboxdExecBody(req.Command, timeout, workdir, env)
+	body := sandboxdExecBody(req.SessionId, req.Command, timeout, workdir, env)
 	start := time.Now()
 	httpCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout+5)*time.Second)
 	defer cancel()
@@ -430,7 +437,7 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 	if envErr != nil {
 		return envErr
 	}
-	body := sandboxdExecBody(req.Command, timeout, workdir, env)
+	body := sandboxdExecBody(req.SessionId, req.Command, timeout, workdir, env)
 	httpCtx, cancel := context.WithTimeout(stream.Context(), time.Duration(timeout+5)*time.Second)
 	defer cancel()
 
@@ -539,7 +546,9 @@ func (s *Server) ReadFile(ctx context.Context, req *pb.ReadFileRequest) (*pb.Rea
 		return nil, status.Errorf(codes.Unavailable, "sandboxd read: %v", err)
 	}
 	defer resp.Body.Close()
-	var result struct{ Content string `json:"content"` }
+	var result struct {
+		Content string `json:"content"`
+	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	return &pb.ReadFileResponse{Content: result.Content}, nil
 }
@@ -549,7 +558,7 @@ func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.L
 	if err != nil {
 		return nil, err
 	}
-	resp, err := sandboxdGet(ctx, podIP, "/files/list")
+	resp, err := sandboxdGet(ctx, podIP, fmt.Sprintf("/files/list?since=%d", req.Since))
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd list: %v", err)
 	}
@@ -598,6 +607,45 @@ func (s *Server) ConfirmAction(ctx context.Context, req *pb.ConfirmActionRequest
 
 func (s *Server) ApproveAction(ctx context.Context, req *pb.ApproveActionRequest) (*pb.ApproveActionResponse, error) {
 	return s.orch.ApproveAction(ctx, req)
+}
+
+// GetTranscript reads a bounded, offset-resumable window of a session's exec
+// transcript (file-backed in sandboxd; KIP-16 M4 / issue #512).
+func (s *Server) GetTranscript(ctx context.Context, req *pb.GetTranscriptRequest) (*pb.GetTranscriptResponse, error) {
+	podIP, err := s.getPodIP(ctx, req.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("/transcript?session=%s&offset=%d&limit=%d",
+		url.QueryEscape(req.SessionId), req.Offset, req.Limit)
+	resp, err := sandboxdGet(ctx, podIP, path)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "sandboxd transcript: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// No transcript yet for this session — return an empty window at 0.
+		return &pb.GetTranscriptResponse{SessionId: req.SessionId, Eof: true}, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, status.Errorf(codes.Internal, "sandboxd transcript: http %d", resp.StatusCode)
+	}
+	var result struct {
+		Output          string `json:"output"`
+		Offset          int64  `json:"offset"`
+		NextOffset      int64  `json:"next_offset"`
+		TruncatedBefore bool   `json:"truncated_before"`
+		Eof             bool   `json:"eof"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+	return &pb.GetTranscriptResponse{
+		SessionId:       req.SessionId,
+		Output:          result.Output,
+		Offset:          result.Offset,
+		NextOffset:      result.NextOffset,
+		TruncatedBefore: result.TruncatedBefore,
+		Eof:             result.Eof,
+	}, nil
 }
 
 // PollRun checks the status of a background execution.

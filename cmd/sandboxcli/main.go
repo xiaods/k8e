@@ -41,6 +41,7 @@ func main() {
 		sandboxcli.ApproveCommand(),
 		sandboxcli.SnapshotCommand(),
 		sandboxcli.PollCommand(),
+		sandboxcli.LogCommand(),
 		sandboxcli.BenchmarkCommand(),
 		sandboxcli.InstallSkillCommand(),
 	}

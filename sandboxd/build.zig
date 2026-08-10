@@ -40,4 +40,8 @@ pub fn build(b: *std.Build) void {
     const files_mod = b.createModule(.{ .root_source_file = b.path("src/files_test.zig"), .target = native });
     const files_tests = b.addTest(.{ .root_module = files_mod });
     test_step.dependOn(&b.addRunArtifact(files_tests).step);
+
+    const transcript_mod = b.createModule(.{ .root_source_file = b.path("src/transcript_test.zig"), .target = native });
+    const transcript_tests = b.addTest(.{ .root_module = transcript_mod });
+    test_step.dependOn(&b.addRunArtifact(transcript_tests).step);
 }
