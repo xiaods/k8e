@@ -157,6 +157,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		DefaultMemory:  cfg.SandboxDefaultMemory,
 		GRPCPort:       cfg.SandboxGRPCPort,
 		Namespace:      cfg.SandboxNamespace,
+		// Server-side snapshot layer registry lives under the data dir.
+		LayerStoreDir: filepath.Join(cfg.DataDir, "server", "sandbox-layers"),
 	}
 	serverConfig.ControlConfig.EtcdExposeMetrics = cfg.EtcdExposeMetrics
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots

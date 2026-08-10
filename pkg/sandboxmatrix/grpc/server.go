@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/sandboxlayer"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"github.com/xiaods/k8e/pkg/sandboxmatrix/ratelimit"
@@ -108,6 +109,9 @@ type ServerConfig struct {
 	ServerKeyFile  string
 	GRPCPort       int
 	LocalAuth      bool // allow loopback connections without client cert
+	// LayerStoreDir, when set, enables the server-side content-addressed
+	// snapshot layer registry (KIP-16 M2 / issue #511).
+	LayerStoreDir string
 }
 
 // Server implements the SandboxService gRPC interface.
@@ -128,6 +132,7 @@ type Server struct {
 	revocList      *RevocationList
 	localAuth      bool
 	rateLimiter    *ratelimit.Limiter
+	layerStore     *sandboxlayer.Store
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -148,6 +153,11 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
 	RegisterSandboxMetrics(s.orch)
+	if cfg.LayerStoreDir != "" {
+		if ls, err := sandboxlayer.New(cfg.LayerStoreDir); err == nil {
+			s.layerStore = ls
+		}
+	}
 	return s
 }
 
@@ -683,6 +693,58 @@ func (s *Server) GetEvents(ctx context.Context, req *pb.GetEventsRequest) (*pb.G
 		Returned:  int64(len(lines)),
 		Truncated: int64(len(lines)) == limit,
 	}, nil
+}
+
+// requireLayerStore returns an error when the server-side layer registry is
+// not enabled (ServerConfig.LayerStoreDir unset).
+func (s *Server) requireLayerStore() (*sandboxlayer.Store, error) {
+	if s.layerStore == nil {
+		return nil, status.Error(codes.FailedPrecondition,
+			"server-side snapshot registry disabled; set ServerConfig.LayerStoreDir")
+	}
+	return s.layerStore, nil
+}
+
+// SnapshotPut publishes a snapshot manifest (its layer list) to the server-side
+// registry (KIP-16 M2 / issue #511).
+func (s *Server) SnapshotPut(ctx context.Context, req *pb.SnapshotPutRequest) (*pb.SnapshotPutResponse, error) {
+	store, err := s.requireLayerStore()
+	if err != nil {
+		return nil, err
+	}
+	if req.Name == "" || len(req.Layers) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "name and layers required")
+	}
+	if err := store.SaveManifest(req.Name, req.Layers); err != nil {
+		return nil, status.Errorf(codes.Internal, "snapshot put: %v", err)
+	}
+	return &pb.SnapshotPutResponse{Name: req.Name, Layers: int64(len(req.Layers))}, nil
+}
+
+// SnapshotGet returns a snapshot manifest's ordered layer list.
+func (s *Server) SnapshotGet(ctx context.Context, req *pb.SnapshotGetRequest) (*pb.SnapshotGetResponse, error) {
+	store, err := s.requireLayerStore()
+	if err != nil {
+		return nil, err
+	}
+	m, err := store.LoadManifest(req.Name)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "snapshot %s: %v", req.Name, err)
+	}
+	return &pb.SnapshotGetResponse{Name: req.Name, Layers: m.Layers}, nil
+}
+
+// SnapshotList returns all snapshot manifest names in the registry.
+func (s *Server) SnapshotList(ctx context.Context, req *pb.SnapshotListRequest) (*pb.SnapshotListResponse, error) {
+	store, err := s.requireLayerStore()
+	if err != nil {
+		return nil, err
+	}
+	names, err := store.ListManifests()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "snapshot list: %v", err)
+	}
+	return &pb.SnapshotListResponse{Names: names}, nil
 }
 
 // PollRun checks the status of a background execution.

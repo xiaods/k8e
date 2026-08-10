@@ -36,6 +36,9 @@ const (
 	SandboxService_PollRun_FullMethodName        = "/sandbox.v1.SandboxService/PollRun"
 	SandboxService_GetTranscript_FullMethodName  = "/sandbox.v1.SandboxService/GetTranscript"
 	SandboxService_GetEvents_FullMethodName      = "/sandbox.v1.SandboxService/GetEvents"
+	SandboxService_SnapshotPut_FullMethodName    = "/sandbox.v1.SandboxService/SnapshotPut"
+	SandboxService_SnapshotGet_FullMethodName    = "/sandbox.v1.SandboxService/SnapshotGet"
+	SandboxService_SnapshotList_FullMethodName   = "/sandbox.v1.SandboxService/SnapshotList"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -67,6 +70,11 @@ type SandboxServiceClient interface {
 	// GetEvents reads the daemon's NDJSON event stream (exec/files/bg events;
 	// KIP-16 M5 / issue #513).
 	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
+	// Snapshot layer registry (server-side, KIP-16 M2 / issue #511):
+	// content-addressed snapshot artifacts hosted by the gateway.
+	SnapshotPut(ctx context.Context, in *SnapshotPutRequest, opts ...grpc.CallOption) (*SnapshotPutResponse, error)
+	SnapshotGet(ctx context.Context, in *SnapshotGetRequest, opts ...grpc.CallOption) (*SnapshotGetResponse, error)
+	SnapshotList(ctx context.Context, in *SnapshotListRequest, opts ...grpc.CallOption) (*SnapshotListResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -256,6 +264,36 @@ func (c *sandboxServiceClient) GetEvents(ctx context.Context, in *GetEventsReque
 	return out, nil
 }
 
+func (c *sandboxServiceClient) SnapshotPut(ctx context.Context, in *SnapshotPutRequest, opts ...grpc.CallOption) (*SnapshotPutResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotPutResponse)
+	err := c.cc.Invoke(ctx, SandboxService_SnapshotPut_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) SnapshotGet(ctx context.Context, in *SnapshotGetRequest, opts ...grpc.CallOption) (*SnapshotGetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotGetResponse)
+	err := c.cc.Invoke(ctx, SandboxService_SnapshotGet_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) SnapshotList(ctx context.Context, in *SnapshotListRequest, opts ...grpc.CallOption) (*SnapshotListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SnapshotListResponse)
+	err := c.cc.Invoke(ctx, SandboxService_SnapshotList_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -285,6 +323,11 @@ type SandboxServiceServer interface {
 	// GetEvents reads the daemon's NDJSON event stream (exec/files/bg events;
 	// KIP-16 M5 / issue #513).
 	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
+	// Snapshot layer registry (server-side, KIP-16 M2 / issue #511):
+	// content-addressed snapshot artifacts hosted by the gateway.
+	SnapshotPut(context.Context, *SnapshotPutRequest) (*SnapshotPutResponse, error)
+	SnapshotGet(context.Context, *SnapshotGetRequest) (*SnapshotGetResponse, error)
+	SnapshotList(context.Context, *SnapshotListRequest) (*SnapshotListResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -345,6 +388,15 @@ func (UnimplementedSandboxServiceServer) GetTranscript(context.Context, *GetTran
 }
 func (UnimplementedSandboxServiceServer) GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetEvents not implemented")
+}
+func (UnimplementedSandboxServiceServer) SnapshotPut(context.Context, *SnapshotPutRequest) (*SnapshotPutResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SnapshotPut not implemented")
+}
+func (UnimplementedSandboxServiceServer) SnapshotGet(context.Context, *SnapshotGetRequest) (*SnapshotGetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SnapshotGet not implemented")
+}
+func (UnimplementedSandboxServiceServer) SnapshotList(context.Context, *SnapshotListRequest) (*SnapshotListResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SnapshotList not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -666,6 +718,60 @@ func _SandboxService_GetEvents_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_SnapshotPut_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotPutRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).SnapshotPut(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_SnapshotPut_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).SnapshotPut(ctx, req.(*SnapshotPutRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_SnapshotGet_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotGetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).SnapshotGet(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_SnapshotGet_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).SnapshotGet(ctx, req.(*SnapshotGetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_SnapshotList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SnapshotListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).SnapshotList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_SnapshotList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).SnapshotList(ctx, req.(*SnapshotListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -736,6 +842,18 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetEvents",
 			Handler:    _SandboxService_GetEvents_Handler,
+		},
+		{
+			MethodName: "SnapshotPut",
+			Handler:    _SandboxService_SnapshotPut_Handler,
+		},
+		{
+			MethodName: "SnapshotGet",
+			Handler:    _SandboxService_SnapshotGet_Handler,
+		},
+		{
+			MethodName: "SnapshotList",
+			Handler:    _SandboxService_SnapshotList_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

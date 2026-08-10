@@ -28,6 +28,11 @@ service SandboxService {
   // GetEvents reads the daemon's NDJSON event stream (exec/files/bg events;
   // KIP-16 M5 / issue #513).
   rpc GetEvents(GetEventsRequest)           returns (GetEventsResponse);
+  // Snapshot layer registry (server-side, KIP-16 M2 / issue #511):
+  // content-addressed snapshot artifacts hosted by the gateway.
+  rpc SnapshotPut(SnapshotPutRequest)       returns (SnapshotPutResponse);
+  rpc SnapshotGet(SnapshotGetRequest)       returns (SnapshotGetResponse);
+  rpc SnapshotList(SnapshotListRequest)     returns (SnapshotListResponse);
 }
 
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
@@ -198,4 +203,28 @@ message GetEventsResponse {
   repeated string events = 1; // raw NDJSON lines
   bool   truncated       = 2; // more events exist beyond the returned window
   int64  returned        = 3; // number of lines returned
+}
+
+// SnapshotPutRequest stores one content-addressed layer (or a whole chunked
+// manifest) in the server-side registry.
+message SnapshotPutRequest {
+  string name    = 1; // snapshot name (manifest id)
+  repeated string layers = 2; // layer digests to publish as this snapshot's manifest
+}
+message SnapshotPutResponse {
+  string name = 1;
+  int64  layers = 2; // number of layers published
+}
+
+message SnapshotGetRequest {
+  string name = 1; // manifest name
+}
+message SnapshotGetResponse {
+  string name   = 1;
+  repeated string layers = 2; // ordered layer digests of the manifest
+}
+
+message SnapshotListRequest {}
+message SnapshotListResponse {
+  repeated string names = 1; // manifest names
 }

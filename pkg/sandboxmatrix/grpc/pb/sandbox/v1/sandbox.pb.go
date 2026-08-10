@@ -2086,6 +2086,288 @@ func (x *GetEventsResponse) GetReturned() int64 {
 	return 0
 }
 
+// SnapshotPutRequest stores one content-addressed layer (or a whole chunked
+// manifest) in the server-side registry.
+type SnapshotPutRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`     // snapshot name (manifest id)
+	Layers        []string               `protobuf:"bytes,2,rep,name=layers,proto3" json:"layers,omitempty"` // layer digests to publish as this snapshot's manifest
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotPutRequest) Reset() {
+	*x = SnapshotPutRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotPutRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotPutRequest) ProtoMessage() {}
+
+func (x *SnapshotPutRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotPutRequest.ProtoReflect.Descriptor instead.
+func (*SnapshotPutRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *SnapshotPutRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SnapshotPutRequest) GetLayers() []string {
+	if x != nil {
+		return x.Layers
+	}
+	return nil
+}
+
+type SnapshotPutResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Layers        int64                  `protobuf:"varint,2,opt,name=layers,proto3" json:"layers,omitempty"` // number of layers published
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotPutResponse) Reset() {
+	*x = SnapshotPutResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotPutResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotPutResponse) ProtoMessage() {}
+
+func (x *SnapshotPutResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotPutResponse.ProtoReflect.Descriptor instead.
+func (*SnapshotPutResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *SnapshotPutResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SnapshotPutResponse) GetLayers() int64 {
+	if x != nil {
+		return x.Layers
+	}
+	return 0
+}
+
+type SnapshotGetRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"` // manifest name
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotGetRequest) Reset() {
+	*x = SnapshotGetRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotGetRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotGetRequest) ProtoMessage() {}
+
+func (x *SnapshotGetRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotGetRequest.ProtoReflect.Descriptor instead.
+func (*SnapshotGetRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *SnapshotGetRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type SnapshotGetResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Layers        []string               `protobuf:"bytes,2,rep,name=layers,proto3" json:"layers,omitempty"` // ordered layer digests of the manifest
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotGetResponse) Reset() {
+	*x = SnapshotGetResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotGetResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotGetResponse) ProtoMessage() {}
+
+func (x *SnapshotGetResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotGetResponse.ProtoReflect.Descriptor instead.
+func (*SnapshotGetResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *SnapshotGetResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SnapshotGetResponse) GetLayers() []string {
+	if x != nil {
+		return x.Layers
+	}
+	return nil
+}
+
+type SnapshotListRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotListRequest) Reset() {
+	*x = SnapshotListRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotListRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotListRequest) ProtoMessage() {}
+
+func (x *SnapshotListRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotListRequest.ProtoReflect.Descriptor instead.
+func (*SnapshotListRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{39}
+}
+
+type SnapshotListResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Names         []string               `protobuf:"bytes,1,rep,name=names,proto3" json:"names,omitempty"` // manifest names
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotListResponse) Reset() {
+	*x = SnapshotListResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotListResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotListResponse) ProtoMessage() {}
+
+func (x *SnapshotListResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotListResponse.ProtoReflect.Descriptor instead.
+func (*SnapshotListResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *SnapshotListResponse) GetNames() []string {
+	if x != nil {
+		return x.Names
+	}
+	return nil
+}
+
 var File_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
 
 const file_sandbox_v1_sandbox_proto_rawDesc = "" +
@@ -2258,8 +2540,21 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x11GetEventsResponse\x12\x16\n" +
 	"\x06events\x18\x01 \x03(\tR\x06events\x12\x1c\n" +
 	"\ttruncated\x18\x02 \x01(\bR\ttruncated\x12\x1a\n" +
-	"\breturned\x18\x03 \x01(\x03R\breturned2\xa9\n" +
-	"\n" +
+	"\breturned\x18\x03 \x01(\x03R\breturned\"@\n" +
+	"\x12SnapshotPutRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
+	"\x06layers\x18\x02 \x03(\tR\x06layers\"A\n" +
+	"\x13SnapshotPutResponse\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
+	"\x06layers\x18\x02 \x01(\x03R\x06layers\"(\n" +
+	"\x12SnapshotGetRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\"A\n" +
+	"\x13SnapshotGetResponse\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
+	"\x06layers\x18\x02 \x03(\tR\x06layers\"\x15\n" +
+	"\x13SnapshotListRequest\",\n" +
+	"\x14SnapshotListResponse\x12\x14\n" +
+	"\x05names\x18\x01 \x03(\tR\x05names2\x9c\f\n" +
 	"\x0eSandboxService\x12T\n" +
 	"\rCreateSession\x12 .sandbox.v1.CreateSessionRequest\x1a!.sandbox.v1.CreateSessionResponse\x12K\n" +
 	"\n" +
@@ -2280,7 +2575,10 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x05Login\x12\x18.sandbox.v1.LoginRequest\x1a\x19.sandbox.v1.LoginResponse\x12B\n" +
 	"\aPollRun\x12\x1a.sandbox.v1.PollRunRequest\x1a\x1b.sandbox.v1.PollRunResponse\x12T\n" +
 	"\rGetTranscript\x12 .sandbox.v1.GetTranscriptRequest\x1a!.sandbox.v1.GetTranscriptResponse\x12H\n" +
-	"\tGetEvents\x12\x1c.sandbox.v1.GetEventsRequest\x1a\x1d.sandbox.v1.GetEventsResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
+	"\tGetEvents\x12\x1c.sandbox.v1.GetEventsRequest\x1a\x1d.sandbox.v1.GetEventsResponse\x12N\n" +
+	"\vSnapshotPut\x12\x1e.sandbox.v1.SnapshotPutRequest\x1a\x1f.sandbox.v1.SnapshotPutResponse\x12N\n" +
+	"\vSnapshotGet\x12\x1e.sandbox.v1.SnapshotGetRequest\x1a\x1f.sandbox.v1.SnapshotGetResponse\x12Q\n" +
+	"\fSnapshotList\x12\x1f.sandbox.v1.SnapshotListRequest\x1a .sandbox.v1.SnapshotListResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
 
 var (
 	file_sandbox_v1_sandbox_proto_rawDescOnce sync.Once
@@ -2294,7 +2592,7 @@ func file_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 	return file_sandbox_v1_sandbox_proto_rawDescData
 }
 
-var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
+var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
 var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*SecretRef)(nil),              // 0: sandbox.v1.SecretRef
 	(*CreateSessionRequest)(nil),   // 1: sandbox.v1.CreateSessionRequest
@@ -2331,10 +2629,16 @@ var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*GetTranscriptResponse)(nil),  // 32: sandbox.v1.GetTranscriptResponse
 	(*GetEventsRequest)(nil),       // 33: sandbox.v1.GetEventsRequest
 	(*GetEventsResponse)(nil),      // 34: sandbox.v1.GetEventsResponse
-	nil,                            // 35: sandbox.v1.CreateSessionRequest.EnvEntry
+	(*SnapshotPutRequest)(nil),     // 35: sandbox.v1.SnapshotPutRequest
+	(*SnapshotPutResponse)(nil),    // 36: sandbox.v1.SnapshotPutResponse
+	(*SnapshotGetRequest)(nil),     // 37: sandbox.v1.SnapshotGetRequest
+	(*SnapshotGetResponse)(nil),    // 38: sandbox.v1.SnapshotGetResponse
+	(*SnapshotListRequest)(nil),    // 39: sandbox.v1.SnapshotListRequest
+	(*SnapshotListResponse)(nil),   // 40: sandbox.v1.SnapshotListResponse
+	nil,                            // 41: sandbox.v1.CreateSessionRequest.EnvEntry
 }
 var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
-	35, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
+	41, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
 	0,  // 1: sandbox.v1.CreateSessionRequest.secret_refs:type_name -> sandbox.v1.SecretRef
 	4,  // 2: sandbox.v1.ListSessionsResponse.sessions:type_name -> sandbox.v1.GetSessionResponse
 	18, // 3: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
@@ -2355,25 +2659,31 @@ var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	29, // 18: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
 	31, // 19: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
 	33, // 20: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
-	2,  // 21: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
-	4,  // 22: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
-	6,  // 23: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
-	8,  // 24: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
-	10, // 25: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
-	11, // 26: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
-	13, // 27: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
-	15, // 28: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
-	17, // 29: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
-	20, // 30: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
-	22, // 31: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
-	24, // 32: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
-	26, // 33: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	28, // 34: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
-	30, // 35: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
-	32, // 36: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
-	34, // 37: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
-	21, // [21:38] is the sub-list for method output_type
-	4,  // [4:21] is the sub-list for method input_type
+	35, // 21: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
+	37, // 22: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
+	39, // 23: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
+	2,  // 24: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
+	4,  // 25: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
+	6,  // 26: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
+	8,  // 27: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
+	10, // 28: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
+	11, // 29: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
+	13, // 30: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
+	15, // 31: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
+	17, // 32: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
+	20, // 33: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
+	22, // 34: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
+	24, // 35: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
+	26, // 36: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
+	28, // 37: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
+	30, // 38: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
+	32, // 39: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
+	34, // 40: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
+	36, // 41: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
+	38, // 42: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
+	40, // 43: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
+	24, // [24:44] is the sub-list for method output_type
+	4,  // [4:24] is the sub-list for method input_type
 	4,  // [4:4] is the sub-list for extension type_name
 	4,  // [4:4] is the sub-list for extension extendee
 	0,  // [0:4] is the sub-list for field type_name
@@ -2390,7 +2700,7 @@ func file_sandbox_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   36,
+			NumMessages:   42,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

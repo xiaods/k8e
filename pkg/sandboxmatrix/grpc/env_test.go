@@ -15,7 +15,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/xiaods/k8e/pkg/metrics"
+	"github.com/xiaods/k8e/pkg/sandboxlayer"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestValidateSessionEnv(t *testing.T) {
@@ -566,5 +569,52 @@ func TestGetEvents_NoEvents(t *testing.T) {
 	}
 	if len(resp.Events) != 0 || resp.Returned != 0 {
 		t.Fatalf("expected empty events, got %+v", resp)
+	}
+}
+
+// TestSnapshotRPCs_LayerRegistry verifies the server-side snapshot registry
+// (KIP-16 M2): put/list/get manifest round-trip.
+func TestSnapshotRPCs_LayerRegistry(t *testing.T) {
+	s := newTestServer()
+	ls, err := sandboxlayer.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("layerstore: %v", err)
+	}
+	s.layerStore = ls
+	ctx := context.Background()
+
+	// Publish a manifest referencing two layer digests.
+	put, err := s.SnapshotPut(ctx, &pb.SnapshotPutRequest{Name: "snap-rpc", Layers: []string{"abc", "def"}})
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if put.Layers != 2 {
+		t.Fatalf("expected 2 layers published, got %d", put.Layers)
+	}
+
+	list, err := s.SnapshotList(ctx, &pb.SnapshotListRequest{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(list.Names) != 1 || list.Names[0] != "snap-rpc" {
+		t.Fatalf("unexpected manifests: %v", list.Names)
+	}
+
+	got, err := s.SnapshotGet(ctx, &pb.SnapshotGetRequest{Name: "snap-rpc"})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Layers) != 2 || got.Layers[0] != "abc" || got.Layers[1] != "def" {
+		t.Fatalf("unexpected layers: %v", got.Layers)
+	}
+}
+
+// TestSnapshotRPCs_DisabledRegistry verifies a clear error when the registry
+// is not enabled.
+func TestSnapshotRPCs_DisabledRegistry(t *testing.T) {
+	s := newTestServer() // layerStore nil
+	_, err := s.SnapshotList(context.Background(), &pb.SnapshotListRequest{})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition, got %v", err)
 	}
 }
