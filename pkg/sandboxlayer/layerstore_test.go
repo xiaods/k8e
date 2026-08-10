@@ -222,3 +222,83 @@ func TestStore_LargeContentRoundTrip(t *testing.T) {
 		t.Fatalf("size mismatch: %d vs %d", len(got), len(content))
 	}
 }
+
+// TestStore_Autosquash verifies SaveManifest squashes over-threshold layer
+// counts into a single consolidated layer (KIP-16 M2 autosquash, mirroring
+// ephemeral-sandbox squash_at_n_layers).
+func TestStore_Autosquash(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	// Exactly at threshold: no squash.
+	atThreshold := make([]string, SquashThreshold)
+	for i := range atThreshold {
+		d, _ := s.Put([]byte{byte(i)})
+		atThreshold[i] = d
+	}
+	if err := s.SaveManifest("snap-at", atThreshold); err != nil {
+		t.Fatalf("save at threshold: %v", err)
+	}
+	mAt, _ := s.LoadManifest("snap-at")
+	if len(mAt.Layers) != SquashThreshold {
+		t.Fatalf("at threshold must not squash: %d layers", len(mAt.Layers))
+	}
+
+	// One over threshold: squashed to a single consolidated layer.
+	over := make([]string, SquashThreshold+1)
+	for i := range over {
+		d, _ := s.Put([]byte{byte(200 + i)})
+		over[i] = d
+	}
+	if err := s.SaveManifest("snap-over", over); err != nil {
+		t.Fatalf("save over threshold: %v", err)
+	}
+	mOver, _ := s.LoadManifest("snap-over")
+	if len(mOver.Layers) != 1 {
+		t.Fatalf("over threshold must squash to 1 layer, got %d", len(mOver.Layers))
+	}
+	// Consolidated content must reconstruct the concatenation.
+	got, err := s.Get(mOver.Layers[0])
+	if err != nil {
+		t.Fatalf("get consolidated: %v", err)
+	}
+	var want []byte
+	for i := range over {
+		want = append(want, byte(200+i))
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatal("squashed layer content mismatch")
+	}
+}
+
+// TestStore_Autosquash_ReleasesOriginals verifies the original over-threshold
+// layers become unreferenced and are reclaimed by GC.
+func TestStore_Autosquash_ReleasesOriginals(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	layers := make([]string, SquashThreshold+1)
+	for i := range layers {
+		d, _ := s.Put([]byte{byte(100 + i)})
+		layers[i] = d
+	}
+	if err := s.SaveManifest("snap-sq", layers); err != nil {
+		t.Fatal(err)
+	}
+	// GC should reclaim the squashed-away originals (only the consolidated
+	// layer is referenced now).
+	if _, err := s.GC(); err != nil {
+		t.Fatalf("gc: %v", err)
+	}
+	for _, d := range layers {
+		if s.Has(d) {
+			t.Fatalf("squashed-original layer %s must be reclaimed", d)
+		}
+	}
+	m, _ := s.LoadManifest("snap-sq")
+	if !s.Has(m.Layers[0]) {
+		t.Fatal("consolidated layer must survive GC")
+	}
+}

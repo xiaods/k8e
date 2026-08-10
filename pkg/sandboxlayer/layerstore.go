@@ -103,9 +103,23 @@ type Manifest struct {
 // ManifestVersion is the current manifest schema.
 const ManifestVersion = 1
 
+// SquashThreshold is the max layers a manifest may hold before SaveManifest
+// squashes it into a single consolidated layer (mirrors ephemeral-sandbox's
+// squash_at_n_layers). Bounds manifest size and restore cost.
+const SquashThreshold = 32
+
 // SaveManifest writes a manifest under manifests/<name>.json (atomic: tmp +
 // rename). Layers referenced by any saved manifest are protected from GC.
+// When the layer count exceeds SquashThreshold, the layers are squashed into
+// one consolidated layer first (KIP-16 M2 autosquash).
 func (s *Store) SaveManifest(name string, layers []string) error {
+	if len(layers) > SquashThreshold {
+		consolidated, err := s.squash(layers)
+		if err != nil {
+			return err
+		}
+		layers = []string{consolidated}
+	}
 	m := Manifest{SchemaVersion: ManifestVersion, Layers: layers}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -260,6 +274,25 @@ func (s *Store) manifestDir() string {
 }
 func (s *Store) layerPath(digest string) string {
 	return filepath.Join(s.layerDir(), digest)
+}
+
+// squash consolidates layers into a single layer containing their
+// concatenated (decompressed) content. Used by autosquash to bound manifest
+// growth; the original layers become unreferenced and are reclaimed by GC.
+func (s *Store) squash(layers []string) (string, error) {
+	var out []byte
+	for _, d := range layers {
+		b, err := s.Get(d)
+		if err != nil {
+			return "", fmt.Errorf("layerstore squash get %s: %w", d, err)
+		}
+		out = append(out, b...)
+	}
+	digest, err := s.Put(out)
+	if err != nil {
+		return "", fmt.Errorf("layerstore squash put: %w", err)
+	}
+	return digest, nil
 }
 
 func trimExt(name string) string {
