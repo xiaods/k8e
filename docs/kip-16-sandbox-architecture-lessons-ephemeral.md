@@ -146,6 +146,53 @@ Wave 1 (2026-08-10, agent-assisted) shipped R3 + R4 + M12:
 
 Remaining waves: M1 workspace-session reuse, M2 zstd delta layers + server-side registry, M5 observability.
 
+## Implementation status (2026-08-10, 20 waves, 12 PRs)
+
+All P0/P1 matrix rows are implemented or have a tracked issue. 12 PRs shipped:
+
+| PR | Scope | Status |
+|---|---|---|
+| #515 | R3 ready handshake, R4 protocol limits, M12 bg cap, M4 transcripts, M2 mtimes+since, P2 CNP hardening, `--cilium-dns-proxy` flag | merged |
+| #516 | M2 CAS layerstore (`pkg/sandboxlayer`) | merged |
+| #517 | M5 Prometheus collector (gateway metrics) | merged |
+| #518 | M5 sandboxd NDJSON event writer (disk-only, activity-gated) | merged |
+| #519 | M5 `GetEvents` RPC + CLI `events` | merged |
+| #520 | M1 slice 1: sub-agents reuse parent pod | review |
+| #521 | M2 zstd-compressed layer storage | review |
+| #522 | M2 multi-layer chunked snapshots + `--base` incremental | review |
+| #523 | M2 server-side snapshot layer registry (SnapshotPut/Get/List) | review |
+| #524 | M2 autosquash past threshold | review |
+| #525 | M2 CLI publishes/queries gateway registry (`--remote`) | review |
+| #526 | M10 slice 1: `allowed_hosts` enforced via Cilium toFQDNs (opt-in) | review |
+
+### Key design decisions recorded
+
+1. **M10 enforcement path = Cilium toFQDNs** (opt-in via `--cilium-dns-proxy`), not egress-proxy or API removal — the DNS proxy is now an explicit opt-in (from #515), making enforcement safe and backward-compatible (blanket world remains the default). DNS :53 stays world; only :443 becomes scoped.
+2. **M1 sub-agent reuse**: child inherits parent PodIP but has NO own PodName/CNP — destroy/GC only delete the child CRD, never reset the shared pod. Trust boundary stays pod-level (per §4: reuse optimization, not a security boundary).
+3. **M2 layer model**: OCI-style — zstd-compressed on disk, content-addressed by UNCOMPRESSED sha256; chunks dedup across snapshots; autosquash bounds manifest growth; server registry enables cross-host sharing.
+4. **M5 observability**: disk-only + activity-gated (read never triggers collection; idle daemon does zero work) — ephemeral-sandbox L5 principle, no new processes.
+
+### Remaining (all P2, tracked)
+
+| Item | Issue | Notes |
+|---|---|---|
+| M1 slice 2: per-session overlay isolation | #514 | upperdir per session in pod; trust boundary stays pod-level |
+| M2: wire-level delta transfer via registry | #511 | CLI `--base` computes delta locally; gateway-level transfer next |
+| M2: autosquash on incremental chain | #511 | done in #524; server-side chaining pending |
+| M3: operation catalog layering | — | proto as catalog seed → generated CLI/SDK validation (P2) |
+| M6: label-driven recovery | — | rebuild in-flight state from pod labels/CRD (P2) |
+| M9: single-catalog multi-adapter projection | — | proto → CLI/SDK generation (P2) |
+| M11: transactional destroy | — | idempotent destroy ledger (P2) |
+| M10 slice 2: egress-proxy for DNS-proxy-off clusters | #510 | alternative enforcement path |
+| M5: process topology by namespace identity | #513 | /proc ns/pid matching (P2) |
+
+### Maintainer action list
+
+1. Review + merge PRs #520–#526 (all CI-green; the cluster of 7 pending PRs unblocks the full M1/M2/M10 story).
+2. Decide #510's remaining option: egress-proxy for DNS-proxy-off clusters, or document current opt-in posture.
+3. After merge, add integration tests against a live cluster for toFQDNs enforcement and sub-agent pod reuse.
+4. Track P2 backlog (M3/M6/M9/M11, M5 topology) as separate KIPs or issues.
+
 ## Related work
 
 - [KIP-3](./kip-3-agentic-ai-sandbox-matrix.md) — matrix / sessions / Cilium allowlist 设计（`allowed_hosts` 未执行即源于此）
