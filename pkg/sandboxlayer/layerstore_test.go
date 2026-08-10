@@ -60,7 +60,8 @@ func TestStore_PutIdempotent(t *testing.T) {
 	}
 }
 
-func TestStore_ManifestLifecycle(t *testing.T) {
+// TestStore_ManifestRoundTrip exercises save/load/list in one flow.
+func TestStore_ManifestRoundTrip(t *testing.T) {
 	s, err := New(t.TempDir())
 	if err != nil {
 		t.Fatalf("new store: %v", err)
@@ -68,26 +69,42 @@ func TestStore_ManifestLifecycle(t *testing.T) {
 	d1, _ := s.Put([]byte("part1"))
 	d2, _ := s.Put([]byte("part2"))
 
-	if err := s.SaveManifest("snap-a", []string{d1, d2}); err != nil {
+	if err := s.SaveManifest("snap-b", []string{d1, d2}); err != nil {
 		t.Fatalf("save manifest: %v", err)
 	}
-	m, err := s.LoadManifest("snap-a")
+	m, err := s.LoadManifest("snap-b")
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
 	}
-	if m.SchemaVersion != ManifestVersion || len(m.Layers) != 2 {
-		t.Fatalf("unexpected manifest: %+v", m)
-	}
-
+	expectLayers(t, m, 2)
 	names, err := s.ListManifests()
-	if err != nil || len(names) != 1 || names[0] != "snap-a" {
+	if err != nil || len(names) != 1 || names[0] != "snap-b" {
 		t.Fatalf("unexpected manifests: %v err=%v", names, err)
 	}
+}
 
-	if err := s.DeleteManifest("snap-a"); err != nil {
+// expectLayers asserts a manifest has the expected schema and layer count.
+func expectLayers(t *testing.T, m *Manifest, n int) {
+	t.Helper()
+	if m.SchemaVersion != ManifestVersion || len(m.Layers) != n {
+		t.Fatalf("unexpected manifest: %+v", m)
+	}
+}
+
+// TestStore_ManifestDelete verifies delete removes the manifest lease.
+func TestStore_ManifestDelete(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	d, _ := s.Put([]byte("part1"))
+	if err := s.SaveManifest("snap-c", []string{d}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteManifest("snap-c"); err != nil {
 		t.Fatalf("delete manifest: %v", err)
 	}
-	if _, err := s.LoadManifest("snap-a"); err == nil {
+	if _, err := s.LoadManifest("snap-c"); err == nil {
 		t.Fatal("expected error loading deleted manifest")
 	}
 }
@@ -125,9 +142,7 @@ func TestStore_GC_OnlyUnreferencedRemoved(t *testing.T) {
 	if removed == 0 {
 		t.Fatal("expected orphan layer to be removed")
 	}
-	if !s.Has(keep1) || !s.Has(keep2) {
-		t.Fatal("referenced layers must survive GC")
-	}
+	assertHasAll(t, s, keep1, keep2)
 	if s.Has(orphan) {
 		t.Fatal("orphan layer must be removed")
 	}
@@ -136,6 +151,16 @@ func TestStore_GC_OnlyUnreferencedRemoved(t *testing.T) {
 	removed2, _ := s.GC()
 	if removed2 != 0 {
 		t.Fatalf("expected no-op second GC, removed %d", removed2)
+	}
+}
+
+// assertHasAll asserts every digest is present in the store.
+func assertHasAll(t *testing.T, s *Store, digests ...string) {
+	t.Helper()
+	for _, d := range digests {
+		if !s.Has(d) {
+			t.Fatalf("layer %s missing after GC", d)
+		}
 	}
 }
 
