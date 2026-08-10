@@ -551,21 +551,17 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 		return nil, status.Errorf(codes.Internal, "create sub-agent: %v", err)
 	}
 
-	pod, err := o.claimOrCreatePod(ctx, childID, child.Spec.RuntimeClass, parentPVC, "", "")
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "pod: %v", err)
-	}
-
+	// M1 workspace-session reuse (KIP-16 L1 / issue #514): the sub-agent shares
+	// the parent's pod + sandboxd instead of provisioning a new pod. The child
+	// inherits the parent's PodIP for exec routing but deliberately has NO own
+	// PodName and NO own CNP — so DestroySession/GC only delete the child CRD
+	// and never reset the shared pod's workspace or release it back to the pool.
 	child.Status.Phase = sandboxv1.SandboxPhaseActive
-	child.Status.PodName = pod.Name
-	child.Status.PodIP = pod.Status.PodIP
+	child.Status.PodIP = parent.Status.PodIP
 	child.Status.WorkspacePVC = parentPVC
 	child.Status.CreatedAt = &metav1.Time{Time: time.Now()}
 	o.updateSessionStatus(ctx, child)
 
-	if err := o.applyCNP(ctx, child); err != nil {
-		return nil, status.Errorf(codes.Internal, "network policy: %v", err)
-	}
 	return &pb.RunSubAgentResponse{SessionId: childID}, nil
 }
 
