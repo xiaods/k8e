@@ -185,20 +185,7 @@ func Delta(have, want *Manifest) []string {
 // GC removes layers not referenced by any saved manifest (lease-driven: a
 // snapshot's layers are its lease). Returns the number of bytes removed.
 func (s *Store) GC() (int64, error) {
-	referenced := map[string]bool{}
-	names, err := s.ListManifests()
-	if err != nil {
-		return 0, err
-	}
-	for _, n := range names {
-		m, err := s.LoadManifest(n)
-		if err != nil {
-			continue
-		}
-		for _, d := range m.Layers {
-			referenced[d] = true
-		}
-	}
+	referenced := s.referencedLayers()
 
 	entries, err := os.ReadDir(s.layerDir())
 	if err != nil {
@@ -213,15 +200,42 @@ func (s *Store) GC() (int64, error) {
 		if referenced[name] {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if err := os.Remove(filepath.Join(s.layerDir(), name)); err == nil {
-			removed += info.Size()
+		if removedBytes, err := s.removeLayer(e, name); err == nil {
+			removed += removedBytes
 		}
 	}
 	return removed, nil
+}
+
+// referencedLayers returns the set of layer digests leased by saved manifests.
+func (s *Store) referencedLayers() map[string]bool {
+	referenced := map[string]bool{}
+	names, err := s.ListManifests()
+	if err != nil {
+		return referenced
+	}
+	for _, n := range names {
+		m, err := s.LoadManifest(n)
+		if err != nil {
+			continue
+		}
+		for _, d := range m.Layers {
+			referenced[d] = true
+		}
+	}
+	return referenced
+}
+
+// removeLayer deletes one unreferenced layer entry, returning its size.
+func (s *Store) removeLayer(e os.DirEntry, name string) (int64, error) {
+	info, err := e.Info()
+	if err != nil {
+		return 0, err
+	}
+	if err := os.Remove(filepath.Join(s.layerDir(), name)); err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }
 
 // SizeBytes returns total bytes of all stored layers (for status surfacing).
