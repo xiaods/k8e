@@ -63,11 +63,6 @@ var (
 	sessionGVR = schema.GroupVersionResource{Group: sandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxsessions"}
 	cnpGVR     = schema.GroupVersionResource{Group: "cilium.io", Version: "v2", Resource: "ciliumnetworkpolicies"}
 	matrixGVR  = schema.GroupVersionResource{Group: sandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}
-
-	defaultAllowedHosts = []string{
-		"pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
-		"objects.githubusercontent.com", "github.com", "raw.githubusercontent.com",
-	}
 )
 
 type pendingApproval struct {
@@ -347,7 +342,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	}
 
 	now := time.Now()
-	// use request allowed_hosts; fall back to SandboxMatrix.spec.defaultAllowedHosts; then hardcoded defaults
+	// Use request allowed_hosts; fall back to SandboxMatrix.spec.defaultAllowedHosts.
 	allowedHosts := req.AllowedHosts
 	if len(allowedHosts) == 0 && len(matrixDefaultHosts) > 0 {
 		allowedHosts = matrixDefaultHosts
