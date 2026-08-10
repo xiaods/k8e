@@ -25,7 +25,7 @@ func main() {
 		cli.StringFlag{Name: "endpoint", EnvVar: "K8E_SANDBOX_ENDPOINT", Usage: "gRPC endpoint (default: 127.0.0.1:50051)"},
 		cli.StringFlag{Name: "apikey", EnvVar: "K8E_SANDBOX_APIKEY", Usage: "API key for remote cluster authentication"},
 	}
-	app.Commands = []cli.Command{
+	commands := []cli.Command{
 		sandboxcli.ConnectCommand(),
 		sandboxcli.LoginCommand(),
 		sandboxcli.RunCommand(),
@@ -47,6 +47,9 @@ func main() {
 		sandboxcli.PsCommand(),
 		sandboxcli.BenchmarkCommand(),
 	}
+	// M9 catalog: emits the full command surface (single source for SDK stubs).
+	commands = append(commands, sandboxcli.CatalogCommand(commands))
+	app.Commands = commands
 
 	if err := app.Run(os.Args); err != nil {
 		var exitErr *sandboxcli.ExitError

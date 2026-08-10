@@ -920,6 +920,50 @@ func runBenchmark(ctx *cli.Context) error {
 	return nil
 }
 
+// ── CatalogCommand ─────────────────────────────────────────────────────────
+
+// CatalogCommand emits a machine-readable inventory of the CLI's command
+// surface (KIP-16 M9: single-catalog multi-adapter projection — the proto/CLI
+// surface is the seed for SDK stubs). Callers pass the full command list.
+func CatalogCommand(commands []cli.Command) cli.Command {
+	return cli.Command{
+		Name:  "catalog",
+		Usage: "Emit the CLI command/flag inventory as JSON (KIP-16 M9 catalog)",
+		Action: func(ctx *cli.Context) error {
+			entries := make([]map[string]any, 0, len(commands))
+			for _, c := range commands {
+				flags := make([]map[string]any, 0, len(c.Flags))
+				for _, f := range c.Flags {
+					flags = append(flags, map[string]any{
+						"name":  flagName(f),
+						"usage": f.String(),
+					})
+				}
+				entries = append(entries, map[string]any{
+					"name":  c.Name,
+					"usage": c.Usage,
+					"flags": flags,
+				})
+			}
+			printJSON(map[string]any{"catalog_version": 1, "commands": entries})
+			return nil
+		},
+	}
+}
+
+// flagName extracts a flag's canonical long name from GetName(), preferring
+// the multi-char name over a single-char shorthand.
+func flagName(f cli.Flag) string {
+	for _, part := range strings.Split(f.GetName(), ",") {
+		p := strings.TrimSpace(part)
+		p = strings.TrimLeft(p, "-")
+		if len(p) > 1 {
+			return p
+		}
+	}
+	return strings.TrimLeft(strings.TrimSpace(strings.Split(f.GetName(), ",")[0]), "-")
+}
+
 // benchPreCreateWarmPool creates poolSize sessions and returns a cleanup function.
 func benchPreCreateWarmPool(c *client.Client, tenant string, poolSize int) (func(), error) {
 	sids := make([]string, 0, poolSize)
