@@ -60,8 +60,9 @@ fn getUnixSeconds() i64 {
 }
 
 /// Window is a bounded, line-aligned slice of a session transcript.
+/// The caller owns output's allocation and must free it.
 pub const Window = struct {
-    output: []const u8, // caller-owned slice into read buffer
+    output: []u8, // caller-owned allocation (free with allocator)
     absolute_offset: i64, // file offset this window starts at (== requested offset when in range)
     next_offset: i64, // offset for the next window; == file size at EOF
     truncated_before: bool, // true when the window starts mid-line (bytes were skipped)
@@ -102,11 +103,13 @@ pub fn readWindowAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
     const want: usize = @min(clamped, @as(usize, @intCast(@max(file_size - start, 0))));
 
     const buf = allocator.alloc(u8, want + 1) catch return null;
-    defer allocator.free(buf);
 
     const n_raw = std.os.linux.pread(@intCast(fd), buf.ptr, want, @intCast(start));
     const n: isize = @bitCast(n_raw);
-    if (n < 0) return null;
+    if (n < 0) {
+        allocator.free(buf);
+        return null;
+    }
     var actual: usize = @intCast(n);
 
     // Line-align the end: trim back to the last newline so no partial line
@@ -127,6 +130,11 @@ pub fn readWindowAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
         .truncated_before = start > 0,
         .eof = next_offset >= file_size,
     };
+}
+
+/// freeWindow releases the window's output allocation (owned by the caller).
+pub fn freeWindow(allocator: std.mem.Allocator, w: Window) void {
+    allocator.free(w.output);
 }
 
 /// handleTranscript serves GET /transcript?session=<sid>&offset=<n>&limit=<n>.
@@ -158,6 +166,7 @@ pub fn handleTranscript(allocator: std.mem.Allocator, client_fd: i32, query: []c
         try main.writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"no transcript\"}");
         return;
     };
+    defer freeWindow(allocator, w);
 
     const escaped = try exec_json_escape(allocator, w.output);
     defer allocator.free(escaped);

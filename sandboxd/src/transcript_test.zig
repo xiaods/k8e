@@ -35,6 +35,7 @@ test "appendLine then readWindow returns full content" {
     const w = transcript.readWindowAt(allocator, TEST_BASE, "sess-1", 0, 0) orelse {
         return error.TestUnexpectedResult;
     };
+    defer transcript.freeWindow(allocator, w);
     try std.testing.expect(w.absolute_offset == 0);
     try std.testing.expect(w.eof);
     try std.testing.expect(std.mem.indexOf(u8, w.output, "echo hello") != null);
@@ -53,11 +54,16 @@ test "readWindow offset continuation resumes at next_offset" {
     transcript.appendLineAt(allocator, TEST_BASE, "sess-2", "cmd", "line one");
     transcript.appendLineAt(allocator, TEST_BASE, "sess-2", "stdout", "line two");
 
-    const w1 = transcript.readWindowAt(allocator, TEST_BASE, "sess-2", 0, 64) orelse return error.TestUnexpectedResult;
+    // Window sized to capture the first line (~24 bytes) but not the second,
+    // so continuation is exercised and the end lands on a newline boundary
+    // (line-alignment trims partial lines).
+    const w1 = transcript.readWindowAt(allocator, TEST_BASE, "sess-2", 0, 30) orelse return error.TestUnexpectedResult;
+    defer transcript.freeWindow(allocator, w1);
     try std.testing.expect(w1.next_offset > 0);
     try std.testing.expect(!w1.eof);
 
     const w2 = transcript.readWindowAt(allocator, TEST_BASE, "sess-2", w1.next_offset, 64) orelse return error.TestUnexpectedResult;
+    defer transcript.freeWindow(allocator, w2);
     try std.testing.expect(w2.eof);
 }
 
@@ -73,6 +79,7 @@ test "readWindow clamps offset to EOF and reports eof" {
     transcript.appendLineAt(allocator, TEST_BASE, "sess-3", "stdout", "done");
 
     const w = transcript.readWindowAt(allocator, TEST_BASE, "sess-3", 1 << 30, 64) orelse return error.TestUnexpectedResult;
+    defer transcript.freeWindow(allocator, w);
     try std.testing.expect(w.eof);
     try std.testing.expect(w.output.len == 0);
 }
