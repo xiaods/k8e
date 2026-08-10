@@ -1,6 +1,7 @@
 package sandboxcli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,7 +43,7 @@ func TestSnapshotStore_ContentAddressedDedup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if string(got) != string(payload) {
+	if !bytes.Equal(got, payload) {
 		t.Fatal("zstd round-trip mismatch")
 	}
 }
