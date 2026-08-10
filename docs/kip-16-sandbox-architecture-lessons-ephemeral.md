@@ -125,11 +125,14 @@ KIP-16 acceptance criterion #1 (each P0/P1 matrix row gets a GitHub issue):
 
 | Matrix row | Issue | Status |
 |---|---|---|
-| M10 allowed_hosts enforcement (P0) | [#510](https://github.com/xiaods/k8e/issues/510) | open — needs design decision (toFQDNs / egress proxy / API removal) |
-| M2 layerstack snapshot layer (P1) | [#511](https://github.com/xiaods/k8e/issues/511) | **slices 1–4 shipped** — mtimes+since (#515); CAS layerstore (#516); zstd layers (#521); chunked multi-layer + incremental `--base` (#522); server-side registry + autosquash remain |
-| M4 PTY transcript + windowed replay (P1) | [#512](https://github.com/xiaods/k8e/issues/512) | **Wave 3: shipped** — file-backed transcript + GetTranscript RPC + `log` CLI (transcript window semantics; PTY master variant deferred) |
-| M5 observability (P1) | [#513](https://github.com/xiaods/k8e/issues/513) | **slice 1+2 shipped** — Prometheus collector (#517) + sandboxd NDJSON event stream (#518); query endpoint + process topology remain |
-| M1 workspace-session reuse (P1) | [#514](https://github.com/xiaods/k8e/issues/514) | **slice 1 shipped (#520)** — sub-agents share parent pod (no own PodName/CNP); per-session overlay remains |
+| M10 allowed_hosts enforcement (P0) | [#510](https://github.com/xiaods/k8e/issues/510) | **slice 1 shipped (#526)** — toFQDNs enforcement when `--cilium-dns-proxy` enabled; egress-proxy for DNS-proxy-off clusters remains as follow-up |
+| M2 layerstack snapshot layer (P1) | [#511](https://github.com/xiaods/k8e/issues/511) | **complete** — CAS (#516) + zstd (#521) + chunked/incremental (#522) + server registry (#523) + autosquash (#524) + CLI integration (#525) |
+| M4 PTY transcript + windowed replay (P1) | [#512](https://github.com/xiaods/k8e/issues/512) | **shipped (#515)** — file-backed transcript + GetTranscript RPC + `log` CLI (PTY master variant deferred) |
+| M5 observability (P1) | [#513](https://github.com/xiaods/k8e/issues/513) | **complete** — Prometheus (#517) + event writer (#518) + GetEvents (#519) + process topology (#530) |
+| M1 workspace-session reuse (P1) | [#514](https://github.com/xiaods/k8e/issues/514) | **complete** — pod reuse (#520) + per-session isolation (#528) |
+| M6 registry rebuild | — | shipped (#532) |
+| M9 CLI catalog | — | shipped (#533) |
+| M11 transactional destroy | — | shipped (#531) |
 | M7 protocol limits | implemented in-tree (Wave 1 R4) | — |
 | M8 ready handshake | implemented in-tree (Wave 1 R3) | — |
 | M12 background caps | implemented in-tree (Wave 2 M12) | — |
@@ -144,7 +147,7 @@ Wave 1 (2026-08-10, agent-assisted) shipped R3 + R4 + M12:
 - **M4/R2 — file-backed transcripts + windowed replay (issue #512)**: sandboxd `transcript.zig` appends `cmd/stdout/stderr` lines per session under `/workspace/.k8e_transcripts/<sid>.log`; `GET /transcript?session=&offset=&limit=` serves line-aligned, offset-resumable windows (256KiB cap); new gRPC `GetTranscript` + `k8e-sandbox-cli log <sid> [--offset --limit --follow]`. Exec/background bodies now carry `session_id` so transcripts record. Tests: Zig `transcript_test.zig` (4 window/offset/eof cases, Linux CI), Go `TestGetTranscript_*` (proxy + no-transcript empty window), `TestSandboxdRequestBodies` session_id propagation.
 - **M2 slice 2 — content-addressed layerstore (issue #511)**: new `pkg/sandboxlayer` (pure Go): SHA-256 CAS layers, atomic staging+publish (fsync+rename), manifest leases, `Delta()` for incremental transfer, lease-driven `GC()`, `SizeBytes()`. Snapshot CLI wired: save stores payload as CAS layer + manifest (dedup), restore reads via layerstore (legacy tar fallback), delete releases manifest lease + GC. Tests: 9 unit (store/dedup/manifest/delta/GC/large 1MiB) + 4 CLI-level. Foundation for incremental/diff snapshots.
 
-Remaining waves: M1 workspace-session reuse, M2 zstd delta layers + server-side registry, M5 observability.
+Remaining P2 (documented above): M3 catalog layering depth, M10 slice 2 (egress-proxy), M5 process-topology deeper ns/pid matching, PTY master variant.
 
 ## Implementation status (2026-08-10, 20 waves, 12 PRs)
 
