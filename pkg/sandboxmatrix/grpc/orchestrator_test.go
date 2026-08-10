@@ -1062,3 +1062,47 @@ func TestMarkDestroyStep_Idempotent(t *testing.T) {
 		t.Fatalf("expected deduped ledger 'cnp,workspace', got %q", ledger)
 	}
 }
+
+// TestRebuildRunRegistry_FromSessionAnnotations verifies the M6 rebuild restores
+// the run registry from persisted session annotations after a restart.
+func TestRebuildRunRegistry_FromSessionAnnotations(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+
+	// Create a session with persisted background-run annotations.
+	_ = mustCreateSession(t, o, "rebuild-sess")
+	// Simulate ExecBackground's persistence.
+	o.recordRunOnSession(ctx, "rebuild-sess", "rebuild-sess-bg-111")
+	o.recordRunOnSession(ctx, "rebuild-sess", "rebuild-sess-bg-222")
+
+	// Simulate a restart: fresh registry.
+	o.runRegistry = map[string]string{}
+
+	o.RebuildRunRegistry(ctx, sandboxNS)
+
+	if got := o.countAllBackgroundRuns(); got != 2 {
+		t.Fatalf("expected 2 rebuilt runs, got %d", got)
+	}
+	if o.runRegistry["rebuild-sess-bg-111"] != "rebuild-sess" {
+		t.Fatalf("rebuild missing bg-111 mapping: %v", o.runRegistry)
+	}
+	if o.runRegistry["rebuild-sess-bg-222"] != "rebuild-sess" {
+		t.Fatalf("rebuild missing bg-222 mapping: %v", o.runRegistry)
+	}
+}
+
+// TestRebuildRunRegistry_Idempotent verifies re-running rebuild does not
+// duplicate entries.
+func TestRebuildRunRegistry_Idempotent(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	_ = mustCreateSession(t, o, "rebuild-idem")
+	o.recordRunOnSession(ctx, "rebuild-idem", "rebuild-idem-bg-1")
+
+	o.RebuildRunRegistry(ctx, sandboxNS)
+	o.RebuildRunRegistry(ctx, sandboxNS) // second rebuild
+
+	if got := o.countAllBackgroundRuns(); got != 1 {
+		t.Fatalf("expected 1 rebuilt run (idempotent), got %d", got)
+	}
+}
