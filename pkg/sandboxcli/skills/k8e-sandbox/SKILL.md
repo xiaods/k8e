@@ -89,6 +89,9 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--raw`, `--session-id`, `--tenant`) |
 | `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`) |
 | `k8e-sandbox-cli write/read/list` | Workspace files |
+| `k8e-sandbox-cli log <sid>` | Replay exec transcript | `--offset`, `--limit`, `--follow` |
+| `k8e-sandbox-cli events <sid>` | Read daemon NDJSON event stream | `--limit` |
+| `k8e-sandbox-cli poll <run-id>` | Poll a background run | |
 | `k8e-sandbox-cli destroy <sid>` | Tear down session |
 
 Default run output is JSON: `stdout`, `stderr`, `exit_code`, `session_id`. Use `--raw` to stream text.

@@ -43,6 +43,7 @@ func main() {
 		sandboxcli.SnapshotCommand(),
 		sandboxcli.PollCommand(),
 		sandboxcli.LogCommand(),
+		sandboxcli.EventsCommand(),
 		sandboxcli.BenchmarkCommand(),
 	}
 

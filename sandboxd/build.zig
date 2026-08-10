@@ -44,4 +44,8 @@ pub fn build(b: *std.Build) void {
     const transcript_mod = b.createModule(.{ .root_source_file = b.path("src/transcript_test.zig"), .target = native });
     const transcript_tests = b.addTest(.{ .root_module = transcript_mod });
     test_step.dependOn(&b.addRunArtifact(transcript_tests).step);
+
+    const events_mod = b.createModule(.{ .root_source_file = b.path("src/events_test.zig"), .target = native });
+    const events_tests = b.addTest(.{ .root_module = events_mod });
+    test_step.dependOn(&b.addRunArtifact(events_tests).step);
 }

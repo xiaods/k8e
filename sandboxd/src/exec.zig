@@ -376,11 +376,11 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
     };
     defer result.deinit(allocator);
 
-    // File-backed transcript: append command + outputs for the session.
-    const transcript_mod = @import("transcript.zig");
-    transcript_mod.appendLine(allocator, req.session_id, "cmd", req.command);
-    if (result.stdout.len > 0) transcript_mod.appendLine(allocator, req.session_id, "stdout", result.stdout);
-    if (result.stderr.len > 0) transcript_mod.appendLine(allocator, req.session_id, "stderr", result.stderr);
+    // Disk-only event stream (KIP-16 L5): record exec completion.
+    const events = @import("events.zig");
+    var ev_buf: [128]u8 = undefined;
+    const ev_extra = std.fmt.bufPrint(&ev_buf, ",\"exit\":{d},\"dur_ms\":{d}", .{ result.exit_code, result.duration_ms }) catch "";
+    events.append(req.session_id, "exec_end", ev_extra);
 
     const stdout_json = try jsonEscape(allocator, result.stdout);
     defer allocator.free(stdout_json);

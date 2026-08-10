@@ -497,3 +497,74 @@ func TestRegisterSandboxMetrics_SharedRegistry(t *testing.T) {
 		}
 	}
 }
+
+// TestGetEvents_ReadsDaemonEvents verifies GetEvents proxies to sandboxd
+// /events and passes through NDJSON lines (KIP-16 M5).
+func TestGetEvents_ReadsDaemonEvents(t *testing.T) {
+	s := newTestServer()
+	ctx := context.Background()
+	mustCreateSession(t, s.orch, "events-read")
+	stubSessionPodIP(ctx, t, s.orch, "events-read", "127.0.0.1")
+
+	old := sandboxdClient
+	defer func() { sandboxdClient = old }()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/events" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("limit") != "100" {
+			t.Errorf("expected limit=100, got %s", r.URL.Query().Get("limit"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"t":1750000000,"ev":"exec_end","sid":"events-read","exit":0},{"t":1750000001,"ev":"bg_submit","sid":"events-read"}]`))
+	}))
+	ln, err := net.Listen("tcp", "127.0.0.1:2024")
+	if err != nil {
+		t.Fatalf("bind 2024: %v", err)
+	}
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	sandboxdClient = &http.Client{}
+
+	resp, err := s.GetEvents(ctx, &pb.GetEventsRequest{SessionId: "events-read", Limit: 100})
+	if err != nil {
+		t.Fatalf("GetEvents: %v", err)
+	}
+	if len(resp.Events) != 2 || resp.Returned != 2 {
+		t.Fatalf("unexpected events: %+v", resp)
+	}
+	if !strings.Contains(resp.Events[0], "exec_end") || !strings.Contains(resp.Events[1], "bg_submit") {
+		t.Fatalf("unexpected event content: %+v", resp.Events)
+	}
+}
+
+// TestGetEvents_NoEvents returns empty (not error) when sandboxd has none.
+func TestGetEvents_NoEvents(t *testing.T) {
+	s := newTestServer()
+	ctx := context.Background()
+	mustCreateSession(t, s.orch, "events-empty")
+	stubSessionPodIP(ctx, t, s.orch, "events-empty", "127.0.0.1")
+
+	old := sandboxdClient
+	defer func() { sandboxdClient = old }()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	ln, err := net.Listen("tcp", "127.0.0.1:2024")
+	if err != nil {
+		t.Fatalf("bind 2024: %v", err)
+	}
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	sandboxdClient = &http.Client{}
+
+	resp, err := s.GetEvents(ctx, &pb.GetEventsRequest{SessionId: "events-empty"})
+	if err != nil {
+		t.Fatalf("GetEvents: %v", err)
+	}
+	if len(resp.Events) != 0 || resp.Returned != 0 {
+		t.Fatalf("expected empty events, got %+v", resp)
+	}
+}

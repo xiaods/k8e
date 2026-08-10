@@ -108,6 +108,12 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
     var resp_buf: [256]u8 = undefined;
     const resp = try std.fmt.bufPrint(&resp_buf, "{{\"status\":\"started\",\"run_id\":\"{s}\"}}", .{req.run_id});
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
+
+    // Disk-only event stream (KIP-16 L5): record background submission.
+    const events = @import("events.zig");
+    var ev_buf: [256]u8 = undefined;
+    const ev_extra = std.fmt.bufPrint(&ev_buf, ",\"run_id\":\"{s}\"", .{req.run_id}) catch "";
+    events.append("", "bg_submit", ev_extra);
 }
 
 /// handleBgPoll reports the status of a background task and returns its output

@@ -25,6 +25,9 @@ service SandboxService {
   // GetTranscript reads a bounded window of a session's exec transcript
   // (file-backed, offset-resumable; KIP-16 M4 / issue #512).
   rpc GetTranscript(GetTranscriptRequest)   returns (GetTranscriptResponse);
+  // GetEvents reads the daemon's NDJSON event stream (exec/files/bg events;
+  // KIP-16 M5 / issue #513).
+  rpc GetEvents(GetEventsRequest)           returns (GetEventsResponse);
 }
 
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
@@ -182,4 +185,17 @@ message GetTranscriptResponse {
   int64  next_offset = 4;     // offset for the next window; == file size at EOF
   bool   truncated_before = 5; // true when the window starts mid-file (lines were skipped)
   bool   eof        = 6;      // true when next_offset reached the end of the transcript
+}
+
+// GetEventsRequest reads the daemon NDJSON event stream (KIP-16 M5).
+message GetEventsRequest {
+  // Empty = all events (daemon-wide). When set, only events for this session.
+  string session_id = 1;
+  // Max events to return in this call (0 = server default 500).
+  int64  limit      = 2;
+}
+message GetEventsResponse {
+  repeated string events = 1; // raw NDJSON lines
+  bool   truncated       = 2; // more events exist beyond the returned window
+  int64  returned        = 3; // number of lines returned
 }

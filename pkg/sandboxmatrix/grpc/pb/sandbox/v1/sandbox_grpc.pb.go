@@ -35,6 +35,7 @@ const (
 	SandboxService_Login_FullMethodName          = "/sandbox.v1.SandboxService/Login"
 	SandboxService_PollRun_FullMethodName        = "/sandbox.v1.SandboxService/PollRun"
 	SandboxService_GetTranscript_FullMethodName  = "/sandbox.v1.SandboxService/GetTranscript"
+	SandboxService_GetEvents_FullMethodName      = "/sandbox.v1.SandboxService/GetEvents"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -63,6 +64,9 @@ type SandboxServiceClient interface {
 	// GetTranscript reads a bounded window of a session's exec transcript
 	// (file-backed, offset-resumable; KIP-16 M4 / issue #512).
 	GetTranscript(ctx context.Context, in *GetTranscriptRequest, opts ...grpc.CallOption) (*GetTranscriptResponse, error)
+	// GetEvents reads the daemon's NDJSON event stream (exec/files/bg events;
+	// KIP-16 M5 / issue #513).
+	GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -242,6 +246,16 @@ func (c *sandboxServiceClient) GetTranscript(ctx context.Context, in *GetTranscr
 	return out, nil
 }
 
+func (c *sandboxServiceClient) GetEvents(ctx context.Context, in *GetEventsRequest, opts ...grpc.CallOption) (*GetEventsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetEventsResponse)
+	err := c.cc.Invoke(ctx, SandboxService_GetEvents_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -268,6 +282,9 @@ type SandboxServiceServer interface {
 	// GetTranscript reads a bounded window of a session's exec transcript
 	// (file-backed, offset-resumable; KIP-16 M4 / issue #512).
 	GetTranscript(context.Context, *GetTranscriptRequest) (*GetTranscriptResponse, error)
+	// GetEvents reads the daemon's NDJSON event stream (exec/files/bg events;
+	// KIP-16 M5 / issue #513).
+	GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -325,6 +342,9 @@ func (UnimplementedSandboxServiceServer) PollRun(context.Context, *PollRunReques
 }
 func (UnimplementedSandboxServiceServer) GetTranscript(context.Context, *GetTranscriptRequest) (*GetTranscriptResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTranscript not implemented")
+}
+func (UnimplementedSandboxServiceServer) GetEvents(context.Context, *GetEventsRequest) (*GetEventsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetEvents not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -628,6 +648,24 @@ func _SandboxService_GetTranscript_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_GetEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetEventsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).GetEvents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_GetEvents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).GetEvents(ctx, req.(*GetEventsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -694,6 +732,10 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetTranscript",
 			Handler:    _SandboxService_GetTranscript_Handler,
+		},
+		{
+			MethodName: "GetEvents",
+			Handler:    _SandboxService_GetEvents_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
