@@ -618,3 +618,44 @@ func TestSnapshotRPCs_DisabledRegistry(t *testing.T) {
 		t.Fatalf("expected FailedPrecondition, got %v", err)
 	}
 }
+
+// TestGetProcesses_ReadsProcessTopology verifies GetProcesses proxies to
+// sandboxd /processes and passes through pid/comm/state (KIP-16 M5).
+func TestGetProcesses_ReadsProcessTopology(t *testing.T) {
+	s := newTestServer()
+	ctx := context.Background()
+	mustCreateSession(t, s.orch, "proc-read")
+	stubSessionPodIP(ctx, t, s.orch, "proc-read", "127.0.0.1")
+
+	old := sandboxdClient
+	defer func() { sandboxdClient = old }()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/processes" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"processes":[{"pid":1,"comm":"sandboxd","state":"S"},{"pid":42,"comm":"bash","state":"R"}]}`))
+	}))
+	ln, err := net.Listen("tcp", "127.0.0.1:2024")
+	if err != nil {
+		t.Fatalf("bind 2024: %v", err)
+	}
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	sandboxdClient = &http.Client{}
+
+	resp, err := s.GetProcesses(ctx, &pb.GetProcessesRequest{SessionId: "proc-read"})
+	if err != nil {
+		t.Fatalf("GetProcesses: %v", err)
+	}
+	if len(resp.Processes) != 2 {
+		t.Fatalf("expected 2 processes, got %d", len(resp.Processes))
+	}
+	if resp.Processes[0].Pid != 1 || resp.Processes[0].Comm != "sandboxd" || resp.Processes[0].State != "S" {
+		t.Fatalf("unexpected first process: %+v", resp.Processes[0])
+	}
+	if resp.Processes[1].Pid != 42 || resp.Processes[1].Comm != "bash" {
+		t.Fatalf("unexpected second process: %+v", resp.Processes[1])
+	}
+}

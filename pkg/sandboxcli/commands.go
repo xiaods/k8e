@@ -1216,3 +1216,37 @@ func EventsCommand() cli.Command {
 		},
 	}
 }
+
+// ── PsCommand ──────────────────────────────────────────────────────────────
+
+func PsCommand() cli.Command {
+	return cli.Command{
+		Name:      "ps",
+		Usage:     "List processes running in the sandbox pod (KIP-16 M5 process topology)",
+		ArgsUsage: "<session-id>",
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().First()
+			if sid == "" {
+				return printErrorExit("usage: k8e-sandbox-cli ps <session-id>", 1)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			resp, err := client.SandboxServiceClient.GetProcesses(context.Background(), &pb.GetProcessesRequest{
+				SessionId: sid,
+			})
+			if err != nil {
+				return printErrorExit("ps: "+err.Error(), 1)
+			}
+			procs := make([]map[string]any, len(resp.Processes))
+			for i, p := range resp.Processes {
+				procs[i] = map[string]any{"pid": p.Pid, "comm": p.Comm, "state": p.State}
+			}
+			printJSON(map[string]any{"processes": procs})
+			return nil
+		},
+	}
+}

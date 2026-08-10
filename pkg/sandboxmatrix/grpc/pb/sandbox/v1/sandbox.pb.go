@@ -2368,6 +2368,156 @@ func (x *SnapshotListResponse) GetNames() []string {
 	return nil
 }
 
+// GetProcessesRequest lists processes visible in the sandbox pod's pid
+// namespace (KIP-16 M5 follow-up: namespace-identity process topology).
+type GetProcessesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProcessesRequest) Reset() {
+	*x = GetProcessesRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProcessesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProcessesRequest) ProtoMessage() {}
+
+func (x *GetProcessesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProcessesRequest.ProtoReflect.Descriptor instead.
+func (*GetProcessesRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *GetProcessesRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type ProcessInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pid           int32                  `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`
+	Comm          string                 `protobuf:"bytes,2,opt,name=comm,proto3" json:"comm,omitempty"`
+	State         string                 `protobuf:"bytes,3,opt,name=state,proto3" json:"state,omitempty"` // single char: R/S/D/Z/...
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProcessInfo) Reset() {
+	*x = ProcessInfo{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProcessInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProcessInfo) ProtoMessage() {}
+
+func (x *ProcessInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProcessInfo.ProtoReflect.Descriptor instead.
+func (*ProcessInfo) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *ProcessInfo) GetPid() int32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *ProcessInfo) GetComm() string {
+	if x != nil {
+		return x.Comm
+	}
+	return ""
+}
+
+func (x *ProcessInfo) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+type GetProcessesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Processes     []*ProcessInfo         `protobuf:"bytes,1,rep,name=processes,proto3" json:"processes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProcessesResponse) Reset() {
+	*x = GetProcessesResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProcessesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProcessesResponse) ProtoMessage() {}
+
+func (x *GetProcessesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProcessesResponse.ProtoReflect.Descriptor instead.
+func (*GetProcessesResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *GetProcessesResponse) GetProcesses() []*ProcessInfo {
+	if x != nil {
+		return x.Processes
+	}
+	return nil
+}
+
 var File_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
 
 const file_sandbox_v1_sandbox_proto_rawDesc = "" +
@@ -2554,7 +2704,16 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x06layers\x18\x02 \x03(\tR\x06layers\"\x15\n" +
 	"\x13SnapshotListRequest\",\n" +
 	"\x14SnapshotListResponse\x12\x14\n" +
-	"\x05names\x18\x01 \x03(\tR\x05names2\x9c\f\n" +
+	"\x05names\x18\x01 \x03(\tR\x05names\"4\n" +
+	"\x13GetProcessesRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"I\n" +
+	"\vProcessInfo\x12\x10\n" +
+	"\x03pid\x18\x01 \x01(\x05R\x03pid\x12\x12\n" +
+	"\x04comm\x18\x02 \x01(\tR\x04comm\x12\x14\n" +
+	"\x05state\x18\x03 \x01(\tR\x05state\"M\n" +
+	"\x14GetProcessesResponse\x125\n" +
+	"\tprocesses\x18\x01 \x03(\v2\x17.sandbox.v1.ProcessInfoR\tprocesses2\xef\f\n" +
 	"\x0eSandboxService\x12T\n" +
 	"\rCreateSession\x12 .sandbox.v1.CreateSessionRequest\x1a!.sandbox.v1.CreateSessionResponse\x12K\n" +
 	"\n" +
@@ -2578,7 +2737,8 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\tGetEvents\x12\x1c.sandbox.v1.GetEventsRequest\x1a\x1d.sandbox.v1.GetEventsResponse\x12N\n" +
 	"\vSnapshotPut\x12\x1e.sandbox.v1.SnapshotPutRequest\x1a\x1f.sandbox.v1.SnapshotPutResponse\x12N\n" +
 	"\vSnapshotGet\x12\x1e.sandbox.v1.SnapshotGetRequest\x1a\x1f.sandbox.v1.SnapshotGetResponse\x12Q\n" +
-	"\fSnapshotList\x12\x1f.sandbox.v1.SnapshotListRequest\x1a .sandbox.v1.SnapshotListResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
+	"\fSnapshotList\x12\x1f.sandbox.v1.SnapshotListRequest\x1a .sandbox.v1.SnapshotListResponse\x12Q\n" +
+	"\fGetProcesses\x12\x1f.sandbox.v1.GetProcessesRequest\x1a .sandbox.v1.GetProcessesResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
 
 var (
 	file_sandbox_v1_sandbox_proto_rawDescOnce sync.Once
@@ -2592,7 +2752,7 @@ func file_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 	return file_sandbox_v1_sandbox_proto_rawDescData
 }
 
-var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
+var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*SecretRef)(nil),              // 0: sandbox.v1.SecretRef
 	(*CreateSessionRequest)(nil),   // 1: sandbox.v1.CreateSessionRequest
@@ -2635,58 +2795,64 @@ var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*SnapshotGetResponse)(nil),    // 38: sandbox.v1.SnapshotGetResponse
 	(*SnapshotListRequest)(nil),    // 39: sandbox.v1.SnapshotListRequest
 	(*SnapshotListResponse)(nil),   // 40: sandbox.v1.SnapshotListResponse
-	nil,                            // 41: sandbox.v1.CreateSessionRequest.EnvEntry
+	(*GetProcessesRequest)(nil),    // 41: sandbox.v1.GetProcessesRequest
+	(*ProcessInfo)(nil),            // 42: sandbox.v1.ProcessInfo
+	(*GetProcessesResponse)(nil),   // 43: sandbox.v1.GetProcessesResponse
+	nil,                            // 44: sandbox.v1.CreateSessionRequest.EnvEntry
 }
 var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
-	41, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
+	44, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
 	0,  // 1: sandbox.v1.CreateSessionRequest.secret_refs:type_name -> sandbox.v1.SecretRef
 	4,  // 2: sandbox.v1.ListSessionsResponse.sessions:type_name -> sandbox.v1.GetSessionResponse
 	18, // 3: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
-	1,  // 4: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
-	3,  // 5: sandbox.v1.SandboxService.GetSession:input_type -> sandbox.v1.GetSessionRequest
-	5,  // 6: sandbox.v1.SandboxService.ListSessions:input_type -> sandbox.v1.ListSessionsRequest
-	7,  // 7: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
-	9,  // 8: sandbox.v1.SandboxService.Exec:input_type -> sandbox.v1.ExecRequest
-	9,  // 9: sandbox.v1.SandboxService.ExecStream:input_type -> sandbox.v1.ExecRequest
-	12, // 10: sandbox.v1.SandboxService.WriteFile:input_type -> sandbox.v1.WriteFileRequest
-	14, // 11: sandbox.v1.SandboxService.ReadFile:input_type -> sandbox.v1.ReadFileRequest
-	16, // 12: sandbox.v1.SandboxService.ListFiles:input_type -> sandbox.v1.ListFilesRequest
-	19, // 13: sandbox.v1.SandboxService.PipInstall:input_type -> sandbox.v1.PipInstallRequest
-	21, // 14: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
-	23, // 15: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
-	25, // 16: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
-	27, // 17: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
-	29, // 18: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
-	31, // 19: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
-	33, // 20: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
-	35, // 21: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
-	37, // 22: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
-	39, // 23: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
-	2,  // 24: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
-	4,  // 25: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
-	6,  // 26: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
-	8,  // 27: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
-	10, // 28: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
-	11, // 29: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
-	13, // 30: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
-	15, // 31: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
-	17, // 32: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
-	20, // 33: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
-	22, // 34: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
-	24, // 35: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
-	26, // 36: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	28, // 37: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
-	30, // 38: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
-	32, // 39: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
-	34, // 40: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
-	36, // 41: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
-	38, // 42: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
-	40, // 43: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
-	24, // [24:44] is the sub-list for method output_type
-	4,  // [4:24] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	42, // 4: sandbox.v1.GetProcessesResponse.processes:type_name -> sandbox.v1.ProcessInfo
+	1,  // 5: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
+	3,  // 6: sandbox.v1.SandboxService.GetSession:input_type -> sandbox.v1.GetSessionRequest
+	5,  // 7: sandbox.v1.SandboxService.ListSessions:input_type -> sandbox.v1.ListSessionsRequest
+	7,  // 8: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
+	9,  // 9: sandbox.v1.SandboxService.Exec:input_type -> sandbox.v1.ExecRequest
+	9,  // 10: sandbox.v1.SandboxService.ExecStream:input_type -> sandbox.v1.ExecRequest
+	12, // 11: sandbox.v1.SandboxService.WriteFile:input_type -> sandbox.v1.WriteFileRequest
+	14, // 12: sandbox.v1.SandboxService.ReadFile:input_type -> sandbox.v1.ReadFileRequest
+	16, // 13: sandbox.v1.SandboxService.ListFiles:input_type -> sandbox.v1.ListFilesRequest
+	19, // 14: sandbox.v1.SandboxService.PipInstall:input_type -> sandbox.v1.PipInstallRequest
+	21, // 15: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
+	23, // 16: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
+	25, // 17: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
+	27, // 18: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
+	29, // 19: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
+	31, // 20: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
+	33, // 21: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
+	35, // 22: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
+	37, // 23: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
+	39, // 24: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
+	41, // 25: sandbox.v1.SandboxService.GetProcesses:input_type -> sandbox.v1.GetProcessesRequest
+	2,  // 26: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
+	4,  // 27: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
+	6,  // 28: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
+	8,  // 29: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
+	10, // 30: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
+	11, // 31: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
+	13, // 32: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
+	15, // 33: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
+	17, // 34: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
+	20, // 35: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
+	22, // 36: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
+	24, // 37: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
+	26, // 38: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
+	28, // 39: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
+	30, // 40: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
+	32, // 41: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
+	34, // 42: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
+	36, // 43: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
+	38, // 44: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
+	40, // 45: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
+	43, // 46: sandbox.v1.SandboxService.GetProcesses:output_type -> sandbox.v1.GetProcessesResponse
+	26, // [26:47] is the sub-list for method output_type
+	5,  // [5:26] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_sandbox_v1_sandbox_proto_init() }
@@ -2700,7 +2866,7 @@ func file_sandbox_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   42,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
