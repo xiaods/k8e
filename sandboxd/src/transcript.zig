@@ -34,11 +34,14 @@ pub fn appendLineAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
 
     _ = std.os.linux.mkdir(@ptrCast(base_dir.ptr), 0o755);
     // Open append-only, creating if missing.
-    const fd = std.os.linux.open(path.ptr, std.os.linux.O{
+    // open returns usize; a failure is encoded as a huge value from -errno.
+    // Cast to isize so the negativity check is reliable.
+    const fd_raw = std.os.linux.open(path.ptr, std.os.linux.O{
         .CREAT = true,
         .ACCMODE = .WRONLY,
         .APPEND = true,
     }, 0o644);
+    const fd: isize = @bitCast(fd_raw);
     if (fd < 0) return;
     defer _ = std.os.linux.close(@intCast(fd));
 
@@ -78,7 +81,8 @@ pub fn readWindowAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
     var path_buf: [512]u8 = undefined;
     const path = transcriptPath(&path_buf, base_dir, session_id) orelse return null;
 
-    const fd = std.os.linux.open(path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    const fd_raw = std.os.linux.open(path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    const fd: isize = @bitCast(fd_raw);
     if (fd < 0) return null;
     defer _ = std.os.linux.close(@intCast(fd));
 
@@ -100,7 +104,8 @@ pub fn readWindowAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
     const buf = allocator.alloc(u8, want + 1) catch return null;
     defer allocator.free(buf);
 
-    const n = std.os.linux.pread(@intCast(fd), buf.ptr, want, @intCast(start));
+    const n_raw = std.os.linux.pread(@intCast(fd), buf.ptr, want, @intCast(start));
+    const n: isize = @bitCast(n_raw);
     if (n < 0) return null;
     var actual: usize = @intCast(n);
 
