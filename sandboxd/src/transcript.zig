@@ -84,8 +84,8 @@ pub fn readWindowAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
 
     // File size via lseek to EOF (avoids fstat portability differences).
     const fd_i32: i32 = @intCast(fd);
-    const size_rc = std.os.linux.lseek(fd_i32, 0, std.os.linux.SEEK.END);
-    if (size_rc == std.math.maxInt(usize)) return null;
+    const size_rc: isize = @bitCast(std.os.linux.lseek(fd_i32, 0, std.os.linux.SEEK.END));
+    if (size_rc < 0) return null; // errno: lseek failed
     const file_size: i64 = @intCast(size_rc);
     _ = std.os.linux.lseek(fd_i32, 0, std.os.linux.SEEK.SET);
     if (file_size == 0) {

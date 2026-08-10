@@ -222,8 +222,9 @@ pub fn fileMtime(path: []const u8) ?i64 {
     );
     if (rc != 0) return null;
     // Check the mask actually reports mtime (varies by kernel/filesystem).
+    // STATX_MTIME = 0x40 = bit 6.
     const stx_mask: u32 = @bitCast(stx.mask);
-    const mtime_bit: u32 = 1 << 14; // STATX_MTIME
+    const mtime_bit: u32 = 1 << 6;
     if (stx_mask & mtime_bit == 0) return null;
     return stx.mtime.sec;
 }
