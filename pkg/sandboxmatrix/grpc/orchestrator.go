@@ -155,7 +155,7 @@ func readyHandshake(ctx context.Context, hostPort string) bool {
 	reqCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost,
-		"http://"+hostPort+"/ready", nil)
+		"http://"+hostPort+"/ready", http.NoBody)
 	if err != nil {
 		return false
 	}
