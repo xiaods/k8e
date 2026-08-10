@@ -105,6 +105,10 @@ type Orchestrator struct {
 	// session. Matches the KIP-16 M12 recommendation (capped, reaped
 	// background execution) and KIP-15 G9 Perplexity parity.
 	maxBackgroundRuns int
+
+	// fqdnEgressEnabled enables Cilium toFQDNs egress rules for sessions with
+	// allowedHosts (requires the Cilium DNS proxy; see KIP-16 M10 / #510).
+	fqdnEgressEnabled bool
 }
 
 func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestrator {
@@ -186,6 +190,21 @@ func PodReadyCondition(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// SetFQDNEGressEnabled toggles Cilium toFQDNs enforcement for allowedHosts.
+// When false (default), egress stays blanket world:53/443 regardless of
+// allowedHosts (KIP-16 M10 / issue #510).
+func (o *Orchestrator) SetFQDNEGressEnabled(enabled bool) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.fqdnEgressEnabled = enabled
+}
+
+func (o *Orchestrator) fqdnEnabled() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.fqdnEgressEnabled
 }
 
 // defaultTTL is used when the session has no explicit TTL (0 = no expiry).
@@ -939,7 +958,7 @@ func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string)
 }
 
 func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxSession) error {
-	obj := buildSessionCNP(session)
+	obj := buildSessionCNP(session, o.fqdnEnabled())
 	name := fmt.Sprintf("sandbox-session-%s", session.Name)
 	_, err := o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Get(ctx, name, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
@@ -959,7 +978,44 @@ func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxS
 // enabled in 9f5b7f41 and reverted in 2b3bfb0a because it broke DNS in gVisor
 // pods. Operators who re-enable the DNS proxy (see manifests/cilium.yaml
 // dnsProxy.enabled) can tighten egress further; see KIP-16 M10 / issue #510.
-func buildSessionCNP(session *sandboxv1.SandboxSession) *unstructured.Unstructured {
+func buildSessionCNP(session *sandboxv1.SandboxSession, fqdnEnabled bool) *unstructured.Unstructured {
+	// Egress: DNS (53) always to world. HTTPS (443) is either blanket world
+	// (default) or scoped toFQDNs when FQDN egress is enabled AND the session
+	// declares allowedHosts (KIP-16 M10 / issue #510).
+	egress := []interface{}{
+		map[string]interface{}{
+			"toEntities": []interface{}{"world"},
+			"toPorts": []interface{}{
+				map[string]interface{}{
+					"ports": []interface{}{map[string]interface{}{"port": "53", "protocol": "ANY"}},
+				},
+			},
+		},
+	}
+	if fqdnEnabled && len(session.Spec.AllowedHosts) > 0 {
+		// Scoped egress: only the declared hosts, via Cilium FQDN rules.
+		fqdns := make([]interface{}, 0, len(session.Spec.AllowedHosts))
+		for _, h := range session.Spec.AllowedHosts {
+			fqdns = append(fqdns, map[string]interface{}{"matchName": h})
+		}
+		egress = append(egress, map[string]interface{}{
+			"toFQDNs": fqdns,
+			"toPorts": []interface{}{
+				map[string]interface{}{
+					"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
+				},
+			},
+		})
+	} else {
+		egress = append(egress, map[string]interface{}{
+			"toEntities": []interface{}{"world"},
+			"toPorts": []interface{}{
+				map[string]interface{}{
+					"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
+				},
+			},
+		})
+	}
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cilium.io/v2",
 		"kind":       "CiliumNetworkPolicy",
@@ -995,24 +1051,7 @@ func buildSessionCNP(session *sandboxv1.SandboxSession) *unstructured.Unstructur
 					},
 				},
 			},
-			"egress": []interface{}{
-				map[string]interface{}{
-					"toEntities": []interface{}{"world"},
-					"toPorts": []interface{}{
-						map[string]interface{}{
-							"ports": []interface{}{map[string]interface{}{"port": "53", "protocol": "ANY"}},
-						},
-					},
-				},
-				map[string]interface{}{
-					"toEntities": []interface{}{"world"},
-					"toPorts": []interface{}{
-						map[string]interface{}{
-							"ports": []interface{}{map[string]interface{}{"port": "443", "protocol": "TCP"}},
-						},
-					},
-				},
-			},
+			"egress": egress,
 		},
 	}}
 }

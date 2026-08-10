@@ -158,7 +158,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		GRPCPort:       cfg.SandboxGRPCPort,
 		Namespace:      cfg.SandboxNamespace,
 		// Server-side snapshot layer registry lives under the data dir.
-		LayerStoreDir: filepath.Join(cfg.DataDir, "server", "sandbox-layers"),
+		LayerStoreDir:         filepath.Join(cfg.DataDir, "server", "sandbox-layers"),
+		CiliumDNSProxyEnabled: cfg.CiliumDNSProxyEnabled,
 	}
 	serverConfig.ControlConfig.EtcdExposeMetrics = cfg.EtcdExposeMetrics
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots

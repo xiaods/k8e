@@ -199,6 +199,9 @@ type SandboxConfig struct {
 	// LayerStoreDir, when set, enables the server-side content-addressed
 	// snapshot layer registry (KIP-16 M2 / issue #511).
 	LayerStoreDir string
+	// CiliumDNSProxyEnabled opts into Cilium toFQDNs egress enforcement for
+	// sessions with allowedHosts (KIP-16 M10 / issue #510).
+	CiliumDNSProxyEnabled bool
 }
 
 type Control struct {

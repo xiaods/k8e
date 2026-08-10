@@ -112,6 +112,9 @@ type ServerConfig struct {
 	// LayerStoreDir, when set, enables the server-side content-addressed
 	// snapshot layer registry (KIP-16 M2 / issue #511).
 	LayerStoreDir string
+	// FQDNEnabled enables Cilium toFQDNs egress for sessions with allowedHosts
+	// (requires Cilium DNS proxy; KIP-16 M10 / issue #510).
+	FQDNEnabled bool
 }
 
 // Server implements the SandboxService gRPC interface.
@@ -152,6 +155,9 @@ func NewServer(cfg ServerConfig) *Server {
 		rateLimiter:    ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
 	}
 	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
+	if cfg.FQDNEnabled {
+		s.orch.SetFQDNEGressEnabled(true)
+	}
 	RegisterSandboxMetrics(s.orch)
 	if cfg.LayerStoreDir != "" {
 		if ls, err := sandboxlayer.New(cfg.LayerStoreDir); err == nil {
