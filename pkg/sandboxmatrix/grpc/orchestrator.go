@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -410,8 +411,16 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 	session.Status.Phase = sandboxv1.SandboxPhaseTerminating
 	o.updateSessionStatus(ctx, session)
 
+	// M11: destroy-step ledger (ephemeral-sandbox TeardownTransaction analog).
+	// Completed steps are recorded on the session so a crash-resumed destroy
+	// skips them; the ledger is observable on the CRD.
+	done := destroyStepsDone(session)
+
 	// 1. Delete CNP
-	o.deleteCNP(ctx, session)
+	if !done["cnp"] {
+		o.deleteCNP(ctx, session)
+		o.markDestroyStep(ctx, sessionID, "cnp")
+	}
 
 	// 2. Find the pod by session-id label and reset its workspace
 	podIP, podName := o.findPodBySession(ctx, sessionID)
@@ -423,16 +432,62 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 			podName = pod.Name
 		}
 	}
-	if podIP != "" {
+	if podIP != "" && !done["workspace"] {
 		o.resetWorkspace(ctx, podIP)
+		o.markDestroyStep(ctx, sessionID, "workspace")
 		// 3. Relabel pod: active → resetting, remove session-id
 		if podName != "" {
 			o.releasePod(ctx, podName)
+			o.markDestroyStep(ctx, sessionID, "release")
 		}
 	}
 
 	// 4. Delete Session CRD (pod and PVC survive, return to pool)
 	return o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Delete(ctx, sessionID, metav1.DeleteOptions{})
+}
+
+// destroyStepAnnotation records completed destroy steps (comma-separated) on
+// the session CRD so a resumed destroy is idempotent (KIP-16 M11).
+const destroyStepAnnotation = "sandbox.k8e.io/destroy-steps"
+
+// destroyStepsDone reads the destroy-step ledger annotation.
+func destroyStepsDone(session *sandboxv1.SandboxSession) map[string]bool {
+	done := map[string]bool{}
+	for _, s := range strings.Split(session.Annotations[destroyStepAnnotation], ",") {
+		if s != "" {
+			done[s] = true
+		}
+	}
+	return done
+}
+
+// markDestroyStep appends a completed step to the session's destroy ledger.
+func (o *Orchestrator) markDestroyStep(ctx context.Context, sessionID, step string) {
+	session, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	if session.Annotations == nil {
+		session.Annotations = map[string]string{}
+	}
+	cur := session.Annotations[destroyStepAnnotation]
+	if strings.Contains(cur, step) {
+		return
+	}
+	if cur != "" {
+		cur += ","
+	}
+	session.Annotations[destroyStepAnnotation] = cur + step
+	o.updateSession(ctx, session)
+}
+
+// updateSession persists a session's spec+metadata (not just status).
+func (o *Orchestrator) updateSession(ctx context.Context, session *sandboxv1.SandboxSession) {
+	u, err := sessionToUnstructured(session)
+	if err != nil {
+		return
+	}
+	o.dynamic.Resource(sessionGVR).Namespace(session.Namespace).Update(ctx, u, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
 // findPodBySession returns pod IP and name for a session by label, or empty strings.
