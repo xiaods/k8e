@@ -63,11 +63,6 @@ var (
 	sessionGVR = schema.GroupVersionResource{Group: sandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxsessions"}
 	cnpGVR     = schema.GroupVersionResource{Group: "cilium.io", Version: "v2", Resource: "ciliumnetworkpolicies"}
 	matrixGVR  = schema.GroupVersionResource{Group: sandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}
-
-	defaultAllowedHosts = []string{
-		"pypi.org", "files.pythonhosted.org", "registry.npmjs.org",
-		"objects.githubusercontent.com", "github.com", "raw.githubusercontent.com",
-	}
 )
 
 type pendingApproval struct {
@@ -347,7 +342,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	}
 
 	now := time.Now()
-	// use request allowed_hosts; fall back to SandboxMatrix.spec.defaultAllowedHosts; then hardcoded defaults
+	// Use request allowed_hosts; fall back to SandboxMatrix.spec.defaultAllowedHosts.
 	allowedHosts := req.AllowedHosts
 	if len(allowedHosts) == 0 && len(matrixDefaultHosts) > 0 {
 		allowedHosts = matrixDefaultHosts
@@ -748,6 +743,10 @@ func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command st
 	o.runRegistry[runID] = sessionID
 	o.mu.Unlock()
 
+	// M6: persist the run_id on the session CRD so a gateway restart can
+	// rebuild the registry (ephemeral-sandbox recover_sandboxes analog).
+	o.recordRunOnSession(ctx, sessionID, runID)
+
 	return runID, nil
 }
 
@@ -778,7 +777,31 @@ func (o *Orchestrator) PollRun(ctx context.Context, runID string) (*pb.PollRunRe
 	return &result, nil
 }
 
-// RebuildRunRegistry scans Session CRDs and rebuilds the run_registry on startup.
+// backgroundRunAnnotation lists run_ids registered on a session (comma-
+// separated); used to rebuild the in-memory run registry after a gateway
+// restart (KIP-16 M6 / ephemeral-sandbox recover_sandboxes analog).
+const backgroundRunAnnotation = "sandbox.k8e.io/background-runs"
+
+// recordRunOnSession appends a run_id to the session CRD annotation so the
+// registry survives gateway restarts.
+func (o *Orchestrator) recordRunOnSession(ctx context.Context, sessionID, runID string) {
+	session, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	if session.Annotations == nil {
+		session.Annotations = map[string]string{}
+	}
+	cur := session.Annotations[backgroundRunAnnotation]
+	if cur != "" {
+		cur += ","
+	}
+	session.Annotations[backgroundRunAnnotation] = cur + runID
+	o.updateSession(ctx, session)
+}
+
+// RebuildRunRegistry scans Session CRDs and rebuilds the run_registry on startup
+// from the persisted run_id annotations (KIP-16 M6).
 func (o *Orchestrator) RebuildRunRegistry(ctx context.Context, namespace string) {
 	sessions, err := o.dynamic.Resource(sessionGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -787,10 +810,15 @@ func (o *Orchestrator) RebuildRunRegistry(ctx context.Context, namespace string)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for _, s := range sessions.Items {
-		phase, _, _ := unstructured.NestedString(s.Object, "status", "phase")
-		if phase == string(sandboxv1.SandboxPhaseBackgroundRunning) || phase == string(sandboxv1.SandboxPhaseBackgroundCompleted) {
-			// Registry rebuild: background phase exists, run registry needs the run_id entry.
-			// run_id is stored in sandboxd files on the pod; actual rebuild from files happens on first PollRun call.
+		sessionID := s.GetName()
+		annos := s.GetAnnotations()
+		for _, runID := range strings.Split(annos[backgroundRunAnnotation], ",") {
+			if runID == "" {
+				continue
+			}
+			if _, exists := o.runRegistry[runID]; !exists {
+				o.runRegistry[runID] = sessionID
+			}
 		}
 	}
 }
