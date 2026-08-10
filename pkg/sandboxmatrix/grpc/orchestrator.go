@@ -457,6 +457,14 @@ func (o *Orchestrator) countBackgroundRuns(sessionID string) int32 {
 	return n
 }
 
+// countAllBackgroundRuns returns the total number of registered background runs
+// across all sessions (used by the Prometheus gauge).
+func (o *Orchestrator) countAllBackgroundRuns() int32 {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return int32(len(o.runRegistry))
+}
+
 func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentRequest) (*pb.RunSubAgentResponse, error) {
 	parent, err := o.getSession(ctx, req.ParentSessionId)
 	if err != nil {
