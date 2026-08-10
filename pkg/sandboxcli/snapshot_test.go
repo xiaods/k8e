@@ -127,3 +127,39 @@ func TestSnapshotStore_LargePayload(t *testing.T) {
 	}
 	_ = os.RemoveAll(dir)
 }
+
+// TestSnapshotStore_IncrementalDelta verifies two snapshots with a shared
+// prefix report shared chunks via Delta (KIP-16 M2 incremental restore signal).
+func TestSnapshotStore_IncrementalDelta(t *testing.T) {
+	dir := t.TempDir()
+	store, err := sandboxlayer.New(filepath.Join(dir, ".layers"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	base := []byte("shared-prefix-data-AAA")
+	next := []byte("shared-prefix-data-BBB") // same prefix, different tail
+	baseL, err := store.PutChunks(base, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextL, err := store.PutChunks(next, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveManifest("base", baseL); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveManifest("next", nextL); err != nil {
+		t.Fatal(err)
+	}
+	bm, _ := store.LoadManifest("base")
+	nm, _ := store.LoadManifest("next")
+	missing := sandboxlayer.Delta(bm, nm)
+	shared := len(nm.Layers) - len(missing)
+	if shared == 0 {
+		t.Fatal("expected shared chunks between base and next snapshots")
+	}
+	if len(missing) >= len(nm.Layers) {
+		t.Fatal("expected strictly fewer missing than total layers")
+	}
+}
