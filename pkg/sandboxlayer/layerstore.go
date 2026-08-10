@@ -89,6 +89,50 @@ func (s *Store) Has(digest string) bool {
 	return err == nil
 }
 
+// PutChunks splits content into fixed-size chunks and stores each as a layer,
+// returning the ordered digest list. Chunks dedup across calls, so snapshots
+// sharing identical chunks reference the same layer (Delta-friendly).
+func (s *Store) PutChunks(content []byte, chunkSize int) ([]string, error) {
+	if chunkSize <= 0 {
+		chunkSize = 4 * 1024 * 1024
+	}
+	var digests []string
+	for start := 0; start < len(content); start += chunkSize {
+		end := start + chunkSize
+		if end > len(content) {
+			end = len(content)
+		}
+		d, err := s.Put(content[start:end])
+		if err != nil {
+			return nil, err
+		}
+		digests = append(digests, d)
+	}
+	if len(content) == 0 {
+		// Empty workspace: store one empty layer so the manifest is non-empty.
+		d, err := s.Put(nil)
+		if err != nil {
+			return nil, err
+		}
+		digests = append(digests, d)
+	}
+	return digests, nil
+}
+
+// Assemble concatenates layer contents in digest order, reconstructing the
+// original payload (each layer decompressed transparently).
+func (s *Store) Assemble(digests []string) ([]byte, error) {
+	var out []byte
+	for _, d := range digests {
+		b, err := s.Get(d)
+		if err != nil {
+			return nil, fmt.Errorf("layerstore assemble %s: %w", d, err)
+		}
+		out = append(out, b...)
+	}
+	return out, nil
+}
+
 // Get returns the (decompressed) layer content for digest.
 func (s *Store) Get(digest string) ([]byte, error) {
 	b, err := os.ReadFile(s.layerPath(digest))

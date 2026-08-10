@@ -362,3 +362,51 @@ func TestStore_GetLegacyUncompressedLayer(t *testing.T) {
 		t.Fatal("legacy layer fallback mismatch")
 	}
 }
+func TestStore_PutChunksAssemble(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	// 10 bytes with 4-byte chunks → 3 layers (4+4+2).
+	content := []byte("0123456789")
+	digests, err := s.PutChunks(content, 4)
+	if err != nil {
+		t.Fatalf("put chunks: %v", err)
+	}
+	if len(digests) != 3 {
+		t.Fatalf("expected 3 chunks, got %d", len(digests))
+	}
+	got, err := s.Assemble(digests)
+	if err != nil {
+		t.Fatalf("assemble: %v", err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("chunk round-trip mismatch: %q vs %q", got, content)
+	}
+}
+
+// TestStore_DeltaSharedChunks verifies two snapshots with a common prefix share
+// layers, so Delta reports only the unique tail as missing.
+func TestStore_DeltaSharedChunks(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	base := []byte("AAAA-BBBB")
+	next := []byte("AAAA-BBBB-CCCC") // shares first 8 bytes → chunks overlap
+	baseLayers, err := s.PutChunks(base, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextLayers, err := s.PutChunks(next, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := &Manifest{Layers: baseLayers}
+	want := &Manifest{Layers: nextLayers}
+	missing := Delta(have, want)
+	// Shared prefix "AAAA-" is one chunk → at most len(next)-1 missing.
+	if len(missing) >= len(nextLayers) {
+		t.Fatalf("expected some shared chunks, missing=%d of %d", len(missing), len(nextLayers))
+	}
+}
