@@ -196,6 +196,9 @@ type SandboxConfig struct {
 	DefaultMemory  string
 	GRPCPort       int
 	Namespace      string
+	// LayerStoreDir, when set, enables the server-side content-addressed
+	// snapshot layer registry (KIP-16 M2 / issue #511).
+	LayerStoreDir string
 }
 
 type Control struct {
@@ -255,8 +258,8 @@ type Control struct {
 	ServerNodeName           string
 	VLevel                   int
 	VModule                  string
-	DisableSandboxMatrix bool
-	SandboxConfig        SandboxConfig
+	DisableSandboxMatrix     bool
+	SandboxConfig            SandboxConfig
 	// CiliumDNSProxyEnabled opts into the Cilium L7 DNS proxy (FQDN network
 	// policies). Off by default — see KIP-16 M10 / issue #510.
 	CiliumDNSProxyEnabled bool
