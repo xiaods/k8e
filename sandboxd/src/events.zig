@@ -74,3 +74,57 @@ fn getUnixSeconds() i64 {
     _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.REALTIME, &ts);
     return @intCast(ts.sec);
 }
+
+/// readTail returns up to max_lines trailing NDJSON lines from the event file
+/// (oldest retained generation included). Best-effort: returns an empty slice
+/// on any error so the HTTP handler can respond 404.
+pub fn readTail(allocator: std.mem.Allocator, max_lines: usize, out: *std.array_list.Managed(u8)) void {
+    readTailAt(allocator, EVENT_DIR, max_lines, out);
+}
+
+/// readTailAt is readTail with an explicit event dir (testable).
+pub fn readTailAt(allocator: std.mem.Allocator, dir: []const u8, max_lines: usize, out: *std.array_list.Managed(u8)) void {
+    var path_buf: [512]u8 = undefined;
+    const path = std.fmt.bufPrintZ(&path_buf, "{s}/events.ndjson", .{dir}) catch return;
+
+    const fd_raw = std.os.linux.open(path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    const fd: isize = @bitCast(fd_raw);
+    if (fd < 0) return;
+    defer _ = std.os.linux.close(@intCast(fd));
+
+    // File size via lseek.
+    const size_rc: isize = @bitCast(std.os.linux.lseek(@intCast(fd), 0, std.os.linux.SEEK.END));
+    if (size_rc < 0) return;
+    const file_size: usize = @intCast(size_rc);
+    if (file_size == 0) return;
+
+    // Read the whole file (capped by max_event_bytes after rotation, so the
+    // active file is bounded).
+    const content = allocator.alloc(u8, file_size) catch return;
+    defer allocator.free(content);
+    _ = std.os.linux.lseek(@intCast(fd), 0, std.os.linux.SEEK.SET);
+    const n = std.os.linux.read(@intCast(fd), content.ptr, content.len);
+    if (n < 0) return;
+    const data = content[0..@as(usize, @intCast(n))];
+
+    // Collect the last max_lines lines: find the start of the
+    // (lines - max_lines)th retained line.
+    var total_lines: usize = 0;
+    for (data) |c| {
+        if (c == '\n') total_lines += 1;
+    }
+    if (total_lines > max_lines) {
+        var to_skip = total_lines - max_lines;
+        var start: usize = 0;
+        var k: usize = 0;
+        while (k < data.len and to_skip > 0) : (k += 1) {
+            if (data[k] == '\n') {
+                to_skip -= 1;
+                start = k + 1;
+            }
+        }
+        out.appendSlice(data[start..]) catch {};
+    } else {
+        out.appendSlice(data) catch {};
+    }
+}

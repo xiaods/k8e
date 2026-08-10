@@ -647,6 +647,44 @@ func (s *Server) GetTranscript(ctx context.Context, req *pb.GetTranscriptRequest
 	}, nil
 }
 
+// GetEvents reads the daemon's NDJSON event stream (exec/files/bg events;
+// KIP-16 M5 / issue #513).
+func (s *Server) GetEvents(ctx context.Context, req *pb.GetEventsRequest) (*pb.GetEventsResponse, error) {
+	podIP, err := s.getPodIP(ctx, req.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	limit := req.Limit
+	if limit == 0 {
+		limit = 500
+	}
+	path := fmt.Sprintf("/events?limit=%d", limit)
+	resp, err := sandboxdGet(ctx, podIP, path)
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "sandboxd events: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return &pb.GetEventsResponse{}, nil // no events yet
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, status.Errorf(codes.Internal, "sandboxd events: http %d", resp.StatusCode)
+	}
+	var raw []json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, status.Errorf(codes.Internal, "sandboxd events decode: %v", err)
+	}
+	lines := make([]string, len(raw))
+	for i, r := range raw {
+		lines[i] = string(r)
+	}
+	return &pb.GetEventsResponse{
+		Events:    lines,
+		Returned:  int64(len(lines)),
+		Truncated: int64(len(lines)) == limit,
+	}, nil
+}
+
 // PollRun checks the status of a background execution.
 func (s *Server) PollRun(ctx context.Context, req *pb.PollRunRequest) (*pb.PollRunResponse, error) {
 	return s.orch.PollRun(ctx, req.RunId)

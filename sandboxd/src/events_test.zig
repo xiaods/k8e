@@ -68,3 +68,41 @@ test "appendAt two events both present" {
     try std.testing.expect(std.mem.indexOf(u8, content, "r1") != null);
     _ = allocator;
 }
+
+test "readTailAt returns last N lines" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    setup();
+    defer teardown();
+
+    events.appendAt(TEST_DIR, "sess-1", "exec_end", ",\"exit\":0");
+    events.appendAt(TEST_DIR, "sess-1", "bg_submit", ",\"run_id\":\"r1\"");
+    events.appendAt(TEST_DIR, "sess-1", "file_write", ",\"path\":\"/workspace/a.txt\"");
+
+    var out = std.array_list.Managed(u8).init(allocator);
+    defer out.deinit();
+    events.readTailAt(allocator, TEST_DIR, 2, &out);
+    const content = out.items;
+    // Last 2 of 3 lines: bg_submit + file_write.
+    try std.testing.expect(std.mem.indexOf(u8, content, "exec_end") == null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "bg_submit") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "file_write") != null);
+}
+
+test "readTailAt empty file returns empty" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
+    setup();
+    defer teardown();
+
+    var out = std.array_list.Managed(u8).init(allocator);
+    defer out.deinit();
+    events.readTailAt(allocator, TEST_DIR, 10, &out);
+    try std.testing.expect(out.items.len == 0);
+}

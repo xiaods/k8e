@@ -5,6 +5,7 @@ const workspace = @import("workspace.zig");
 const background = @import("background.zig");
 const venv = @import("venv.zig");
 const transcript = @import("transcript.zig");
+const events = @import("events.zig");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -166,6 +167,8 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
         try background.handleBgPoll(allocator, client_fd, run_id);
     } else if (std.mem.eql(u8, path, "/transcript") and std.mem.eql(u8, method, "GET")) {
         try transcript.handleTranscript(allocator, client_fd, query);
+    } else if (std.mem.eql(u8, path, "/events") and std.mem.eql(u8, method, "GET")) {
+        try handleEvents(allocator, client_fd, query);
     } else if (std.mem.eql(u8, path, "/files/write") and std.mem.eql(u8, method, "POST")) {
         try files.handleWrite(allocator, client_fd, body);
     } else if (std.mem.eql(u8, path, "/files/read") and std.mem.eql(u8, method, "GET")) {
@@ -187,6 +190,44 @@ fn handleReady(client_fd: i32) !void {
         "{{\"status\":\"ready\",\"venv\":{s}}}", .{if (venv_ready) "true" else "false"});
     defer std.heap.page_allocator.free(body);
     try writeResponse(client_fd, "200 OK", "application/json", body);
+}
+
+/// handleEvents serves GET /events?limit=<n> — the last n NDJSON event lines
+/// (KIP-16 M5). Returns 404 when no events have been recorded yet.
+fn handleEvents(allocator: std.mem.Allocator, client_fd: i32, query: []const u8) !void {
+    var limit: usize = 500;
+    var params = std.mem.splitScalar(u8, query, '&');
+    while (params.next()) |pair| {
+        var kv = std.mem.splitScalar(u8, pair, '=');
+        const key = kv.next() orelse continue;
+        const val = kv.next() orelse continue;
+        if (std.mem.eql(u8, key, "limit")) {
+            limit = std.fmt.parseInt(usize, val, 10) catch 500;
+        }
+    }
+
+    var out = std.array_list.Managed(u8).init(allocator);
+    defer out.deinit();
+    events.readTail(allocator, limit, &out);
+    if (out.items.len == 0) {
+        try writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"no events\"}");
+        return;
+    }
+
+    // NDJSON lines are already valid JSON objects; wrap in a JSON array.
+    var body = std.array_list.Managed(u8).init(allocator);
+    defer body.deinit();
+    try body.append('[');
+    var first = true;
+    var it = std.mem.splitScalar(u8, out.items, '\n');
+    while (it.next()) |line| {
+        if (line.len == 0) continue;
+        if (!first) try body.append(',');
+        first = false;
+        try body.appendSlice(line);
+    }
+    try body.append(']');
+    try writeResponse(client_fd, "200 OK", "application/json", body.items);
 }
 
 pub fn writeResponse(client_fd: i32, status: []const u8, content_type: []const u8, body: []const u8) !void {

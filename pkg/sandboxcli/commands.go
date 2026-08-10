@@ -1178,3 +1178,41 @@ func LogCommand() cli.Command {
 		},
 	}
 }
+
+// ── EventsCommand ──────────────────────────────────────────────────────────
+
+func EventsCommand() cli.Command {
+	return cli.Command{
+		Name:      "events",
+		Usage:     "Read the daemon NDJSON event stream (exec/bg events, KIP-16 M5)",
+		ArgsUsage: "<session-id>",
+		Flags: []cli.Flag{
+			cli.Int64Flag{Name: "limit", Value: 500, Usage: "max events to return"},
+		},
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().First()
+			if sid == "" {
+				return printErrorExit("usage: k8e-sandbox-cli events <session-id>", 1)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			resp, err := client.SandboxServiceClient.GetEvents(context.Background(), &pb.GetEventsRequest{
+				SessionId: sid,
+				Limit:     ctx.Int64("limit"),
+			})
+			if err != nil {
+				return printErrorExit("events: "+err.Error(), 1)
+			}
+			printJSON(map[string]any{
+				"events":    resp.Events,
+				"returned":  resp.Returned,
+				"truncated": resp.Truncated,
+			})
+			return nil
+		},
+	}
+}
