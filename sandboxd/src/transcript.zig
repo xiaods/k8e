@@ -60,9 +60,10 @@ fn getUnixSeconds() i64 {
 }
 
 /// Window is a bounded, line-aligned slice of a session transcript.
-/// The caller owns output's allocation and must free it.
+/// The caller owns the allocation and must free it via freeWindow.
 pub const Window = struct {
-    output: []u8, // caller-owned allocation (free with allocator)
+    output: []u8, // line-aligned window content
+    alloc: []u8, // full allocation backing output (== output when untrimmed)
     absolute_offset: i64, // file offset this window starts at (== requested offset when in range)
     next_offset: i64, // offset for the next window; == file size at EOF
     truncated_before: bool, // true when the window starts mid-line (bytes were skipped)
@@ -94,13 +95,26 @@ pub fn readWindowAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
     const file_size: i64 = @intCast(size_rc);
     _ = std.os.linux.lseek(fd_i32, 0, std.os.linux.SEEK.SET);
     if (file_size == 0) {
-        return Window{ .output = "", .absolute_offset = 0, .next_offset = 0, .truncated_before = false, .eof = true };
+        return Window{ .output = "", .alloc = "", .absolute_offset = 0, .next_offset = 0, .truncated_before = false, .eof = true };
     }
 
     const clamped = if (limit == 0) @min(max_window_bytes, @as(usize, @intCast(file_size))) else @min(limit, max_window_bytes);
     // Start reading at the requested offset; clamp to EOF.
     const start: i64 = if (offset < 0) 0 else @min(offset, file_size);
     const want: usize = @min(clamped, @as(usize, @intCast(@max(file_size - start, 0))));
+
+    if (want == 0) {
+        // Nothing to read (offset at/past EOF). Return a static empty window
+        // so the caller has nothing to free.
+        return Window{
+            .output = "",
+            .alloc = "",
+            .absolute_offset = start,
+            .next_offset = start,
+            .truncated_before = start > 0,
+            .eof = start >= file_size,
+        };
+    }
 
     const buf = allocator.alloc(u8, want + 1) catch return null;
 
@@ -125,6 +139,7 @@ pub fn readWindowAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
     const next_offset = start + @as(i64, @intCast(actual));
     return Window{
         .output = buf[0..actual],
+        .alloc = buf,
         .absolute_offset = start,
         .next_offset = next_offset,
         .truncated_before = start > 0,
@@ -132,9 +147,12 @@ pub fn readWindowAt(allocator: std.mem.Allocator, base_dir: []const u8, session_
     };
 }
 
-/// freeWindow releases the window's output allocation (owned by the caller).
+/// freeWindow releases the window's backing allocation (owned by the caller).
+/// Static empty windows (alloc len 0, e.g. EOF) are a no-op.
 pub fn freeWindow(allocator: std.mem.Allocator, w: Window) void {
-    allocator.free(w.output);
+    if (w.alloc.len > 0) {
+        allocator.free(w.alloc);
+    }
 }
 
 /// handleTranscript serves GET /transcript?session=<sid>&offset=<n>&limit=<n>.
