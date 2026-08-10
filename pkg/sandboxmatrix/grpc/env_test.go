@@ -10,6 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/xiaods/k8e/pkg/metrics"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
@@ -284,5 +286,82 @@ func TestResolveSessionEnv_MissingSecretFails(t *testing.T) {
 	_, err = s.resolveSessionEnv(context.Background(), "sec-miss")
 	if err == nil {
 		t.Fatal("expected secret resolution error")
+	}
+}
+
+// TestSandboxMetricsCollector verifies the Prometheus collector surfaces the
+// orchestrator's counters at scrape time (KIP-16 M5).
+func TestSandboxMetricsCollector(t *testing.T) {
+	o := newTestOrchestrator()
+	o.claimedFromWarm.Store(3)
+	o.coldStarts.Store(2)
+	o.claimLatencyTotalMs.Store(1000)
+	o.claimCount.Store(4) // avg = 250ms
+	o.mu.Lock()
+	o.runRegistry["s-1-bg-1"] = "s-1"
+	o.mu.Unlock()
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(NewSandboxMetricsCollector(o)); err != nil {
+		t.Fatalf("register collector: %v", err)
+	}
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	got := map[string]float64{}
+	for _, mf := range mfs {
+		for _, m := range mf.GetMetric() {
+			switch mf.GetName() {
+			case "k8e_sandbox_warm_claims_total":
+				got[mf.GetName()] = m.GetCounter().GetValue()
+			case "k8e_sandbox_cold_starts_total":
+				got[mf.GetName()] = m.GetCounter().GetValue()
+			case "k8e_sandbox_claim_latency_ms_average":
+				got[mf.GetName()] = m.GetGauge().GetValue()
+			case "k8e_sandbox_background_runs":
+				got[mf.GetName()] = m.GetGauge().GetValue()
+			}
+		}
+	}
+	if got["k8e_sandbox_warm_claims_total"] != 3 {
+		t.Fatalf("warm claims: %v", got)
+	}
+	if got["k8e_sandbox_cold_starts_total"] != 2 {
+		t.Fatalf("cold starts: %v", got)
+	}
+	if got["k8e_sandbox_claim_latency_ms_average"] != 250 {
+		t.Fatalf("avg latency: %v", got)
+	}
+	if got["k8e_sandbox_background_runs"] != 1 {
+		t.Fatalf("bg runs: %v", got)
+	}
+}
+
+// TestRegisterSandboxMetrics_SharedRegistry verifies the collectors register
+// into the shared k8e metrics registry (surfaces on the server /metrics).
+func TestRegisterSandboxMetrics_SharedRegistry(t *testing.T) {
+	o := newTestOrchestrator()
+	// Registering twice must be safe (idempotent no-op on collision).
+	RegisterSandboxMetrics(o)
+	RegisterSandboxMetrics(o)
+
+	mfs, err := metrics.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather shared registry: %v", err)
+	}
+	found := map[string]bool{}
+	for _, mf := range mfs {
+		found[mf.GetName()] = true
+	}
+	for _, name := range []string{
+		"k8e_sandbox_warm_claims_total",
+		"k8e_sandbox_cold_starts_total",
+		"k8e_sandbox_claim_latency_ms_average",
+		"k8e_sandbox_background_runs",
+	} {
+		if !found[name] {
+			t.Fatalf("metric %s not in shared registry", name)
+		}
 	}
 }

@@ -146,6 +146,7 @@ func NewServer(cfg ServerConfig) *Server {
 		rateLimiter:    ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
 	}
 	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
+	RegisterSandboxMetrics(s.orch)
 	return s
 }
 
