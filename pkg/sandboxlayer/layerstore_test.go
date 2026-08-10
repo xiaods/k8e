@@ -1,6 +1,7 @@
 package sandboxlayer
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -34,7 +35,7 @@ func TestStore_PutGetRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if string(got) != string(content) {
+	if !bytes.Equal(got, content) {
 		t.Fatalf("round-trip mismatch")
 	}
 	if !s.Has(digest) {
