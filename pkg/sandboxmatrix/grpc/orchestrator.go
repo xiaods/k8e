@@ -876,15 +876,6 @@ func (o *Orchestrator) updateSessionStatus(ctx context.Context, session *sandbox
 	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{})
 }
 
-// updateSession persists a session's spec+metadata (annotations), not just status.
-func (o *Orchestrator) updateSession(ctx context.Context, session *sandboxv1.SandboxSession) {
-	u, err := sessionToUnstructured(session)
-	if err != nil {
-		return
-	}
-	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Update(ctx, u, metav1.UpdateOptions{}) //nolint:errcheck
-}
-
 func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeClass, pvcName, cpu, memory string) (*corev1.Pod, error) {
 	start := time.Now()
 	// Only ephemeral sessions (no PVC) may adopt a warm pod: warm pods boot with an
