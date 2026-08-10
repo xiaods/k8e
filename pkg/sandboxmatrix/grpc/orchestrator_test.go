@@ -569,7 +569,7 @@ func TestRunSubAgent_Success(t *testing.T) {
 		"kind":       "SandboxSession",
 		"metadata":   map[string]interface{}{"name": "parent-ok", "namespace": sandboxNS},
 		"spec":       map[string]interface{}{"depth": int64(0), "runtimeClass": "gvisor", "allowedHosts": []interface{}{"pypi.org"}},
-		"status":     map[string]interface{}{"workspacePVC": "workspace-parent-ok"},
+		"status":     map[string]interface{}{"workspacePVC": "workspace-parent-ok", "podIP": "10.0.0.5"},
 	}}
 	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Create(ctx, parent, metav1.CreateOptions{}) //nolint:errcheck
 
@@ -591,6 +591,14 @@ func TestRunSubAgent_Success(t *testing.T) {
 	// child must share the parent's workspace PVC for file-based IPC
 	if child.Status.WorkspacePVC != "workspace-parent-ok" {
 		t.Fatalf("expected child to share parent PVC, got %q", child.Status.WorkspacePVC)
+	}
+	// M1 workspace-session reuse: child inherits parent PodIP (exec routing)
+	// but has NO own PodName (destroy must not touch the shared pod).
+	if child.Status.PodIP != "10.0.0.5" {
+		t.Fatalf("expected child to reuse parent PodIP, got %q", child.Status.PodIP)
+	}
+	if child.Status.PodName != "" {
+		t.Fatalf("expected child to have no own PodName (shares parent pod), got %q", child.Status.PodName)
 	}
 }
 
@@ -888,5 +896,55 @@ func TestBuildSessionCNP_NamespaceScoped(t *testing.T) {
 	}
 	if obj.GetName() != "sandbox-session-cnp-ns" {
 		t.Fatalf("unexpected CNP name: %s", obj.GetName())
+	}
+}
+
+// TestRunSubAgent_DestroyChildLeavesParentPod verifies the M1 workspace-session
+// model: destroying a child that shares the parent's pod deletes only the
+// child CRD — the parent's pod is not reset or released (no own PodName, so
+// DestroySession's pod-cleanup path is skipped).
+func TestRunSubAgent_DestroyChildLeavesParentPod(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+
+	parent := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": testAPIVer,
+		"kind":       "SandboxSession",
+		"metadata":   map[string]interface{}{"name": "parent-shared", "namespace": sandboxNS},
+		"spec":       map[string]interface{}{"depth": int64(0), "runtimeClass": "gvisor"},
+		"status":     map[string]interface{}{"workspacePVC": "workspace-parent-shared", "podName": "pod-parent", "podIP": "10.0.0.9"},
+	}}
+	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Create(ctx, parent, metav1.CreateOptions{}) //nolint:errcheck
+
+	// Parent pod exists and is active.
+	parentPod := warmTestPod("pod-parent", "10.0.0.9")
+	parentPod.Labels[labelSessionID] = "parent-shared"
+	parentPod.Labels[labelState] = stateActive
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, parentPod, metav1.CreateOptions{}) //nolint:errcheck
+
+	resp, err := o.RunSubAgent(ctx, &pb.RunSubAgentRequest{ParentSessionId: "parent-shared"})
+	if err != nil {
+		t.Fatalf("run sub-agent: %v", err)
+	}
+
+	if err := o.DestroySession(ctx, resp.SessionId); err != nil {
+		t.Fatalf("destroy child: %v", err)
+	}
+
+	// Child CRD gone.
+	if _, err := o.getSession(ctx, resp.SessionId); err == nil {
+		t.Fatal("expected child session to be deleted")
+	}
+
+	// Parent pod untouched: still exists, still active, session label intact.
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, "pod-parent", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("parent pod should survive child destroy: %v", err)
+	}
+	if pod.Labels[labelState] != stateActive {
+		t.Fatalf("parent pod must stay active, got %v", pod.Labels)
+	}
+	if pod.Labels[labelSessionID] != "parent-shared" {
+		t.Fatalf("parent pod session label must be intact, got %v", pod.Labels)
 	}
 }
