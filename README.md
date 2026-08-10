@@ -61,10 +61,15 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | Capability | Description |
 |---|---|
 | 🔒 **Hardware Isolation** | Pluggable runtimes: gVisor (default), Kata Containers, Firecracker microVM |
-| 🌐 **Network Policies** | Cilium eBPF `toFQDNs` egress control — per-session, no proxy process needed |
+| 🌐 **Network Policies** | Cilium eBPF `toFQDNs` egress control — per-session, no proxy process needed; `allowed_hosts` enforced via `--cilium-dns-proxy` (KIP-16 M10) |
 | ⚖️ **Resource Quotas** | CPU/memory caps per agent session to prevent runaway costs |
-| 🗑️ **Ephemeral Workspaces** | Auto-cleanup after agent session ends |
-| 🧠 **Warm Pool** | Pre-booted sandbox pods for sub-500ms session claim latency |
+| 🗑️ **Ephemeral Workspaces** | Auto-cleanup after agent session ends; per-session workspace isolation for sub-agents (KIP-16 M1) |
+| 🧠 **Warm Pool** | Pre-booted sandbox pods for sub-500ms session claim latency; application-layer readiness handshake, adaptive sizing, per-session background-run caps |
+| 📸 **Content-Addressed Snapshots** | SHA-256 CAS layerstore with zstd compression, chunked multi-layer manifests, incremental `--base` restore, server-side registry, autosquash (KIP-16 M2) |
+| 📜 **Exec Transcripts** | File-backed, windowed, offset-resumable command transcripts — `k8e-sandbox-cli log` (KIP-16 M4) |
+| 📊 **Observability** | Prometheus metrics, disk-only NDJSON event stream, process topology — `events` / `ps` CLI (KIP-16 M5) |
+| 🔄 **Sub-agent Reuse** | Sub-agents share the parent pod + workspace; isolated reset (KIP-16 M1) |
+| 🧾 **CLI Catalog** | Machine-readable command/flag surface for SDK generation — `catalog` (KIP-16 M9) |
 | 🤝 **agent-sandbox compatible** | Works with [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) |
 | 🔄 **SKILL + CLI** | AI agents (claude code, codex, pi) connect via `k8e-sandbox-cli` CLI commands |
 
