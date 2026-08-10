@@ -6,6 +6,7 @@ const background = @import("background.zig");
 const venv = @import("venv.zig");
 const transcript = @import("transcript.zig");
 const events = @import("events.zig");
+const processes = @import("processes.zig");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -169,6 +170,8 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
         try transcript.handleTranscript(allocator, client_fd, query);
     } else if (std.mem.eql(u8, path, "/events") and std.mem.eql(u8, method, "GET")) {
         try handleEvents(allocator, client_fd, query);
+    } else if (std.mem.eql(u8, path, "/processes") and std.mem.eql(u8, method, "GET")) {
+        try processes.handleProcesses(allocator, client_fd, query);
     } else if (std.mem.eql(u8, path, "/files/write") and std.mem.eql(u8, method, "POST")) {
         try files.handleWrite(allocator, client_fd, body);
     } else if (std.mem.eql(u8, path, "/files/read") and std.mem.eql(u8, method, "GET")) {

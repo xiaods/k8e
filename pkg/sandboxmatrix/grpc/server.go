@@ -747,6 +747,38 @@ func (s *Server) SnapshotList(ctx context.Context, req *pb.SnapshotListRequest) 
 	return &pb.SnapshotListResponse{Names: names}, nil
 }
 
+// GetProcesses lists processes visible in the sandbox pod's pid namespace
+// (KIP-16 M5 follow-up: namespace-identity process topology).
+func (s *Server) GetProcesses(ctx context.Context, req *pb.GetProcessesRequest) (*pb.GetProcessesResponse, error) {
+	podIP, err := s.getPodIP(ctx, req.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := sandboxdGet(ctx, podIP, "/processes")
+	if err != nil {
+		return nil, status.Errorf(codes.Unavailable, "sandboxd processes: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, status.Errorf(codes.Internal, "sandboxd processes: http %d", resp.StatusCode)
+	}
+	var result struct {
+		Processes []struct {
+			Pid   int32  `json:"pid"`
+			Comm  string `json:"comm"`
+			State string `json:"state"`
+		} `json:"processes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, status.Errorf(codes.Internal, "sandboxd processes decode: %v", err)
+	}
+	procs := make([]*pb.ProcessInfo, len(result.Processes))
+	for i, p := range result.Processes {
+		procs[i] = &pb.ProcessInfo{Pid: p.Pid, Comm: p.Comm, State: p.State}
+	}
+	return &pb.GetProcessesResponse{Processes: procs}, nil
+}
+
 // PollRun checks the status of a background execution.
 func (s *Server) PollRun(ctx context.Context, req *pb.PollRunRequest) (*pb.PollRunResponse, error) {
 	return s.orch.PollRun(ctx, req.RunId)

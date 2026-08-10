@@ -39,6 +39,7 @@ const (
 	SandboxService_SnapshotPut_FullMethodName    = "/sandbox.v1.SandboxService/SnapshotPut"
 	SandboxService_SnapshotGet_FullMethodName    = "/sandbox.v1.SandboxService/SnapshotGet"
 	SandboxService_SnapshotList_FullMethodName   = "/sandbox.v1.SandboxService/SnapshotList"
+	SandboxService_GetProcesses_FullMethodName   = "/sandbox.v1.SandboxService/GetProcesses"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -75,6 +76,8 @@ type SandboxServiceClient interface {
 	SnapshotPut(ctx context.Context, in *SnapshotPutRequest, opts ...grpc.CallOption) (*SnapshotPutResponse, error)
 	SnapshotGet(ctx context.Context, in *SnapshotGetRequest, opts ...grpc.CallOption) (*SnapshotGetResponse, error)
 	SnapshotList(ctx context.Context, in *SnapshotListRequest, opts ...grpc.CallOption) (*SnapshotListResponse, error)
+	// GetProcesses lists processes in the sandbox pod (KIP-16 M5 process topology).
+	GetProcesses(ctx context.Context, in *GetProcessesRequest, opts ...grpc.CallOption) (*GetProcessesResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -294,6 +297,16 @@ func (c *sandboxServiceClient) SnapshotList(ctx context.Context, in *SnapshotLis
 	return out, nil
 }
 
+func (c *sandboxServiceClient) GetProcesses(ctx context.Context, in *GetProcessesRequest, opts ...grpc.CallOption) (*GetProcessesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetProcessesResponse)
+	err := c.cc.Invoke(ctx, SandboxService_GetProcesses_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -328,6 +341,8 @@ type SandboxServiceServer interface {
 	SnapshotPut(context.Context, *SnapshotPutRequest) (*SnapshotPutResponse, error)
 	SnapshotGet(context.Context, *SnapshotGetRequest) (*SnapshotGetResponse, error)
 	SnapshotList(context.Context, *SnapshotListRequest) (*SnapshotListResponse, error)
+	// GetProcesses lists processes in the sandbox pod (KIP-16 M5 process topology).
+	GetProcesses(context.Context, *GetProcessesRequest) (*GetProcessesResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -397,6 +412,9 @@ func (UnimplementedSandboxServiceServer) SnapshotGet(context.Context, *SnapshotG
 }
 func (UnimplementedSandboxServiceServer) SnapshotList(context.Context, *SnapshotListRequest) (*SnapshotListResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SnapshotList not implemented")
+}
+func (UnimplementedSandboxServiceServer) GetProcesses(context.Context, *GetProcessesRequest) (*GetProcessesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProcesses not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -772,6 +790,24 @@ func _SandboxService_SnapshotList_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_GetProcesses_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProcessesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).GetProcesses(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_GetProcesses_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).GetProcesses(ctx, req.(*GetProcessesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -854,6 +890,10 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SnapshotList",
 			Handler:    _SandboxService_SnapshotList_Handler,
+		},
+		{
+			MethodName: "GetProcesses",
+			Handler:    _SandboxService_GetProcesses_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

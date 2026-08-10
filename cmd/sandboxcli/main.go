@@ -44,6 +44,7 @@ func main() {
 		sandboxcli.PollCommand(),
 		sandboxcli.LogCommand(),
 		sandboxcli.EventsCommand(),
+		sandboxcli.PsCommand(),
 		sandboxcli.BenchmarkCommand(),
 	}
 

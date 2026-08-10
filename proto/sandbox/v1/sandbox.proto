@@ -33,6 +33,8 @@ service SandboxService {
   rpc SnapshotPut(SnapshotPutRequest)       returns (SnapshotPutResponse);
   rpc SnapshotGet(SnapshotGetRequest)       returns (SnapshotGetResponse);
   rpc SnapshotList(SnapshotListRequest)     returns (SnapshotListResponse);
+  // GetProcesses lists processes in the sandbox pod (KIP-16 M5 process topology).
+  rpc GetProcesses(GetProcessesRequest)     returns (GetProcessesResponse);
 }
 
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
@@ -227,4 +229,18 @@ message SnapshotGetResponse {
 message SnapshotListRequest {}
 message SnapshotListResponse {
   repeated string names = 1; // manifest names
+}
+
+// GetProcessesRequest lists processes visible in the sandbox pod's pid
+// namespace (KIP-16 M5 follow-up: namespace-identity process topology).
+message GetProcessesRequest {
+  string session_id = 1;
+}
+message ProcessInfo {
+  int32  pid    = 1;
+  string comm   = 2;
+  string state  = 3; // single char: R/S/D/Z/...
+}
+message GetProcessesResponse {
+  repeated ProcessInfo processes = 1;
 }
