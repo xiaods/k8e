@@ -4,6 +4,7 @@ const files = @import("files.zig");
 const workspace = @import("workspace.zig");
 const background = @import("background.zig");
 const venv = @import("venv.zig");
+const transcript = @import("transcript.zig");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -84,13 +85,59 @@ fn handleConn(allocator: std.mem.Allocator, client_fd: i32) void {
     };
 }
 
-fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
-    var buf: [65536]u8 = undefined;
-    const n = std.os.linux.read(client_fd, &buf, buf.len);
-    if (n < 0) return error.ReadFailed;
-    if (n == 0) return;
+/// maxRequestBodyBytes caps a single HTTP request body. Raised far above the
+/// old fixed 64KiB stack buffer so WriteFile can carry large payloads; the
+/// gateway gRPC layer already allows 64MiB messages (see KIP-16 M7).
+const maxRequestBodyBytes: usize = 64 * 1024 * 1024;
 
-    const request = buf[0..@as(usize, @intCast(n))];
+fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
+    // Read the whole request. Headers are tiny; bodies (WriteFile) can be large,
+    // so allocate on the heap sized by Content-Length instead of a stack array.
+    var header_buf: [16384]u8 = undefined;
+    var content_length: usize = 0;
+
+    // First read headers (single read is fine for our small requests).
+    const n0 = std.os.linux.read(client_fd, &header_buf, header_buf.len);
+    if (n0 < 0) return error.ReadFailed;
+    if (n0 == 0) return;
+    const head = header_buf[0..@as(usize, @intCast(n0))];
+
+    // Parse Content-Length so we know how much body to read.
+    var head_lines = std.mem.splitScalar(u8, head, '\n');
+    _ = head_lines.next(); // request line
+    while (head_lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
+        if (std.ascii.startsWithIgnoreCase(trimmed, "content-length:")) {
+            const val = std.mem.trim(u8, trimmed["content-length:".len..], &std.ascii.whitespace);
+            content_length = std.fmt.parseInt(usize, val, 10) catch 0;
+        }
+    }
+    if (content_length > maxRequestBodyBytes) {
+        try writeResponse(client_fd, "413 Payload Too Large", "application/json", "{\"error\":\"request too large\"}");
+        return;
+    }
+
+    const header_end = std.mem.indexOf(u8, head, "\r\n\r\n") orelse return;
+    const body_start = header_end + 4;
+    const body_in_head = if (head.len > body_start) head.len - body_start else 0;
+    const remaining = if (body_in_head < content_length) content_length - body_in_head else 0;
+
+    const buf_len = if (head.len > body_start + remaining) head.len else body_start + remaining;
+    const buf = try allocator.alloc(u8, buf_len);
+    defer allocator.free(buf);
+    @memcpy(buf[0..head.len], head);
+
+    var read: usize = 0;
+    while (read < remaining) {
+        const n = std.os.linux.read(client_fd, buf.ptr + body_start + read, remaining - read);
+        if (n <= 0) break;
+        read += @as(usize, @intCast(n));
+    }
+
+    // request spans headers + body: body_in_head bytes already in the first
+    // read plus anything fetched by the loop.
+    const body_total = if (remaining > 0) content_length else body_in_head;
+    const request = buf[0 .. body_start + body_total];
 
     var lines = std.mem.splitScalar(u8, request, '\n');
     const request_line = lines.next() orelse return;
@@ -104,7 +151,9 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
 
     const body = if (std.mem.indexOf(u8, request, "\r\n\r\n")) |i| request[i + 4 ..] else "";
 
-    if (std.mem.eql(u8, path, "/exec") and std.mem.eql(u8, method, "POST")) {
+    if (std.mem.eql(u8, path, "/ready") and std.mem.eql(u8, method, "POST")) {
+        try handleReady(client_fd);
+    } else if (std.mem.eql(u8, path, "/exec") and std.mem.eql(u8, method, "POST")) {
         try exec.handleExec(allocator, client_fd, body, false);
     } else if (std.mem.eql(u8, path, "/exec/stream") and std.mem.eql(u8, method, "POST")) {
         try exec.handleExec(allocator, client_fd, body, true);
@@ -115,6 +164,8 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
     } else if (std.mem.startsWith(u8, path, "/exec/background/")) {
         const run_id = path["/exec/background/".len..];
         try background.handleBgPoll(allocator, client_fd, run_id);
+    } else if (std.mem.eql(u8, path, "/transcript") and std.mem.eql(u8, method, "GET")) {
+        try transcript.handleTranscript(allocator, client_fd, query);
     } else if (std.mem.eql(u8, path, "/files/write") and std.mem.eql(u8, method, "POST")) {
         try files.handleWrite(allocator, client_fd, body);
     } else if (std.mem.eql(u8, path, "/files/read") and std.mem.eql(u8, method, "GET")) {
@@ -124,6 +175,18 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
     } else {
         try writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
     }
+}
+
+/// handleReady implements the application-layer readiness handshake. A bare TCP
+/// connect to :2024 is not a reliable readiness signal (the socket may be open
+/// before sandboxd finished initialization); consumers should call /ready and
+/// require status=="ready".
+fn handleReady(client_fd: i32) !void {
+    const venv_ready = venv.isReady();
+    const body = try std.fmt.allocPrint(std.heap.page_allocator,
+        "{{\"status\":\"ready\",\"venv\":{s}}}", .{if (venv_ready) "true" else "false"});
+    defer std.heap.page_allocator.free(body);
+    try writeResponse(client_fd, "200 OK", "application/json", body);
 }
 
 pub fn writeResponse(client_fd: i32, status: []const u8, content_type: []const u8, body: []const u8) !void {

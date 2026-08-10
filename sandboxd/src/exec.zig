@@ -11,6 +11,8 @@ const ExecRequest = struct {
     workdir: []const u8 = "/workspace",
     // Optional object of string->string; absent/null means defaults only.
     env: std.json.Value = .{ .null = {} },
+    // Optional session id for transcript recording (KIP-16 M4).
+    session_id: []const u8 = "",
 };
 
 // max_stdout_bytes / max_stderr_bytes: capture caps (~1 MiB agent-facing policy).
@@ -373,6 +375,12 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         return;
     };
     defer result.deinit(allocator);
+
+    // File-backed transcript: append command + outputs for the session.
+    const transcript_mod = @import("transcript.zig");
+    transcript_mod.appendLine(allocator, req.session_id, "cmd", req.command);
+    if (result.stdout.len > 0) transcript_mod.appendLine(allocator, req.session_id, "stdout", result.stdout);
+    if (result.stderr.len > 0) transcript_mod.appendLine(allocator, req.session_id, "stderr", result.stderr);
 
     const stdout_json = try jsonEscape(allocator, result.stdout);
     defer allocator.free(stdout_json);

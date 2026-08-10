@@ -91,8 +91,9 @@ pub fn handleRead(allocator: std.mem.Allocator, client_fd: i32, query: []const u
     }
     defer _ = std.os.linux.close(@intCast(fd));
 
-    // Read file content (up to 10MB)
-    const max_size: usize = 10 * 1024 * 1024;
+    // Read file content (up to 64MB; raised from 10MB so snapshot restore and
+    // large-file reads work — see KIP-16 M7)
+    const max_size: usize = 64 * 1024 * 1024;
 
     const content = try allocator.alloc(u8, max_size);
     defer allocator.free(content);
@@ -107,14 +108,18 @@ pub fn handleRead(allocator: std.mem.Allocator, client_fd: i32, query: []const u
 }
 
 pub fn handleList(allocator: std.mem.Allocator, client_fd: i32, query: []const u8) !void {
-    _ = query;
+    // Optional since=<unix_seconds>: only include files modified after it.
+    var since: i64 = 0;
+    if (extractQueryParam(query, "since")) |v| {
+        since = std.fmt.parseInt(i64, v, 10) catch 0;
+    }
     var entries = std.array_list.Managed(FileEntry).init(allocator);
     defer {
         for (entries.items) |e| allocator.free(e.path);
         entries.deinit();
     }
 
-    listDirRecursive(allocator, &entries, "/workspace", "") catch {};
+    listDirRecursive(allocator, &entries, "/workspace", "", since) catch {};
 
     // Build JSON array manually
     var json_buf = std.array_list.Managed(u8).init(allocator);
@@ -137,7 +142,7 @@ pub fn handleList(allocator: std.mem.Allocator, client_fd: i32, query: []const u
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }
 
-fn listDirRecursive(allocator: std.mem.Allocator, entries: *std.array_list.Managed(FileEntry), base: []const u8, sub: []const u8) !void {
+fn listDirRecursive(allocator: std.mem.Allocator, entries: *std.array_list.Managed(FileEntry), base: []const u8, sub: []const u8, since: i64) !void {
     const full_path_raw = if (sub.len > 0)
         try std.fmt.allocPrint(allocator, "{s}/{s}", .{ base, sub })
     else
@@ -173,13 +178,19 @@ fn listDirRecursive(allocator: std.mem.Allocator, entries: *std.array_list.Manag
                 else
                     try allocator.dupe(u8, name);
                 defer allocator.free(next_sub_raw);
-                try listDirRecursive(allocator, entries, base, next_sub_raw);
+                try listDirRecursive(allocator, entries, base, next_sub_raw, since);
                 allocator.free(entry_path);
                 continue;
             }
 
-            // Get modification time
-            const mtime: i64 = 0; // metadata not available via raw syscall; non-critical
+            // Modification time via statx (real mtime, not 0 — KIP-16 M2
+            // enables diff/since-based incremental snapshots).
+            const mtime = fileMtime(entry_path) orelse 0;
+
+            if (since > 0 and mtime < since) {
+                allocator.free(entry_path);
+                continue;
+            }
 
             try entries.append(.{ .path = entry_path, .modified = mtime });
         }
@@ -190,6 +201,32 @@ const FileEntry = struct {
     path: []u8,
     modified: i64,
 };
+
+/// fileMtime returns the file's last-modification time (unix seconds) via the
+/// statx syscall, or null on any error. statx works on Linux targets; the
+/// caller treats null as mtime 0.
+pub fn fileMtime(path: []const u8) ?i64 {
+    var path_z_buf: [4096]u8 = undefined;
+    if (path.len >= path_z_buf.len) return null;
+    @memcpy(path_z_buf[0..path.len], path);
+    path_z_buf[path.len] = 0;
+    const path_z: [*:0]const u8 = @ptrCast(&path_z_buf);
+
+    var stx: std.os.linux.Statx = undefined;
+    const rc = std.os.linux.statx(
+        std.os.linux.AT.FDCWD,
+        path_z,
+        0, // follow symlinks like read does
+        std.os.linux.STATX.BASIC_STATS,
+        &stx,
+    );
+    if (rc != 0) return null;
+    // Check the mask actually reports mtime (varies by kernel/filesystem).
+    const stx_mask: u32 = @bitCast(stx.mask);
+    const mtime_bit: u32 = 1 << 14; // STATX_MTIME
+    if (stx_mask & mtime_bit == 0) return null;
+    return stx.mtime.sec;
+}
 
 fn extractQueryParam(query: []const u8, key: []const u8) ?[]const u8 {
     var it = std.mem.splitScalar(u8, query, '&');

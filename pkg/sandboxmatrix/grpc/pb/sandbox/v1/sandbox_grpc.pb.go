@@ -34,6 +34,7 @@ const (
 	SandboxService_ApproveAction_FullMethodName  = "/sandbox.v1.SandboxService/ApproveAction"
 	SandboxService_Login_FullMethodName          = "/sandbox.v1.SandboxService/Login"
 	SandboxService_PollRun_FullMethodName        = "/sandbox.v1.SandboxService/PollRun"
+	SandboxService_GetTranscript_FullMethodName  = "/sandbox.v1.SandboxService/GetTranscript"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -59,6 +60,9 @@ type SandboxServiceClient interface {
 	Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error)
 	// PollRun checks the status of a background execution.
 	PollRun(ctx context.Context, in *PollRunRequest, opts ...grpc.CallOption) (*PollRunResponse, error)
+	// GetTranscript reads a bounded window of a session's exec transcript
+	// (file-backed, offset-resumable; KIP-16 M4 / issue #512).
+	GetTranscript(ctx context.Context, in *GetTranscriptRequest, opts ...grpc.CallOption) (*GetTranscriptResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -228,6 +232,16 @@ func (c *sandboxServiceClient) PollRun(ctx context.Context, in *PollRunRequest, 
 	return out, nil
 }
 
+func (c *sandboxServiceClient) GetTranscript(ctx context.Context, in *GetTranscriptRequest, opts ...grpc.CallOption) (*GetTranscriptResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetTranscriptResponse)
+	err := c.cc.Invoke(ctx, SandboxService_GetTranscript_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -251,6 +265,9 @@ type SandboxServiceServer interface {
 	Login(context.Context, *LoginRequest) (*LoginResponse, error)
 	// PollRun checks the status of a background execution.
 	PollRun(context.Context, *PollRunRequest) (*PollRunResponse, error)
+	// GetTranscript reads a bounded window of a session's exec transcript
+	// (file-backed, offset-resumable; KIP-16 M4 / issue #512).
+	GetTranscript(context.Context, *GetTranscriptRequest) (*GetTranscriptResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -305,6 +322,9 @@ func (UnimplementedSandboxServiceServer) Login(context.Context, *LoginRequest) (
 }
 func (UnimplementedSandboxServiceServer) PollRun(context.Context, *PollRunRequest) (*PollRunResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PollRun not implemented")
+}
+func (UnimplementedSandboxServiceServer) GetTranscript(context.Context, *GetTranscriptRequest) (*GetTranscriptResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTranscript not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -590,6 +610,24 @@ func _SandboxService_PollRun_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_GetTranscript_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTranscriptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).GetTranscript(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_GetTranscript_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).GetTranscript(ctx, req.(*GetTranscriptRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -652,6 +690,10 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PollRun",
 			Handler:    _SandboxService_PollRun_Handler,
+		},
+		{
+			MethodName: "GetTranscript",
+			Handler:    _SandboxService_GetTranscript_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

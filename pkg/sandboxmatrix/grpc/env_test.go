@@ -2,6 +2,9 @@ package grpc
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -64,21 +67,21 @@ func TestValidateSessionEnv(t *testing.T) {
 func TestSandboxdRequestBodies(t *testing.T) {
 	env := map[string]string{"FOO": "bar", "BAZ": "qux"}
 
-	empty := sandboxdExecBody("echo hi", 30, "/workspace", nil)
+	empty := sandboxdExecBody("sess-1", "echo hi", 30, "/workspace", nil)
 	if _, ok := empty["env"]; ok {
 		t.Fatalf("env should be omitted when empty: %v", empty)
 	}
-	if empty["command"] != "echo hi" || empty["timeout"] != int32(30) || empty["workdir"] != "/workspace" {
+	if empty["command"] != "echo hi" || empty["timeout"] != int32(30) || empty["workdir"] != "/workspace" || empty["session_id"] != "sess-1" {
 		t.Fatalf("unexpected exec body: %v", empty)
 	}
 
-	withEnv := sandboxdExecBody("true", 10, "/tmp", env)
+	withEnv := sandboxdExecBody("sess-2", "true", 10, "/tmp", env)
 	got, ok := withEnv["env"].(map[string]string)
 	if !ok || got["FOO"] != "bar" || got["BAZ"] != "qux" {
 		t.Fatalf("exec env payload: %v", withEnv["env"])
 	}
 
-	bg := sandboxdBackgroundBody("sleep 1", "run-1", 60, "/workspace", map[string]string{"FOO": "bar"})
+	bg := sandboxdBackgroundBody("sess-3", "sleep 1", "run-1", 60, "/workspace", map[string]string{"FOO": "bar"})
 	if bg["run_id"] != "run-1" {
 		t.Fatalf("run_id: %v", bg["run_id"])
 	}
@@ -286,6 +289,135 @@ func TestResolveSessionEnv_MissingSecretFails(t *testing.T) {
 	_, err = s.resolveSessionEnv(context.Background(), "sec-miss")
 	if err == nil {
 		t.Fatal("expected secret resolution error")
+	}
+}
+
+// TestGetTranscript_ReadsWindowedOutput verifies GetTranscript proxies to
+// sandboxd /transcript and maps the windowed response.
+func TestGetTranscript_ReadsWindowedOutput(t *testing.T) {
+	s := newTestServer()
+	ctx := context.Background()
+	mustCreateSession(t, s.orch, "transcript-win")
+	stubSessionPodIP(ctx, t, s.orch, "transcript-win", "127.0.0.1")
+
+	old := sandboxdClient
+	defer func() { sandboxdClient = old }()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/transcript" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("session") != "transcript-win" || q.Get("offset") != "10" || q.Get("limit") != "64" {
+			t.Errorf("unexpected query: %v", q)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"output":"line1\nline2\n","offset":10,"next_offset":22,"truncated_before":true,"eof":true}`))
+	}))
+	// sandboxdURL is fixed at :2024 — bind the stub there so pod IP 127.0.0.1 works.
+	ln, err := net.Listen("tcp", "127.0.0.1:2024")
+	if err != nil {
+		t.Fatalf("bind 2024: %v", err)
+	}
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	sandboxdClient = &http.Client{}
+
+	resp, err := s.GetTranscript(ctx, &pb.GetTranscriptRequest{
+		SessionId: "transcript-win", Offset: 10, Limit: 64,
+	})
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if resp.Output != "line1\nline2\n" || resp.Offset != 10 || resp.NextOffset != 22 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if !resp.TruncatedBefore || !resp.Eof {
+		t.Fatalf("expected truncated_before+eof, got %+v", resp)
+	}
+}
+
+// TestGetTranscript_NoTranscript returns an empty EOF window (not an error)
+// when sandboxd has no transcript for the session yet.
+func TestGetTranscript_NoTranscript(t *testing.T) {
+	s := newTestServer()
+	ctx := context.Background()
+	mustCreateSession(t, s.orch, "transcript-empty")
+	stubSessionPodIP(ctx, t, s.orch, "transcript-empty", "127.0.0.1")
+
+	old := sandboxdClient
+	defer func() { sandboxdClient = old }()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	ln, err := net.Listen("tcp", "127.0.0.1:2024")
+	if err != nil {
+		t.Fatalf("bind 2024: %v", err)
+	}
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	sandboxdClient = &http.Client{}
+
+	resp, err := s.GetTranscript(ctx, &pb.GetTranscriptRequest{SessionId: "transcript-empty"})
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if resp.SessionId != "transcript-empty" || !resp.Eof || resp.Output != "" {
+		t.Fatalf("expected empty eof window, got %+v", resp)
+	}
+}
+
+// stubSessionPodIP sets the session CRD status podIP so getPodIP resolves
+// without a real pod (mirrors setupPodForRelease).
+func stubSessionPodIP(ctx context.Context, t *testing.T, o *Orchestrator, sessName, ip string) {
+	t.Helper()
+	u, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get session %s: %v", sessName, err)
+	}
+	st := u.Object["status"].(map[string]interface{})
+	st["podIP"] = ip
+	if _, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("update session status: %v", err)
+	}
+}
+
+// TestListFiles_ForwardsSince verifies ListFiles forwards the since filter to
+// sandboxd and passes through real mtimes.
+func TestListFiles_ForwardsSince(t *testing.T) {
+	s := newTestServer()
+	ctx := context.Background()
+	mustCreateSession(t, s.orch, "list-since")
+	stubSessionPodIP(ctx, t, s.orch, "list-since", "127.0.0.1")
+
+	old := sandboxdClient
+	defer func() { sandboxdClient = old }()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/files/list" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("since") != "1750000000" {
+			t.Errorf("expected since=1750000000, got %s", r.URL.Query().Get("since"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"files":[{"path":"/workspace/a.txt","modified":1750000001}]}`))
+	}))
+	ln, err := net.Listen("tcp", "127.0.0.1:2024")
+	if err != nil {
+		t.Fatalf("bind 2024: %v", err)
+	}
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	sandboxdClient = &http.Client{}
+
+	resp, err := s.ListFiles(ctx, &pb.ListFilesRequest{SessionId: "list-since", Since: 1750000000})
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	if len(resp.Files) != 1 || resp.Files[0].Path != "/workspace/a.txt" || resp.Files[0].Modified != 1750000001 {
+		t.Fatalf("unexpected files: %+v", resp.Files)
 	}
 }
 

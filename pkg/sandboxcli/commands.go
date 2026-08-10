@@ -22,18 +22,10 @@ const errSessionNotFound = "not found"
 // ErrSessionGone is returned when a sandbox session has expired or been destroyed.
 var ErrSessionGone = errors.New("sandbox session expired or destroyed")
 
-// newClientFromCtx creates a gRPC client using endpoint/apikey from global flags,
-// falling back to the connection config saved by `connect`.
+// newClientFromCtx creates a gRPC client using endpoint/apikey from global flags.
 func newClientFromCtx(ctx *cli.Context) (*client.Client, *ExitError) {
-	endpoint := strings.TrimSpace(ctx.GlobalString("endpoint"))
-	apikey := strings.TrimSpace(ctx.GlobalString("apikey"))
-
-	// Prefer flags/env; else use persisted connect config.
-	if endpoint == "" {
-		if cfg, err := LoadConnectionConfig(); err == nil && cfg != nil && cfg.Endpoint != "" {
-			endpoint = cfg.Endpoint
-		}
-	}
+	endpoint := ctx.GlobalString("endpoint")
+	apikey := ctx.GlobalString("apikey")
 
 	var c *client.Client
 	var err error
@@ -713,8 +705,11 @@ func ReadCommand() cli.Command {
 func ListCommand() cli.Command {
 	return cli.Command{
 		Name:      "list",
-		Usage:     "List files in the sandbox /workspace",
+		Usage:     "List files in the sandbox /workspace (real mtimes; --since for changed-files diff)",
 		ArgsUsage: "<session-id>",
+		Flags: []cli.Flag{
+			cli.Int64Flag{Name: "since", Usage: "only files modified after this unix timestamp (0 = all)"},
+		},
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().First()
 			if sid == "" {
@@ -729,6 +724,7 @@ func ListCommand() cli.Command {
 
 			resp, err := client.SandboxServiceClient.ListFiles(context.Background(), &pb.ListFilesRequest{
 				SessionId: sid,
+				Since:     ctx.Int64("since"),
 			})
 			if err != nil {
 				return printErrorExit("list: "+err.Error(), 1)
@@ -1122,6 +1118,62 @@ func PollCommand() cli.Command {
 				"duration_ms": resp.DurationMs,
 				"truncated":   resp.Truncated,
 			})
+			return nil
+		},
+	}
+}
+
+// ── LogCommand ─────────────────────────────────────────────────────────────
+
+func LogCommand() cli.Command {
+	return cli.Command{
+		Name:      "log",
+		Usage:     "Replay a session's exec transcript (windowed, offset-resumable)",
+		ArgsUsage: "<session-id>",
+		Flags: []cli.Flag{
+			cli.Int64Flag{Name: "offset", Usage: "byte offset to start from (0 = start)"},
+			cli.Int64Flag{Name: "limit", Usage: "max bytes per window (0 = server default)"},
+			cli.BoolFlag{Name: "follow", Usage: "poll for new output until EOF is stable"},
+		},
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().First()
+			if sid == "" {
+				return printErrorExit("usage: k8e-sandbox-cli log <session-id>", 1)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			offset := ctx.Int64("offset")
+			follow := ctx.Bool("follow")
+			lastNext := int64(-1)
+			for {
+				resp, err := client.SandboxServiceClient.GetTranscript(context.Background(), &pb.GetTranscriptRequest{
+					SessionId: sid,
+					Offset:    offset,
+					Limit:     ctx.Int64("limit"),
+				})
+				if err != nil {
+					return printErrorExit("log: "+err.Error(), 1)
+				}
+				if resp.Output != "" {
+					fmt.Print(resp.Output)
+				}
+				offset = resp.NextOffset
+				if resp.Eof {
+					if !follow {
+						break
+					}
+					if lastNext == resp.NextOffset {
+						// No new output; brief pause then poll again.
+						time.Sleep(500 * time.Millisecond)
+					} else {
+						lastNext = resp.NextOffset
+					}
+				}
+			}
 			return nil
 		},
 	}
