@@ -24,14 +24,32 @@ If `$ARGUMENTS` is empty and no goal is otherwise provided, ask the user for a s
 
 ## Binary naming (read this first)
 
-`k8e-sandbox-cli-linux-amd64` (and `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`) is the **platform-suffixed download name** of the very same binary this skill invokes as `k8e-sandbox-cli`. They are the same file:
+The downloaded file name carries a **platform suffix** — pick the one for the user's machine:
 
-1. Download: `curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64 && chmod +x k8e-sandbox-cli-linux-amd64`
-2. Rename the downloaded file to the plain command name: `mv k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli` (optionally move it into a `PATH` directory, e.g. `~/.local/bin/`)
-3. Run `./k8e-sandbox-cli ... connect` — `connect` installs this skill into your agent harnesses and ensures `k8e-sandbox-cli` is on `PATH`.
-4. From then on, this skill and all examples use the plain name `k8e-sandbox-cli` — same binary.
+| Platform | Download name |
+|----------|---------------|
+| Linux amd64 | `k8e-sandbox-cli-linux-amd64` |
+| Linux arm64 | `k8e-sandbox-cli-linux-arm64` |
+| macOS amd64 | `k8e-sandbox-cli-darwin-amd64` |
+| macOS arm64 | `k8e-sandbox-cli-darwin-arm64` |
+| Windows amd64 | `k8e-sandbox-cli-windows-amd64.exe` |
 
-If you only see `k8e-sandbox-cli-linux-amd64` in the user's environment (not yet renamed), use that file directly: `./k8e-sandbox-cli-linux-amd64 status` etc. Both spellings are interchangeable; never tell the user they are missing a second binary.
+It is the **same binary** this skill invokes as `k8e-sandbox-cli` — just under the platform-suffixed name. To make the plain name work without renaming, create a **symlink** (do not rename the file):
+
+```bash
+# Example for Linux amd64 — substitute the platform name for other OS/arch
+curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
+chmod +x k8e-sandbox-cli-linux-amd64
+ln -s k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli          # symlink, original file stays
+# optionally move both into a PATH dir, e.g. ~/.local/bin/
+./k8e-sandbox-cli ... connect                             # connect installs this skill + ensures PATH
+```
+
+(Windows: use `mklink k8e-sandbox-cli.exe k8e-sandbox-cli-windows-amd64.exe` in cmd.)
+
+From then on, this skill and all examples use the plain name `k8e-sandbox-cli` — same binary.
+
+If you only see a platform-suffixed name in the user's environment (no symlink yet), use that file directly: `./k8e-sandbox-cli-linux-amd64 status` etc. All spellings are interchangeable; never tell the user they are missing a second binary.
 
 ## Hard rules
 
