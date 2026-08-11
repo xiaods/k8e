@@ -199,6 +199,8 @@ k8e sandbox-apikey create my-agent
 
 Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
 
+> **One binary, two names:** the downloaded `k8e-sandbox-cli-linux-amd64` file **is** the `k8e-sandbox-cli` command the skill uses. `connect` symlinks it to `~/.local/bin/k8e-sandbox-cli` (on PATH) and installs the `/k8e-sandbox` skill into your agent harnesses, so every skill example (`k8e-sandbox-cli run ...`) is the same file you just downloaded.
+
 Then ask your agent naturally:
 
 > "Run this Python snippet in a sandbox"
@@ -304,6 +306,8 @@ chmod +x k8e-sandbox-cli-linux-amd64
 ```
 
 Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
+
+> **One binary, two names:** the downloaded `k8e-sandbox-cli-linux-amd64` file **is** the `k8e-sandbox-cli` command the skill uses. `connect` symlinks it to `~/.local/bin/k8e-sandbox-cli` (on PATH) and installs the `/k8e-sandbox` skill, so every skill example (`k8e-sandbox-cli run ...`) is the same file you just downloaded.
 
 Then in your agent harness:
 
