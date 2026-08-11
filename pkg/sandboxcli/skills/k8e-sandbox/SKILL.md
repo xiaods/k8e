@@ -26,7 +26,7 @@ If `$ARGUMENTS` is empty and no goal is otherwise provided, ask the user for a s
 
 `k8e-sandbox-cli-linux-amd64` (and `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`) is the **platform-suffixed download name** of the very same binary this skill invokes as `k8e-sandbox-cli`. They are the same file:
 
-1. Download: `curl -sLO .../k8e-sandbox-cli-linux-amd64 && chmod +x k8e-sandbox-cli-linux-amd64`
+1. Download: `curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64 && chmod +x k8e-sandbox-cli-linux-amd64`
 2. Run `./k8e-sandbox-cli-linux-amd64 ... connect` — `connect` symlinks it to `~/.local/bin/k8e-sandbox-cli` (on PATH) and installs this skill into your agent harnesses.
 3. From then on, this skill and all examples use the plain name `k8e-sandbox-cli` — same binary.
 
