@@ -137,7 +137,10 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child session (shares parent's pod + workspace — no new pod) |
 | `k8e-sandbox-cli confirm <sid> <action>` | Gate destructive action on human approval (`--timeout`, `--no-wait`) |
 | `k8e-sandbox-cli approve <aid>` | Approve a pending confirm (`--reject`, `--reason`) |
-| `k8e-sandbox-cli snapshot save/restore/list/delete` | Content-addressed snapshots (`save --remote`, `restore --base <snap>`) |
+| `k8e-sandbox-cli snapshot save <sid> <name>` | Save workspace snapshot (content-addressed, dedup'd) |
+| `k8e-sandbox-cli snapshot list` | List saved snapshots |
+| `k8e-sandbox-cli snapshot restore <name>` | New session from a snapshot (`--base <snap>` for incremental) |
+| `k8e-sandbox-cli snapshot delete <name>` | Delete a snapshot |
 | `k8e-sandbox-cli benchmark` | Warm-pool latency metrics (`--pool-size`, `--iterations`) |
 | `k8e-sandbox-cli catalog` | Emit machine-readable command surface (SDK generation) |
 | `k8e-sandbox-cli destroy <sid>` | Tear down session |
