@@ -27,10 +27,11 @@ If `$ARGUMENTS` is empty and no goal is otherwise provided, ask the user for a s
 `k8e-sandbox-cli-linux-amd64` (and `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`) is the **platform-suffixed download name** of the very same binary this skill invokes as `k8e-sandbox-cli`. They are the same file:
 
 1. Download: `curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64 && chmod +x k8e-sandbox-cli-linux-amd64`
-2. Run `./k8e-sandbox-cli-linux-amd64 ... connect` — `connect` symlinks it to `~/.local/bin/k8e-sandbox-cli` (on PATH) and installs this skill into your agent harnesses.
-3. From then on, this skill and all examples use the plain name `k8e-sandbox-cli` — same binary.
+2. Rename the downloaded file to the plain command name: `mv k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli` (optionally move it into a `PATH` directory, e.g. `~/.local/bin/`)
+3. Run `./k8e-sandbox-cli ... connect` — `connect` installs this skill into your agent harnesses and ensures `k8e-sandbox-cli` is on `PATH`.
+4. From then on, this skill and all examples use the plain name `k8e-sandbox-cli` — same binary.
 
-If you only see `k8e-sandbox-cli-linux-amd64` in the user's environment (no `k8e-sandbox-cli` yet), use that file directly: `./k8e-sandbox-cli-linux-amd64 status` etc. Both spellings are interchangeable; never tell the user they are missing a second binary.
+If you only see `k8e-sandbox-cli-linux-amd64` in the user's environment (not yet renamed), use that file directly: `./k8e-sandbox-cli-linux-amd64 status` etc. Both spellings are interchangeable; never tell the user they are missing a second binary.
 
 ## Hard rules
 

@@ -187,12 +187,15 @@ Download the standalone sandbox CLI, authenticate, and install the skill into yo
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
 
+# Rename to the plain command name used by the skill
+mv k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli
+
 # Create an API key on the server
 k8e sandbox-apikey create my-agent
 # → {"name":"my-agent","key":"k8e-abc123..."}
 
 # Connect: authenticate (mTLS) + install /k8e-sandbox skill into agent harnesses
-./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
+./k8e-sandbox-cli --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
 ```
 
 > **Local usage:** If you're on the same machine as the K8E server, the CLI auto-discovers TLS certs — just run `k8e-sandbox-cli connect`.
@@ -300,9 +303,12 @@ k8e sandbox-apikey create my-agent
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
 
-# 2. Connect: mTLS auth + install /k8e-sandbox skill into Claude/Codex/Pi
+# 2. Rename to the plain command name used by the skill
+mv k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli
+
+# 3. Connect: mTLS auth + install /k8e-sandbox skill into Claude/Codex/Pi
 #    Note: --endpoint and --apikey are global flags, placed before the subcommand
-./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
+./k8e-sandbox-cli --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
 ```
 
 Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
