@@ -183,21 +183,27 @@ kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
 Download the standalone sandbox CLI, authenticate, and install the skill into your agent:
 
 ```bash
-# Download sandbox CLI (~44MB)
+# Download sandbox CLI (~44MB) — pick your platform suffix
+#   k8e-sandbox-cli-linux-amd64 / linux-arm64 / darwin-amd64 / darwin-arm64 / windows-amd64.exe
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
+
+# Symlink the plain command name to the downloaded file (do not rename)
+ln -s k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli
 
 # Create an API key on the server
 k8e sandbox-apikey create my-agent
 # → {"name":"my-agent","key":"k8e-abc123..."}
 
 # Connect: authenticate (mTLS) + install /k8e-sandbox skill into agent harnesses
-./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
+./k8e-sandbox-cli --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
 ```
 
 > **Local usage:** If you're on the same machine as the K8E server, the CLI auto-discovers TLS certs — just run `k8e-sandbox-cli connect`.
 
-Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
+Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}` (Windows: `k8e-sandbox-cli-windows-amd64.exe`, symlink via `mklink k8e-sandbox-cli.exe k8e-sandbox-cli-windows-amd64.exe`)
+
+> **One binary, two names:** the downloaded `k8e-sandbox-cli-linux-amd64` file **is** the `k8e-sandbox-cli` command the skill uses. `connect` symlinks it to `~/.local/bin/k8e-sandbox-cli` (on PATH) and installs the `/k8e-sandbox` skill into your agent harnesses, so every skill example (`k8e-sandbox-cli run ...`) is the same file you just downloaded.
 
 Then ask your agent naturally:
 
@@ -295,15 +301,21 @@ k8e sandbox-apikey create my-agent
 
 ```bash
 # 1. Download the platform-specific binary (~44MB)
+#    k8e-sandbox-cli-linux-amd64 / linux-arm64 / darwin-amd64 / darwin-arm64 / windows-amd64.exe
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
 
-# 2. Connect: mTLS auth + install /k8e-sandbox skill into Claude/Codex/Pi
+# 2. Symlink the plain command name to the downloaded file (do not rename)
+ln -s k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli
+
+# 3. Connect: mTLS auth + install /k8e-sandbox skill into Claude/Codex/Pi
 #    Note: --endpoint and --apikey are global flags, placed before the subcommand
-./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
+./k8e-sandbox-cli --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
 ```
 
-Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}`
+Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}` (Windows: `k8e-sandbox-cli-windows-amd64.exe`, symlink via `mklink k8e-sandbox-cli.exe k8e-sandbox-cli-windows-amd64.exe`)
+
+> **One binary, two names:** the downloaded `k8e-sandbox-cli-linux-amd64` file **is** the `k8e-sandbox-cli` command the skill uses — the symlink is just a plain-name alias to the same file. `connect` installs the `/k8e-sandbox` skill, so every skill example (`k8e-sandbox-cli run ...`) is the same file you just downloaded.
 
 Then in your agent harness:
 

@@ -22,6 +22,35 @@ $ARGUMENTS
 
 If `$ARGUMENTS` is empty and no goal is otherwise provided, ask the user for a sandbox goal and **stop** (do not invent work).
 
+## Binary naming (read this first)
+
+The downloaded file name carries a **platform suffix** — pick the one for the user's machine:
+
+| Platform | Download name |
+|----------|---------------|
+| Linux amd64 | `k8e-sandbox-cli-linux-amd64` |
+| Linux arm64 | `k8e-sandbox-cli-linux-arm64` |
+| macOS amd64 | `k8e-sandbox-cli-darwin-amd64` |
+| macOS arm64 | `k8e-sandbox-cli-darwin-arm64` |
+| Windows amd64 | `k8e-sandbox-cli-windows-amd64.exe` |
+
+It is the **same binary** this skill invokes as `k8e-sandbox-cli` — just under the platform-suffixed name. To make the plain name work without renaming, create a **symlink** (do not rename the file):
+
+```bash
+# Example for Linux amd64 — substitute the platform name for other OS/arch
+curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
+chmod +x k8e-sandbox-cli-linux-amd64
+ln -s k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli          # symlink, original file stays
+# optionally move both into a PATH dir, e.g. ~/.local/bin/
+./k8e-sandbox-cli ... connect                             # connect installs this skill + ensures PATH
+```
+
+(Windows: use `mklink k8e-sandbox-cli.exe k8e-sandbox-cli-windows-amd64.exe` in cmd.)
+
+From then on, this skill and all examples use the plain name `k8e-sandbox-cli` — same binary.
+
+If you only see a platform-suffixed name in the user's environment (no symlink yet), use that file directly: `./k8e-sandbox-cli-linux-amd64 status` etc. All spellings are interchangeable; never tell the user they are missing a second binary.
+
 ## Hard rules
 
 1. **All code and shell execution goes through `k8e-sandbox-cli`** — never run `python3`, `node`, `pip`, `npm`, `curl`, compilers, or tests on the host for this goal.
@@ -58,9 +87,19 @@ k8e-sandbox-cli run 'pip install pandas' --lang bash
 # write via stdin:
 # cat analysis.py | k8e-sandbox-cli write <session_id> /workspace/analysis.py
 # k8e-sandbox-cli run 'python3 /workspace/analysis.py' --session-id <session_id>
+
+# Background exec (returns run_id immediately)
+k8e-sandbox-cli run 'sleep 30; echo done' --background
+k8e-sandbox-cli poll <run-id>            # wait + stream output
+
+# Tenant reuse (share one session across CLI calls)
+k8e-sandbox-cli run 'echo hi' --tenant my-project
+
+# Sub-agent: child session sharing parent pod + workspace (no new pod)
+k8e-sandbox-cli subagent <parent-sid>
 ```
 
-Useful commands: `run`, `write`, `read`, `list`, `create`, `get`, `sessions`, `destroy`, `status`.
+Useful commands: `run`, `write`, `read`, `list`, `create`, `get`, `sessions`, `destroy`, `status`, `log`, `events`, `ps`, `poll`, `subagent`, `confirm`, `approve`, `snapshot`, `benchmark`, `catalog`.
 
 ### 4. Report
 
@@ -76,7 +115,7 @@ k8e-sandbox-cli connect
 k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 ```
 
-`connect` authenticates, verifies the gateway, puts `k8e-sandbox-cli` on PATH when needed, and installs this skill into Claude / Codex / Pi discovery paths.
+`connect` authenticates, verifies the gateway, puts `k8e-sandbox-cli` on PATH when needed (symlink to `~/.local/bin/k8e-sandbox-cli`), and installs this skill into Claude / Codex / Pi discovery paths.
 
 ## Command reference
 
@@ -86,23 +125,21 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli connect --skill-only` | Re-install this skill only (no gateway dial) |
 | `k8e-sandbox-cli login` | Remote mTLS only (no skill install) |
 | `k8e-sandbox-cli status` | Gateway + session probe |
-| `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--raw`, `--session-id`, `--tenant`, `--background`) |
-| `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`) |
+| `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--timeout`, `--raw`, `--session-id`, `--tenant`, `--background`, `--manifest`, `--git-repo`, `--allowed-hosts`) |
+| `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`, `--manifest`, `--git-repo`) |
 | `k8e-sandbox-cli get <sid>` | Session introspection (phase, runtime, env keys) |
 | `k8e-sandbox-cli sessions` | List sessions |
 | `k8e-sandbox-cli write/read/list` | Workspace files; `list --since <ts>` for changed-file diff |
-| `k8e-sandbox-cli log <sid>` | Replay exec transcript | `--offset`, `--limit`, `--follow` |
-| `k8e-sandbox-cli events <sid>` | Read daemon NDJSON event stream | `--limit` |
-| `k8e-sandbox-cli ps <sid>` | List processes in the sandbox pod | pid, comm, state |
-| `k8e-sandbox-cli poll <run-id>` | Poll a background run | |
+| `k8e-sandbox-cli log <sid>` | Replay exec transcript (`--offset`, `--limit`, `--follow`) |
+| `k8e-sandbox-cli events <sid>` | Read daemon NDJSON event stream (`--limit`) |
+| `k8e-sandbox-cli ps <sid>` | List processes in the sandbox pod (pid, comm, state) |
+| `k8e-sandbox-cli poll <run-id>` | Poll a background run (`--follow`) |
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child session (shares parent's pod + workspace — no new pod) |
-
-| `k8e-sandbox-cli subagent <parent-sid>` | Spawn child session (shares parent pod + workspace) |
-| `k8e-sandbox-cli confirm <sid> <action>` | Gate destructive action on human approval |
-| `k8e-sandbox-cli approve <aid>` | Approve a pending confirm | `--reject` |
-| `k8e-sandbox-cli snapshot save/restore/list/delete` | Content-addressed snapshots | `save --remote`, `restore --base <snap>` |
-| `k8e-sandbox-cli benchmark` | Warm-pool latency metrics | `--pool-size`, `--iterations` |
-| `k8e-sandbox-cli catalog` | Emit machine-readable command surface (SDK generation) | |
+| `k8e-sandbox-cli confirm <sid> <action>` | Gate destructive action on human approval (`--timeout`, `--no-wait`) |
+| `k8e-sandbox-cli approve <aid>` | Approve a pending confirm (`--reject`, `--reason`) |
+| `k8e-sandbox-cli snapshot save/restore/list/delete` | Content-addressed snapshots (`save --remote`, `restore --base <snap>`) |
+| `k8e-sandbox-cli benchmark` | Warm-pool latency metrics (`--pool-size`, `--iterations`) |
+| `k8e-sandbox-cli catalog` | Emit machine-readable command surface (SDK generation) |
 | `k8e-sandbox-cli destroy <sid>` | Tear down session |
 
 Default run output is JSON: `stdout`, `stderr`, `exit_code`, `session_id`. Use `--raw` to stream text.
@@ -124,6 +161,7 @@ Default allowed hosts (kernel eBPF): `pypi.org`, `files.pythonhosted.org`, `regi
 - `--env` is for non-sensitive config only (stored on CRD). Use `--secret ENV=secret:key` for secrets.
 - Never pass host secrets into sandbox flags in chat logs if avoidable.
 - Never `sudo` via sandbox CLI.
+- Destructive sandbox actions require `confirm` → `approve` (human in the loop); don't skip it.
 
 ## Error quick reference
 
