@@ -604,13 +604,10 @@ func dialErr(endpoint string, err error) error {
 // ── Local auto-discovery ──────────────────────────────────────────────────────
 
 // sandboxCacheDir resolves the directory for CA + client cert material.
-// Priority: K8E_SANDBOX_CERT_DIR → $XDG_CONFIG_HOME/k8e/sandbox → ~/.k8e/sandbox.
+// Priority: K8E_SANDBOX_CERT_DIR → ~/.k8e/sandbox.
 func sandboxCacheDir() (string, error) {
 	if dir := strings.TrimSpace(os.Getenv("K8E_SANDBOX_CERT_DIR")); dir != "" {
 		return filepath.Clean(dir), nil
-	}
-	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
-		return filepath.Join(xdg, "k8e", "sandbox"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

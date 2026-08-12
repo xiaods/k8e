@@ -20,7 +20,6 @@ func TestNewClientWithEndpointRemoteWithoutKeyRequiresCachedCerts(t *testing.T) 
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
-	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("K8E_SANDBOX_APIKEY", "")
 
 	_, err := NewClientWithEndpoint("sandbox.example.com:50051", "")
@@ -37,7 +36,6 @@ func TestNewClientWithEndpointLoopbackWithoutKeyUsesLocalDiscovery(t *testing.T)
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
-	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("K8E_SANDBOX_APIKEY", "")
 
 	c, err := NewClientWithEndpoint("127.0.0.1:50051", "")
@@ -50,7 +48,6 @@ func TestNewClientWithEndpointLoopbackWithoutKeyUsesLocalDiscovery(t *testing.T)
 func TestSandboxCacheDirPriority(t *testing.T) {
 	explicit := t.TempDir()
 	t.Setenv("K8E_SANDBOX_CERT_DIR", explicit)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir, err := sandboxCacheDir()
 	if err != nil {
 		t.Fatal(err)
@@ -60,18 +57,6 @@ func TestSandboxCacheDirPriority(t *testing.T) {
 	}
 
 	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
-	xdg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", xdg)
-	dir, err = sandboxCacheDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := filepath.Join(xdg, "k8e", "sandbox")
-	if dir != want {
-		t.Fatalf("XDG path: got %q want %q", dir, want)
-	}
-
-	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -79,7 +64,7 @@ func TestSandboxCacheDirPriority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = filepath.Join(home, ".k8e", "sandbox")
+	want := filepath.Join(home, ".k8e", "sandbox")
 	if dir != want {
 		t.Fatalf("home path: got %q want %q", dir, want)
 	}

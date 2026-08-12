@@ -38,9 +38,6 @@ func profileConfigPaths() []string {
 	if p := strings.TrimSpace(os.Getenv("K8E_SANDBOX_CONFIG")); p != "" {
 		paths = append(paths, p)
 	}
-	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
-		paths = append(paths, filepath.Join(xdg, "k8e", "config.yaml"))
-	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		paths = append(paths, filepath.Join(home, ".k8e", "config.yaml"))
 	}

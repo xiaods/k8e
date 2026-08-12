@@ -82,7 +82,7 @@ k8e-sandbox-cli --profile prod run 'echo hi'
 # or: export K8E_SANDBOX_PROFILE=prod
 ```
 
-Priority: flags → env (`K8E_SANDBOX_ENDPOINT` / `APIKEY` / `CERT_DIR` / `PROFILE`) → profile → defaults. Cert dir also: `K8E_SANDBOX_CERT_DIR` / `XDG_CONFIG_HOME/k8e/sandbox`.
+Priority: flags → env (`K8E_SANDBOX_ENDPOINT` / `APIKEY` / `CERT_DIR` / `PROFILE`) → profile → defaults. Cert dir: `K8E_SANDBOX_CERT_DIR` → `~/.k8e/sandbox` (no XDG).
 
 ## Procedure (always)
 

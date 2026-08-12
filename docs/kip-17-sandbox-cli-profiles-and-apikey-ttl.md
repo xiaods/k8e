@@ -39,8 +39,9 @@ API keys are currently immortal secrets in `sandbox-matrix/sandbox-apikeys`. Boo
 | Priority | Source |
 |----------|--------|
 | 1 | `K8E_SANDBOX_CONFIG` (absolute or relative path) |
-| 2 | `$XDG_CONFIG_HOME/k8e/config.yaml` when XDG is set |
-| 3 | `~/.k8e/config.yaml` |
+| 2 | `~/.k8e/config.yaml` |
+
+k8e does **not** use `XDG_CONFIG_HOME`; paths stay under `~/.k8e/` (or explicit `K8E_SANDBOX_*` overrides).
 
 **Schema (`version: 1`):**
 
