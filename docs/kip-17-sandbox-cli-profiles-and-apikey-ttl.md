@@ -8,44 +8,48 @@
 
 Make remote sandbox auth usable for humans and AI agents that talk to **more than one** K8E cluster, and make bootstrap API keys **short-lived by default**.
 
-1. **Multi-profile `config.yaml`** — named endpoints + optional per-profile cert directories, selected by `--profile` / `K8E_SANDBOX_PROFILE`.
+1. **Multi-profile `profiles.yaml`** — named endpoints + optional per-profile cert directories, selected by `--profile` / `K8E_SANDBOX_PROFILE`.
 2. **API key TTL** — `k8e sandbox-apikey create` defaults to **30 days**; gateway Login rejects expired keys.
 3. **Compatible with KIP-14 / issue #538 mTLS** — profiles only choose *where* certs live; Login still issues 90-day client certs with 30-day lazy renew.
 
 ## Motivation
 
-Issue #538 sketched:
+Users need multiple gateway endpoints without juggling env vars. A naive `~/.k8e/config.yaml` **collides in name** with the server daemon flag file `/etc/k8e/config.yaml` (written at install / parsed by `configfilearg`). Those two files are **not the same format** and must stay distinct (same lesson as kip-4 sandbox-mcp: never overload `config.yaml`).
 
-```yaml
-# ~/.k8e/config.yaml
-profiles:
-  default:
-    endpoint: 10.0.0.1:50051
-  prod:
-    endpoint: prod.k8e.example:50051
-    cert_dir: ~/.k8e/sandbox-prod
-```
+| File | Owner | Purpose | Format |
+|------|-------|---------|--------|
+| `/etc/k8e/config.yaml` | **k8e server/agent** | Daemon CLI flags (`write-kubeconfig-mode`, `tls-san`, …) | flag keys → `configfilearg` |
+| `~/.k8e/sandbox/profiles.yaml` | **k8e-sandbox-cli** | Named remote gateways + cert dirs | `version` + `profiles` map |
+| `~/.k8e/sandbox/config.json` | **k8e-sandbox-cli** | Last successful connect stamp | JSON `{mode,endpoint,agents}` |
+| `~/.k8e/sandbox/{ca,client}.*` | **k8e-sandbox-cli** | mTLS material for active cert dir | PEM |
 
-Today the CLI stores a single last-used connection in `~/.k8e/sandbox/config.json` and a single cert cache. Switching clusters requires manual env overrides and easily reuses the wrong mTLS material.
-
-API keys are currently immortal secrets in `sandbox-matrix/sandbox-apikeys`. Bootstrap tokens should be revocable by time as well as by delete.
+API keys remain immortal-or-TTL secrets in `sandbox-matrix/sandbox-apikeys` (not in any local yaml).
 
 ## Design
 
 ### Part A — Profile file
 
+**Canonical path:** `~/.k8e/sandbox/profiles.yaml`  
+(or `$K8E_SANDBOX_CERT_DIR/profiles.yaml` when cert dir is overridden)
+
 **Path resolution (first hit wins):**
 
 | Priority | Source |
 |----------|--------|
-| 1 | `K8E_SANDBOX_CONFIG` (absolute or relative path) |
-| 2 | `~/.k8e/config.yaml` |
+| 1 | `K8E_SANDBOX_CONFIG` (explicit path) |
+| 2 | `~/.k8e/sandbox/profiles.yaml` (canonical) |
+| 3 | `~/.k8e/config.yaml` (**legacy only** — deprecation warning on stderr; migrate away) |
 
-k8e does **not** use `XDG_CONFIG_HOME`; paths stay under `~/.k8e/` (or explicit `K8E_SANDBOX_*` overrides).
+**Why not `config.yaml` for the CLI:**
+
+- Server already owns `/etc/k8e/config.yaml` as the only well-known `config.yaml` for k8e.
+- `configfilearg` strips unknown keys; dropping a profiles document there would silently break server startup if someone merged files.
+- A verb-named file (`profiles.yaml`) next to certs matches “client multi-cluster” mental model.
 
 **Schema (`version: 1`):**
 
 ```yaml
+# ~/.k8e/sandbox/profiles.yaml  — NOT /etc/k8e/config.yaml
 version: 1
 current_profile: default   # used when --profile / env unset
 profiles:
@@ -84,7 +88,8 @@ Applying a profile with `cert_dir` sets `K8E_SANDBOX_CERT_DIR` for the process s
 
 **Non-goals (this KIP):**
 
-- Storing API keys inside `config.yaml` (still env / flag only)
+- Storing API keys inside profiles.yaml (still env / flag only)
+- Writing profiles into `/etc/k8e/config.yaml` (server-only)
 - Interactive profile wizard
 - Syncing profiles via cluster CRDs
 
@@ -149,5 +154,6 @@ Default client cert lifetime (KIP-14 / #538) stays **90 days** with lazy renew a
 | Option | Why not |
 |--------|---------|
 | One cert dir, multiple endpoint stamps only | Still no named ergonomics; agents need stable `--profile prod` |
-| Store keys in config.yaml | Secrets in user config files leak into backups/chat |
+| Store keys in profiles.yaml | Secrets in user config files leak into backups/chat |
+| Reuse name `~/.k8e/config.yaml` | Collides with server `/etc/k8e/config.yaml` in user mental model |
 | Force-migrate legacy keys to 30d | Breaks existing clusters; migrate only on new create |

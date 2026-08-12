@@ -23,7 +23,7 @@ const errSessionNotFound = "not found"
 var ErrSessionGone = errors.New("sandbox session expired or destroyed")
 
 // newClientFromCtx creates a gRPC client using endpoint/apikey from global flags,
-// env, and optional ~/.k8e/config.yaml profile (KIP-17).
+// env, and optional ~/.k8e/sandbox/profiles.yaml profile (KIP-17).
 func newClientFromCtx(ctx *cli.Context) (*client.Client, *ExitError) {
 	resolved, err := ResolveConn(ctx.GlobalString("endpoint"), ctx.GlobalString("apikey"), ctx.GlobalString("profile"), "")
 	if err != nil {

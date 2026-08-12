@@ -56,15 +56,24 @@ If you only see a platform-suffixed name in the user's environment (no symlink y
 1. **All code and shell execution goes through `k8e-sandbox-cli`** — never run `python3`, `node`, `pip`, `npm`, `curl`, compilers, or tests on the host for this goal.
 2. Prefer auto session mode: `k8e-sandbox-cli run "..."` (creates/reuses session).
 3. Parse JSON with `jq` unless `--raw` is used.
-4. If the gateway is unreachable, tell the user to run `k8e-sandbox-cli connect` (local) or `k8e-sandbox-cli connect --endpoint <host>:50051 --apikey <key>` (remote). Multi-cluster: `--profile <name>` / `~/.k8e/config.yaml` (KIP-17).
+4. If the gateway is unreachable, tell the user to run `k8e-sandbox-cli connect` (local) or `k8e-sandbox-cli connect --endpoint <host>:50051 --apikey <key>` (remote). Multi-cluster: `--profile <name>` / `~/.k8e/sandbox/profiles.yaml` (KIP-17).
 
 ## Auth & multi-profile (KIP-14 / KIP-17 / #538)
 
+**Do not confuse these files:**
+
+| Path | Who | What |
+|------|-----|------|
+| `/etc/k8e/config.yaml` | **k8e server/agent** | Daemon flags only |
+| `~/.k8e/sandbox/profiles.yaml` | **k8e-sandbox-cli** | Named gateways / cert dirs |
+| `~/.k8e/sandbox/config.json` | **k8e-sandbox-cli** | Last connect stamp |
+
 **mTLS bootstrap:** first remote connect/login uses an API key once; CLI stores `ca.crt` + `client.crt` + `client.key` (private key never leaves the machine). Client certs last **90 days** and auto-renew when **&lt;30 days** remain. API keys default to **30-day TTL** (`k8e sandbox-apikey create name`, override with `--ttl 90d|never`).
 
-**Profiles** (`~/.k8e/config.yaml`, optional `K8E_SANDBOX_CONFIG`):
+**Profiles** (`~/.k8e/sandbox/profiles.yaml`, override with `K8E_SANDBOX_CONFIG`):
 
 ```yaml
+# ~/.k8e/sandbox/profiles.yaml  — NOT /etc/k8e/config.yaml
 version: 1
 current_profile: default
 profiles:
@@ -82,7 +91,7 @@ k8e-sandbox-cli --profile prod run 'echo hi'
 # or: export K8E_SANDBOX_PROFILE=prod
 ```
 
-Priority: flags → env (`K8E_SANDBOX_ENDPOINT` / `APIKEY` / `CERT_DIR` / `PROFILE`) → profile → defaults. Cert dir: `K8E_SANDBOX_CERT_DIR` → `~/.k8e/sandbox` (no XDG).
+Priority: flags → env (`K8E_SANDBOX_ENDPOINT` / `APIKEY` / `CERT_DIR` / `PROFILE`) → profile → defaults. Cert dir: `K8E_SANDBOX_CERT_DIR` → `~/.k8e/sandbox`.
 
 ## Procedure (always)
 
@@ -152,7 +161,7 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 
 | Command | Purpose |
 |---------|---------|
-| `k8e-sandbox-cli --profile <name> …` | Use named profile from `~/.k8e/config.yaml` |
+| `k8e-sandbox-cli --profile <name> …` | Use named profile from `~/.k8e/sandbox/profiles.yaml` |
 | `k8e-sandbox-cli connect` | Local/remote auth + install this skill into agent harnesses |
 | `k8e-sandbox-cli connect --skill-only` | Re-install this skill only (no gateway dial) |
 | `k8e-sandbox-cli login` | Remote mTLS only (no skill install); optional `--device-name` |
