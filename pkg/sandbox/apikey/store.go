@@ -126,44 +126,37 @@ func NewRecord(key string, ttlDays int, never bool, now time.Time) Record {
 // Returns (ttlDays, never, error).
 func ParseTTL(s string) (ttlDays int, never bool, err error) {
 	s = strings.TrimSpace(strings.ToLower(s))
-	if s == "" {
-		return DefaultTTLDays, false, nil
-	}
 	switch s {
+	case "":
+		return DefaultTTLDays, false, nil
 	case "never", "none", "0":
 		return 0, true, nil
 	}
-	if strings.HasSuffix(s, "d") {
-		n, e := strconv.Atoi(strings.TrimSuffix(s, "d"))
-		if e != nil || n < 0 {
-			return 0, false, fmt.Errorf("invalid ttl %q (want Nd, e.g. 30d)", s)
-		}
-		if n == 0 {
-			return 0, true, nil
-		}
-		return n, false, nil
+
+	unit := "d"
+	raw := s
+	switch {
+	case strings.HasSuffix(s, "d"):
+		raw = strings.TrimSuffix(s, "d")
+	case strings.HasSuffix(s, "h"):
+		unit = "h"
+		raw = strings.TrimSuffix(s, "h")
 	}
-	if strings.HasSuffix(s, "h") {
-		n, e := strconv.Atoi(strings.TrimSuffix(s, "h"))
-		if e != nil || n < 0 {
-			return 0, false, fmt.Errorf("invalid ttl %q (want Nh, e.g. 720h)", s)
-		}
-		if n == 0 {
-			return 0, true, nil
-		}
+
+	n, e := strconv.Atoi(raw)
+	if e != nil || n < 0 {
+		return 0, false, fmt.Errorf("invalid ttl %q (want 30d, 720h, 30, or never)", s)
+	}
+	if n == 0 {
+		return 0, true, nil
+	}
+	if unit == "h" {
 		// Round up to whole days for storage; min 1 day if any hours remain.
 		days := (n + 23) / 24
 		if days < 1 {
 			days = 1
 		}
 		return days, false, nil
-	}
-	n, e := strconv.Atoi(s)
-	if e != nil || n < 0 {
-		return 0, false, fmt.Errorf("invalid ttl %q (want 30d, 720h, 30, or never)", s)
-	}
-	if n == 0 {
-		return 0, true, nil
 	}
 	return n, false, nil
 }

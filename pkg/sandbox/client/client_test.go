@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -131,7 +132,7 @@ func TestAtomicWriteFileAndLoadOrGenerateKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(payload) {
+	if !bytes.Equal(got, payload) {
 		t.Fatalf("atomic write mismatch: %q", got)
 	}
 	// no leftover temp files
