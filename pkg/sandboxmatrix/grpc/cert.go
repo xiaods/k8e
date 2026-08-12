@@ -272,13 +272,25 @@ func (s *issuedCertStore) PruneExpired() {
 			n++
 		}
 	}
+	// Only rewrite the ledger when something was removed (hot Login path).
+	if n == len(s.records) {
+		return
+	}
 	s.records = s.records[:n]
 	s.save()
 }
 
 func (s *issuedCertStore) save() {
-	data, _ := json.MarshalIndent(s.records, "", "  ")
-	os.WriteFile(s.filePath, data, 0644) //nolint:errcheck
+	data, err := json.MarshalIndent(s.records, "", "  ")
+	if err != nil {
+		return
+	}
+	// Atomic replace so concurrent readers never see a half-written ledger.
+	tmp := s.filePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, s.filePath)
 }
 
 // RevocationList is an in-memory list of revoked certificate fingerprints.

@@ -56,7 +56,33 @@ If you only see a platform-suffixed name in the user's environment (no symlink y
 1. **All code and shell execution goes through `k8e-sandbox-cli`** — never run `python3`, `node`, `pip`, `npm`, `curl`, compilers, or tests on the host for this goal.
 2. Prefer auto session mode: `k8e-sandbox-cli run "..."` (creates/reuses session).
 3. Parse JSON with `jq` unless `--raw` is used.
-4. If the gateway is unreachable, tell the user to run `k8e-sandbox-cli connect` (local) or `k8e-sandbox-cli connect --endpoint <host>:50051 --apikey <key>` (remote).
+4. If the gateway is unreachable, tell the user to run `k8e-sandbox-cli connect` (local) or `k8e-sandbox-cli connect --endpoint <host>:50051 --apikey <key>` (remote). Multi-cluster: `--profile <name>` / `~/.k8e/config.yaml` (KIP-17).
+
+## Auth & multi-profile (KIP-14 / KIP-17 / #538)
+
+**mTLS bootstrap:** first remote connect/login uses an API key once; CLI stores `ca.crt` + `client.crt` + `client.key` (private key never leaves the machine). Client certs last **90 days** and auto-renew when **&lt;30 days** remain. API keys default to **30-day TTL** (`k8e sandbox-apikey create name`, override with `--ttl 90d|never`).
+
+**Profiles** (`~/.k8e/config.yaml`, optional `K8E_SANDBOX_CONFIG`):
+
+```yaml
+version: 1
+current_profile: default
+profiles:
+  default:
+    endpoint: 10.0.0.1:50051
+  prod:
+    endpoint: sandbox.prod.example:50051
+    cert_dir: ~/.k8e/sandbox-prod
+    device_name: laptop-prod
+```
+
+```bash
+k8e-sandbox-cli --profile prod connect --apikey k8e-...
+k8e-sandbox-cli --profile prod run 'echo hi'
+# or: export K8E_SANDBOX_PROFILE=prod
+```
+
+Priority: flags → env (`K8E_SANDBOX_ENDPOINT` / `APIKEY` / `CERT_DIR` / `PROFILE`) → profile → defaults. Cert dir: `K8E_SANDBOX_CERT_DIR` → `~/.k8e/sandbox` (no XDG).
 
 ## Procedure (always)
 
@@ -111,19 +137,25 @@ Show stdout/stderr and exit codes from the CLI JSON. Do not claim host-side exec
 # Local K8E node
 k8e-sandbox-cli connect
 
-# Remote — API key from server: k8e sandbox-apikey create my-agent
+# Remote — API key from server (default TTL 30d)
+k8e sandbox-apikey create my-agent
+# → {"name":"my-agent","key":"k8e-…","ttl_days":30,"expires_at":"…"}
+# k8e sandbox-apikey create my-agent --ttl never   # optional non-expiring
+
 k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
+# Multi-cluster: k8e-sandbox-cli --profile prod connect --apikey k8e-...
 ```
 
-`connect` authenticates, verifies the gateway, puts `k8e-sandbox-cli` on PATH when needed (symlink to `~/.local/bin/k8e-sandbox-cli`), and installs this skill into Claude / Codex / Pi discovery paths.
+`connect` authenticates (mTLS), verifies the gateway, puts `k8e-sandbox-cli` on PATH when needed (symlink to `~/.local/bin/k8e-sandbox-cli`), and installs this skill into Claude / Codex / Pi discovery paths.
 
 ## Command reference
 
 | Command | Purpose |
 |---------|---------|
+| `k8e-sandbox-cli --profile <name> …` | Use named profile from `~/.k8e/config.yaml` |
 | `k8e-sandbox-cli connect` | Local/remote auth + install this skill into agent harnesses |
 | `k8e-sandbox-cli connect --skill-only` | Re-install this skill only (no gateway dial) |
-| `k8e-sandbox-cli login` | Remote mTLS only (no skill install) |
+| `k8e-sandbox-cli login` | Remote mTLS only (no skill install); optional `--device-name` |
 | `k8e-sandbox-cli status` | Gateway + session probe |
 | `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--timeout`, `--raw`, `--session-id`, `--tenant`, `--background`, `--manifest`, `--git-repo`, `--allowed-hosts`) |
 | `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`, `--manifest`, `--git-repo`) |
@@ -137,7 +169,10 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child session (shares parent's pod + workspace — no new pod) |
 | `k8e-sandbox-cli confirm <sid> <action>` | Gate destructive action on human approval (`--timeout`, `--no-wait`) |
 | `k8e-sandbox-cli approve <aid>` | Approve a pending confirm (`--reject`, `--reason`) |
-| `k8e-sandbox-cli snapshot save/restore/list/delete` | Content-addressed snapshots (`save --remote`, `restore --base <snap>`) |
+| `k8e-sandbox-cli snapshot save <sid> <name>` | Save workspace snapshot (content-addressed, dedup'd) |
+| `k8e-sandbox-cli snapshot list` | List saved snapshots |
+| `k8e-sandbox-cli snapshot restore <name>` | New session from a snapshot (`--base <snap>` for incremental) |
+| `k8e-sandbox-cli snapshot delete <name>` | Delete a snapshot |
 | `k8e-sandbox-cli benchmark` | Warm-pool latency metrics (`--pool-size`, `--iterations`) |
 | `k8e-sandbox-cli catalog` | Emit machine-readable command surface (SDK generation) |
 | `k8e-sandbox-cli destroy <sid>` | Tear down session |
@@ -167,8 +202,8 @@ Default allowed hosts (kernel eBPF): `pypi.org`, `files.pythonhosted.org`, `regi
 
 | Exit | Meaning | Action |
 |------|---------|--------|
-| 2 | TLS / cert / unreachable | `connect` again; clear `~/.k8e/sandbox/ca.crt` on SAN mismatch |
-| 1 | Command/session error | Read JSON error; recreate session if gone |
+| 2 | TLS / cert / unreachable | `connect` again; clear cert dir `ca.crt` on trust mismatch; check profile `cert_dir` |
+| 1 | Command/session error | Read JSON error; recreate session if gone; re-create API key if TTL expired |
 | 8 | ResourceExhausted | Wait or free warm pool capacity |
 
 ## Your role when this skill is active
