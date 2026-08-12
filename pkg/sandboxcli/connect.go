@@ -65,14 +65,13 @@ func connectAction(ctx *cli.Context) error {
 		return connectSkillOnly(ctx)
 	}
 
-	endpoint := strings.TrimSpace(ctx.GlobalString("endpoint"))
-	apikey := strings.TrimSpace(ctx.GlobalString("apikey"))
-	if endpoint == "" {
-		endpoint = strings.TrimSpace(os.Getenv("K8E_SANDBOX_ENDPOINT"))
+	resolved, err := ResolveConn(ctx.GlobalString("endpoint"), ctx.GlobalString("apikey"), ctx.GlobalString("profile"), "")
+	if err != nil {
+		return printErrorExit(err.Error(), 1)
 	}
-	if apikey == "" {
-		apikey = strings.TrimSpace(os.Getenv("K8E_SANDBOX_APIKEY"))
-	}
+	ApplyResolvedConn(resolved)
+	endpoint := resolved.Endpoint
+	apikey := resolved.APIKey
 
 	mode, cfgEndpoint, err := resolveConnectMode(endpoint, apikey)
 	if err != nil {
@@ -251,9 +250,9 @@ func printConnectSuccess(mode, endpoint, cliPath string, agents []string, result
 	}
 	fmt.Fprintf(os.Stderr, "✓ Connected to K8E sandbox (%s)\n", mode)
 	fmt.Fprintf(os.Stderr, "  Endpoint: %s\n", ep)
-	fmt.Fprintf(os.Stderr, "  Config:   ~/.k8e/sandbox/config.json\n")
+	fmt.Fprintf(os.Stderr, "  Config:   ~/.k8e/sandbox/config.json (profiles: ~/.k8e/config.yaml)\n")
 	if mode == "remote" {
-		fmt.Fprintf(os.Stderr, "  Creds:    ~/.k8e/sandbox/{ca.crt,client.crt,client.key}\n")
+		fmt.Fprintf(os.Stderr, "  Creds:    ~/.k8e/sandbox/{ca.crt,client.crt,client.key} (or profile cert_dir)\n")
 	}
 	if cliPath != "" {
 		fmt.Fprintf(os.Stderr, "  CLI:      %s\n", cliPath)

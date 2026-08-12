@@ -3,6 +3,7 @@ package sandboxcli
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/sandbox/client"
@@ -17,14 +18,20 @@ func LoginCommand() cli.Command {
 			cli.StringFlag{Name: "device-name", Usage: "Device name for audit logging (default: hostname)"},
 		},
 		Action: func(ctx *cli.Context) error {
-			endpoint := ctx.GlobalString("endpoint")
-			apikey := ctx.GlobalString("apikey")
+			deviceFlag := strings.TrimSpace(ctx.String("device-name"))
+			resolved, err := ResolveConn(ctx.GlobalString("endpoint"), ctx.GlobalString("apikey"), ctx.GlobalString("profile"), deviceFlag)
+			if err != nil {
+				return printErrorExit(err.Error(), 1)
+			}
+			ApplyResolvedConn(resolved)
+			endpoint := resolved.Endpoint
+			apikey := resolved.APIKey
 
 			if endpoint == "" {
-				return printErrorExit("--endpoint is required for login (e.g. sandbox.example.com:50051)", 1)
+				return printErrorExit("--endpoint is required for login (e.g. sandbox.example.com:50051), or set a profile", 1)
 			}
 			if apikey == "" {
-				return printErrorExit("--apikey is required for login", 1)
+				return printErrorExit("--apikey is required for login (or K8E_SANDBOX_APIKEY)", 1)
 			}
 
 			c, err := client.NewClientWithEndpoint(endpoint, apikey)
@@ -40,8 +47,11 @@ func LoginCommand() cli.Command {
 			}
 
 			fmt.Fprintf(os.Stderr, "✓ Logged in to %s\n", endpoint)
-			fmt.Fprintf(os.Stderr, "  Credentials stored in ~/.k8e/sandbox/\n")
-			fmt.Fprintf(os.Stderr, "  Certificate valid for 30 days (auto-renewed on use)\n")
+			if resolved.Profile != "" {
+				fmt.Fprintf(os.Stderr, "  Profile:  %s\n", resolved.Profile)
+			}
+			fmt.Fprintf(os.Stderr, "  Credentials stored in ~/.k8e/sandbox/ (override with K8E_SANDBOX_CERT_DIR / profile cert_dir)\n")
+			fmt.Fprintf(os.Stderr, "  Certificate valid for 90 days (auto-renewed when <30 days remain)\n")
 			fmt.Fprintf(os.Stderr, "  Tip: use 'k8e-sandbox-cli connect' to also install /k8e-sandbox skills\n")
 			return nil
 		},

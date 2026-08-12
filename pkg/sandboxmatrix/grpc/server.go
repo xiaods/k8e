@@ -17,9 +17,11 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"github.com/xiaods/k8e/pkg/sandbox/apikey"
 	"github.com/xiaods/k8e/pkg/sandboxlayer"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
@@ -130,12 +132,16 @@ type Server struct {
 	serverKeyFile  string
 	caCert         *x509.Certificate
 	caKey          *ecdsa.PrivateKey
-	apiKeys        map[string]string // name → key for validation
-	issuedStore    *issuedCertStore
-	revocList      *RevocationList
-	localAuth      bool
-	rateLimiter    *ratelimit.Limiter
-	layerStore     *sandboxlayer.Store
+	// apiKeysMu guards apiKeys + apiKeyByToken against concurrent Login reads
+	// while reloadConfigLoop swaps the maps every 30s.
+	apiKeysMu     sync.RWMutex
+	apiKeys       map[string]string // name → key
+	apiKeyByToken map[string]string // key → name (O(1) Login lookup)
+	issuedStore   *issuedCertStore
+	revocList     *RevocationList
+	localAuth     bool
+	rateLimiter   *ratelimit.Limiter
+	layerStore    *sandboxlayer.Store
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -168,34 +174,64 @@ func NewServer(cfg ServerConfig) *Server {
 }
 
 // loadAPIKeys reads API keys from the sandbox-apikeys Secret.
+// Supports legacy flat map and KIP-17 v2 records with TTL; expired keys are dropped.
 func (s *Server) loadAPIKeys(ctx context.Context) {
 	secret, err := s.k8s.CoreV1().Secrets(apiKeySecretNS).Get(ctx, apiKeySecretName, metav1.GetOptions{})
 	if err != nil {
 		logrus.Debugf("sandbox gRPC: no api-key secret found, all requests allowed")
-		s.apiKeys = nil
+		s.replaceAPIKeys(nil)
 		return
 	}
 	data, ok := secret.Data["keys.json"]
 	if !ok {
-		s.apiKeys = nil
+		s.replaceAPIKeys(nil)
 		return
 	}
-	var store map[string]string
-	if err := json.Unmarshal(data, &store); err != nil {
+	records, err := apikey.Parse(data)
+	if err != nil {
 		logrus.Warnf("sandbox gRPC: api-key secret corrupted: %v", err)
 		return
 	}
-	// Detect removed keys and revoke their certificates
-	if s.revocList != nil && s.issuedStore != nil {
-		for name := range s.apiKeys {
+	store := apikey.ActiveSecrets(records, time.Now())
+	// Detect removed keys and revoke their certificates (snapshot under RLock).
+	s.apiKeysMu.RLock()
+	prev := s.apiKeys
+	s.apiKeysMu.RUnlock()
+	if s.revocList != nil && s.issuedStore != nil && prev != nil {
+		for name := range prev {
 			if _, ok := store[name]; !ok {
 				s.revocList.RevokeByKeyName(s.issuedStore, name)
 				logrus.Infof("sandbox gRPC: revoked certificates for deleted API key %q", name)
 			}
 		}
 	}
+	s.replaceAPIKeys(store)
+	logrus.Infof("sandbox gRPC: loaded %d active API key(s) (%d total in secret)", len(store), len(records))
+}
+
+// replaceAPIKeys swaps the name→key map and rebuilds the O(1) reverse index under write lock.
+func (s *Server) replaceAPIKeys(store map[string]string) {
+	var byToken map[string]string
+	if store != nil {
+		byToken = make(map[string]string, len(store))
+		for name, key := range store {
+			byToken[key] = name
+		}
+	}
+	s.apiKeysMu.Lock()
 	s.apiKeys = store
-	logrus.Infof("sandbox gRPC: loaded %d API key(s)", len(store))
+	s.apiKeyByToken = byToken
+	s.apiKeysMu.Unlock()
+}
+
+// lookupAPIKeyName resolves an API key token to its name in O(1).
+func (s *Server) lookupAPIKeyName(token string) string {
+	s.apiKeysMu.RLock()
+	defer s.apiKeysMu.RUnlock()
+	if s.apiKeyByToken == nil {
+		return ""
+	}
+	return s.apiKeyByToken[token]
 }
 
 // reloadConfigLoop periodically reloads API keys and rate limits from the SandboxMatrix CRD.
@@ -804,23 +840,25 @@ func (s *Server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResp
 			return nil, status.Error(codes.Unauthenticated, "missing API key or client certificate")
 		}
 		token := strings.TrimPrefix(auth[0], "Bearer ")
-		for name, key := range s.apiKeys {
-			if key == token {
-				keyName = name
-				break
-			}
-		}
+		keyName = s.lookupAPIKeyName(token)
 		if keyName == "" {
 			return nil, status.Error(codes.Unauthenticated, "invalid API key")
 		}
 	}
 
-	certPEM, fingerprint, err := signClientCert(s.caKey, s.caCert, req.Csr, keyName, 30)
+	// 90-day leaf certs (issue #538): long enough for agent/CI sessions, short
+	// enough for key rotation. Clients renew when <30 days remain.
+	const clientCertTTLDays = 90
+	certPEM, fingerprint, err := signClientCert(s.caKey, s.caCert, req.Csr, keyName, clientCertTTLDays)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "sign certificate: %v", err)
 	}
 
-	s.issuedStore.Add(keyName, fingerprint, time.Now(), time.Now().Add(30*24*time.Hour))
+	if s.issuedStore != nil {
+		// Opportunistic prune keeps the on-disk ledger from growing without bound.
+		s.issuedStore.PruneExpired()
+		s.issuedStore.Add(keyName, fingerprint, time.Now(), time.Now().Add(time.Duration(clientCertTTLDays)*24*time.Hour))
+	}
 
 	logrus.WithFields(logrus.Fields{
 		"key_name":         keyName,
@@ -834,7 +872,7 @@ func (s *Server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResp
 	return &pb.LoginResponse{
 		Cert:      certPEM,
 		CaCert:    string(caPEM),
-		ValidDays: 30,
+		ValidDays: clientCertTTLDays,
 	}, nil
 }
 

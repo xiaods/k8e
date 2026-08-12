@@ -191,12 +191,15 @@ chmod +x k8e-sandbox-cli-linux-amd64
 # Symlink the plain command name to the downloaded file (do not rename)
 ln -s k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli
 
-# Create an API key on the server
+# Create an API key on the server (default TTL 30 days; use --ttl never for non-expiring)
 k8e sandbox-apikey create my-agent
-# → {"name":"my-agent","key":"k8e-abc123..."}
+# → {"name":"my-agent","key":"k8e-abc123...","ttl_days":30,"expires_at":"..."}
 
 # Connect: authenticate (mTLS) + install /k8e-sandbox skill into agent harnesses
 ./k8e-sandbox-cli --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
+
+# Optional multi-cluster profiles (~/.k8e/config.yaml) — see docs/kip-17-sandbox-cli-profiles-and-apikey-ttl.md
+# ./k8e-sandbox-cli --profile prod connect --apikey k8e-...
 ```
 
 > **Local usage:** If you're on the same machine as the K8E server, the CLI auto-discovers TLS certs — just run `k8e-sandbox-cli connect`.
@@ -329,6 +332,7 @@ Or ask naturally: *"Run this Python snippet in a sandbox"* — the skill drives 
 
 | Command | Description |
 |---|---|
+| `k8e-sandbox-cli --profile <name> …` | Use named profile from `~/.k8e/config.yaml` (KIP-17) |
 | `k8e-sandbox-cli connect` | Connect local/remote gateway and install `/k8e-sandbox` agent skill |
 | `k8e-sandbox-cli connect --skill-only` | Re-install agent skill only (no gateway dial) |
 | `k8e-sandbox-cli login` | Authenticate only (mTLS cert; no skill install) |
@@ -342,11 +346,11 @@ Or ask naturally: *"Run this Python snippet in a sandbox"* — the skill drives 
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
 | `k8e-sandbox-cli confirm <sid> <action>` | Gate irreversible action on human approval |
 | `k8e-sandbox-cli approve <approval-id>` | Approve a pending confirm request |
-| `k8e sandbox-apikey create <name>` | Create API key for remote sandbox access (server-side) |
-| `k8e sandbox-apikey list` | List API key names (server-side) |
+| `k8e sandbox-apikey create <name> [--ttl 30d\|never]` | Create API key (default TTL **30 days**) |
+| `k8e sandbox-apikey list` | List API key names + expiry (secrets not shown) |
 | `k8e sandbox-apikey delete <name>` | Delete an API key (server-side) |
 
-See [pkg/sandboxcli/skills/k8e-sandbox/SKILL.md](pkg/sandboxcli/skills/k8e-sandbox/SKILL.md) for full usage examples.
+See [pkg/sandboxcli/skills/k8e-sandbox/SKILL.md](pkg/sandboxcli/skills/k8e-sandbox/SKILL.md) and [docs/kip-17-sandbox-cli-profiles-and-apikey-ttl.md](docs/kip-17-sandbox-cli-profiles-and-apikey-ttl.md).
 
 ### Quick Examples
 

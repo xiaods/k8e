@@ -17,6 +17,7 @@ import (
 	"time"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
+	"github.com/xiaods/k8e/pkg/version"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
@@ -92,11 +93,25 @@ func newLocalClient(endpoint string) (*Client, error) {
 	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
 
+// Client cert lifetime and lazy-renewal window.
+// Server issues 90-day certs; clients renew when fewer than 30 days remain so
+// the Login RPC is not paid on every dial (issue #538).
+const (
+	clientCertRenewalDays = 30
+	loginTimeout          = 15 * time.Second
+	endpointStampFile     = "endpoint"
+)
+
 // NewClientWithEndpoint connects to a remote K8E cluster at endpoint.
 // On first use, performs mTLS bootstrap: generates a key pair, logs in with the API key,
 // and obtains a short-lived client certificate. Subsequent calls use the cached certificate
 // with automatic lazy renewal.
+//
+// When apiKey is empty, K8E_SANDBOX_APIKEY is used if set (agent/CI convenience).
 func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
+	if apiKey == "" {
+		apiKey = strings.TrimSpace(os.Getenv("K8E_SANDBOX_APIKEY"))
+	}
 	if apiKey == "" {
 		if endpoint == "" {
 			return NewClient()
@@ -106,16 +121,24 @@ func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
 		}
 		return newClientWithCachedCerts(endpoint)
 	}
-	cacheDir, _ := sandboxCacheDir()
+	cacheDir, err := sandboxCacheDir()
+	if err != nil {
+		return nil, fmt.Errorf("sandbox client: resolve cache dir: %w", err)
+	}
 	caFile := filepath.Join(cacheDir, "ca.crt")
 	certFile := filepath.Join(cacheDir, "client.crt")
 	keyFile := filepath.Join(cacheDir, "client.key")
 
-	// Path 1: have CA + valid client cert → direct mTLS
+	// Path 1: have CA + valid client cert for this endpoint → direct mTLS
 	if _, caErr := os.Stat(caFile); caErr == nil {
-		if certValid(certFile) {
-			// Lazy renewal: if cert expires within 7 days, try to renew via mTLS
-			if certExpiringSoon(certFile, 7) {
+		if err := checkEndpointStamp(cacheDir, endpoint); err != nil {
+			// Wrong endpoint's material: re-bootstrap with the provided API key.
+			return bootstrapInsecure(endpoint, caFile, certFile, keyFile, apiKey)
+		}
+		st := inspectClientCert(certFile)
+		if st.valid {
+			// Lazy renewal: single cert parse already decided expiringSoon.
+			if st.expiringSoon {
 				renewClientCert(endpoint, caFile, certFile, keyFile)
 			}
 			conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
@@ -147,10 +170,14 @@ func newClientWithCachedCerts(endpoint string) (*Client, error) {
 	if _, err := os.Stat(caFile); err != nil {
 		return nil, fmt.Errorf("sandbox client: no cached CA for %s; run connect or login with --apikey", endpoint)
 	}
-	if !certValid(certFile) {
+	if err := checkEndpointStamp(cacheDir, endpoint); err != nil {
+		return nil, err
+	}
+	st := inspectClientCert(certFile)
+	if !st.valid {
 		return nil, fmt.Errorf("sandbox client: cached client certificate for %s is missing or expired; reconnect with --apikey", endpoint)
 	}
-	if certExpiringSoon(certFile, 7) {
+	if st.expiringSoon {
 		renewClientCert(endpoint, caFile, certFile, keyFile)
 	}
 
@@ -166,7 +193,7 @@ func (c *Client) Close() error { return c.conn.Close() }
 // ── mTLS bootstrap helpers ────────────────────────────────────────────────────
 
 func bootstrapWithCA(endpoint, caFile, certFile, keyFile, apiKey string) (*Client, error) {
-	key, err := generateAndSaveKey(keyFile)
+	key, err := loadOrGenerateKey(keyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -178,8 +205,11 @@ func bootstrapWithCA(endpoint, caFile, certFile, keyFile, apiKey string) (*Clien
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: login: %w", err)
 	}
-	if err := os.WriteFile(certFile, []byte(resp.Cert), 0644); err != nil {
+	if err := atomicWriteFile(certFile, []byte(resp.Cert), 0644); err != nil {
 		return nil, fmt.Errorf("sandbox client: save cert: %w", err)
+	}
+	if err := writeEndpointStamp(filepath.Dir(caFile), endpoint); err != nil {
+		return nil, fmt.Errorf("sandbox client: save endpoint stamp: %w", err)
 	}
 
 	conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
@@ -190,7 +220,7 @@ func bootstrapWithCA(endpoint, caFile, certFile, keyFile, apiKey string) (*Clien
 }
 
 func bootstrapInsecure(endpoint, caFile, certFile, keyFile, apiKey string) (*Client, error) {
-	key, err := generateAndSaveKey(keyFile)
+	key, err := loadOrGenerateKey(keyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -203,11 +233,14 @@ func bootstrapInsecure(endpoint, caFile, certFile, keyFile, apiKey string) (*Cli
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: bootstrap login: %w", err)
 	}
-	if err := os.WriteFile(caFile, []byte(resp.CaCert), 0644); err != nil {
+	if err := atomicWriteFile(caFile, []byte(resp.CaCert), 0644); err != nil {
 		return nil, fmt.Errorf("sandbox client: save CA: %w", err)
 	}
-	if err := os.WriteFile(certFile, []byte(resp.Cert), 0644); err != nil {
+	if err := atomicWriteFile(certFile, []byte(resp.Cert), 0644); err != nil {
 		return nil, fmt.Errorf("sandbox client: save cert: %w", err)
+	}
+	if err := writeEndpointStamp(filepath.Dir(caFile), endpoint); err != nil {
+		return nil, fmt.Errorf("sandbox client: save endpoint stamp: %w", err)
 	}
 
 	conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
@@ -232,10 +265,23 @@ func renewClientCert(endpoint, caFile, certFile, keyFile string) {
 	if err != nil {
 		return
 	}
-	os.WriteFile(certFile, []byte(resp.Cert), 0644) //nolint:errcheck
+	if err := atomicWriteFile(certFile, []byte(resp.Cert), 0644); err != nil {
+		return
+	}
+	// Backfill endpoint stamp for pre-stamp installs and after successful renew.
+	_ = writeEndpointStamp(filepath.Dir(caFile), endpoint)
 }
 
 // ── Key & CSR generation ──────────────────────────────────────────────────────
+
+// loadOrGenerateKey reuses an existing client key when present so re-login after
+// cert expiry does not pay for a new ECDSA keygen or invalidate other cached material.
+func loadOrGenerateKey(keyFile string) (*ecdsa.PrivateKey, error) {
+	if key, err := loadClientKey(keyFile); err == nil {
+		return key, nil
+	}
+	return generateAndSaveKey(keyFile)
+}
 
 func generateAndSaveKey(keyFile string) (*ecdsa.PrivateKey, error) {
 	if err := os.MkdirAll(filepath.Dir(keyFile), 0700); err != nil {
@@ -249,12 +295,43 @@ func generateAndSaveKey(keyFile string) (*ecdsa.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sandbox client: marshal key: %w", err)
 	}
-	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{
+	if err := atomicWriteFile(keyFile, pem.EncodeToMemory(&pem.Block{
 		Type: "EC PRIVATE KEY", Bytes: der,
 	}), 0600); err != nil {
 		return nil, fmt.Errorf("sandbox client: save key: %w", err)
 	}
 	return key, nil
+}
+
+// atomicWriteFile writes data via temp file + rename so concurrent CLI processes
+// never observe a half-written cert/key (issue #538).
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	// Best-effort cleanup if rename never happens.
+	defer os.Remove(tmp) //nolint:errcheck
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(perm); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func createCSR(key *ecdsa.PrivateKey) (string, error) {
@@ -284,21 +361,29 @@ func loadClientKey(keyFile string) (*ecdsa.PrivateKey, error) {
 
 // ── Certificate validation ────────────────────────────────────────────────────
 
-func certValid(certFile string) bool {
-	cert, err := loadAndParseCert(certFile)
-	if err != nil {
-		return false
-	}
-	now := time.Now()
-	return now.After(cert.NotBefore) && now.Before(cert.NotAfter)
+// certStatus is the result of a single PEM load+parse for the hot dial path.
+type certStatus struct {
+	valid        bool
+	expiringSoon bool
 }
 
-func certExpiringSoon(certFile string, days int) bool {
+// inspectClientCert loads and parses the client cert once, deciding both
+// validity and whether lazy renewal should run. Avoids double disk+parse work
+// that the previous certValid + certExpiringSoon pair paid on every dial.
+func inspectClientCert(certFile string) certStatus {
 	cert, err := loadAndParseCert(certFile)
 	if err != nil {
-		return true
+		return certStatus{}
 	}
-	return time.Now().After(cert.NotAfter.Add(-time.Duration(days) * 24 * time.Hour))
+	now := time.Now()
+	if !now.After(cert.NotBefore) || !now.Before(cert.NotAfter) {
+		return certStatus{}
+	}
+	renewAfter := cert.NotAfter.Add(-time.Duration(clientCertRenewalDays) * 24 * time.Hour)
+	return certStatus{
+		valid:        true,
+		expiringSoon: now.After(renewAfter) || now.Equal(renewAfter),
+	}
 }
 
 func loadAndParseCert(certFile string) (*x509.Certificate, error) {
@@ -315,7 +400,14 @@ func loadAndParseCert(certFile string) (*x509.Certificate, error) {
 
 // ── Connection helpers ────────────────────────────────────────────────────────
 
-func dialMTLS(endpoint, caFile, certFile, keyFile string) (*grpc.ClientConn, error) {
+// mtlsMaterial holds parsed CA pool + client leaf for one dial (avoids re-reading
+// the same PEM files across helper layers on a single connect path).
+type mtlsMaterial struct {
+	pool       *x509.CertPool
+	clientCert tls.Certificate
+}
+
+func loadMTLSMaterial(caFile, certFile, keyFile string) (*mtlsMaterial, error) {
 	caPEM, err := os.ReadFile(caFile)
 	if err != nil {
 		return nil, fmt.Errorf("read CA: %w", err)
@@ -324,19 +416,29 @@ func dialMTLS(endpoint, caFile, certFile, keyFile string) (*grpc.ClientConn, err
 	if !pool.AppendCertsFromPEM(caPEM) {
 		return nil, fmt.Errorf("parse CA cert")
 	}
-
 	clientCert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("load client cert: %w", err)
 	}
+	return &mtlsMaterial{pool: pool, clientCert: clientCert}, nil
+}
 
+func dialMTLS(endpoint, caFile, certFile, keyFile string) (*grpc.ClientConn, error) {
+	mat, err := loadMTLSMaterial(caFile, certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	return dialMTLSMaterial(endpoint, mat)
+}
+
+func dialMTLSMaterial(endpoint string, mat *mtlsMaterial) (*grpc.ClientConn, error) {
 	var creds credentials.TransportCredentials
 	if isLoopback(endpoint) {
-		creds = credentials.NewTLS(loopbackTLSConfig(pool, clientCert))
+		creds = credentials.NewTLS(loopbackTLSConfig(mat.pool, mat.clientCert))
 	} else {
 		creds = credentials.NewTLS(&tls.Config{
-			Certificates: []tls.Certificate{clientCert},
-			RootCAs:      pool,
+			Certificates: []tls.Certificate{mat.clientCert},
+			RootCAs:      mat.pool,
 			MinVersion:   tls.VersionTLS12,
 		})
 	}
@@ -413,12 +515,12 @@ func callLogin(endpoint, caFile, apiKey, csr string) (*pb.LoginResponse, error) 
 	}
 	defer conn.Close()
 
-	ctx := metadata.AppendToOutgoingContext(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
+	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx,
 		"authorization", "Bearer "+apiKey,
 	)
-	return pb.NewSandboxServiceClient(conn).Login(ctx, &pb.LoginRequest{
-		Csr: csr,
-	})
+	return pb.NewSandboxServiceClient(conn).Login(ctx, loginRequest(csr))
 }
 
 func callLoginMTLS(endpoint, caFile, certFile, keyFile, csr string) (*pb.LoginResponse, error) {
@@ -428,18 +530,88 @@ func callLoginMTLS(endpoint, caFile, certFile, keyFile, csr string) (*pb.LoginRe
 	}
 	defer conn.Close()
 
-	return pb.NewSandboxServiceClient(conn).Login(context.Background(), &pb.LoginRequest{
-		Csr: csr,
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
+	defer cancel()
+	return pb.NewSandboxServiceClient(conn).Login(ctx, loginRequest(csr))
+}
+
+// loginRequest builds the Login RPC body with CSR plus audit fields.
+// Device name priority: K8E_SANDBOX_DEVICE_NAME → hostname (empty if unknown).
+func loginRequest(csr string) *pb.LoginRequest {
+	return &pb.LoginRequest{
+		Csr:           csr,
+		DeviceName:    loginDeviceName(),
+		ClientVersion: version.Version,
+	}
+}
+
+func loginDeviceName() string {
+	if n := strings.TrimSpace(os.Getenv("K8E_SANDBOX_DEVICE_NAME")); n != "" {
+		return n
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return host
+}
+
+// writeEndpointStamp records which gateway these certs belong to so a later
+// dial against a different endpoint does not silently reuse the wrong mTLS material.
+func writeEndpointStamp(cacheDir, endpoint string) error {
+	return atomicWriteFile(filepath.Join(cacheDir, endpointStampFile), []byte(endpoint+"\n"), 0644)
+}
+
+// checkEndpointStamp returns an error when cached material was issued for a
+// different endpoint. Missing stamp is tolerated for backward compatibility
+// (pre-stamp installs) and is filled in on the next successful bootstrap/renew.
+func checkEndpointStamp(cacheDir, endpoint string) error {
+	path := filepath.Join(cacheDir, endpointStampFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("sandbox client: read endpoint stamp: %w", err)
+	}
+	cached := strings.TrimSpace(string(data))
+	if cached == "" || cached == endpoint {
+		return nil
+	}
+	return fmt.Errorf("sandbox client: cached certs are for %q, not %q; re-run login/connect with --apikey or use a separate K8E_SANDBOX_CERT_DIR", cached, endpoint)
 }
 
 func dialErr(endpoint string, err error) error {
-	return fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
+	msg := err.Error()
+	// Friendly recovery hints for the most common remote-TLS failures (issue #538).
+	switch {
+	case strings.Contains(msg, "x509: certificate signed by unknown authority"),
+		strings.Contains(msg, "certificate is not standards compliant"),
+		strings.Contains(msg, "x509:"):
+		cacheHint, _ := sandboxCacheDir()
+		if cacheHint == "" {
+			cacheHint = "~/.k8e/sandbox"
+		}
+		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: TLS trust failed — remove %s/ca.crt and re-run login/connect with --apikey", endpoint, err, cacheHint)
+	case strings.Contains(msg, "certificate required"),
+		strings.Contains(msg, "bad certificate"):
+		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: client cert rejected — re-run login/connect with --apikey", endpoint, err)
+	default:
+		return fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
+	}
 }
 
 // ── Local auto-discovery ──────────────────────────────────────────────────────
 
+// sandboxCacheDir resolves the directory for CA + client cert material.
+// Priority: K8E_SANDBOX_CERT_DIR → $XDG_CONFIG_HOME/k8e/sandbox → ~/.k8e/sandbox.
 func sandboxCacheDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("K8E_SANDBOX_CERT_DIR")); dir != "" {
+		return filepath.Clean(dir), nil
+	}
+	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
+		return filepath.Join(xdg, "k8e", "sandbox"), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
