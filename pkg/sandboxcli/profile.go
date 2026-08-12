@@ -9,7 +9,17 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// ProfileFile is the multi-cluster CLI config (KIP-17): ~/.k8e/config.yaml.
+// Canonical multi-profile file for k8e-sandbox-cli (KIP-17).
+// Intentionally NOT named config.yaml — that name is reserved for the
+// k8e server/agent daemon flag file at /etc/k8e/config.yaml (configfilearg).
+const profilesFileName = "profiles.yaml"
+
+// legacyHomeProfilesPath is the short-lived KIP-17 path that collided in name
+// with the server config. Still read for one release with a stderr warning.
+const legacyHomeProfilesRel = ".k8e/config.yaml"
+
+// ProfileFile is the multi-cluster CLI config (KIP-17).
+// Default path: ~/.k8e/sandbox/profiles.yaml
 type ProfileFile struct {
 	Version        int                `yaml:"version"`
 	CurrentProfile string             `yaml:"current_profile"`
@@ -32,19 +42,36 @@ type ResolvedConn struct {
 	Profile    string // empty if no profile file/selection
 }
 
-// profileConfigPaths returns candidate config.yaml paths in priority order.
+// DefaultProfilesPath returns the canonical user profiles file path.
+func DefaultProfilesPath() (string, error) {
+	dir, err := dataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, profilesFileName), nil
+}
+
+// profileConfigPaths returns candidate profile file paths in priority order.
+//
+//  1. K8E_SANDBOX_CONFIG (explicit override)
+//  2. ~/.k8e/sandbox/profiles.yaml (or $K8E_SANDBOX_CERT_DIR/profiles.yaml)
+//  3. ~/.k8e/config.yaml (legacy; name collides with server /etc/k8e/config.yaml)
 func profileConfigPaths() []string {
 	var paths []string
 	if p := strings.TrimSpace(os.Getenv("K8E_SANDBOX_CONFIG")); p != "" {
 		paths = append(paths, p)
 	}
+	if p, err := DefaultProfilesPath(); err == nil {
+		paths = append(paths, p)
+	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		paths = append(paths, filepath.Join(home, ".k8e", "config.yaml"))
+		paths = append(paths, filepath.Join(home, legacyHomeProfilesRel))
 	}
 	return paths
 }
 
 // LoadProfileFile reads the first existing profile config. Returns (nil, nil) when none exist.
+// If the legacy ~/.k8e/config.yaml path is used, a deprecation warning is printed to stderr.
 func LoadProfileFile() (*ProfileFile, string, error) {
 	for _, path := range profileConfigPaths() {
 		data, err := os.ReadFile(path)
@@ -52,18 +79,35 @@ func LoadProfileFile() (*ProfileFile, string, error) {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return nil, path, fmt.Errorf("read profile config %s: %w", path, err)
+			return nil, path, fmt.Errorf("read sandbox profiles %s: %w", path, err)
 		}
 		var f ProfileFile
 		if err := yaml.Unmarshal(data, &f); err != nil {
-			return nil, path, fmt.Errorf("parse profile config %s: %w", path, err)
+			return nil, path, fmt.Errorf("parse sandbox profiles %s: %w", path, err)
 		}
 		if f.Profiles == nil {
 			f.Profiles = map[string]Profile{}
 		}
+		if isLegacyHomeProfilesPath(path) {
+			canonical, _ := DefaultProfilesPath()
+			if canonical == "" {
+				canonical = "~/.k8e/sandbox/profiles.yaml"
+			}
+			fmt.Fprintf(os.Stderr, "⚠ sandbox profiles: %s is deprecated (name collides with server /etc/k8e/config.yaml).\n  Move this file to %s\n", path, canonical)
+		}
 		return &f, path, nil
 	}
 	return nil, "", nil
+}
+
+func isLegacyHomeProfilesPath(path string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	// Compare cleaned absolute-ish paths.
+	legacy := filepath.Clean(filepath.Join(home, legacyHomeProfilesRel))
+	return filepath.Clean(path) == legacy
 }
 
 // SelectProfileName picks the active profile name.
@@ -117,7 +161,7 @@ func ResolveConn(flagEndpoint, flagAPIKey, flagProfile, flagDevice string) (*Res
 	}
 	prof, ok := file.Profiles[name]
 	if !ok {
-		return nil, fmt.Errorf("sandbox profile %q not found in config.yaml", name)
+		return nil, fmt.Errorf("sandbox profile %q not found in profiles.yaml", name)
 	}
 	out.Profile = name
 	if out.Endpoint == "" {

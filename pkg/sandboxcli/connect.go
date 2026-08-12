@@ -250,7 +250,8 @@ func printConnectSuccess(mode, endpoint, cliPath string, agents []string, result
 	}
 	fmt.Fprintf(os.Stderr, "✓ Connected to K8E sandbox (%s)\n", mode)
 	fmt.Fprintf(os.Stderr, "  Endpoint: %s\n", ep)
-	fmt.Fprintf(os.Stderr, "  Config:   ~/.k8e/sandbox/config.json (profiles: ~/.k8e/config.yaml)\n")
+	fmt.Fprintf(os.Stderr, "  Config:   ~/.k8e/sandbox/config.json (last connect)\n")
+	fmt.Fprintf(os.Stderr, "  Profiles: ~/.k8e/sandbox/profiles.yaml (CLI only; server uses /etc/k8e/config.yaml)\n")
 	if mode == "remote" {
 		fmt.Fprintf(os.Stderr, "  Creds:    ~/.k8e/sandbox/{ca.crt,client.crt,client.key} (or profile cert_dir)\n")
 	}

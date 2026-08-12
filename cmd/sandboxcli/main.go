@@ -24,7 +24,7 @@ func main() {
 	app.Flags = []cli.Flag{
 		cli.StringFlag{Name: "endpoint", EnvVar: "K8E_SANDBOX_ENDPOINT", Usage: "gRPC endpoint (default: 127.0.0.1:50051)"},
 		cli.StringFlag{Name: "apikey", EnvVar: "K8E_SANDBOX_APIKEY", Usage: "API key for remote cluster authentication"},
-		cli.StringFlag{Name: "profile", EnvVar: "K8E_SANDBOX_PROFILE", Usage: "Named profile from ~/.k8e/config.yaml (KIP-17)"},
+		cli.StringFlag{Name: "profile", EnvVar: "K8E_SANDBOX_PROFILE", Usage: "Named profile from ~/.k8e/sandbox/profiles.yaml (KIP-17; not server /etc/k8e/config.yaml)"},
 	}
 	commands := []cli.Command{
 		sandboxcli.ConnectCommand(),

@@ -3,6 +3,7 @@ package sandboxcli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -42,8 +43,9 @@ func TestResolveConnProfileCertDir(t *testing.T) {
 	t.Setenv("K8E_SANDBOX_PROFILE", "")
 	t.Setenv("K8E_SANDBOX_DEVICE_NAME", "")
 
-	cfgDir := filepath.Join(home, ".k8e")
-	if err := os.MkdirAll(cfgDir, 0700); err != nil {
+	// Canonical path: ~/.k8e/sandbox/profiles.yaml
+	profDir := filepath.Join(home, ".k8e", "sandbox")
+	if err := os.MkdirAll(profDir, 0700); err != nil {
 		t.Fatal(err)
 	}
 	yaml := []byte(`
@@ -57,7 +59,7 @@ profiles:
     cert_dir: ~/sandbox-prod
     device_name: ci-bot
 `)
-	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), yaml, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(profDir, profilesFileName), yaml, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -94,13 +96,104 @@ func TestResolveConnMissingProfile(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("K8E_SANDBOX_CONFIG", "")
+	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
 	t.Setenv("K8E_SANDBOX_PROFILE", "")
-	cfgDir := filepath.Join(home, ".k8e")
-	_ = os.MkdirAll(cfgDir, 0700)
-	_ = os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte("version: 1\nprofiles:\n  only:\n    endpoint: x:1\n"), 0600)
+	profDir := filepath.Join(home, ".k8e", "sandbox")
+	_ = os.MkdirAll(profDir, 0700)
+	_ = os.WriteFile(filepath.Join(profDir, profilesFileName), []byte("version: 1\nprofiles:\n  only:\n    endpoint: x:1\n"), 0600)
 
 	_, err := ResolveConn("", "", "nope", "")
 	if err == nil {
 		t.Fatal("expected missing profile error")
+	}
+	if !strings.Contains(err.Error(), "profiles.yaml") {
+		t.Fatalf("error should mention profiles.yaml: %v", err)
+	}
+}
+
+func TestLegacyHomeConfigYAMLStillLoads(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("K8E_SANDBOX_CONFIG", "")
+	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
+	t.Setenv("K8E_SANDBOX_PROFILE", "")
+	t.Setenv("K8E_SANDBOX_ENDPOINT", "")
+	t.Setenv("K8E_SANDBOX_APIKEY", "")
+	t.Setenv("K8E_SANDBOX_DEVICE_NAME", "")
+
+	// Only legacy ~/.k8e/config.yaml present (no profiles.yaml).
+	legacyDir := filepath.Join(home, ".k8e")
+	if err := os.MkdirAll(legacyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`
+version: 1
+current_profile: legacy
+profiles:
+  legacy:
+    endpoint: legacy.example:50051
+`)
+	if err := os.WriteFile(filepath.Join(legacyDir, "config.yaml"), legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := ResolveConn("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Profile != "legacy" || r.Endpoint != "legacy.example:50051" {
+		t.Fatalf("legacy load failed: %+v", r)
+	}
+}
+
+func TestCanonicalProfilesPathPreferredOverLegacy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("K8E_SANDBOX_CONFIG", "")
+	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
+	t.Setenv("K8E_SANDBOX_PROFILE", "")
+	t.Setenv("K8E_SANDBOX_ENDPOINT", "")
+
+	// Both files exist — canonical must win.
+	_ = os.MkdirAll(filepath.Join(home, ".k8e", "sandbox"), 0700)
+	_ = os.MkdirAll(filepath.Join(home, ".k8e"), 0700)
+	_ = os.WriteFile(filepath.Join(home, ".k8e", "sandbox", profilesFileName), []byte(`
+version: 1
+current_profile: new
+profiles:
+  new:
+    endpoint: new.example:1
+`), 0600)
+	_ = os.WriteFile(filepath.Join(home, ".k8e", "config.yaml"), []byte(`
+version: 1
+current_profile: old
+profiles:
+  old:
+    endpoint: old.example:1
+`), 0600)
+
+	r, err := ResolveConn("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Profile != "new" || r.Endpoint != "new.example:1" {
+		t.Fatalf("canonical should win: %+v", r)
+	}
+}
+
+func TestDefaultProfilesPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
+	p, err := DefaultProfilesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".k8e", "sandbox", profilesFileName)
+	if p != want {
+		t.Fatalf("got %q want %q", p, want)
 	}
 }
