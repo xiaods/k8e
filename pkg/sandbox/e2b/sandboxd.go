@@ -170,7 +170,7 @@ func (s *sandboxdClient) get(ctx context.Context, sessionID, path string, out an
 		}
 		base = fmt.Sprintf("http://%s:2024", ip)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -228,7 +228,7 @@ func (s *sandboxdClient) attach(ctx context.Context, sessionID string, pid int) 
 		base = fmt.Sprintf("http://%s:2024", ip)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/exec/attach?pid=%d", base, pid), nil)
+		fmt.Sprintf("%s/exec/attach?pid=%d", base, pid), http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ func (s *sandboxdClient) getWatcherEvents(ctx context.Context, sessionID string,
 		base = fmt.Sprintf("http://%s:2024", ip)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/watch/events?watcher_id=%d", base, watcherID), nil)
+		fmt.Sprintf("%s/watch/events?watcher_id=%d", base, watcherID), http.NoBody)
 	if err != nil {
 		return nil, err
 	}

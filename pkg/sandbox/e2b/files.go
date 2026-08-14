@@ -1,6 +1,7 @@
 package e2b
 
 import (
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
@@ -170,6 +171,24 @@ func (s *Server) serveFileDownload(w http.ResponseWriter, r *http.Request, sandb
 	_, _ = w.Write(body)
 }
 
+// decodeBodyIfGzip applies the SDK's gzip Content-Encoding to an upload body,
+// returning the decoded bytes; on any decode failure the original bytes are
+// kept (the sandbox then reports the true error).
+func decodeBodyIfGzip(data []byte, encoding string) []byte {
+	if encoding != "gzip" {
+		return data
+	}
+	dec, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return data
+	}
+	defer dec.Close()
+	if decoded, derr := io.ReadAll(dec); derr == nil {
+		return decoded
+	}
+	return data
+}
+
 // serveFileUpload stores a file: POST /files with multipart parts (filename
 // carries the destination path) or octet-stream with ?path=.
 func (s *Server) serveFileUpload(w http.ResponseWriter, r *http.Request, sandboxID string) {
@@ -239,13 +258,7 @@ func (s *Server) serveFileUpload(w http.ResponseWriter, r *http.Request, sandbox
 		}
 		// The SDK's gzip option is a Content-Encoding on the whole body; the
 		// sandbox must receive the decoded bytes.
-		if r.Header.Get("Content-Encoding") == "gzip" {
-			if dec, err := gzip.NewReader(strings.NewReader(string(data))); err == nil {
-				if decoded, derr := io.ReadAll(dec); derr == nil {
-					data = decoded
-				}
-			}
-		}
+		data = decodeBodyIfGzip(data, r.Header.Get("Content-Encoding"))
 		writeOne(path, string(data))
 	}
 	w.Header().Set("Content-Type", "application/json")
