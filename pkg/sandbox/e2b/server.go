@@ -103,7 +103,7 @@ func NewServer(cfg Config, gw Gateway) *Server {
 			runtimes[r] = struct{}{}
 		}
 	}
-	apiKeys := []string{}
+	var apiKeys []string
 	if cfg.APIKey != "" {
 		apiKeys = append(apiKeys, cfg.APIKey)
 	}

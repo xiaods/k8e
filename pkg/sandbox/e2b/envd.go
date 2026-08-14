@@ -646,7 +646,7 @@ func (s *Server) handleFSListDir(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
 	}
-	entries := []map[string]any{}
+	var entries []map[string]any
 	seen := map[string]bool{}
 	for _, f := range resp.Files {
 		if !strings.HasPrefix(f.Path, prefix) {

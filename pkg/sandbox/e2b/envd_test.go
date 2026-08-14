@@ -456,8 +456,6 @@ func TestEnvdStreamGuestPIDCapture(t *testing.T) {
 	s, ts := testServer(t, gw)
 	id := createSandboxID(t, ts)
 
-	gw.mu.Lock()
-	gw.mu.Unlock()
 	release := gw.gatedExecStream("echo hi", []*pb.ExecStreamResponse{
 		{Chunk: "data: {\"pid\":4242}\n\n"},
 		{Chunk: "data: hi\n\n"},
