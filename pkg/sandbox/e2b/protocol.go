@@ -214,15 +214,6 @@ func checkSignatureExpiration(material signatureMaterial) *E2bError {
 	return nil
 }
 
-// validateSignatureQuery runs the full signed-file validation (match then
-// expiration) and returns an error in the envd dialect.
-func validateSignatureQuery(presented, sandboxID, signingSecret string, material signatureMaterial) error {
-	if !signatureMatches(presented, sandboxID, signingSecret, material) {
-		return connectError("unauthenticated", "invalid signature")
-	}
-	return checkSignatureExpiration(material)
-}
-
 // --- small helpers --------------------------------------------------------
 
 // apiKeyFromHeader strips the SDK's `e2b_` prefix. The prefix is the SDK's

@@ -49,149 +49,202 @@ func newSandboxdStub() *sandboxdStub {
 	}
 }
 
+// sandboxdBody is the JSON envelope the E2B server sends to sandboxd; the
+// stub decodes the union of fields and each handler reads what it needs.
+type sandboxdBody struct {
+	Path        string `json:"path"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Pid         int    `json:"pid"`
+	Data        string `json:"data"`
+	Signal      string `json:"signal"`
+	WatcherID   int    `json:"watcher_id"`
+}
+
 func (st *sandboxdStub) handle(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Path        string `json:"path"`
-		Source      string `json:"source"`
-		Destination string `json:"destination"`
-		Pid         int    `json:"pid"`
-		Data        string `json:"data"`
-		Signal      string `json:"signal"`
-		WatcherID   int    `json:"watcher_id"`
-	}
+	var body sandboxdBody
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	writeOK := func(v any) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(v)
-	}
 	switch r.URL.Path {
 	case "/files/stat":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		if content, ok := st.files[body.Path]; ok {
-			writeOK(map[string]any{
-				"type": "file", "size": len(content), "mode": "644",
-				"uid": 1000, "gid": 1000, "mtime": 1720000000, "name": body.Path,
-			})
-			return
-		}
-		if st.dirs[body.Path] {
-			writeOK(map[string]any{
-				"type": "dir", "size": 0, "mode": "755",
-				"uid": 1000, "gid": 1000, "mtime": 1720000000, "name": body.Path,
-			})
-			return
-		}
-		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		st.handleStat(w, body)
 	case "/files/mkdir":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		if st.dirs[body.Path] {
-			http.Error(w, `{"error":"already exists"}`, http.StatusConflict)
-			return
-		}
-		st.dirs[body.Path] = true
-		writeOK(map[string]any{"ok": true})
+		st.handleMkdir(w, body)
 	case "/files/move":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		if content, ok := st.files[body.Source]; ok {
-			delete(st.files, body.Source)
-			st.files[body.Destination] = content
-			writeOK(map[string]any{"ok": true})
-			return
-		}
-		if st.dirs[body.Source] {
-			delete(st.dirs, body.Source)
-			st.dirs[body.Destination] = true
-			writeOK(map[string]any{"ok": true})
-			return
-		}
-		http.Error(w, `{"error":"source not found"}`, http.StatusNotFound)
+		st.handleMove(w, body)
 	case "/files/remove":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		delete(st.files, body.Path)
-		delete(st.dirs, body.Path)
-		writeOK(map[string]any{"ok": true})
+		st.handleRemove(w, body)
 	case "/exec/stdin":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		st.stdin[body.Pid] = append(st.stdin[body.Pid], body.Data)
-		writeOK(map[string]any{"ok": true})
+		st.handleStdin(w, body)
 	case "/exec/stdin/close":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		st.closed[body.Pid] = true
-		writeOK(map[string]any{"ok": true})
+		st.handleStdinClose(w, body)
 	case "/exec/signal":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		st.signals[body.Pid] = append(st.signals[body.Pid], body.Signal)
-		writeOK(map[string]any{"ok": true})
+		st.handleSignal(w, body)
 	case "/exec/processes":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		procs := make([]sandboxProcess, 0, len(st.procTable))
-		for pid, p := range st.procTable {
-			procs = append(procs, sandboxProcess{PID: pid, Alive: p.Alive, Config: p.Config})
-		}
-		writeOK(map[string]any{"processes": procs})
+		st.handleProcesses(w)
 	case "/exec/attach":
-		// GET /exec/attach?pid=N → SSE replay of buffered output.
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		pidStr := r.URL.Query().Get("pid")
-		pid, _ := strconv.Atoi(pidStr)
-		if pid == 0 {
-			http.Error(w, `{"error":"pid required"}`, http.StatusBadRequest)
-			return
-		}
-		if _, known := st.procTable[pid]; !known {
-			// Unknown pid: the sandbox has no such process.
-			http.Error(w, `{"error":"process not found"}`, http.StatusNotFound)
-			return
-		}
-		output := st.attachOutputs[pid]
-		w.Header().Set("Content-Type", "text/event-stream")
-		// Skip the pid frame: the Connect handler sends its own start frame.
-		if len(output) > 0 {
-			_, _ = w.Write([]byte("data: " + output + "\n\n"))
-		}
-		_, _ = w.Write([]byte("data: {\"done\":true}\n\n"))
+		st.handleAttach(w, r)
 	case "/watch/create":
-		var wb struct {
-			Path string `json:"path"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&wb)
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		id := st.nextWatcherID
-		st.nextWatcherID++
-		st.watchers[id] = nil
-		writeOK(map[string]any{"watcher_id": id})
+		st.handleWatchCreate(w, r)
 	case "/watch/events":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		id, _ := strconv.Atoi(r.URL.Query().Get("watcher_id"))
-		evs, ok := st.watchers[id]
-		if !ok {
-			http.Error(w, `{"error":"watcher not found"}`, http.StatusNotFound)
-			return
-		}
-		writeOK(map[string]any{"events": evs})
+		st.handleWatchEvents(w, r)
 	case "/watch/remove":
-		st.mu.Lock()
-		defer st.mu.Unlock()
-		if _, ok := st.watchers[body.WatcherID]; !ok {
-			http.Error(w, `{"error":"watcher not found"}`, http.StatusNotFound)
-			return
-		}
-		delete(st.watchers, body.WatcherID)
-		writeOK(map[string]any{"ok": true})
+		st.handleWatchRemove(w, body)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (st *sandboxdStub) writeOK(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (st *sandboxdStub) handleStat(w http.ResponseWriter, body sandboxdBody) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if content, ok := st.files[body.Path]; ok {
+		st.writeOK(w, map[string]any{
+			"type": "file", "size": len(content), "mode": "644",
+			"uid": 1000, "gid": 1000, "mtime": 1720000000, "name": body.Path,
+		})
+		return
+	}
+	if st.dirs[body.Path] {
+		st.writeOK(w, map[string]any{
+			"type": "dir", "size": 0, "mode": "755",
+			"uid": 1000, "gid": 1000, "mtime": 1720000000, "name": body.Path,
+		})
+		return
+	}
+	http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+}
+
+func (st *sandboxdStub) handleMkdir(w http.ResponseWriter, body sandboxdBody) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.dirs[body.Path] {
+		http.Error(w, `{"error":"already exists"}`, http.StatusConflict)
+		return
+	}
+	st.dirs[body.Path] = true
+	st.writeOK(w, map[string]any{"ok": true})
+}
+
+func (st *sandboxdStub) handleMove(w http.ResponseWriter, body sandboxdBody) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if content, ok := st.files[body.Source]; ok {
+		delete(st.files, body.Source)
+		st.files[body.Destination] = content
+		st.writeOK(w, map[string]any{"ok": true})
+		return
+	}
+	if st.dirs[body.Source] {
+		delete(st.dirs, body.Source)
+		st.dirs[body.Destination] = true
+		st.writeOK(w, map[string]any{"ok": true})
+		return
+	}
+	http.Error(w, `{"error":"source not found"}`, http.StatusNotFound)
+}
+
+func (st *sandboxdStub) handleRemove(w http.ResponseWriter, body sandboxdBody) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	delete(st.files, body.Path)
+	delete(st.dirs, body.Path)
+	st.writeOK(w, map[string]any{"ok": true})
+}
+
+func (st *sandboxdStub) handleStdin(w http.ResponseWriter, body sandboxdBody) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.stdin[body.Pid] = append(st.stdin[body.Pid], body.Data)
+	st.writeOK(w, map[string]any{"ok": true})
+}
+
+func (st *sandboxdStub) handleStdinClose(w http.ResponseWriter, body sandboxdBody) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.closed[body.Pid] = true
+	st.writeOK(w, map[string]any{"ok": true})
+}
+
+func (st *sandboxdStub) handleSignal(w http.ResponseWriter, body sandboxdBody) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.signals[body.Pid] = append(st.signals[body.Pid], body.Signal)
+	st.writeOK(w, map[string]any{"ok": true})
+}
+
+func (st *sandboxdStub) handleProcesses(w http.ResponseWriter) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	procs := make([]sandboxProcess, 0, len(st.procTable))
+	for pid, p := range st.procTable {
+		procs = append(procs, sandboxProcess{PID: pid, Alive: p.Alive, Config: p.Config})
+	}
+	st.writeOK(w, map[string]any{"processes": procs})
+}
+
+func (st *sandboxdStub) handleAttach(w http.ResponseWriter, r *http.Request) {
+	// GET /exec/attach?pid=N → SSE replay of buffered output.
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	pidStr := r.URL.Query().Get("pid")
+	pid, _ := strconv.Atoi(pidStr)
+	if pid == 0 {
+		http.Error(w, `{"error":"pid required"}`, http.StatusBadRequest)
+		return
+	}
+	if _, known := st.procTable[pid]; !known {
+		// Unknown pid: the sandbox has no such process.
+		http.Error(w, `{"error":"process not found"}`, http.StatusNotFound)
+		return
+	}
+	output := st.attachOutputs[pid]
+	w.Header().Set("Content-Type", "text/event-stream")
+	// Skip the pid frame: the Connect handler sends its own start frame.
+	if len(output) > 0 {
+		_, _ = w.Write([]byte("data: " + output + "\n\n"))
+	}
+	_, _ = w.Write([]byte("data: {\"done\":true}\n\n"))
+}
+
+func (st *sandboxdStub) handleWatchCreate(w http.ResponseWriter, r *http.Request) {
+	var wb struct {
+		Path string `json:"path"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&wb)
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	id := st.nextWatcherID
+	st.nextWatcherID++
+	st.watchers[id] = nil
+	st.writeOK(w, map[string]any{"watcher_id": id})
+}
+
+func (st *sandboxdStub) handleWatchEvents(w http.ResponseWriter, r *http.Request) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	id, _ := strconv.Atoi(r.URL.Query().Get("watcher_id"))
+	evs, ok := st.watchers[id]
+	if !ok {
+		http.Error(w, `{"error":"watcher not found"}`, http.StatusNotFound)
+		return
+	}
+	st.writeOK(w, map[string]any{"events": evs})
+}
+
+func (st *sandboxdStub) handleWatchRemove(w http.ResponseWriter, body sandboxdBody) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if _, ok := st.watchers[body.WatcherID]; !ok {
+		http.Error(w, `{"error":"watcher not found"}`, http.StatusNotFound)
+		return
+	}
+	delete(st.watchers, body.WatcherID)
+	st.writeOK(w, map[string]any{"ok": true})
 }
 
 func testServer(t *testing.T, gw Gateway) (*Server, *httptest.Server) {
@@ -497,7 +550,7 @@ func TestListPagination(t *testing.T) {
 	if page.StatusCode != 200 {
 		t.Fatalf("list: %d", page.StatusCode)
 	}
-	arr := []map[string]any{}
+	var arr []map[string]any
 	_ = json.Unmarshal([]byte(readBody(t, page)), &arr)
 	if len(arr) != 2 {
 		t.Fatalf("want 2, got %d", len(arr))

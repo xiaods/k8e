@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -206,18 +205,6 @@ func (s *Server) wakeForTraffic(r *http.Request, sandboxID string) (*pb.GetSessi
 
 // unixNow returns the current unix time in seconds.
 func unixNow() int64 { return time.Now().Unix() }
-
-// parseQueryDuration parses a unix-seconds query value defensively.
-func parseQueryDuration(v string) (int64, error) {
-	if v == "" {
-		return 0, nil
-	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return 0, err
-	}
-	return n, nil
-}
 
 // jsonWriter writes a JSON response body.
 func jsonWriter(w http.ResponseWriter, status int, body any) {

@@ -49,7 +49,7 @@ func TestFilesWriteRead(t *testing.T) {
 	}
 
 	// Download.
-	dl, err := http.NewRequest("GET", ts.URL+"/e2b/envd/files?path=notes/hello.txt", nil)
+	dl, err := http.NewRequest("GET", ts.URL+"/e2b/envd/files?path=notes/hello.txt", http.NoBody)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestFilesRangeDownload(t *testing.T) {
 	gw.files["/workspace/big.txt"] = "0123456789"
 	gw.mu.Unlock()
 
-	req, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/files?path=big.txt", nil)
+	req, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/files?path=big.txt", http.NoBody)
 	req.Header.Set("Range", "bytes=2-5")
 	for k, v := range headers {
 		req.Header.Set(k, v)
@@ -131,7 +131,7 @@ func TestFilesMissingAuth(t *testing.T) {
 	_, ts := testServer(t, gw)
 	id := createSandboxID(t, ts)
 
-	req, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/files?path=x", nil)
+	req, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/files?path=x", http.NoBody)
 	req.Header.Set("E2b-Sandbox-Id", id) // no token
 	resp, err := ts.Client().Do(req)
 	if err != nil {
@@ -361,7 +361,7 @@ func TestFilesystemListDirDepth(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &out); err != nil {
 			t.Fatalf("list body: %s", body)
 		}
-		names := []string{}
+		var names []string
 		for _, e := range out.Entries {
 			names = append(names, e["name"].(string))
 		}

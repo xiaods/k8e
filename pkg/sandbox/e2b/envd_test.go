@@ -41,7 +41,7 @@ func TestEnvdHealth(t *testing.T) {
 	_, ts := testServer(t, gw)
 	id := createSandboxID(t, ts)
 
-	req, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/health", nil)
+	req, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/health", http.NoBody)
 	req.Header.Set("E2b-Sandbox-Id", id)
 	resp, err := ts.Client().Do(req)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestEnvdHealth(t *testing.T) {
 	resp.Body.Close()
 
 	// Unknown sandbox → 502.
-	req2, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/health", nil)
+	req2, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/health", http.NoBody)
 	req2.Header.Set("E2b-Sandbox-Id", "no-such")
 	resp2, _ := ts.Client().Do(req2)
 	if resp2.StatusCode != 502 {
@@ -169,10 +169,10 @@ func TestEnvdProcessStartStreamsFrames(t *testing.T) {
 	}
 	// End frame with exit code 0.
 	var endFrame *frame
-	for _, f := range frames {
+	for i, f := range frames {
 		if ev, ok := f.json["event"].(map[string]any); ok {
 			if _, ok := ev["end"]; ok {
-				endFrame = &f
+				endFrame = &frames[i]
 			}
 		}
 	}

@@ -481,20 +481,6 @@ func (s *Server) handleUnimplementedFS(name string) http.HandlerFunc {
 	}
 }
 
-// --- filesystem service (shell-backed) ------------------------------------
-
-type entryInfo struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	Path         string `json:"path"`
-	Size         string `json:"size"`
-	Mode         string `json:"mode"`
-	Permissions  string `json:"permissions"`
-	Owner        string `json:"owner"`
-	Group        string `json:"group"`
-	ModifiedTime string `json:"modifiedTime"`
-}
-
 // fsReady resolves the sandbox for a filesystem RPC, auto-resuming a paused
 // one. Returns the live sandbox ID or writes the error and returns "".
 func (s *Server) fsReady(w http.ResponseWriter, r *http.Request) string {

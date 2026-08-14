@@ -1,8 +1,10 @@
 package e2b
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +33,66 @@ type connectBody struct {
 	Timeout *int `json:"timeout"`
 }
 
+// parseSandboxTimeout validates the E2B timeout knob shared by create and
+// connect. Returns the effective seconds, whether the sandbox should never
+// time out, and a protocol error message on invalid values.
+func parseSandboxTimeout(t *int) (timeoutSeconds int, neverTimeout bool, errMsg string) {
+	timeoutSeconds = DefaultTimeoutSeconds
+	if t == nil {
+		return timeoutSeconds, false, ""
+	}
+	if *t == NeverTimeout {
+		return timeoutSeconds, true, ""
+	}
+	if *t <= 0 || *t > maxTimeoutSeconds {
+		return 0, false, "invalid timeout"
+	}
+	return *t, false, ""
+}
+
+// resolveRuntimeClass maps a templateID to a runtime class: a known runtime
+// wins, 'base' and absence mean the default runtime, anything else is not
+// found — the SDK default is the literal string 'base'.
+func resolveRuntimeClass(runtimes map[string]struct{}, templateID string) (runtimeClass string, ok bool) {
+	if templateID == "" {
+		return "", true
+	}
+	if _, found := runtimes[templateID]; found {
+		return templateID, true
+	}
+	if templateID != "base" {
+		return "", false
+	}
+	return "", true
+}
+
+// reacquireByKey serves the Dormice idempotent-create extension: a live
+// sandbox under the same metadata.name key is reused (deadline extended like
+// a connect). A protocol-dead one is destroyed so the caller builds fresh
+// under the same key. Returns true when the response was fully written.
+func (s *Server) reacquireByKey(w http.ResponseWriter, r *http.Request, key string, timeoutSeconds int) bool {
+	if key == "" {
+		return false
+	}
+	id, ok := s.registry.byKeyName(key)
+	if !ok {
+		return false
+	}
+	sess, err := s.gw.GetSession(r.Context(), &pb.GetSessionRequest{SessionId: id})
+	if err == nil && sessionState(sess.Phase) == stateRunning {
+		s.registry.extendDeadline(id, timeoutSeconds)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(s.sessionView(sess))
+		return true
+	}
+	// Protocol-dead but not yet reaped: E2B semantics say it is gone, so
+	// finish the job and build fresh under the same key.
+	_, _ = s.gw.DestroySession(r.Context(), &pb.DestroySessionRequest{SessionId: id})
+	s.registry.del(id)
+	return false
+}
+
 // handleCreate implements POST /e2b/api/sandboxes.
 func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var body createBody
@@ -38,17 +100,10 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		s.writeControlError(w, apiError(400, "invalid request body: "+err.Error()))
 		return
 	}
-	timeoutSeconds := DefaultTimeoutSeconds
-	neverTimeout := false
-	if body.Timeout != nil {
-		if *body.Timeout == NeverTimeout {
-			neverTimeout = true
-		} else if *body.Timeout <= 0 || *body.Timeout > maxTimeoutSeconds {
-			s.writeControlError(w, apiError(400, "invalid timeout"))
-			return
-		} else {
-			timeoutSeconds = *body.Timeout
-		}
+	timeoutSeconds, neverTimeout, errMsg := parseSandboxTimeout(body.Timeout)
+	if errMsg != "" {
+		s.writeControlError(w, apiError(400, errMsg))
+		return
 	}
 	meta := sanitizeMetadata(body.Metadata)
 	requestedKey := meta["name"]
@@ -56,35 +111,16 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	// templateID resolution: a known runtime class wins; 'base' and absence
 	// mean the default runtime; anything else is 404 — the SDK default is the
 	// literal string 'base'.
-	runtimeClass := ""
-	if body.TemplateID != "" {
-		if _, ok := s.runtimes[body.TemplateID]; ok {
-			runtimeClass = body.TemplateID
-		} else if body.TemplateID != "base" {
-			s.writeControlError(w, apiError(404, "template '"+body.TemplateID+"' not found"))
-			return
-		}
+	runtimeClass, ok := resolveRuntimeClass(s.runtimes, body.TemplateID)
+	if !ok {
+		s.writeControlError(w, apiError(404, "template '"+body.TemplateID+"' not found"))
+		return
 	}
 
 	// The Dormice extension: metadata.name makes create idempotent — same
-	// key, same sandbox (an acquire in E2B clothes). Stored metadata/envs
-	// stay; the deadline is extended like a connect.
-	if requestedKey != "" {
-		if id, ok := s.registry.byKeyName(requestedKey); ok {
-			sess, err := s.gw.GetSession(r.Context(), &pb.GetSessionRequest{SessionId: id})
-			if err == nil && sessionState(sess.Phase) == stateRunning {
-				deadline := s.registry.extendDeadline(id, timeoutSeconds)
-				_ = deadline
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusCreated)
-				_ = json.NewEncoder(w).Encode(s.sessionView(sess))
-				return
-			}
-			// Protocol-dead but not yet reaped: E2B semantics say it is gone,
-			// so finish the job and build fresh under the same key.
-			_, _ = s.gw.DestroySession(r.Context(), &pb.DestroySessionRequest{SessionId: id})
-			s.registry.del(id)
-		}
+	// key, same sandbox (an acquire in E2B clothes).
+	if s.reacquireByKey(w, r, requestedKey, timeoutSeconds) {
+		return
 	}
 
 	sessionID := requestedKey
@@ -134,17 +170,10 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength != 0 {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
-	timeoutSeconds := DefaultTimeoutSeconds
-	neverTimeout := false
-	if body.Timeout != nil {
-		if *body.Timeout == NeverTimeout {
-			neverTimeout = true
-		} else if *body.Timeout <= 0 || *body.Timeout > maxTimeoutSeconds {
-			s.writeControlError(w, apiError(400, "invalid timeout"))
-			return
-		} else {
-			timeoutSeconds = *body.Timeout
-		}
+	timeoutSeconds, neverTimeout, errMsg := parseSandboxTimeout(body.Timeout)
+	if errMsg != "" {
+		s.writeControlError(w, apiError(400, errMsg))
+		return
 	}
 
 	sess, err := s.gw.GetSession(r.Context(), &pb.GetSessionRequest{SessionId: id})
@@ -301,44 +330,53 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("[]"))
 }
 
-// handleList implements GET /e2b/api/v2/sandboxes.
-func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	wanted := map[string]bool{}
+// listQuery carries the parsed /v2/sandboxes query parameters.
+type listQuery struct {
+	states     map[string]bool
+	limit      int
+	offset     int
+	nameFilter string
+}
+
+// parseListQuery decodes the E2B list query: a state filter (default running
+// + paused), pagination limit/nextToken, and the metadata name filter.
+func parseListQuery(query url.Values) listQuery {
+	q := listQuery{limit: 100}
 	if state := query.Get("state"); state != "" {
+		q.states = map[string]bool{}
 		for _, st := range strings.Split(state, ",") {
-			wanted[strings.TrimSpace(st)] = true
+			q.states[strings.TrimSpace(st)] = true
 		}
 	} else {
-		wanted["running"] = true
-		wanted["paused"] = true
+		q.states = map[string]bool{"running": true, "paused": true}
 	}
-	limit := 100
 	if l := query.Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 1000 {
-			limit = n
+			q.limit = n
 		}
 	}
-	offset := 0
 	if tok := query.Get("nextToken"); tok != "" {
 		if n, err := strconv.Atoi(tok); err == nil && n > 0 {
-			offset = n
+			q.offset = n
 		}
 	}
 	// metadata filter (name key only — the one metadata we actually store).
-	nameFilter := ""
 	if meta := query.Get("metadata"); meta != "" {
 		for _, pair := range strings.Split(meta, "&") {
 			if strings.HasPrefix(pair, "name=") {
-				nameFilter = strings.TrimPrefix(pair, "name=")
+				q.nameFilter = strings.TrimPrefix(pair, "name=")
 			}
 		}
 	}
+	return q
+}
 
-	resp, err := s.gw.ListSessions(r.Context(), &pb.ListSessionsRequest{Phase: "all"})
+// listLiveSessions collects the non-dead sessions matching the query's state
+// and name filters, sorted by id.
+func (s *Server) listLiveSessions(ctx context.Context, q listQuery) ([]*pb.GetSessionResponse, error) {
+	resp, err := s.gw.ListSessions(ctx, &pb.ListSessionsRequest{Phase: "all"})
 	if err != nil {
-		s.writeControlError(w, apiError(500, "list sandboxes failed: "+err.Error()))
-		return
+		return nil, err
 	}
 	var all []*pb.GetSessionResponse
 	for _, sess := range resp.Sessions {
@@ -346,27 +384,37 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		if st == stateDead {
 			continue
 		}
-		if len(wanted) > 0 && !wanted[string(st)] {
+		if len(q.states) > 0 && !q.states[string(st)] {
 			continue
 		}
-		if nameFilter != "" {
+		if q.nameFilter != "" {
 			e, ok := s.registry.get(sess.SessionId)
-			if !ok || e.metadata["name"] != nameFilter {
+			if !ok || e.metadata["name"] != q.nameFilter {
 				continue
 			}
 		}
 		all = append(all, sess)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].SessionId < all[j].SessionId })
+	return all, nil
+}
 
-	end := offset + limit
-	if offset > len(all) {
-		offset = len(all)
+// handleList implements GET /e2b/api/v2/sandboxes.
+func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	q := parseListQuery(r.URL.Query())
+	all, err := s.listLiveSessions(r.Context(), q)
+	if err != nil {
+		s.writeControlError(w, apiError(500, "list sandboxes failed: "+err.Error()))
+		return
+	}
+	end := q.offset + q.limit
+	if q.offset > len(all) {
+		q.offset = len(all)
 	}
 	if end > len(all) {
 		end = len(all)
 	}
-	page := all[offset:end]
+	page := all[q.offset:end]
 	if end < len(all) {
 		w.Header().Set("x-next-token", strconv.Itoa(end))
 	}
