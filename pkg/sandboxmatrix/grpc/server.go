@@ -398,6 +398,29 @@ func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionReque
 	return &pb.DestroySessionResponse{Ok: true}, nil
 }
 
+// PauseSession releases the sandbox pod (CPU/memory) keeping the workspace
+// PVC and session CRD (E2B pause, KIP-18).
+func (s *Server) PauseSession(ctx context.Context, req *pb.PauseSessionRequest) (*pb.PauseSessionResponse, error) {
+	if req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id required")
+	}
+	if err := s.orch.PauseSession(ctx, req.SessionId); err != nil {
+		return nil, err
+	}
+	return &pb.PauseSessionResponse{Ok: true}, nil
+}
+
+// ResumeSession re-creates a paused sandbox's pod with its workspace PVC.
+func (s *Server) ResumeSession(ctx context.Context, req *pb.ResumeSessionRequest) (*pb.ResumeSessionResponse, error) {
+	if req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id required")
+	}
+	if _, err := s.orch.ResumeSession(ctx, req.SessionId); err != nil {
+		return nil, err
+	}
+	return &pb.ResumeSessionResponse{Ok: true}, nil
+}
+
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
 	// Background mode: submit async, return run_id immediately
 	if req.Background {

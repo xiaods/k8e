@@ -88,6 +88,7 @@ func main() {
 		),
 		cmds.NewCompletionCommand(internalCLIAction(version.Program+"-completion", dataDir, os.Args)),
 		cmds.NewSandboxApiKeyCommand(),
+		cmds.NewE2BServerCommand(internalCLIAction(version.Program+"-e2b-server", dataDir, os.Args)),
 	}
 
 	if err := app.Run(os.Args); err != nil && !errors.Is(err, context.Canceled) {

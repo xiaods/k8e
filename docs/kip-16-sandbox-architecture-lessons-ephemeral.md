@@ -174,6 +174,7 @@ All P0/P1 matrix rows are implemented or have a tracked issue. 12 PRs shipped:
 2. **M1 sub-agent reuse**: child inherits parent PodIP but has NO own PodName/CNP — destroy/GC only delete the child CRD, never reset the shared pod. Trust boundary stays pod-level (per §4: reuse optimization, not a security boundary).
 3. **M2 layer model**: OCI-style — zstd-compressed on disk, content-addressed by UNCOMPRESSED sha256; chunks dedup across snapshots; autosquash bounds manifest growth; server registry enables cross-host sharing.
 4. **M5 observability**: disk-only + activity-gated (read never triggers collection; idle daemon does zero work) — ephemeral-sandbox L5 principle, no new processes.
+5. **HA leader election for the embedded controller**: k8e supports multi-node control planes (`cluster-init` / `datastore-endpoint`), and the sandbox-matrix orchestrator runs embedded in every server process. The gRPC gateway is stateless and multi-node-safe, but the warm-pool / GC / idle-reaper / resetting-detector reconcilers are NOT — two servers reconciling the same pool would double-create/double-GC/double-reap. Reconcilers now contend on a `coordination.k8s.io` Lease (`sandboxmatrix-controller` in the `sandbox-matrix` namespace); only the elected leader runs them, the gateway serves on every node. Leader identity = `SandboxConfig.LeaderElectionIdentity` else hostname.
 
 ### Remaining (all P2, tracked)
 

@@ -7,6 +7,8 @@ const venv = @import("venv.zig");
 const transcript = @import("transcript.zig");
 const events = @import("events.zig");
 const processes = @import("processes.zig");
+const execctl = @import("execctl.zig");
+const watch = @import("watch.zig");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -178,6 +180,37 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
         try files.handleRead(allocator, client_fd, query);
     } else if (std.mem.eql(u8, path, "/files/list") and std.mem.eql(u8, method, "GET")) {
         try files.handleList(allocator, client_fd, query);
+    } else if (std.mem.eql(u8, path, "/files/stat") and std.mem.eql(u8, method, "POST")) {
+        try files.handleStat(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/files/mkdir") and std.mem.eql(u8, method, "POST")) {
+        try files.handleMkdir(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/files/move") and std.mem.eql(u8, method, "POST")) {
+        try files.handleMove(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/files/remove") and std.mem.eql(u8, method, "POST")) {
+        try files.handleRemove(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/exec/stdin") and std.mem.eql(u8, method, "POST")) {
+        try execctl.handleStdin(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/exec/stdin/close") and std.mem.eql(u8, method, "POST")) {
+        try execctl.handleCloseStdin(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/exec/signal") and std.mem.eql(u8, method, "POST")) {
+        try execctl.handleSignal(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/exec/processes") and std.mem.eql(u8, method, "GET")) {
+        // E2B Process/List view of the sandbox process-control table (KIP-18
+        // P1: sandbox-owned process table, node-independent pids).
+        try execctl.handleProcessList(allocator, client_fd);
+    } else if (std.mem.eql(u8, path, "/exec/attach") and std.mem.eql(u8, method, "GET")) {
+        // E2B Process/Connect: replay buffered output for a process (KIP-18
+        // P1: sandbox-owned process table, attach from any node).
+        try execctl.handleAttach(allocator, client_fd, query);
+    } else if (std.mem.eql(u8, path, "/watch/create") and std.mem.eql(u8, method, "POST")) {
+        // E2B Filesystem/CreateWatcher (KIP-18 P1 last gap).
+        try watch.handleCreate(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/watch/events") and std.mem.eql(u8, method, "GET")) {
+        // E2B Filesystem/GetWatcherEvents (incremental).
+        try watch.handleEvents(allocator, client_fd, query);
+    } else if (std.mem.eql(u8, path, "/watch/remove") and std.mem.eql(u8, method, "POST")) {
+        // E2B Filesystem/RemoveWatcher.
+        try watch.handleRemove(allocator, client_fd, body);
     } else {
         try writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
     }

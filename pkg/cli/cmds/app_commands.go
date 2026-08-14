@@ -17,6 +17,7 @@ type AppCommandFuncs struct {
 	SecretsEncrypt SecretsEncryptCommandFuncs
 	Cert           CertCommandFuncs
 	Completion     func(*cli.Context) error
+	E2BServer      func(*cli.Context) error
 }
 
 type TokenCommandFuncs struct {
@@ -74,6 +75,7 @@ func NewAppCommands(f AppCommandFuncs) []cli.Command {
 		),
 		NewCompletionCommand(f.Completion),
 		NewSandboxApiKeyCommand(),
+		NewE2BServerCommand(f.E2BServer),
 	}
 }
 

@@ -160,6 +160,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		// Server-side snapshot layer registry lives under the data dir.
 		LayerStoreDir:         filepath.Join(cfg.DataDir, "server", "sandbox-layers"),
 		CiliumDNSProxyEnabled: cfg.CiliumDNSProxyEnabled,
+		DisableE2B:            cfg.DisableE2B,
+		E2BListen:             cfg.E2BListen,
 	}
 	serverConfig.ControlConfig.EtcdExposeMetrics = cfg.EtcdExposeMetrics
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots

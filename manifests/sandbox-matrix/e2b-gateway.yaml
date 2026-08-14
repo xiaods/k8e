@@ -1,0 +1,210 @@
+# KIP-18 e2b ingress: Cilium Gateway API fronting the k8e sandbox surfaces.
+#
+# Final architecture (KIP-18): sandbox-matrix + e2b-server BOTH embed in the
+# k8e-server host process (embedded e2b is on by default; --disable-e2b to turn off); the Cilium Gateway API is the ONLY
+# external door for every sandbox port:
+#
+#   :80/:443  e2b HTTP (control plane + envd + signed files) via HTTPRoute
+#             -> headless e2b-server Service/Endpoints -> host :3676
+#   :50051    sandbox gRPC (SandboxService) via TCPRoute (L4 passthrough)
+#             -> headless sandbox-grpc-gateway Service/Endpoints -> host :50051
+#
+# The gRPC gateway speaks strong mTLS (client certs signed by the sandbox CA,
+# verified by mTLSAuthInterceptor), so the Gateway must NOT terminate its TLS:
+# the TCPRoute forwards the byte stream unchanged and existing client certs
+# keep working. The e2b HTTP surface is plain HTTP/Connect, so HTTPRoutes with
+# Gateway-terminated TLS (sandbox-e2b secret) are correct there.
+#
+# Requires:
+#   - gateway-api-crds.yaml applied (Cilium Gateway API controller CRDs)
+#   - gatewayAPI.enabled=true in manifests/cilium.yaml
+#   - k8e server with the embedded e2b enabled (default; --disable-e2b to turn
+#     off; e2b listens on 0.0.0.0:3676 inside the host; --e2b-listen to override)
+#     and the sandbox gRPC gateway
+#     enabled (0.0.0.0:50051)
+#
+# Both host services are bridged into the cluster via headless Service +
+# Endpoints pointing at --advertise-address, because they run in the
+# k8e-server host process, not as pods.
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-grpc-gateway
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  # The sandbox gRPC gateway runs in the k8e-server host process on :50051,
+  # not as a pod. This headless Service + Endpoints makes it reachable from
+  # cluster pods (e.g. the e2b-server Deployment) by the stable DNS name
+  # sandbox-grpc-gateway.sandbox-matrix.svc. The Endpoints point at the
+  # host's advertise IP (--advertise-address, default node-ip).
+  clusterIP: None
+  ports:
+  - name: grpc
+    port: 50051
+    protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: sandbox-grpc-gateway
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+subsets:
+- addresses:
+  - ip: %{ADVERTISE_IP}%
+  ports:
+  - name: grpc
+    port: 50051
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2b-server
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  # The E2B HTTP server runs embedded in the k8e-server host process
+  # (embedded in k8e-server, on by default), not as a pod. This headless
+  # Service + Endpoints makes it
+  # reachable from the Cilium Gateway API by the stable DNS name
+  # e2b-server.sandbox-matrix.svc. Endpoints point at the host's advertise IP
+  # on the e2b listen port (default 127.0.0.1:3676 — the Gateway fronts it).
+  clusterIP: None
+  ports:
+  - name: http
+    port: 3676
+    protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: e2b-server
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+subsets:
+- addresses:
+  - ip: %{ADVERTISE_IP}%
+  ports:
+  - name: http
+    port: 3676
+    protocol: TCP
+
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: e2b
+  annotations:
+    # Optional: parametersRef to a CiliumGatewayClassConfig for host-network
+    # mode. Defaults to LoadBalancer-backed listeners.
+    gatewayclass.kubernetes.io/controller-name: io.cilium/gateway-controller
+spec:
+  controllerName: io.cilium/gateway-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: e2b
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  gatewayClassName: e2b
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    allowedRoutes:
+      namespaces:
+        from: Same
+  # TLS listener for https apiUrl: provide a tls secret named sandbox-e2b
+  # (kubectl create secret tls sandbox-e2b --cert=... --key=...).
+  - name: https
+    port: 443
+    protocol: HTTPS
+    tls:
+      certificateRefs:
+      - name: sandbox-e2b
+    allowedRoutes:
+      namespaces:
+        from: Same
+  # L4 passthrough for the sandbox gRPC gateway :50051. The gateway speaks
+  # strong mTLS (client certs signed by the sandbox CA, verified by
+  # mTLSAuthInterceptor), so we cannot terminate TLS here — a TCPRoute
+  # forwards the byte stream unchanged and the existing client certificates
+  # keep working. Backend is the headless sandbox-grpc-gateway Service +
+  # Endpoints pointing at the host-resident k8e-server process.
+  - name: grpc
+    port: 50051
+    protocol: TCP
+    allowedRoutes:
+      kinds:
+      - kind: TCPRoute
+      namespaces:
+        from: Same
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TCPRoute
+metadata:
+  name: sandbox-grpc
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  parentRefs:
+  - name: e2b
+    sectionName: grpc
+  rules:
+  - backendRefs:
+    - name: sandbox-grpc-gateway
+      port: 50051
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: e2b-control-plane
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  parentRefs:
+  - name: e2b
+  rules:
+  # Control plane (root-mounted): /sandboxes, /v2/sandboxes, /health, /files.
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: e2b-server
+      port: 3676
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: e2b-envd
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  parentRefs:
+  - name: e2b
+  rules:
+  # envd surface + signed files: /e2b/envd, /e2b/api (alias), /files.
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /e2b
+    - path:
+        type: PathPrefix
+        value: /files
+    backendRefs:
+    - name: e2b-server
+      port: 3676

@@ -850,10 +850,10 @@ func TestBuildSessionCNP_PerSessionPolicy(t *testing.T) {
 	}
 
 	ingress := spec["ingress"].([]interface{})
-	if len(ingress) != 2 {
-		t.Fatalf("expected 2 ingress rules (host + gateway), got %d", len(ingress))
+	if len(ingress) != 3 {
+		t.Fatalf("expected 3 ingress rules (host + gateway + e2b-server), got %d", len(ingress))
 	}
-	// Both ingress rules must only expose :2024.
+	// All ingress rules must only expose :2024.
 	for _, r := range ingress {
 		rule := r.(map[string]interface{})
 		ports := rule["toPorts"].([]interface{})[0].(map[string]interface{})["ports"].([]interface{})
@@ -1104,5 +1104,129 @@ func TestRebuildRunRegistry_Idempotent(t *testing.T) {
 
 	if got := o.countAllBackgroundRuns(); got != 1 {
 		t.Fatalf("expected 1 rebuilt run (idempotent), got %d", got)
+	}
+}
+
+func TestPauseSessionReleasesPodKeepsPVC(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	// A persistent (tenant) session gets a PVC.
+	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{
+		SessionId: "sess-pause-1", TenantId: "tenant-a",
+	})
+	if err != nil {
+		t.Fatalf(msgCreate, err)
+	}
+	if sess.Status.WorkspacePVC == "" {
+		t.Fatal("persistent session should have a workspace PVC")
+	}
+	if sess.Status.PodName == "" {
+		t.Fatal("session should have a pod")
+	}
+
+	if err := o.PauseSession(ctx, sess.Name); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	// The session CRD survives with phase Paused and its PVC; the pod is gone.
+	after, err := o.getSession(ctx, sess.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status.Phase != sandboxv1.SandboxPhasePaused {
+		t.Fatalf("phase=%s, want Paused", after.Status.Phase)
+	}
+	if after.Status.WorkspacePVC == "" {
+		t.Fatal("PVC must survive pause")
+	}
+	if after.Status.PodName != "" || after.Status.PodIP != "" {
+		t.Fatalf("pod refs must be cleared on pause: %+v", after.Status)
+	}
+	if _, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, sess.Status.PodName, metav1.GetOptions{}); err == nil {
+		t.Fatal("pod should be deleted on pause")
+	}
+}
+
+func TestPauseSessionEphemeralRefused(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	// Ephemeral session (no tenant → no PVC).
+	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "sess-ephemeral"})
+	if err != nil {
+		t.Fatalf(msgCreate, err)
+	}
+	pauseErr := o.PauseSession(ctx, sess.Name)
+	if pauseErr == nil {
+		t.Fatal("ephemeral session must refuse pause (EmptyDir would lose files)")
+	}
+	st, _ := status.FromError(pauseErr)
+	if st.Code() != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition, got %v", st.Code())
+	}
+}
+
+func TestResumeSessionRestoresPodWithPVC(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{
+		SessionId: "sess-resume-1", TenantId: "tenant-b",
+	})
+	if err != nil {
+		t.Fatalf(msgCreate, err)
+	}
+	if err := o.PauseSession(ctx, sess.Name); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	pod, err := o.ResumeSession(ctx, sess.Name)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if pod == nil {
+		t.Fatal("resume returned nil pod")
+	}
+	// The pod must mount the same PVC.
+	foundPVC := false
+	for _, v := range pod.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == sess.Status.WorkspacePVC {
+			foundPVC = true
+		}
+	}
+	if !foundPVC {
+		t.Fatalf("resumed pod must mount workspace PVC %s, volumes=%+v", sess.Status.WorkspacePVC, pod.Spec.Volumes)
+	}
+
+	after, err := o.getSession(ctx, sess.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status.Phase != sandboxv1.SandboxPhaseActive {
+		t.Fatalf("phase=%s, want Active", after.Status.Phase)
+	}
+}
+
+func TestPauseSessionNonActiveRefused(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{
+		SessionId: "sess-refuse", TenantId: "tenant-c",
+	})
+	if err != nil {
+		t.Fatalf(msgCreate, err)
+	}
+	if err := o.PauseSession(ctx, sess.Name); err != nil {
+		t.Fatalf("first pause: %v", err)
+	}
+	// Pausing an already-paused session is refused.
+	if err := o.PauseSession(ctx, sess.Name); err == nil {
+		t.Fatal("second pause must be refused (not active)")
+	}
+	// Resuming the paused session works (it IS paused) — and the second
+	// resume after it is Active again must be refused.
+	if _, rerr := o.ResumeSession(ctx, sess.Name); rerr != nil {
+		t.Fatalf("resume of paused session should work: %v", rerr)
+	}
+	if _, rerr := o.ResumeSession(ctx, sess.Name); rerr == nil {
+		t.Fatal("resume of an Active (non-paused) session must be refused")
 	}
 }

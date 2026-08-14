@@ -7,6 +7,7 @@ import (
 	"github.com/xiaods/k8e/pkg/cli/completion"
 	"github.com/xiaods/k8e/pkg/cli/crictl"
 	"github.com/xiaods/k8e/pkg/cli/ctr"
+	"github.com/xiaods/k8e/pkg/cli/e2bserver"
 	"github.com/xiaods/k8e/pkg/cli/etcdsnapshot"
 	"github.com/xiaods/k8e/pkg/cli/kubectl"
 	"github.com/xiaods/k8e/pkg/cli/secretsencrypt"
@@ -40,5 +41,6 @@ func Funcs() cmds.AppCommandFuncs {
 			Check: cert.Check, Rotate: cert.Rotate, RotateCA: cert.RotateCA,
 		},
 		Completion: completion.Run,
+		E2BServer:  e2bserver.Run,
 	}
 }

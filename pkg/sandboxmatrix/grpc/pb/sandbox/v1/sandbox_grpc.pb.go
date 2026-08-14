@@ -23,6 +23,8 @@ const (
 	SandboxService_GetSession_FullMethodName     = "/sandbox.v1.SandboxService/GetSession"
 	SandboxService_ListSessions_FullMethodName   = "/sandbox.v1.SandboxService/ListSessions"
 	SandboxService_DestroySession_FullMethodName = "/sandbox.v1.SandboxService/DestroySession"
+	SandboxService_PauseSession_FullMethodName   = "/sandbox.v1.SandboxService/PauseSession"
+	SandboxService_ResumeSession_FullMethodName  = "/sandbox.v1.SandboxService/ResumeSession"
 	SandboxService_Exec_FullMethodName           = "/sandbox.v1.SandboxService/Exec"
 	SandboxService_ExecStream_FullMethodName     = "/sandbox.v1.SandboxService/ExecStream"
 	SandboxService_WriteFile_FullMethodName      = "/sandbox.v1.SandboxService/WriteFile"
@@ -50,6 +52,11 @@ type SandboxServiceClient interface {
 	GetSession(ctx context.Context, in *GetSessionRequest, opts ...grpc.CallOption) (*GetSessionResponse, error)
 	ListSessions(ctx context.Context, in *ListSessionsRequest, opts ...grpc.CallOption) (*ListSessionsResponse, error)
 	DestroySession(ctx context.Context, in *DestroySessionRequest, opts ...grpc.CallOption) (*DestroySessionResponse, error)
+	// PauseSession releases the sandbox pod (CPU/memory) while keeping the
+	// workspace PVC and session CRD; a paused sandbox resumes via ResumeSession
+	// with its filesystem intact (E2B pause semantics, KIP-18).
+	PauseSession(ctx context.Context, in *PauseSessionRequest, opts ...grpc.CallOption) (*PauseSessionResponse, error)
+	ResumeSession(ctx context.Context, in *ResumeSessionRequest, opts ...grpc.CallOption) (*ResumeSessionResponse, error)
 	Exec(ctx context.Context, in *ExecRequest, opts ...grpc.CallOption) (*ExecResponse, error)
 	ExecStream(ctx context.Context, in *ExecRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecStreamResponse], error)
 	WriteFile(ctx context.Context, in *WriteFileRequest, opts ...grpc.CallOption) (*WriteFileResponse, error)
@@ -122,6 +129,26 @@ func (c *sandboxServiceClient) DestroySession(ctx context.Context, in *DestroySe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DestroySessionResponse)
 	err := c.cc.Invoke(ctx, SandboxService_DestroySession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) PauseSession(ctx context.Context, in *PauseSessionRequest, opts ...grpc.CallOption) (*PauseSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PauseSessionResponse)
+	err := c.cc.Invoke(ctx, SandboxService_PauseSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) ResumeSession(ctx context.Context, in *ResumeSessionRequest, opts ...grpc.CallOption) (*ResumeSessionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResumeSessionResponse)
+	err := c.cc.Invoke(ctx, SandboxService_ResumeSession_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -315,6 +342,11 @@ type SandboxServiceServer interface {
 	GetSession(context.Context, *GetSessionRequest) (*GetSessionResponse, error)
 	ListSessions(context.Context, *ListSessionsRequest) (*ListSessionsResponse, error)
 	DestroySession(context.Context, *DestroySessionRequest) (*DestroySessionResponse, error)
+	// PauseSession releases the sandbox pod (CPU/memory) while keeping the
+	// workspace PVC and session CRD; a paused sandbox resumes via ResumeSession
+	// with its filesystem intact (E2B pause semantics, KIP-18).
+	PauseSession(context.Context, *PauseSessionRequest) (*PauseSessionResponse, error)
+	ResumeSession(context.Context, *ResumeSessionRequest) (*ResumeSessionResponse, error)
 	Exec(context.Context, *ExecRequest) (*ExecResponse, error)
 	ExecStream(*ExecRequest, grpc.ServerStreamingServer[ExecStreamResponse]) error
 	WriteFile(context.Context, *WriteFileRequest) (*WriteFileResponse, error)
@@ -364,6 +396,12 @@ func (UnimplementedSandboxServiceServer) ListSessions(context.Context, *ListSess
 }
 func (UnimplementedSandboxServiceServer) DestroySession(context.Context, *DestroySessionRequest) (*DestroySessionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DestroySession not implemented")
+}
+func (UnimplementedSandboxServiceServer) PauseSession(context.Context, *PauseSessionRequest) (*PauseSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PauseSession not implemented")
+}
+func (UnimplementedSandboxServiceServer) ResumeSession(context.Context, *ResumeSessionRequest) (*ResumeSessionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResumeSession not implemented")
 }
 func (UnimplementedSandboxServiceServer) Exec(context.Context, *ExecRequest) (*ExecResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Exec not implemented")
@@ -505,6 +543,42 @@ func _SandboxService_DestroySession_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(SandboxServiceServer).DestroySession(ctx, req.(*DestroySessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_PauseSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PauseSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).PauseSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_PauseSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).PauseSession(ctx, req.(*PauseSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_ResumeSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).ResumeSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_ResumeSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).ResumeSession(ctx, req.(*ResumeSessionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -830,6 +904,14 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DestroySession",
 			Handler:    _SandboxService_DestroySession_Handler,
+		},
+		{
+			MethodName: "PauseSession",
+			Handler:    _SandboxService_PauseSession_Handler,
+		},
+		{
+			MethodName: "ResumeSession",
+			Handler:    _SandboxService_ResumeSession_Handler,
 		},
 		{
 			MethodName: "Exec",
