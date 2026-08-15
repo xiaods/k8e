@@ -40,6 +40,18 @@ service SandboxService {
   rpc SnapshotList(SnapshotListRequest)     returns (SnapshotListResponse);
   // GetProcesses lists processes in the sandbox pod (KIP-16 M5 process topology).
   rpc GetProcesses(GetProcessesRequest)     returns (GetProcessesResponse);
+  // ── PTY terminal primitive (KIP-19) ───────────────────────────────────────
+  // CreateTerminal allocates a PTY and starts argv as a controlling-terminal
+  // session leader (argv is NOT shell-interpreted).
+  rpc CreateTerminal(CreateTerminalRequest) returns (CreateTerminalResponse);
+  // TerminalStream streams terminal output bytes; the final frame carries
+  // TerminalExit (exit code / signal) when the top-level process closes.
+  rpc TerminalStream(TerminalStreamRequest) returns (stream TerminalStreamResponse);
+  rpc TerminalWrite(TerminalWriteRequest)   returns (TerminalWriteResponse);
+  rpc TerminalResize(TerminalResizeRequest) returns (TerminalResizeResponse);
+  rpc TerminalForeground(TerminalForegroundRequest) returns (TerminalForegroundResponse);
+  rpc TerminalSignal(TerminalSignalRequest) returns (TerminalSignalResponse);
+  rpc TerminalDestroy(TerminalDestroyRequest) returns (TerminalDestroyResponse);
 }
 
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
@@ -255,3 +267,69 @@ message ProcessInfo {
 message GetProcessesResponse {
   repeated ProcessInfo processes = 1;
 }
+
+// ── PTY terminal primitive (KIP-19) ─────────────────────────────────────────
+
+message CreateTerminalRequest {
+  string session_id = 1;
+  repeated string argv = 2;   // argv[0] is the program; NOT shell-interpreted
+  string workdir = 3;
+  map<string, string> env = 4; // non-sensitive env; secrets stay in CreateSession.secret_refs
+  int32  rows = 5;            // initial window rows (>=1)
+  int32  cols = 6;            // initial window cols (>=1)
+}
+message CreateTerminalResponse {
+  string terminal_id = 1;     // opaque branded handle for all terminal RPCs
+  int32  pid = 2;             // session-leader pid in the sandbox pid space
+}
+
+message TerminalStreamRequest { string terminal_id = 1; }
+message TerminalStreamResponse {
+  oneof frame {
+    bytes data = 1;           // terminal output bytes in delivery order
+    TerminalExit exit = 2;    // final frame: top-level process closed
+  }
+}
+message TerminalExit {
+  int32  exit_code = 1;       // process exit code; 0 = clean
+  string signal    = 2;       // terminating signal name; empty = normal exit
+}
+
+message TerminalWriteRequest {
+  string terminal_id = 1;
+  bytes  data = 2;            // raw bytes, no implicit newline
+}
+message TerminalWriteResponse { bool ok = 1; }
+
+message TerminalResizeRequest {
+  string terminal_id = 1;
+  int32 rows = 2;
+  int32 cols = 3;
+}
+message TerminalResizeResponse { bool ok = 1; }
+
+message TerminalForegroundRequest { string terminal_id = 1; }
+message TerminalForegroundResponse {
+  int32 process_group_id = 1; // current foreground pgid; -1 when unresolvable
+  bool  input_waiting = 2;    // best-effort; false means "not provable" (KIP-19)
+}
+
+enum TerminalSignal {
+  TERMINAL_SIGNAL_UNSPECIFIED = 0;
+  TERMINAL_SIGNAL_INT  = 1;   // SIGINT
+  TERMINAL_SIGNAL_TERM = 2;   // SIGTERM
+  TERMINAL_SIGNAL_KILL = 3;   // SIGKILL
+  TERMINAL_SIGNAL_TSTP = 4;   // SIGTSTP
+  TERMINAL_SIGNAL_HUP  = 5;   // SIGHUP
+}
+message TerminalSignalRequest {
+  string terminal_id = 1;
+  TerminalSignal signal = 2;
+}
+message TerminalSignalResponse { int32 process_group_id = 1; } // pgid that received the signal
+
+message TerminalDestroyRequest {
+  string terminal_id = 1;
+  int32  grace_ms = 2;        // TERM -> grace -> KILL escalation bound
+}
+message TerminalDestroyResponse { bool ok = 1; }

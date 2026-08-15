@@ -21,6 +21,64 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type TerminalSignal int32
+
+const (
+	TerminalSignal_TERMINAL_SIGNAL_UNSPECIFIED TerminalSignal = 0
+	TerminalSignal_TERMINAL_SIGNAL_INT         TerminalSignal = 1 // SIGINT
+	TerminalSignal_TERMINAL_SIGNAL_TERM        TerminalSignal = 2 // SIGTERM
+	TerminalSignal_TERMINAL_SIGNAL_KILL        TerminalSignal = 3 // SIGKILL
+	TerminalSignal_TERMINAL_SIGNAL_TSTP        TerminalSignal = 4 // SIGTSTP
+	TerminalSignal_TERMINAL_SIGNAL_HUP         TerminalSignal = 5 // SIGHUP
+)
+
+// Enum value maps for TerminalSignal.
+var (
+	TerminalSignal_name = map[int32]string{
+		0: "TERMINAL_SIGNAL_UNSPECIFIED",
+		1: "TERMINAL_SIGNAL_INT",
+		2: "TERMINAL_SIGNAL_TERM",
+		3: "TERMINAL_SIGNAL_KILL",
+		4: "TERMINAL_SIGNAL_TSTP",
+		5: "TERMINAL_SIGNAL_HUP",
+	}
+	TerminalSignal_value = map[string]int32{
+		"TERMINAL_SIGNAL_UNSPECIFIED": 0,
+		"TERMINAL_SIGNAL_INT":         1,
+		"TERMINAL_SIGNAL_TERM":        2,
+		"TERMINAL_SIGNAL_KILL":        3,
+		"TERMINAL_SIGNAL_TSTP":        4,
+		"TERMINAL_SIGNAL_HUP":         5,
+	}
+)
+
+func (x TerminalSignal) Enum() *TerminalSignal {
+	p := new(TerminalSignal)
+	*p = x
+	return p
+}
+
+func (x TerminalSignal) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TerminalSignal) Descriptor() protoreflect.EnumDescriptor {
+	return file_sandbox_v1_sandbox_proto_enumTypes[0].Descriptor()
+}
+
+func (TerminalSignal) Type() protoreflect.EnumType {
+	return &file_sandbox_v1_sandbox_proto_enumTypes[0]
+}
+
+func (x TerminalSignal) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TerminalSignal.Descriptor instead.
+func (TerminalSignal) EnumDescriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{0}
+}
+
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
 // at exec time only and never stored on the SandboxSession CRD (#505 / KIP-12 B).
 type SecretRef struct {
@@ -2694,6 +2752,808 @@ func (x *GetProcessesResponse) GetProcesses() []*ProcessInfo {
 	return nil
 }
 
+type CreateTerminalRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Argv          []string               `protobuf:"bytes,2,rep,name=argv,proto3" json:"argv,omitempty"` // argv[0] is the program; NOT shell-interpreted
+	Workdir       string                 `protobuf:"bytes,3,opt,name=workdir,proto3" json:"workdir,omitempty"`
+	Env           map[string]string      `protobuf:"bytes,4,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // non-sensitive env; secrets stay in CreateSession.secret_refs
+	Rows          int32                  `protobuf:"varint,5,opt,name=rows,proto3" json:"rows,omitempty"`                                                                        // initial window rows (>=1)
+	Cols          int32                  `protobuf:"varint,6,opt,name=cols,proto3" json:"cols,omitempty"`                                                                        // initial window cols (>=1)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateTerminalRequest) Reset() {
+	*x = CreateTerminalRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateTerminalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateTerminalRequest) ProtoMessage() {}
+
+func (x *CreateTerminalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateTerminalRequest.ProtoReflect.Descriptor instead.
+func (*CreateTerminalRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *CreateTerminalRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CreateTerminalRequest) GetArgv() []string {
+	if x != nil {
+		return x.Argv
+	}
+	return nil
+}
+
+func (x *CreateTerminalRequest) GetWorkdir() string {
+	if x != nil {
+		return x.Workdir
+	}
+	return ""
+}
+
+func (x *CreateTerminalRequest) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *CreateTerminalRequest) GetRows() int32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *CreateTerminalRequest) GetCols() int32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+type CreateTerminalResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TerminalId    string                 `protobuf:"bytes,1,opt,name=terminal_id,json=terminalId,proto3" json:"terminal_id,omitempty"` // opaque branded handle for all terminal RPCs
+	Pid           int32                  `protobuf:"varint,2,opt,name=pid,proto3" json:"pid,omitempty"`                                // session-leader pid in the sandbox pid space
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateTerminalResponse) Reset() {
+	*x = CreateTerminalResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateTerminalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateTerminalResponse) ProtoMessage() {}
+
+func (x *CreateTerminalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateTerminalResponse.ProtoReflect.Descriptor instead.
+func (*CreateTerminalResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *CreateTerminalResponse) GetTerminalId() string {
+	if x != nil {
+		return x.TerminalId
+	}
+	return ""
+}
+
+func (x *CreateTerminalResponse) GetPid() int32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+type TerminalStreamRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TerminalId    string                 `protobuf:"bytes,1,opt,name=terminal_id,json=terminalId,proto3" json:"terminal_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalStreamRequest) Reset() {
+	*x = TerminalStreamRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalStreamRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalStreamRequest) ProtoMessage() {}
+
+func (x *TerminalStreamRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalStreamRequest.ProtoReflect.Descriptor instead.
+func (*TerminalStreamRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *TerminalStreamRequest) GetTerminalId() string {
+	if x != nil {
+		return x.TerminalId
+	}
+	return ""
+}
+
+type TerminalStreamResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Frame:
+	//
+	//	*TerminalStreamResponse_Data
+	//	*TerminalStreamResponse_Exit
+	Frame         isTerminalStreamResponse_Frame `protobuf_oneof:"frame"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalStreamResponse) Reset() {
+	*x = TerminalStreamResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalStreamResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalStreamResponse) ProtoMessage() {}
+
+func (x *TerminalStreamResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalStreamResponse.ProtoReflect.Descriptor instead.
+func (*TerminalStreamResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *TerminalStreamResponse) GetFrame() isTerminalStreamResponse_Frame {
+	if x != nil {
+		return x.Frame
+	}
+	return nil
+}
+
+func (x *TerminalStreamResponse) GetData() []byte {
+	if x != nil {
+		if x, ok := x.Frame.(*TerminalStreamResponse_Data); ok {
+			return x.Data
+		}
+	}
+	return nil
+}
+
+func (x *TerminalStreamResponse) GetExit() *TerminalExit {
+	if x != nil {
+		if x, ok := x.Frame.(*TerminalStreamResponse_Exit); ok {
+			return x.Exit
+		}
+	}
+	return nil
+}
+
+type isTerminalStreamResponse_Frame interface {
+	isTerminalStreamResponse_Frame()
+}
+
+type TerminalStreamResponse_Data struct {
+	Data []byte `protobuf:"bytes,1,opt,name=data,proto3,oneof"` // terminal output bytes in delivery order
+}
+
+type TerminalStreamResponse_Exit struct {
+	Exit *TerminalExit `protobuf:"bytes,2,opt,name=exit,proto3,oneof"` // final frame: top-level process closed
+}
+
+func (*TerminalStreamResponse_Data) isTerminalStreamResponse_Frame() {}
+
+func (*TerminalStreamResponse_Exit) isTerminalStreamResponse_Frame() {}
+
+type TerminalExit struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ExitCode      int32                  `protobuf:"varint,1,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"` // process exit code; 0 = clean
+	Signal        string                 `protobuf:"bytes,2,opt,name=signal,proto3" json:"signal,omitempty"`                      // terminating signal name; empty = normal exit
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalExit) Reset() {
+	*x = TerminalExit{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalExit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalExit) ProtoMessage() {}
+
+func (x *TerminalExit) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalExit.ProtoReflect.Descriptor instead.
+func (*TerminalExit) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *TerminalExit) GetExitCode() int32 {
+	if x != nil {
+		return x.ExitCode
+	}
+	return 0
+}
+
+func (x *TerminalExit) GetSignal() string {
+	if x != nil {
+		return x.Signal
+	}
+	return ""
+}
+
+type TerminalWriteRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TerminalId    string                 `protobuf:"bytes,1,opt,name=terminal_id,json=terminalId,proto3" json:"terminal_id,omitempty"`
+	Data          []byte                 `protobuf:"bytes,2,opt,name=data,proto3" json:"data,omitempty"` // raw bytes, no implicit newline
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalWriteRequest) Reset() {
+	*x = TerminalWriteRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalWriteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalWriteRequest) ProtoMessage() {}
+
+func (x *TerminalWriteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalWriteRequest.ProtoReflect.Descriptor instead.
+func (*TerminalWriteRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *TerminalWriteRequest) GetTerminalId() string {
+	if x != nil {
+		return x.TerminalId
+	}
+	return ""
+}
+
+func (x *TerminalWriteRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type TerminalWriteResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalWriteResponse) Reset() {
+	*x = TerminalWriteResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalWriteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalWriteResponse) ProtoMessage() {}
+
+func (x *TerminalWriteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalWriteResponse.ProtoReflect.Descriptor instead.
+func (*TerminalWriteResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *TerminalWriteResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+type TerminalResizeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TerminalId    string                 `protobuf:"bytes,1,opt,name=terminal_id,json=terminalId,proto3" json:"terminal_id,omitempty"`
+	Rows          int32                  `protobuf:"varint,2,opt,name=rows,proto3" json:"rows,omitempty"`
+	Cols          int32                  `protobuf:"varint,3,opt,name=cols,proto3" json:"cols,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalResizeRequest) Reset() {
+	*x = TerminalResizeRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalResizeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalResizeRequest) ProtoMessage() {}
+
+func (x *TerminalResizeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalResizeRequest.ProtoReflect.Descriptor instead.
+func (*TerminalResizeRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *TerminalResizeRequest) GetTerminalId() string {
+	if x != nil {
+		return x.TerminalId
+	}
+	return ""
+}
+
+func (x *TerminalResizeRequest) GetRows() int32 {
+	if x != nil {
+		return x.Rows
+	}
+	return 0
+}
+
+func (x *TerminalResizeRequest) GetCols() int32 {
+	if x != nil {
+		return x.Cols
+	}
+	return 0
+}
+
+type TerminalResizeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalResizeResponse) Reset() {
+	*x = TerminalResizeResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalResizeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalResizeResponse) ProtoMessage() {}
+
+func (x *TerminalResizeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalResizeResponse.ProtoReflect.Descriptor instead.
+func (*TerminalResizeResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *TerminalResizeResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+type TerminalForegroundRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TerminalId    string                 `protobuf:"bytes,1,opt,name=terminal_id,json=terminalId,proto3" json:"terminal_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalForegroundRequest) Reset() {
+	*x = TerminalForegroundRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalForegroundRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalForegroundRequest) ProtoMessage() {}
+
+func (x *TerminalForegroundRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalForegroundRequest.ProtoReflect.Descriptor instead.
+func (*TerminalForegroundRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *TerminalForegroundRequest) GetTerminalId() string {
+	if x != nil {
+		return x.TerminalId
+	}
+	return ""
+}
+
+type TerminalForegroundResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ProcessGroupId int32                  `protobuf:"varint,1,opt,name=process_group_id,json=processGroupId,proto3" json:"process_group_id,omitempty"` // current foreground pgid; -1 when unresolvable
+	InputWaiting   bool                   `protobuf:"varint,2,opt,name=input_waiting,json=inputWaiting,proto3" json:"input_waiting,omitempty"`         // best-effort; false means "not provable" (KIP-19)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TerminalForegroundResponse) Reset() {
+	*x = TerminalForegroundResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalForegroundResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalForegroundResponse) ProtoMessage() {}
+
+func (x *TerminalForegroundResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalForegroundResponse.ProtoReflect.Descriptor instead.
+func (*TerminalForegroundResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *TerminalForegroundResponse) GetProcessGroupId() int32 {
+	if x != nil {
+		return x.ProcessGroupId
+	}
+	return 0
+}
+
+func (x *TerminalForegroundResponse) GetInputWaiting() bool {
+	if x != nil {
+		return x.InputWaiting
+	}
+	return false
+}
+
+type TerminalSignalRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TerminalId    string                 `protobuf:"bytes,1,opt,name=terminal_id,json=terminalId,proto3" json:"terminal_id,omitempty"`
+	Signal        TerminalSignal         `protobuf:"varint,2,opt,name=signal,proto3,enum=sandbox.v1.TerminalSignal" json:"signal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalSignalRequest) Reset() {
+	*x = TerminalSignalRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[59]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalSignalRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalSignalRequest) ProtoMessage() {}
+
+func (x *TerminalSignalRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[59]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalSignalRequest.ProtoReflect.Descriptor instead.
+func (*TerminalSignalRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *TerminalSignalRequest) GetTerminalId() string {
+	if x != nil {
+		return x.TerminalId
+	}
+	return ""
+}
+
+func (x *TerminalSignalRequest) GetSignal() TerminalSignal {
+	if x != nil {
+		return x.Signal
+	}
+	return TerminalSignal_TERMINAL_SIGNAL_UNSPECIFIED
+}
+
+type TerminalSignalResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ProcessGroupId int32                  `protobuf:"varint,1,opt,name=process_group_id,json=processGroupId,proto3" json:"process_group_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TerminalSignalResponse) Reset() {
+	*x = TerminalSignalResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalSignalResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalSignalResponse) ProtoMessage() {}
+
+func (x *TerminalSignalResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalSignalResponse.ProtoReflect.Descriptor instead.
+func (*TerminalSignalResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *TerminalSignalResponse) GetProcessGroupId() int32 {
+	if x != nil {
+		return x.ProcessGroupId
+	}
+	return 0
+}
+
+type TerminalDestroyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TerminalId    string                 `protobuf:"bytes,1,opt,name=terminal_id,json=terminalId,proto3" json:"terminal_id,omitempty"`
+	GraceMs       int32                  `protobuf:"varint,2,opt,name=grace_ms,json=graceMs,proto3" json:"grace_ms,omitempty"` // TERM -> grace -> KILL escalation bound
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalDestroyRequest) Reset() {
+	*x = TerminalDestroyRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalDestroyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalDestroyRequest) ProtoMessage() {}
+
+func (x *TerminalDestroyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalDestroyRequest.ProtoReflect.Descriptor instead.
+func (*TerminalDestroyRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *TerminalDestroyRequest) GetTerminalId() string {
+	if x != nil {
+		return x.TerminalId
+	}
+	return ""
+}
+
+func (x *TerminalDestroyRequest) GetGraceMs() int32 {
+	if x != nil {
+		return x.GraceMs
+	}
+	return 0
+}
+
+type TerminalDestroyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TerminalDestroyResponse) Reset() {
+	*x = TerminalDestroyResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TerminalDestroyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TerminalDestroyResponse) ProtoMessage() {}
+
+func (x *TerminalDestroyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TerminalDestroyResponse.ProtoReflect.Descriptor instead.
+func (*TerminalDestroyResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *TerminalDestroyResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
 var File_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
 
 const file_sandbox_v1_sandbox_proto_rawDesc = "" +
@@ -2899,7 +3759,70 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x04comm\x18\x02 \x01(\tR\x04comm\x12\x14\n" +
 	"\x05state\x18\x03 \x01(\tR\x05state\"M\n" +
 	"\x14GetProcessesResponse\x125\n" +
-	"\tprocesses\x18\x01 \x03(\v2\x17.sandbox.v1.ProcessInfoR\tprocesses2\x98\x0e\n" +
+	"\tprocesses\x18\x01 \x03(\v2\x17.sandbox.v1.ProcessInfoR\tprocesses\"\x82\x02\n" +
+	"\x15CreateTerminalRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04argv\x18\x02 \x03(\tR\x04argv\x12\x18\n" +
+	"\aworkdir\x18\x03 \x01(\tR\aworkdir\x12<\n" +
+	"\x03env\x18\x04 \x03(\v2*.sandbox.v1.CreateTerminalRequest.EnvEntryR\x03env\x12\x12\n" +
+	"\x04rows\x18\x05 \x01(\x05R\x04rows\x12\x12\n" +
+	"\x04cols\x18\x06 \x01(\x05R\x04cols\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"K\n" +
+	"\x16CreateTerminalResponse\x12\x1f\n" +
+	"\vterminal_id\x18\x01 \x01(\tR\n" +
+	"terminalId\x12\x10\n" +
+	"\x03pid\x18\x02 \x01(\x05R\x03pid\"8\n" +
+	"\x15TerminalStreamRequest\x12\x1f\n" +
+	"\vterminal_id\x18\x01 \x01(\tR\n" +
+	"terminalId\"g\n" +
+	"\x16TerminalStreamResponse\x12\x14\n" +
+	"\x04data\x18\x01 \x01(\fH\x00R\x04data\x12.\n" +
+	"\x04exit\x18\x02 \x01(\v2\x18.sandbox.v1.TerminalExitH\x00R\x04exitB\a\n" +
+	"\x05frame\"C\n" +
+	"\fTerminalExit\x12\x1b\n" +
+	"\texit_code\x18\x01 \x01(\x05R\bexitCode\x12\x16\n" +
+	"\x06signal\x18\x02 \x01(\tR\x06signal\"K\n" +
+	"\x14TerminalWriteRequest\x12\x1f\n" +
+	"\vterminal_id\x18\x01 \x01(\tR\n" +
+	"terminalId\x12\x12\n" +
+	"\x04data\x18\x02 \x01(\fR\x04data\"'\n" +
+	"\x15TerminalWriteResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"`\n" +
+	"\x15TerminalResizeRequest\x12\x1f\n" +
+	"\vterminal_id\x18\x01 \x01(\tR\n" +
+	"terminalId\x12\x12\n" +
+	"\x04rows\x18\x02 \x01(\x05R\x04rows\x12\x12\n" +
+	"\x04cols\x18\x03 \x01(\x05R\x04cols\"(\n" +
+	"\x16TerminalResizeResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"<\n" +
+	"\x19TerminalForegroundRequest\x12\x1f\n" +
+	"\vterminal_id\x18\x01 \x01(\tR\n" +
+	"terminalId\"k\n" +
+	"\x1aTerminalForegroundResponse\x12(\n" +
+	"\x10process_group_id\x18\x01 \x01(\x05R\x0eprocessGroupId\x12#\n" +
+	"\rinput_waiting\x18\x02 \x01(\bR\finputWaiting\"l\n" +
+	"\x15TerminalSignalRequest\x12\x1f\n" +
+	"\vterminal_id\x18\x01 \x01(\tR\n" +
+	"terminalId\x122\n" +
+	"\x06signal\x18\x02 \x01(\x0e2\x1a.sandbox.v1.TerminalSignalR\x06signal\"B\n" +
+	"\x16TerminalSignalResponse\x12(\n" +
+	"\x10process_group_id\x18\x01 \x01(\x05R\x0eprocessGroupId\"T\n" +
+	"\x16TerminalDestroyRequest\x12\x1f\n" +
+	"\vterminal_id\x18\x01 \x01(\tR\n" +
+	"terminalId\x12\x19\n" +
+	"\bgrace_ms\x18\x02 \x01(\x05R\agraceMs\")\n" +
+	"\x17TerminalDestroyResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok*\xb1\x01\n" +
+	"\x0eTerminalSignal\x12\x1f\n" +
+	"\x1bTERMINAL_SIGNAL_UNSPECIFIED\x10\x00\x12\x17\n" +
+	"\x13TERMINAL_SIGNAL_INT\x10\x01\x12\x18\n" +
+	"\x14TERMINAL_SIGNAL_TERM\x10\x02\x12\x18\n" +
+	"\x14TERMINAL_SIGNAL_KILL\x10\x03\x12\x18\n" +
+	"\x14TERMINAL_SIGNAL_TSTP\x10\x04\x12\x17\n" +
+	"\x13TERMINAL_SIGNAL_HUP\x10\x052\x95\x13\n" +
 	"\x0eSandboxService\x12T\n" +
 	"\rCreateSession\x12 .sandbox.v1.CreateSessionRequest\x1a!.sandbox.v1.CreateSessionResponse\x12K\n" +
 	"\n" +
@@ -2926,7 +3849,14 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\vSnapshotPut\x12\x1e.sandbox.v1.SnapshotPutRequest\x1a\x1f.sandbox.v1.SnapshotPutResponse\x12N\n" +
 	"\vSnapshotGet\x12\x1e.sandbox.v1.SnapshotGetRequest\x1a\x1f.sandbox.v1.SnapshotGetResponse\x12Q\n" +
 	"\fSnapshotList\x12\x1f.sandbox.v1.SnapshotListRequest\x1a .sandbox.v1.SnapshotListResponse\x12Q\n" +
-	"\fGetProcesses\x12\x1f.sandbox.v1.GetProcessesRequest\x1a .sandbox.v1.GetProcessesResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
+	"\fGetProcesses\x12\x1f.sandbox.v1.GetProcessesRequest\x1a .sandbox.v1.GetProcessesResponse\x12W\n" +
+	"\x0eCreateTerminal\x12!.sandbox.v1.CreateTerminalRequest\x1a\".sandbox.v1.CreateTerminalResponse\x12Y\n" +
+	"\x0eTerminalStream\x12!.sandbox.v1.TerminalStreamRequest\x1a\".sandbox.v1.TerminalStreamResponse0\x01\x12T\n" +
+	"\rTerminalWrite\x12 .sandbox.v1.TerminalWriteRequest\x1a!.sandbox.v1.TerminalWriteResponse\x12W\n" +
+	"\x0eTerminalResize\x12!.sandbox.v1.TerminalResizeRequest\x1a\".sandbox.v1.TerminalResizeResponse\x12c\n" +
+	"\x12TerminalForeground\x12%.sandbox.v1.TerminalForegroundRequest\x1a&.sandbox.v1.TerminalForegroundResponse\x12W\n" +
+	"\x0eTerminalSignal\x12!.sandbox.v1.TerminalSignalRequest\x1a\".sandbox.v1.TerminalSignalResponse\x12Z\n" +
+	"\x0fTerminalDestroy\x12\".sandbox.v1.TerminalDestroyRequest\x1a#.sandbox.v1.TerminalDestroyResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
 
 var (
 	file_sandbox_v1_sandbox_proto_rawDescOnce sync.Once
@@ -2940,115 +3870,150 @@ func file_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 	return file_sandbox_v1_sandbox_proto_rawDescData
 }
 
-var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_sandbox_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 65)
 var file_sandbox_v1_sandbox_proto_goTypes = []any{
-	(*SecretRef)(nil),              // 0: sandbox.v1.SecretRef
-	(*CreateSessionRequest)(nil),   // 1: sandbox.v1.CreateSessionRequest
-	(*CreateSessionResponse)(nil),  // 2: sandbox.v1.CreateSessionResponse
-	(*GetSessionRequest)(nil),      // 3: sandbox.v1.GetSessionRequest
-	(*GetSessionResponse)(nil),     // 4: sandbox.v1.GetSessionResponse
-	(*ListSessionsRequest)(nil),    // 5: sandbox.v1.ListSessionsRequest
-	(*ListSessionsResponse)(nil),   // 6: sandbox.v1.ListSessionsResponse
-	(*DestroySessionRequest)(nil),  // 7: sandbox.v1.DestroySessionRequest
-	(*DestroySessionResponse)(nil), // 8: sandbox.v1.DestroySessionResponse
-	(*PauseSessionRequest)(nil),    // 9: sandbox.v1.PauseSessionRequest
-	(*PauseSessionResponse)(nil),   // 10: sandbox.v1.PauseSessionResponse
-	(*ResumeSessionRequest)(nil),   // 11: sandbox.v1.ResumeSessionRequest
-	(*ResumeSessionResponse)(nil),  // 12: sandbox.v1.ResumeSessionResponse
-	(*ExecRequest)(nil),            // 13: sandbox.v1.ExecRequest
-	(*ExecResponse)(nil),           // 14: sandbox.v1.ExecResponse
-	(*ExecStreamResponse)(nil),     // 15: sandbox.v1.ExecStreamResponse
-	(*WriteFileRequest)(nil),       // 16: sandbox.v1.WriteFileRequest
-	(*WriteFileResponse)(nil),      // 17: sandbox.v1.WriteFileResponse
-	(*ReadFileRequest)(nil),        // 18: sandbox.v1.ReadFileRequest
-	(*ReadFileResponse)(nil),       // 19: sandbox.v1.ReadFileResponse
-	(*ListFilesRequest)(nil),       // 20: sandbox.v1.ListFilesRequest
-	(*ListFilesResponse)(nil),      // 21: sandbox.v1.ListFilesResponse
-	(*FileEntry)(nil),              // 22: sandbox.v1.FileEntry
-	(*PipInstallRequest)(nil),      // 23: sandbox.v1.PipInstallRequest
-	(*PipInstallResponse)(nil),     // 24: sandbox.v1.PipInstallResponse
-	(*RunSubAgentRequest)(nil),     // 25: sandbox.v1.RunSubAgentRequest
-	(*RunSubAgentResponse)(nil),    // 26: sandbox.v1.RunSubAgentResponse
-	(*ConfirmActionRequest)(nil),   // 27: sandbox.v1.ConfirmActionRequest
-	(*ConfirmActionResponse)(nil),  // 28: sandbox.v1.ConfirmActionResponse
-	(*ApproveActionRequest)(nil),   // 29: sandbox.v1.ApproveActionRequest
-	(*ApproveActionResponse)(nil),  // 30: sandbox.v1.ApproveActionResponse
-	(*LoginRequest)(nil),           // 31: sandbox.v1.LoginRequest
-	(*LoginResponse)(nil),          // 32: sandbox.v1.LoginResponse
-	(*PollRunRequest)(nil),         // 33: sandbox.v1.PollRunRequest
-	(*PollRunResponse)(nil),        // 34: sandbox.v1.PollRunResponse
-	(*GetTranscriptRequest)(nil),   // 35: sandbox.v1.GetTranscriptRequest
-	(*GetTranscriptResponse)(nil),  // 36: sandbox.v1.GetTranscriptResponse
-	(*GetEventsRequest)(nil),       // 37: sandbox.v1.GetEventsRequest
-	(*GetEventsResponse)(nil),      // 38: sandbox.v1.GetEventsResponse
-	(*SnapshotPutRequest)(nil),     // 39: sandbox.v1.SnapshotPutRequest
-	(*SnapshotPutResponse)(nil),    // 40: sandbox.v1.SnapshotPutResponse
-	(*SnapshotGetRequest)(nil),     // 41: sandbox.v1.SnapshotGetRequest
-	(*SnapshotGetResponse)(nil),    // 42: sandbox.v1.SnapshotGetResponse
-	(*SnapshotListRequest)(nil),    // 43: sandbox.v1.SnapshotListRequest
-	(*SnapshotListResponse)(nil),   // 44: sandbox.v1.SnapshotListResponse
-	(*GetProcessesRequest)(nil),    // 45: sandbox.v1.GetProcessesRequest
-	(*ProcessInfo)(nil),            // 46: sandbox.v1.ProcessInfo
-	(*GetProcessesResponse)(nil),   // 47: sandbox.v1.GetProcessesResponse
-	nil,                            // 48: sandbox.v1.CreateSessionRequest.EnvEntry
+	(TerminalSignal)(0),                // 0: sandbox.v1.TerminalSignal
+	(*SecretRef)(nil),                  // 1: sandbox.v1.SecretRef
+	(*CreateSessionRequest)(nil),       // 2: sandbox.v1.CreateSessionRequest
+	(*CreateSessionResponse)(nil),      // 3: sandbox.v1.CreateSessionResponse
+	(*GetSessionRequest)(nil),          // 4: sandbox.v1.GetSessionRequest
+	(*GetSessionResponse)(nil),         // 5: sandbox.v1.GetSessionResponse
+	(*ListSessionsRequest)(nil),        // 6: sandbox.v1.ListSessionsRequest
+	(*ListSessionsResponse)(nil),       // 7: sandbox.v1.ListSessionsResponse
+	(*DestroySessionRequest)(nil),      // 8: sandbox.v1.DestroySessionRequest
+	(*DestroySessionResponse)(nil),     // 9: sandbox.v1.DestroySessionResponse
+	(*PauseSessionRequest)(nil),        // 10: sandbox.v1.PauseSessionRequest
+	(*PauseSessionResponse)(nil),       // 11: sandbox.v1.PauseSessionResponse
+	(*ResumeSessionRequest)(nil),       // 12: sandbox.v1.ResumeSessionRequest
+	(*ResumeSessionResponse)(nil),      // 13: sandbox.v1.ResumeSessionResponse
+	(*ExecRequest)(nil),                // 14: sandbox.v1.ExecRequest
+	(*ExecResponse)(nil),               // 15: sandbox.v1.ExecResponse
+	(*ExecStreamResponse)(nil),         // 16: sandbox.v1.ExecStreamResponse
+	(*WriteFileRequest)(nil),           // 17: sandbox.v1.WriteFileRequest
+	(*WriteFileResponse)(nil),          // 18: sandbox.v1.WriteFileResponse
+	(*ReadFileRequest)(nil),            // 19: sandbox.v1.ReadFileRequest
+	(*ReadFileResponse)(nil),           // 20: sandbox.v1.ReadFileResponse
+	(*ListFilesRequest)(nil),           // 21: sandbox.v1.ListFilesRequest
+	(*ListFilesResponse)(nil),          // 22: sandbox.v1.ListFilesResponse
+	(*FileEntry)(nil),                  // 23: sandbox.v1.FileEntry
+	(*PipInstallRequest)(nil),          // 24: sandbox.v1.PipInstallRequest
+	(*PipInstallResponse)(nil),         // 25: sandbox.v1.PipInstallResponse
+	(*RunSubAgentRequest)(nil),         // 26: sandbox.v1.RunSubAgentRequest
+	(*RunSubAgentResponse)(nil),        // 27: sandbox.v1.RunSubAgentResponse
+	(*ConfirmActionRequest)(nil),       // 28: sandbox.v1.ConfirmActionRequest
+	(*ConfirmActionResponse)(nil),      // 29: sandbox.v1.ConfirmActionResponse
+	(*ApproveActionRequest)(nil),       // 30: sandbox.v1.ApproveActionRequest
+	(*ApproveActionResponse)(nil),      // 31: sandbox.v1.ApproveActionResponse
+	(*LoginRequest)(nil),               // 32: sandbox.v1.LoginRequest
+	(*LoginResponse)(nil),              // 33: sandbox.v1.LoginResponse
+	(*PollRunRequest)(nil),             // 34: sandbox.v1.PollRunRequest
+	(*PollRunResponse)(nil),            // 35: sandbox.v1.PollRunResponse
+	(*GetTranscriptRequest)(nil),       // 36: sandbox.v1.GetTranscriptRequest
+	(*GetTranscriptResponse)(nil),      // 37: sandbox.v1.GetTranscriptResponse
+	(*GetEventsRequest)(nil),           // 38: sandbox.v1.GetEventsRequest
+	(*GetEventsResponse)(nil),          // 39: sandbox.v1.GetEventsResponse
+	(*SnapshotPutRequest)(nil),         // 40: sandbox.v1.SnapshotPutRequest
+	(*SnapshotPutResponse)(nil),        // 41: sandbox.v1.SnapshotPutResponse
+	(*SnapshotGetRequest)(nil),         // 42: sandbox.v1.SnapshotGetRequest
+	(*SnapshotGetResponse)(nil),        // 43: sandbox.v1.SnapshotGetResponse
+	(*SnapshotListRequest)(nil),        // 44: sandbox.v1.SnapshotListRequest
+	(*SnapshotListResponse)(nil),       // 45: sandbox.v1.SnapshotListResponse
+	(*GetProcessesRequest)(nil),        // 46: sandbox.v1.GetProcessesRequest
+	(*ProcessInfo)(nil),                // 47: sandbox.v1.ProcessInfo
+	(*GetProcessesResponse)(nil),       // 48: sandbox.v1.GetProcessesResponse
+	(*CreateTerminalRequest)(nil),      // 49: sandbox.v1.CreateTerminalRequest
+	(*CreateTerminalResponse)(nil),     // 50: sandbox.v1.CreateTerminalResponse
+	(*TerminalStreamRequest)(nil),      // 51: sandbox.v1.TerminalStreamRequest
+	(*TerminalStreamResponse)(nil),     // 52: sandbox.v1.TerminalStreamResponse
+	(*TerminalExit)(nil),               // 53: sandbox.v1.TerminalExit
+	(*TerminalWriteRequest)(nil),       // 54: sandbox.v1.TerminalWriteRequest
+	(*TerminalWriteResponse)(nil),      // 55: sandbox.v1.TerminalWriteResponse
+	(*TerminalResizeRequest)(nil),      // 56: sandbox.v1.TerminalResizeRequest
+	(*TerminalResizeResponse)(nil),     // 57: sandbox.v1.TerminalResizeResponse
+	(*TerminalForegroundRequest)(nil),  // 58: sandbox.v1.TerminalForegroundRequest
+	(*TerminalForegroundResponse)(nil), // 59: sandbox.v1.TerminalForegroundResponse
+	(*TerminalSignalRequest)(nil),      // 60: sandbox.v1.TerminalSignalRequest
+	(*TerminalSignalResponse)(nil),     // 61: sandbox.v1.TerminalSignalResponse
+	(*TerminalDestroyRequest)(nil),     // 62: sandbox.v1.TerminalDestroyRequest
+	(*TerminalDestroyResponse)(nil),    // 63: sandbox.v1.TerminalDestroyResponse
+	nil,                                // 64: sandbox.v1.CreateSessionRequest.EnvEntry
+	nil,                                // 65: sandbox.v1.CreateTerminalRequest.EnvEntry
 }
 var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
-	48, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
-	0,  // 1: sandbox.v1.CreateSessionRequest.secret_refs:type_name -> sandbox.v1.SecretRef
-	4,  // 2: sandbox.v1.ListSessionsResponse.sessions:type_name -> sandbox.v1.GetSessionResponse
-	22, // 3: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
-	46, // 4: sandbox.v1.GetProcessesResponse.processes:type_name -> sandbox.v1.ProcessInfo
-	1,  // 5: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
-	3,  // 6: sandbox.v1.SandboxService.GetSession:input_type -> sandbox.v1.GetSessionRequest
-	5,  // 7: sandbox.v1.SandboxService.ListSessions:input_type -> sandbox.v1.ListSessionsRequest
-	7,  // 8: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
-	9,  // 9: sandbox.v1.SandboxService.PauseSession:input_type -> sandbox.v1.PauseSessionRequest
-	11, // 10: sandbox.v1.SandboxService.ResumeSession:input_type -> sandbox.v1.ResumeSessionRequest
-	13, // 11: sandbox.v1.SandboxService.Exec:input_type -> sandbox.v1.ExecRequest
-	13, // 12: sandbox.v1.SandboxService.ExecStream:input_type -> sandbox.v1.ExecRequest
-	16, // 13: sandbox.v1.SandboxService.WriteFile:input_type -> sandbox.v1.WriteFileRequest
-	18, // 14: sandbox.v1.SandboxService.ReadFile:input_type -> sandbox.v1.ReadFileRequest
-	20, // 15: sandbox.v1.SandboxService.ListFiles:input_type -> sandbox.v1.ListFilesRequest
-	23, // 16: sandbox.v1.SandboxService.PipInstall:input_type -> sandbox.v1.PipInstallRequest
-	25, // 17: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
-	27, // 18: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
-	29, // 19: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
-	31, // 20: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
-	33, // 21: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
-	35, // 22: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
-	37, // 23: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
-	39, // 24: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
-	41, // 25: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
-	43, // 26: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
-	45, // 27: sandbox.v1.SandboxService.GetProcesses:input_type -> sandbox.v1.GetProcessesRequest
-	2,  // 28: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
-	4,  // 29: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
-	6,  // 30: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
-	8,  // 31: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
-	10, // 32: sandbox.v1.SandboxService.PauseSession:output_type -> sandbox.v1.PauseSessionResponse
-	12, // 33: sandbox.v1.SandboxService.ResumeSession:output_type -> sandbox.v1.ResumeSessionResponse
-	14, // 34: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
-	15, // 35: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
-	17, // 36: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
-	19, // 37: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
-	21, // 38: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
-	24, // 39: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
-	26, // 40: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
-	28, // 41: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
-	30, // 42: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	32, // 43: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
-	34, // 44: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
-	36, // 45: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
-	38, // 46: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
-	40, // 47: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
-	42, // 48: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
-	44, // 49: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
-	47, // 50: sandbox.v1.SandboxService.GetProcesses:output_type -> sandbox.v1.GetProcessesResponse
-	28, // [28:51] is the sub-list for method output_type
-	5,  // [5:28] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	64, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
+	1,  // 1: sandbox.v1.CreateSessionRequest.secret_refs:type_name -> sandbox.v1.SecretRef
+	5,  // 2: sandbox.v1.ListSessionsResponse.sessions:type_name -> sandbox.v1.GetSessionResponse
+	23, // 3: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
+	47, // 4: sandbox.v1.GetProcessesResponse.processes:type_name -> sandbox.v1.ProcessInfo
+	65, // 5: sandbox.v1.CreateTerminalRequest.env:type_name -> sandbox.v1.CreateTerminalRequest.EnvEntry
+	53, // 6: sandbox.v1.TerminalStreamResponse.exit:type_name -> sandbox.v1.TerminalExit
+	0,  // 7: sandbox.v1.TerminalSignalRequest.signal:type_name -> sandbox.v1.TerminalSignal
+	2,  // 8: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
+	4,  // 9: sandbox.v1.SandboxService.GetSession:input_type -> sandbox.v1.GetSessionRequest
+	6,  // 10: sandbox.v1.SandboxService.ListSessions:input_type -> sandbox.v1.ListSessionsRequest
+	8,  // 11: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
+	10, // 12: sandbox.v1.SandboxService.PauseSession:input_type -> sandbox.v1.PauseSessionRequest
+	12, // 13: sandbox.v1.SandboxService.ResumeSession:input_type -> sandbox.v1.ResumeSessionRequest
+	14, // 14: sandbox.v1.SandboxService.Exec:input_type -> sandbox.v1.ExecRequest
+	14, // 15: sandbox.v1.SandboxService.ExecStream:input_type -> sandbox.v1.ExecRequest
+	17, // 16: sandbox.v1.SandboxService.WriteFile:input_type -> sandbox.v1.WriteFileRequest
+	19, // 17: sandbox.v1.SandboxService.ReadFile:input_type -> sandbox.v1.ReadFileRequest
+	21, // 18: sandbox.v1.SandboxService.ListFiles:input_type -> sandbox.v1.ListFilesRequest
+	24, // 19: sandbox.v1.SandboxService.PipInstall:input_type -> sandbox.v1.PipInstallRequest
+	26, // 20: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
+	28, // 21: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
+	30, // 22: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
+	32, // 23: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
+	34, // 24: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
+	36, // 25: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
+	38, // 26: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
+	40, // 27: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
+	42, // 28: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
+	44, // 29: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
+	46, // 30: sandbox.v1.SandboxService.GetProcesses:input_type -> sandbox.v1.GetProcessesRequest
+	49, // 31: sandbox.v1.SandboxService.CreateTerminal:input_type -> sandbox.v1.CreateTerminalRequest
+	51, // 32: sandbox.v1.SandboxService.TerminalStream:input_type -> sandbox.v1.TerminalStreamRequest
+	54, // 33: sandbox.v1.SandboxService.TerminalWrite:input_type -> sandbox.v1.TerminalWriteRequest
+	56, // 34: sandbox.v1.SandboxService.TerminalResize:input_type -> sandbox.v1.TerminalResizeRequest
+	58, // 35: sandbox.v1.SandboxService.TerminalForeground:input_type -> sandbox.v1.TerminalForegroundRequest
+	60, // 36: sandbox.v1.SandboxService.TerminalSignal:input_type -> sandbox.v1.TerminalSignalRequest
+	62, // 37: sandbox.v1.SandboxService.TerminalDestroy:input_type -> sandbox.v1.TerminalDestroyRequest
+	3,  // 38: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
+	5,  // 39: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
+	7,  // 40: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
+	9,  // 41: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
+	11, // 42: sandbox.v1.SandboxService.PauseSession:output_type -> sandbox.v1.PauseSessionResponse
+	13, // 43: sandbox.v1.SandboxService.ResumeSession:output_type -> sandbox.v1.ResumeSessionResponse
+	15, // 44: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
+	16, // 45: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
+	18, // 46: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
+	20, // 47: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
+	22, // 48: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
+	25, // 49: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
+	27, // 50: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
+	29, // 51: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
+	31, // 52: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
+	33, // 53: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
+	35, // 54: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
+	37, // 55: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
+	39, // 56: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
+	41, // 57: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
+	43, // 58: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
+	45, // 59: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
+	48, // 60: sandbox.v1.SandboxService.GetProcesses:output_type -> sandbox.v1.GetProcessesResponse
+	50, // 61: sandbox.v1.SandboxService.CreateTerminal:output_type -> sandbox.v1.CreateTerminalResponse
+	52, // 62: sandbox.v1.SandboxService.TerminalStream:output_type -> sandbox.v1.TerminalStreamResponse
+	55, // 63: sandbox.v1.SandboxService.TerminalWrite:output_type -> sandbox.v1.TerminalWriteResponse
+	57, // 64: sandbox.v1.SandboxService.TerminalResize:output_type -> sandbox.v1.TerminalResizeResponse
+	59, // 65: sandbox.v1.SandboxService.TerminalForeground:output_type -> sandbox.v1.TerminalForegroundResponse
+	61, // 66: sandbox.v1.SandboxService.TerminalSignal:output_type -> sandbox.v1.TerminalSignalResponse
+	63, // 67: sandbox.v1.SandboxService.TerminalDestroy:output_type -> sandbox.v1.TerminalDestroyResponse
+	38, // [38:68] is the sub-list for method output_type
+	8,  // [8:38] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_sandbox_v1_sandbox_proto_init() }
@@ -3056,18 +4021,23 @@ func file_sandbox_v1_sandbox_proto_init() {
 	if File_sandbox_v1_sandbox_proto != nil {
 		return
 	}
+	file_sandbox_v1_sandbox_proto_msgTypes[51].OneofWrappers = []any{
+		(*TerminalStreamResponse_Data)(nil),
+		(*TerminalStreamResponse_Exit)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   49,
+			NumEnums:      1,
+			NumMessages:   65,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_sandbox_v1_sandbox_proto_goTypes,
 		DependencyIndexes: file_sandbox_v1_sandbox_proto_depIdxs,
+		EnumInfos:         file_sandbox_v1_sandbox_proto_enumTypes,
 		MessageInfos:      file_sandbox_v1_sandbox_proto_msgTypes,
 	}.Build()
 	File_sandbox_v1_sandbox_proto = out.File
