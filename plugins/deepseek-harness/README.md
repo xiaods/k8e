@@ -18,7 +18,8 @@ via `dsh plugin --profile <name> add`.
 
 Phase 1 (CLI transport) and Phase 2 (direct gRPC: `spawnTerminal` + streaming
 `spawn`) are implemented. The tree typechecks cleanly against the dsh checkout;
-runtime e2e against a live K8E gateway is still pending.
+runtime e2e against a live K8E gateway is still pending — the procedure is in
+[`e2e.md`](e2e.md).
 
 ## Typecheck
 
