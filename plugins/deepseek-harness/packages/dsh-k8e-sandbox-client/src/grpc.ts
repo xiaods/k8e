@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { Readable } from 'node:stream'
 import * as grpc from '@grpc/grpc-js'
-import { loadPackageDefinition, loadSync } from '@grpc/proto-loader'
+import { loadSync } from '@grpc/proto-loader'
 
 /** Terminal signal names shared with sandboxd /pty/signal. */
 export type TerminalSignal = 'SIGINT' | 'SIGTERM' | 'SIGKILL' | 'SIGTSTP' | 'SIGHUP'
@@ -112,7 +112,7 @@ export class GrpcK8eClient {
       defaults: true,
       oneofs: true,
     })
-    const pkg = loadPackageDefinition(definition) as any
+    const pkg = grpc.loadPackageDefinition(definition) as any
     const SandboxService = pkg.sandbox.v1.SandboxService
     this.client = new SandboxService(opts.endpoint, createCredentials(opts.certDir ?? defaultCertDir())) as SandboxServiceClient
   }
