@@ -202,6 +202,18 @@ type SandboxConfig struct {
 	// CiliumDNSProxyEnabled opts into Cilium toFQDNs egress enforcement for
 	// sessions with allowedHosts (KIP-16 M10 / issue #510).
 	CiliumDNSProxyEnabled bool
+	// LeaderElectionIdentity is the per-node identity used to contend for the
+	// sandboxmatrix-controller Lease in HA clusters. Empty means hostname.
+	// Only the elected leader runs the warm-pool/GC/idle reconcilers; the
+	// gRPC gateway runs on every node regardless.
+	LeaderElectionIdentity string
+	// DisableE2B disables the embedded E2B-compatible HTTP server (KIP-18).
+	// On by default (false = enabled): the e2b server embeds in the k8e-server
+	// process, listening on E2BListen (default 0.0.0.0:3676) and dialing the
+	// in-process gRPC gateway over loopback. External exposure is via the
+	// Cilium Gateway API (HTTPRoute/TCPRoute), never a direct host port.
+	DisableE2B bool
+	E2BListen  string
 }
 
 type Control struct {

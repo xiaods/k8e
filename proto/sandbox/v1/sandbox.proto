@@ -7,6 +7,11 @@ service SandboxService {
   rpc GetSession(GetSessionRequest)         returns (GetSessionResponse);
   rpc ListSessions(ListSessionsRequest)     returns (ListSessionsResponse);
   rpc DestroySession(DestroySessionRequest) returns (DestroySessionResponse);
+  // PauseSession releases the sandbox pod (CPU/memory) while keeping the
+  // workspace PVC and session CRD; a paused sandbox resumes via ResumeSession
+  // with its filesystem intact (E2B pause semantics, KIP-18).
+  rpc PauseSession(PauseSessionRequest)   returns (PauseSessionResponse);
+  rpc ResumeSession(ResumeSessionRequest) returns (ResumeSessionResponse);
   rpc Exec(ExecRequest)                     returns (ExecResponse);
   rpc ExecStream(ExecRequest)               returns (stream ExecStreamResponse);
   rpc WriteFile(WriteFileRequest)           returns (WriteFileResponse);
@@ -82,6 +87,12 @@ message ListSessionsResponse {
 
 message DestroySessionRequest  { string session_id = 1; }
 message DestroySessionResponse { bool   ok         = 1; }
+
+message PauseSessionRequest  { string session_id = 1; }
+message PauseSessionResponse { bool   ok         = 1; }
+
+message ResumeSessionRequest  { string session_id = 1; }
+message ResumeSessionResponse { bool   ok         = 1; }
 
 message ExecRequest {
   string session_id = 1;

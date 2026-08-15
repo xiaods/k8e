@@ -105,13 +105,15 @@ type Server struct {
 	EtcdS3ConfigSecret       string
 	EtcdS3Timeout            time.Duration
 	EtcdS3Insecure           bool
-	DisableSandboxMatrix    bool
-	SandboxDefaultRuntime   string
-	SandboxDefaultImage     string
-	SandboxDefaultCPU       string
-	SandboxDefaultMemory    string
-	SandboxGRPCPort         int
-	SandboxNamespace        string
+	DisableSandboxMatrix     bool
+	DisableE2B               bool
+	E2BListen                string
+	SandboxDefaultRuntime    string
+	SandboxDefaultImage      string
+	SandboxDefaultCPU        string
+	SandboxDefaultMemory     string
+	SandboxGRPCPort          int
+	SandboxNamespace         string
 }
 
 var (
@@ -537,6 +539,19 @@ var ServerFlags = []cli.Flag{
 		Name:        "disable-sandbox-matrix",
 		Usage:       "(components) Disable Agentic AI Sandbox Matrix",
 		Destination: &ServerConfig.DisableSandboxMatrix,
+	},
+	&cli.BoolFlag{
+		Name:        "disable-e2b",
+		Usage:       "(components) Disable the embedded E2B-compatible HTTP server (KIP-18). On by default: sandbox-matrix and e2b-server both embed in k8e-server, exposed via the Cilium Gateway API.",
+		Destination: &ServerConfig.DisableE2B,
+		EnvVar:      "K8E_DISABLE_E2B",
+	},
+	&cli.StringFlag{
+		Name:        "e2b-listen",
+		Usage:       "(sandbox) E2B HTTP listen address (0.0.0.0 so the cluster's headless e2b-server Service/Endpoints can reach it; the Cilium Gateway API is the only external door)",
+		Value:       "0.0.0.0:3676",
+		Destination: &ServerConfig.E2BListen,
+		EnvVar:      "K8E_E2B_LISTEN",
 	},
 	&cli.StringFlag{
 		Name:        "sandbox-default-runtime",

@@ -239,3 +239,192 @@ fn extractQueryParam(query: []const u8, key: []const u8) ?[]const u8 {
     }
     return null;
 }
+
+// ─── Native filesystem operations (KIP-18 "ability downshift") ────────────
+//
+// These replace the e2b-server's shell-command workarounds (stat/mkdir/mv/rm
+// via /bin/sh) with native syscalls: faster, no shell-injection surface, and
+// the e2b layer can speak to them over the same JSON contract it already
+// uses for write/read/list.
+
+const PathRequest = struct {
+    path: []const u8 = "",
+};
+
+const MoveRequest = struct {
+    source: []const u8 = "",
+    destination: []const u8 = "",
+};
+
+/// POST /files/stat {"path": "..."} → 200 {"type","size","mode","uid","gid","mtime","name"}
+pub fn handleStat(allocator: std.mem.Allocator, client_fd: i32, body: []const u8) !void {
+    const parsed = std.json.parseFromSlice(PathRequest, allocator, body, .{ .ignore_unknown_fields = true }) catch {
+        try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid json\"}");
+        return;
+    };
+    defer parsed.deinit();
+    const req = parsed.value;
+    if (req.path.len == 0) {
+        try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"path required\"}");
+        return;
+    }
+    const full = try path_util.resolveWorkspacePath(allocator, req.path);
+    defer allocator.free(full);
+
+    var stx: std.os.linux.Statx = undefined;
+    const rc = std.os.linux.statx(std.os.linux.AT.FDCWD, full.ptr, 0, std.os.linux.STATX.BASIC_STATS, &stx);
+    if (rc != 0) {
+        try main.writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
+        return;
+    }
+    const mode: u16 = stx.mode;
+    const mode_u32: u32 = mode;
+    const ftype = switch (mode_u32 & std.os.linux.S.IFMT) {
+        std.os.linux.S.IFREG => "file",
+        std.os.linux.S.IFDIR => "dir",
+        std.os.linux.S.IFLNK => "symlink",
+        else => "other",
+    };
+    // For symlinks, resolve the target with readlink (E2B EntryInfo
+    // symlink_target; KIP-18 P2).
+    var symlink_target: []const u8 = "";
+    var target_buf: [4096]u8 = undefined;
+    if (std.mem.eql(u8, ftype, "symlink")) {
+        // readlink returns a raw syscall usize (negative errno when it
+        // fails); treat values that fit an isize < 0 as failure.
+        const path_z: [*:0]const u8 = full.ptr;
+        const raw = std.os.linux.readlink(path_z, &target_buf, target_buf.len);
+        const signed: isize = @bitCast(raw);
+        if (signed >= 0) {
+            symlink_target = target_buf[0..@as(usize, @intCast(signed))];
+        }
+    }
+    const target_escaped = try exec.jsonEscape(allocator, symlink_target);
+    defer allocator.free(target_escaped);
+
+    const resp = try std.fmt.allocPrint(allocator,
+        "{{\"type\":\"{s}\",\"size\":{d},\"mode\":\"{o}\",\"uid\":{d},\"gid\":{d},\"mtime\":{d},\"name\":\"{s}\",\"symlink_target\":\"{s}\"}}",
+        .{ ftype, stx.size, mode_u32 & 0o7777, stx.uid, stx.gid, stx.mtime.sec, req.path, target_escaped });
+    defer allocator.free(resp);
+    try main.writeResponse(client_fd, "200 OK", "application/json", resp);
+}
+
+/// POST /files/mkdir {"path": "..."} → 200 {"ok":true} (or 409 already exists)
+pub fn handleMkdir(allocator: std.mem.Allocator, client_fd: i32, body: []const u8) !void {
+    const parsed = std.json.parseFromSlice(PathRequest, allocator, body, .{ .ignore_unknown_fields = true }) catch {
+        try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid json\"}");
+        return;
+    };
+    defer parsed.deinit();
+    const req = parsed.value;
+    if (req.path.len == 0) {
+        try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"path required\"}");
+        return;
+    }
+    const full = try path_util.resolveWorkspacePath(allocator, req.path);
+    defer allocator.free(full);
+
+    const rc = std.os.linux.mkdir(full.ptr, 0o755);
+    if (rc == 0) {
+        try main.writeResponse(client_fd, "200 OK", "application/json", "{\"ok\":true}");
+        return;
+    }
+    const err = std.posix.errno(@as(usize, @bitCast(@as(isize, @intCast(rc)))));
+    if (err == .EXIST) {
+        try main.writeResponse(client_fd, "409 Conflict", "application/json", "{\"error\":\"already exists\"}");
+        return;
+    }
+    try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", "{\"error\":\"mkdir failed\"}");
+}
+
+/// POST /files/move {"source": "...", "destination": "..."} → 200 {"ok":true}
+pub fn handleMove(allocator: std.mem.Allocator, client_fd: i32, body: []const u8) !void {
+    const parsed = std.json.parseFromSlice(MoveRequest, allocator, body, .{ .ignore_unknown_fields = true }) catch {
+        try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid json\"}");
+        return;
+    };
+    defer parsed.deinit();
+    const req = parsed.value;
+    if (req.source.len == 0 or req.destination.len == 0) {
+        try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"source and destination required\"}");
+        return;
+    }
+    const src = try path_util.resolveWorkspacePath(allocator, req.source);
+    defer allocator.free(src);
+    const dst = try path_util.resolveWorkspacePath(allocator, req.destination);
+    defer allocator.free(dst);
+
+    const rc = std.os.linux.rename(src.ptr, dst.ptr);
+    if (rc == 0) {
+        try main.writeResponse(client_fd, "200 OK", "application/json", "{\"ok\":true}");
+        return;
+    }
+    const err = std.posix.errno(@as(usize, @bitCast(@as(isize, @intCast(rc)))));
+    if (err == .NOENT) {
+        try main.writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"source not found\"}");
+        return;
+    }
+    try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", "{\"error\":\"move failed\"}");
+}
+
+/// POST /files/remove {"path": "..."} → 200 {"ok":true}. Removes files and
+/// empty directories; non-empty directories are removed recursively (rm -r
+/// semantics, matching the E2B SDK's files.remove).
+pub fn handleRemove(allocator: std.mem.Allocator, client_fd: i32, body: []const u8) !void {
+    const parsed = std.json.parseFromSlice(PathRequest, allocator, body, .{ .ignore_unknown_fields = true }) catch {
+        try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid json\"}");
+        return;
+    };
+    defer parsed.deinit();
+    const req = parsed.value;
+    if (req.path.len == 0) {
+        try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"path required\"}");
+        return;
+    }
+    const full = try path_util.resolveWorkspacePath(allocator, req.path);
+    defer allocator.free(full);
+    // Null-terminated copy for the recursive walker.
+    const full_z = try allocator.dupeZ(u8, full);
+    defer allocator.free(full_z);
+
+    if (removeRecursive(full_z)) {
+        try main.writeResponse(client_fd, "200 OK", "application/json", "{\"ok\":true}");
+    } else {
+        try main.writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
+    }
+}
+
+/// removeRecursive removes a file, empty dir, or non-empty dir tree.
+/// Returns false when the path does not exist.
+pub fn removeRecursive(path_z: [:0]u8) bool {
+    var stx: std.os.linux.Statx = undefined;
+    const st_rc = std.os.linux.statx(std.os.linux.AT.FDCWD, path_z.ptr, std.os.linux.AT.SYMLINK_NOFOLLOW, std.os.linux.STATX.BASIC_STATS, &stx);
+    if (st_rc != 0) return false;
+    const mode_u32: u32 = stx.mode;
+    if (mode_u32 & std.os.linux.S.IFMT == std.os.linux.S.IFDIR) {
+        // Walk and remove children first (deepest-first).
+        const fd = std.os.linux.open(path_z.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+        if (fd >= 0) {
+            var buf: [4096]u8 align(@alignOf(std.os.linux.dirent64)) = undefined;
+            while (true) {
+                const n = std.os.linux.getdents64(@intCast(fd), @ptrCast(&buf), buf.len);
+                if (n <= 0) break;
+                var pos: usize = 0;
+                while (pos < @as(usize, @intCast(n))) {
+                    const dent = @as(*align(1) std.os.linux.dirent64, @ptrCast(&buf[pos]));
+                    pos += dent.reclen;
+                    const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&dent.name)), 0);
+                    if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+                    var child_buf: [4200]u8 = undefined;
+                    const child = std.fmt.bufPrintZ(&child_buf, "{s}/{s}", .{ path_z, name }) catch continue;
+                    _ = removeRecursive(child);
+                }
+            }
+            _ = std.os.linux.close(@intCast(fd));
+        }
+        _ = std.os.linux.rmdir(path_z.ptr);
+    } else {
+        _ = std.os.linux.unlink(path_z.ptr);
+    }
+    return true;
+}

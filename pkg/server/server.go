@@ -257,6 +257,17 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 		}
 	}
 
+	// KIP-18 final architecture: sandbox-matrix + e2b-server both embed in
+	// k8e-server; the Cilium Gateway API fronts every external port. The
+	// embedded e2b server is ON by default; it is skipped when the sandbox
+	// matrix is disabled entirely (e2b dials the sandbox gRPC gateway, which
+	// is part of sandboxmatrix.Register) or --disable-e2b is set. The Gateway
+	// API exposes :3676 (HTTPRoute) and :50051 (TCPRoute) — see
+	// manifests/sandbox-matrix/e2b-gateway.yaml.
+	if !config.ControlConfig.DisableSandboxMatrix && !config.ControlConfig.SandboxConfig.DisableE2B {
+		go runEmbeddedE2B(ctx, config.ControlConfig.SandboxConfig, config.ControlConfig.Runtime.KubeConfigSupervisor)
+	}
+
 	return nil
 }
 
@@ -292,6 +303,8 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		"%{API_SERVER_HOST}%":             controlConfig.Loopback(false),
 		"%{API_SERVER_PORT}%":             fmt.Sprint(controlConfig.HTTPSPort),
 		"%{KUBERNETES_API}%":              fmt.Sprintf("%s:%d", controlConfig.Loopback(true), controlConfig.HTTPSPort),
+		"%{K8E_VERSION}%":                 version.Version,
+		"%{ADVERTISE_IP}%":                advertiseIP(controlConfig),
 	}
 
 	skip := controlConfig.Skips
@@ -511,6 +524,21 @@ func setupDataDirAndChdir(config *config.Control) error {
 
 func printToken(httpsPort int, advertiseIP, prefix, cmd, varName string) {
 	logrus.Infof("%s %s %s -s https://%s:%d -t ${%s}", prefix, version.Program, cmd, advertiseIP, httpsPort, varName)
+}
+
+// advertiseIP resolves the host IP that cluster pods can use to reach the
+// k8e-server process: --advertise-address if set, else the apiserver bind
+// address when it is not loopback, else loopback. Used to build the
+// sandbox-grpc-gateway Service Endpoints (the gRPC gateway runs in the
+// server host process, not as a pod).
+func advertiseIP(cfg *config.Control) string {
+	if cfg.AdvertiseIP != "" {
+		return cfg.AdvertiseIP
+	}
+	if ip := cfg.APIServerBindAddress; ip != "" && ip != "0.0.0.0" && ip != "::" {
+		return ip
+	}
+	return cfg.Loopback(false)
 }
 
 func writeToken(token, file, certs string) error {

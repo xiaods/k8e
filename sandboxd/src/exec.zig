@@ -1,6 +1,7 @@
 const std = @import("std");
 const main = @import("main.zig");
 const venv = @import("venv.zig");
+const execctl = @import("execctl.zig");
 
 const default_path_value = "/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const default_venv_value = "/workspace/.venv";
@@ -306,14 +307,25 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
             try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", "{\"error\":\"pipe failed\"}");
             return;
         }
+        var stdin_pipe: [2]i32 = undefined;
+        if (std.os.linux.pipe2(&stdin_pipe, std.os.linux.O{ .CLOEXEC = true }) < 0) {
+            _ = std.os.linux.close(stdout_pipe[0]);
+            _ = std.os.linux.close(stdout_pipe[1]);
+            try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", "{\"error\":\"pipe failed\"}");
+            return;
+        }
 
         const child_pid = std.os.linux.fork();
         if (child_pid == 0) {
-            // Child: close read end, dup stdout to write end, exec
+            // Child: close read ends, dup stdout/stderr to write ends, dup
+            // stdin from the pipe read end, exec.
             _ = std.os.linux.close(stdout_pipe[0]);
+            _ = std.os.linux.close(stdin_pipe[1]); // child keeps read end only
             _ = std.os.linux.dup2(stdout_pipe[1], 1);
             _ = std.os.linux.dup2(stdout_pipe[1], 2);
+            _ = std.os.linux.dup2(stdin_pipe[0], 0);
             _ = std.os.linux.close(stdout_pipe[1]);
+            _ = std.os.linux.close(stdin_pipe[0]);
 
             var cwd_buf: [4096]u8 = undefined;
             const cwd_z = std.fmt.bufPrintZ(&cwd_buf, "{s}", .{req.workdir}) catch unreachable;
@@ -324,8 +336,13 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
             std.os.linux.exit(1);
         }
 
-        // Parent: close write end
+        // Parent: close write end (stdout) and the child's stdin read end;
+        // keep the stdin write fd for /exec/stdin via the process table.
+        // Also snapshot the command so E2B Process/List can report it and a
+        // Connect can describe the process.
         _ = std.os.linux.close(stdout_pipe[1]);
+        _ = std.os.linux.close(stdin_pipe[0]);
+        execctl.registerWithConfig(@intCast(child_pid), stdin_pipe[1], req.command);
 
         // spawn timeout killer thread
         if (req.timeout > 0) {
@@ -340,12 +357,23 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         const header = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
         _ = std.os.linux.write(client_fd, header.ptr, header.len);
 
-        // Stream stdout to client
+        // First SSE frame carries the in-guest pid: the e2b layer addresses
+        // /exec/stdin and /exec/signal by it (its synthetic process-table pid
+        // is not the sandbox's real pid). Frame: data: {"pid":N}\n\n
+        var pid_frame_buf: [64]u8 = undefined;
+        const pid_frame = std.fmt.bufPrint(&pid_frame_buf, "data: {{\"pid\":{d}}}\n\n", .{child_pid}) catch {
+            _ = std.os.linux.write(client_fd, "data: {\"error\":\"pid frame\"}\n\n".ptr, 27);
+            return;
+        };
+        _ = std.os.linux.write(client_fd, pid_frame.ptr, pid_frame.len);
+
+        // Stream stdout to client, buffering for attach (E2B Connect).
         var stdout_buf: [4096]u8 = undefined;
         while (true) {
             const n = std.os.linux.read(stdout_pipe[0], &stdout_buf, stdout_buf.len);
             if (n <= 0) break;
             const data = stdout_buf[0..@as(usize, @intCast(n))];
+            execctl.appendOutput(@intCast(child_pid), data);
             var line_buf: [4200]u8 = undefined;
             const line = std.fmt.bufPrint(&line_buf, "data: {s}\n\n", .{data}) catch {
                 _ = std.os.linux.write(client_fd, "data: {\"error\":\"output too large\"}\n\n".ptr, 34);
@@ -355,16 +383,32 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         }
 
         _ = std.os.linux.close(stdout_pipe[0]);
+        execctl.markDone(@intCast(child_pid));
 
-        // Reap child
+        // Reap child, then drop the process-table entry (closes stdin fd).
+        // The exit code is reported as the final SSE frame so the e2b layer
+        // gets the honest code in-stream (retiring the marker-file hack).
         var status: u32 = 0;
-        _ = std.os.linux.syscall4(
+        const wrc = std.os.linux.syscall4(
             .wait4,
             @as(usize, @bitCast(@as(isize, @intCast(child_pid)))),
             @intFromPtr(&status),
             0,
             0,
         );
+        const werr = std.posix.errno(@as(usize, @bitCast(wrc)));
+        const exit_code: i32 = if (werr == .SUCCESS and std.posix.W.IFEXITED(status))
+            @intCast(std.posix.W.EXITSTATUS(status))
+        else
+            -1; // killed by signal / not reaped normally
+        var exit_frame_buf: [64]u8 = undefined;
+        const exit_frame = std.fmt.bufPrint(&exit_frame_buf, "data: {{\"exit\":{d}}}\n\n", .{exit_code}) catch {
+            _ = std.os.linux.write(client_fd, "data: {\"exit\":-1}\n\n".ptr, 22);
+            return;
+        };
+        _ = std.os.linux.write(client_fd, exit_frame.ptr, exit_frame.len);
+
+        execctl.unregister(@intCast(child_pid));
         return;
     }
 

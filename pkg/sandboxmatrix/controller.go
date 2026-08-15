@@ -70,12 +70,12 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		default: // already a refill pending
 		}
 	}
-	go runWarmPoolReconciler(ctx, k8s, dyn, cfg, refillTrigger, orch)
-	go runResettingDetector(ctx, k8s, cfg.Namespace)
-	go runIdlePodReaper(ctx, k8s, dyn, cfg)
 
-	go runGCLoop(ctx, orch, cfg.Namespace)
-
+	// The gRPC gateway is stateless and multi-node-safe: start it on every
+	// server. The reconcilers (warm pool, idle reaper, resetting detector,
+	// GC) are NOT safe to run on every HA control-plane node — two servers
+	// reconciling the same pool would double-create/double-GC/double-reap —
+	// so they run only on the leader elected via a coordination Lease.
 	srv := sandboxgrpc.NewServer(sandboxgrpc.ServerConfig{
 		K8s:            k8s,
 		Dyn:            dyn,
@@ -93,14 +93,23 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		}
 	}()
 
+	go runLeaderGated(ctx, k8s, cfg, func(leaderCtx context.Context) {
+		// Each reconciler is a blocking loop; start them concurrently so a
+		// leader runs all four.
+		go runWarmPoolReconciler(leaderCtx, k8s, dyn, cfg, refillTrigger, orch)
+		go runResettingDetector(leaderCtx, k8s, cfg.Namespace)
+		go runIdlePodReaper(leaderCtx, k8s, dyn, cfg)
+		go runGCLoop(leaderCtx, orch, cfg.Namespace)
+	})
+
 	if _, err := os.Stat("/dev/kvm"); err == nil {
 		logrus.Info("sandbox-matrix: /dev/kvm detected, Firecracker RuntimeClass enabled")
 	} else {
 		logrus.Info("sandbox-matrix: /dev/kvm not found, Firecracker RuntimeClass skipped")
 	}
 
-	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d)",
-		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort)
+	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s)",
+		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName)
 	return nil
 }
 

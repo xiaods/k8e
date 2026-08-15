@@ -15,7 +15,11 @@ var (
 
 	UpstreamGolang = ""
 
-	CiliumChartVersion = "1.17.1"
+	// CiliumChartVersion is the Cilium Helm chart shipped by k8e. 1.20.0 moved
+	// the Gateway API controller to Gateway API v1.6.1 CRDs (see
+	// manifests/sandbox-matrix/gateway-api-crds.yaml, which must stay in sync —
+	// v1.6.1 standard + experimental TLSRoute with v1alpha2).
+	CiliumChartVersion = "1.20.0"
 )
 
 func PrintK8eASCIIArt() {

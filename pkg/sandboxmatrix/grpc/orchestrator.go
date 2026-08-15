@@ -1010,6 +1010,110 @@ func GvisorAnnotations(runtimeClass string) map[string]string {
 	return nil
 }
 
+// PauseSession releases a sandbox's pod (CPU/memory) while keeping the
+// workspace PVC and the Session CRD, so a later ResumeSession comes back
+// with the filesystem intact — E2B pause semantics (KIP-18). Only
+// persistent sessions (tenant set, PVC-backed) can pause; an ephemeral
+// session's EmptyDir volume dies with the pod, so pausing it would silently
+// lose the workspace — the honest refusal matches CubeSandbox's "delete a
+// paused sandbox does not wake it" and Dormice's pause memory:false
+// (filesystem only) semantics.
+func (o *Orchestrator) PauseSession(ctx context.Context, sessionID string) error {
+	session, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if session.Status.Phase != sandboxv1.SandboxPhaseActive {
+		return status.Errorf(codes.FailedPrecondition,
+			"session %s is not active (phase=%s)", sessionID, session.Status.Phase)
+	}
+	if session.Spec.TenantID == "" && session.Status.WorkspacePVC == "" {
+		return status.Errorf(codes.FailedPrecondition,
+			"session %s is ephemeral (no workspace PVC); pause requires a persistent session", sessionID)
+	}
+	// Ensure a PVC exists so resume can attach the same workspace.
+	pvcName := session.Status.WorkspacePVC
+	if pvcName == "" {
+		pvcName, err = o.ensureWorkspacePVC(ctx, sessionID)
+		if err != nil {
+			return status.Errorf(codes.Internal, "pause: ensure workspace PVC: %v", err)
+		}
+	}
+
+	// Delete the pod (CPU/memory released); the PVC and CRD survive.
+	podIP, podName := o.findPodBySession(ctx, sessionID)
+	if podIP == "" && session.Status.PodName != "" {
+		pod, gerr := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, session.Status.PodName, metav1.GetOptions{})
+		if gerr == nil {
+			podIP = pod.Status.PodIP
+			podName = pod.Name
+		}
+	}
+	if podName != "" {
+		// Best-effort workspace flush would belong here (none exists yet);
+		// the PVC persists regardless.
+		if derr := o.k8s.CoreV1().Pods(sandboxNS).Delete(ctx, podName, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
+			return status.Errorf(codes.Internal, "pause: delete pod %s: %v", podName, derr)
+		}
+	}
+
+	session.Status.Phase = sandboxv1.SandboxPhasePaused
+	session.Status.PodName = ""
+	session.Status.PodIP = ""
+	session.Status.WorkspacePVC = pvcName
+	o.updateSessionStatus(ctx, session)
+	// Delete the session CNP so the paused sandbox exposes no ports.
+	o.deleteCNP(ctx, session)
+	return nil
+}
+
+// ResumeSession re-creates a paused sandbox's pod with its workspace PVC
+// attached (cold boot on resume — Dormice's pause memory:false semantics:
+// filesystem only). Files survive; in-memory state does not.
+func (o *Orchestrator) ResumeSession(ctx context.Context, sessionID string) (*corev1.Pod, error) {
+	session, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session.Status.Phase != sandboxv1.SandboxPhasePaused {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"session %s is not paused (phase=%s)", sessionID, session.Status.Phase)
+	}
+	if session.Status.WorkspacePVC == "" {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"session %s has no workspace PVC; cannot resume", sessionID)
+	}
+
+	// Re-create the pod with the same PVC. A persistent session always
+	// cold-starts (warm pods boot with EmptyDir and cannot swap volumes).
+	matrixCPU, matrixMemory := o.matrixResourceDefaults(ctx)
+	pod, perr := o.claimOrCreatePod(ctx, sessionID, session.Spec.RuntimeClass,
+		session.Status.WorkspacePVC, matrixCPU, matrixMemory)
+	if perr != nil {
+		return nil, status.Errorf(codes.Internal, "resume: create pod: %v", perr)
+	}
+
+	session.Status.Phase = sandboxv1.SandboxPhaseActive
+	session.Status.PodName = pod.Name
+	session.Status.PodIP = pod.Status.PodIP
+	o.updateSessionStatus(ctx, session)
+	if err := o.applyCNP(ctx, session); err != nil {
+		return nil, status.Errorf(codes.Internal, "resume: apply network policy: %v", err)
+	}
+	return pod, nil
+}
+
+// matrixResourceDefaults reads CPU/memory defaults from the SandboxMatrix CRD.
+func (o *Orchestrator) matrixResourceDefaults(ctx context.Context) (cpu, memory string) {
+	list, err := o.dynamic.Resource(matrixGVR).Namespace(sandboxNS).List(ctx, metav1.ListOptions{})
+	if err != nil || len(list.Items) == 0 {
+		return "", ""
+	}
+	cpu, _, _ = unstructured.NestedString(list.Items[0].Object, "spec", "resourceLimits", "cpu")
+	memory, _, _ = unstructured.NestedString(list.Items[0].Object, "spec", "resourceLimits", "memory")
+	return cpu, memory
+}
+
 // ensureWorkspacePVC creates a PVC for the session workspace if it doesn't exist.
 func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string) (string, error) {
 	pvcName := "workspace-" + sessionID
@@ -1124,6 +1228,23 @@ func buildSessionCNP(session *sandboxv1.SandboxSession, fqdnEnabled bool) *unstr
 						map[string]interface{}{
 							"matchLabels": map[string]interface{}{
 								"app": "sandbox-grpc-gateway",
+							},
+						},
+					},
+					"toPorts": []interface{}{
+						map[string]interface{}{
+							"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
+						},
+					},
+				},
+				// In-cluster e2b-server (Cilium Gateway API front door) dials
+				// sandboxd directly for the native fs/process-control ops
+				// (KIP-18 ability downshift), same as the gateway.
+				map[string]interface{}{
+					"fromEndpoints": []interface{}{
+						map[string]interface{}{
+							"matchLabels": map[string]interface{}{
+								"app": "e2b-server",
 							},
 						},
 					},

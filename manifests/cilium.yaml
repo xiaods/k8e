@@ -22,6 +22,14 @@ spec:
     kubeProxyReplacement: "true"
     k8sServiceHost: "%{API_SERVER_HOST}%"
     k8sServicePort: "%{API_SERVER_PORT}%"
+    # Gateway API controller (KIP-18 e2b ingress): routes E2B control-plane
+    # and envd traffic to the e2b-server Service. Requires the Gateway API
+    # CRDs staged by manifests/sandbox-matrix/gateway-api-crds.yaml (the
+    # HelmChart is applied after CRD staging). Enable ALPN so gRPC/HTTP2
+    # backend negotiation works for the envd Connect surface.
+    gatewayAPI:
+      enabled: true
+      enableAlpn: true
     dnsProxy:
       # L7 DNS proxy enables toFQDNs egress policies. Off by default: it
       # previously broke DNS in gVisor sandbox pods (see KIP-16 M10 / issue
