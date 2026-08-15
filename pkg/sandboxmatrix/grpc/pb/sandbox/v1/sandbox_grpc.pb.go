@@ -19,29 +19,36 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SandboxService_CreateSession_FullMethodName  = "/sandbox.v1.SandboxService/CreateSession"
-	SandboxService_GetSession_FullMethodName     = "/sandbox.v1.SandboxService/GetSession"
-	SandboxService_ListSessions_FullMethodName   = "/sandbox.v1.SandboxService/ListSessions"
-	SandboxService_DestroySession_FullMethodName = "/sandbox.v1.SandboxService/DestroySession"
-	SandboxService_PauseSession_FullMethodName   = "/sandbox.v1.SandboxService/PauseSession"
-	SandboxService_ResumeSession_FullMethodName  = "/sandbox.v1.SandboxService/ResumeSession"
-	SandboxService_Exec_FullMethodName           = "/sandbox.v1.SandboxService/Exec"
-	SandboxService_ExecStream_FullMethodName     = "/sandbox.v1.SandboxService/ExecStream"
-	SandboxService_WriteFile_FullMethodName      = "/sandbox.v1.SandboxService/WriteFile"
-	SandboxService_ReadFile_FullMethodName       = "/sandbox.v1.SandboxService/ReadFile"
-	SandboxService_ListFiles_FullMethodName      = "/sandbox.v1.SandboxService/ListFiles"
-	SandboxService_PipInstall_FullMethodName     = "/sandbox.v1.SandboxService/PipInstall"
-	SandboxService_RunSubAgent_FullMethodName    = "/sandbox.v1.SandboxService/RunSubAgent"
-	SandboxService_ConfirmAction_FullMethodName  = "/sandbox.v1.SandboxService/ConfirmAction"
-	SandboxService_ApproveAction_FullMethodName  = "/sandbox.v1.SandboxService/ApproveAction"
-	SandboxService_Login_FullMethodName          = "/sandbox.v1.SandboxService/Login"
-	SandboxService_PollRun_FullMethodName        = "/sandbox.v1.SandboxService/PollRun"
-	SandboxService_GetTranscript_FullMethodName  = "/sandbox.v1.SandboxService/GetTranscript"
-	SandboxService_GetEvents_FullMethodName      = "/sandbox.v1.SandboxService/GetEvents"
-	SandboxService_SnapshotPut_FullMethodName    = "/sandbox.v1.SandboxService/SnapshotPut"
-	SandboxService_SnapshotGet_FullMethodName    = "/sandbox.v1.SandboxService/SnapshotGet"
-	SandboxService_SnapshotList_FullMethodName   = "/sandbox.v1.SandboxService/SnapshotList"
-	SandboxService_GetProcesses_FullMethodName   = "/sandbox.v1.SandboxService/GetProcesses"
+	SandboxService_CreateSession_FullMethodName      = "/sandbox.v1.SandboxService/CreateSession"
+	SandboxService_GetSession_FullMethodName         = "/sandbox.v1.SandboxService/GetSession"
+	SandboxService_ListSessions_FullMethodName       = "/sandbox.v1.SandboxService/ListSessions"
+	SandboxService_DestroySession_FullMethodName     = "/sandbox.v1.SandboxService/DestroySession"
+	SandboxService_PauseSession_FullMethodName       = "/sandbox.v1.SandboxService/PauseSession"
+	SandboxService_ResumeSession_FullMethodName      = "/sandbox.v1.SandboxService/ResumeSession"
+	SandboxService_Exec_FullMethodName               = "/sandbox.v1.SandboxService/Exec"
+	SandboxService_ExecStream_FullMethodName         = "/sandbox.v1.SandboxService/ExecStream"
+	SandboxService_WriteFile_FullMethodName          = "/sandbox.v1.SandboxService/WriteFile"
+	SandboxService_ReadFile_FullMethodName           = "/sandbox.v1.SandboxService/ReadFile"
+	SandboxService_ListFiles_FullMethodName          = "/sandbox.v1.SandboxService/ListFiles"
+	SandboxService_PipInstall_FullMethodName         = "/sandbox.v1.SandboxService/PipInstall"
+	SandboxService_RunSubAgent_FullMethodName        = "/sandbox.v1.SandboxService/RunSubAgent"
+	SandboxService_ConfirmAction_FullMethodName      = "/sandbox.v1.SandboxService/ConfirmAction"
+	SandboxService_ApproveAction_FullMethodName      = "/sandbox.v1.SandboxService/ApproveAction"
+	SandboxService_Login_FullMethodName              = "/sandbox.v1.SandboxService/Login"
+	SandboxService_PollRun_FullMethodName            = "/sandbox.v1.SandboxService/PollRun"
+	SandboxService_GetTranscript_FullMethodName      = "/sandbox.v1.SandboxService/GetTranscript"
+	SandboxService_GetEvents_FullMethodName          = "/sandbox.v1.SandboxService/GetEvents"
+	SandboxService_SnapshotPut_FullMethodName        = "/sandbox.v1.SandboxService/SnapshotPut"
+	SandboxService_SnapshotGet_FullMethodName        = "/sandbox.v1.SandboxService/SnapshotGet"
+	SandboxService_SnapshotList_FullMethodName       = "/sandbox.v1.SandboxService/SnapshotList"
+	SandboxService_GetProcesses_FullMethodName       = "/sandbox.v1.SandboxService/GetProcesses"
+	SandboxService_CreateTerminal_FullMethodName     = "/sandbox.v1.SandboxService/CreateTerminal"
+	SandboxService_TerminalStream_FullMethodName     = "/sandbox.v1.SandboxService/TerminalStream"
+	SandboxService_TerminalWrite_FullMethodName      = "/sandbox.v1.SandboxService/TerminalWrite"
+	SandboxService_TerminalResize_FullMethodName     = "/sandbox.v1.SandboxService/TerminalResize"
+	SandboxService_TerminalForeground_FullMethodName = "/sandbox.v1.SandboxService/TerminalForeground"
+	SandboxService_TerminalSignal_FullMethodName     = "/sandbox.v1.SandboxService/TerminalSignal"
+	SandboxService_TerminalDestroy_FullMethodName    = "/sandbox.v1.SandboxService/TerminalDestroy"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -85,6 +92,18 @@ type SandboxServiceClient interface {
 	SnapshotList(ctx context.Context, in *SnapshotListRequest, opts ...grpc.CallOption) (*SnapshotListResponse, error)
 	// GetProcesses lists processes in the sandbox pod (KIP-16 M5 process topology).
 	GetProcesses(ctx context.Context, in *GetProcessesRequest, opts ...grpc.CallOption) (*GetProcessesResponse, error)
+	// ── PTY terminal primitive (KIP-19) ───────────────────────────────────────
+	// CreateTerminal allocates a PTY and starts argv as a controlling-terminal
+	// session leader (argv is NOT shell-interpreted).
+	CreateTerminal(ctx context.Context, in *CreateTerminalRequest, opts ...grpc.CallOption) (*CreateTerminalResponse, error)
+	// TerminalStream streams terminal output bytes; the final frame carries
+	// TerminalExit (exit code / signal) when the top-level process closes.
+	TerminalStream(ctx context.Context, in *TerminalStreamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TerminalStreamResponse], error)
+	TerminalWrite(ctx context.Context, in *TerminalWriteRequest, opts ...grpc.CallOption) (*TerminalWriteResponse, error)
+	TerminalResize(ctx context.Context, in *TerminalResizeRequest, opts ...grpc.CallOption) (*TerminalResizeResponse, error)
+	TerminalForeground(ctx context.Context, in *TerminalForegroundRequest, opts ...grpc.CallOption) (*TerminalForegroundResponse, error)
+	TerminalSignal(ctx context.Context, in *TerminalSignalRequest, opts ...grpc.CallOption) (*TerminalSignalResponse, error)
+	TerminalDestroy(ctx context.Context, in *TerminalDestroyRequest, opts ...grpc.CallOption) (*TerminalDestroyResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -334,6 +353,85 @@ func (c *sandboxServiceClient) GetProcesses(ctx context.Context, in *GetProcesse
 	return out, nil
 }
 
+func (c *sandboxServiceClient) CreateTerminal(ctx context.Context, in *CreateTerminalRequest, opts ...grpc.CallOption) (*CreateTerminalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateTerminalResponse)
+	err := c.cc.Invoke(ctx, SandboxService_CreateTerminal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) TerminalStream(ctx context.Context, in *TerminalStreamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TerminalStreamResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &SandboxService_ServiceDesc.Streams[1], SandboxService_TerminalStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[TerminalStreamRequest, TerminalStreamResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SandboxService_TerminalStreamClient = grpc.ServerStreamingClient[TerminalStreamResponse]
+
+func (c *sandboxServiceClient) TerminalWrite(ctx context.Context, in *TerminalWriteRequest, opts ...grpc.CallOption) (*TerminalWriteResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TerminalWriteResponse)
+	err := c.cc.Invoke(ctx, SandboxService_TerminalWrite_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) TerminalResize(ctx context.Context, in *TerminalResizeRequest, opts ...grpc.CallOption) (*TerminalResizeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TerminalResizeResponse)
+	err := c.cc.Invoke(ctx, SandboxService_TerminalResize_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) TerminalForeground(ctx context.Context, in *TerminalForegroundRequest, opts ...grpc.CallOption) (*TerminalForegroundResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TerminalForegroundResponse)
+	err := c.cc.Invoke(ctx, SandboxService_TerminalForeground_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) TerminalSignal(ctx context.Context, in *TerminalSignalRequest, opts ...grpc.CallOption) (*TerminalSignalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TerminalSignalResponse)
+	err := c.cc.Invoke(ctx, SandboxService_TerminalSignal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) TerminalDestroy(ctx context.Context, in *TerminalDestroyRequest, opts ...grpc.CallOption) (*TerminalDestroyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TerminalDestroyResponse)
+	err := c.cc.Invoke(ctx, SandboxService_TerminalDestroy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -375,6 +473,18 @@ type SandboxServiceServer interface {
 	SnapshotList(context.Context, *SnapshotListRequest) (*SnapshotListResponse, error)
 	// GetProcesses lists processes in the sandbox pod (KIP-16 M5 process topology).
 	GetProcesses(context.Context, *GetProcessesRequest) (*GetProcessesResponse, error)
+	// ── PTY terminal primitive (KIP-19) ───────────────────────────────────────
+	// CreateTerminal allocates a PTY and starts argv as a controlling-terminal
+	// session leader (argv is NOT shell-interpreted).
+	CreateTerminal(context.Context, *CreateTerminalRequest) (*CreateTerminalResponse, error)
+	// TerminalStream streams terminal output bytes; the final frame carries
+	// TerminalExit (exit code / signal) when the top-level process closes.
+	TerminalStream(*TerminalStreamRequest, grpc.ServerStreamingServer[TerminalStreamResponse]) error
+	TerminalWrite(context.Context, *TerminalWriteRequest) (*TerminalWriteResponse, error)
+	TerminalResize(context.Context, *TerminalResizeRequest) (*TerminalResizeResponse, error)
+	TerminalForeground(context.Context, *TerminalForegroundRequest) (*TerminalForegroundResponse, error)
+	TerminalSignal(context.Context, *TerminalSignalRequest) (*TerminalSignalResponse, error)
+	TerminalDestroy(context.Context, *TerminalDestroyRequest) (*TerminalDestroyResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -453,6 +563,27 @@ func (UnimplementedSandboxServiceServer) SnapshotList(context.Context, *Snapshot
 }
 func (UnimplementedSandboxServiceServer) GetProcesses(context.Context, *GetProcessesRequest) (*GetProcessesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProcesses not implemented")
+}
+func (UnimplementedSandboxServiceServer) CreateTerminal(context.Context, *CreateTerminalRequest) (*CreateTerminalResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateTerminal not implemented")
+}
+func (UnimplementedSandboxServiceServer) TerminalStream(*TerminalStreamRequest, grpc.ServerStreamingServer[TerminalStreamResponse]) error {
+	return status.Error(codes.Unimplemented, "method TerminalStream not implemented")
+}
+func (UnimplementedSandboxServiceServer) TerminalWrite(context.Context, *TerminalWriteRequest) (*TerminalWriteResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TerminalWrite not implemented")
+}
+func (UnimplementedSandboxServiceServer) TerminalResize(context.Context, *TerminalResizeRequest) (*TerminalResizeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TerminalResize not implemented")
+}
+func (UnimplementedSandboxServiceServer) TerminalForeground(context.Context, *TerminalForegroundRequest) (*TerminalForegroundResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TerminalForeground not implemented")
+}
+func (UnimplementedSandboxServiceServer) TerminalSignal(context.Context, *TerminalSignalRequest) (*TerminalSignalResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TerminalSignal not implemented")
+}
+func (UnimplementedSandboxServiceServer) TerminalDestroy(context.Context, *TerminalDestroyRequest) (*TerminalDestroyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method TerminalDestroy not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -882,6 +1013,125 @@ func _SandboxService_GetProcesses_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_CreateTerminal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateTerminalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).CreateTerminal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_CreateTerminal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).CreateTerminal(ctx, req.(*CreateTerminalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_TerminalStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(TerminalStreamRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(SandboxServiceServer).TerminalStream(m, &grpc.GenericServerStream[TerminalStreamRequest, TerminalStreamResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SandboxService_TerminalStreamServer = grpc.ServerStreamingServer[TerminalStreamResponse]
+
+func _SandboxService_TerminalWrite_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TerminalWriteRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).TerminalWrite(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_TerminalWrite_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).TerminalWrite(ctx, req.(*TerminalWriteRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_TerminalResize_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TerminalResizeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).TerminalResize(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_TerminalResize_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).TerminalResize(ctx, req.(*TerminalResizeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_TerminalForeground_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TerminalForegroundRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).TerminalForeground(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_TerminalForeground_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).TerminalForeground(ctx, req.(*TerminalForegroundRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_TerminalSignal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TerminalSignalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).TerminalSignal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_TerminalSignal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).TerminalSignal(ctx, req.(*TerminalSignalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_TerminalDestroy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TerminalDestroyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).TerminalDestroy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_TerminalDestroy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).TerminalDestroy(ctx, req.(*TerminalDestroyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -977,11 +1227,40 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "GetProcesses",
 			Handler:    _SandboxService_GetProcesses_Handler,
 		},
+		{
+			MethodName: "CreateTerminal",
+			Handler:    _SandboxService_CreateTerminal_Handler,
+		},
+		{
+			MethodName: "TerminalWrite",
+			Handler:    _SandboxService_TerminalWrite_Handler,
+		},
+		{
+			MethodName: "TerminalResize",
+			Handler:    _SandboxService_TerminalResize_Handler,
+		},
+		{
+			MethodName: "TerminalForeground",
+			Handler:    _SandboxService_TerminalForeground_Handler,
+		},
+		{
+			MethodName: "TerminalSignal",
+			Handler:    _SandboxService_TerminalSignal_Handler,
+		},
+		{
+			MethodName: "TerminalDestroy",
+			Handler:    _SandboxService_TerminalDestroy_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "ExecStream",
 			Handler:       _SandboxService_ExecStream_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "TerminalStream",
+			Handler:       _SandboxService_TerminalStream_Handler,
 			ServerStreams: true,
 		},
 	},
