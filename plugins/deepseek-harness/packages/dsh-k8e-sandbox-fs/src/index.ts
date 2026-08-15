@@ -165,12 +165,13 @@ export class K8eFileSystem extends FileSystem {
     }
     const client = (await this.runtime()).getClient()
     const sid = await this.session()
-    const before = await this.stat(target, signal).then((info) => info ?? null)
+    const existing = await this.stat(target, signal)
+    const before = existing === undefined ? null : await this.readText(target, signal)
     await client.write(sid, this.processPath(target), content)
-    const after = await this.probe(this.processPath(target))
+    const facts = await this.probe(this.processPath(target))
     return {
-      operation: before === null ? 'create' : 'update',
-      version: after?.version ?? FsVersion('k8e:unknown'),
+      operation: existing === undefined ? 'create' : 'update',
+      version: facts?.version ?? FsVersion('k8e:unknown'),
       before,
       after: content,
     }
