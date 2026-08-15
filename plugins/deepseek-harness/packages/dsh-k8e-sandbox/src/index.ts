@@ -8,6 +8,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { CliK8eClient } from '@k8e/dsh-k8e-sandbox-client'
+import { GrpcK8eClient } from '@k8e/dsh-k8e-sandbox-client/grpc'
 
 /** Configuration for the shared k8e-sandbox owner. */
 export interface Config {
@@ -15,6 +16,8 @@ export interface Config {
   endpoint?: string
   /** Named profile from ~/.k8e/sandbox/profiles.yaml (KIP-17). */
   profile?: string
+  /** mTLS material dir for the direct gRPC terminal client. */
+  certDir?: string
   /** Remote working directory shared by provider adapters. */
   cwd?: string
   /** RuntimeClass for the session pod. */
@@ -52,6 +55,7 @@ export class K8eSandboxRuntime extends Service {
   static Config: z<Config> = z.object({
     endpoint: z.string(),
     profile: z.string(),
+    certDir: z.string(),
     cwd: z.string().default('/workspace'),
     runtimeClass: z.string().default('gvisor'),
     tenant: z.string(),
@@ -64,6 +68,7 @@ export class K8eSandboxRuntime extends Service {
 
   private readonly config: ResolvedConfig
   private readonly client: CliK8eClient
+  private readonly grpcClient: GrpcK8eClient | undefined
   private sessionId: string | undefined
   private disposed = false
 
@@ -84,6 +89,9 @@ export class K8eSandboxRuntime extends Service {
       profile: config.profile,
       endpoint: config.endpoint,
     })
+    this.grpcClient = config.endpoint !== undefined
+      ? new GrpcK8eClient({ endpoint: config.endpoint, certDir: config.certDir })
+      : undefined
 
     ctx.effect(() => async () => {
       this.disposed = true
@@ -119,6 +127,18 @@ export class K8eSandboxRuntime extends Service {
   /** Return the shared transport client. */
   getClient(): CliK8eClient {
     return this.client
+  }
+
+  /**
+   * Return the direct gRPC client for the terminal primitive. Requires an
+   * explicit `endpoint` (the gRPC client does no local auto-discovery).
+   * @throws when no endpoint is configured.
+   */
+  getGrpcClient(): GrpcK8eClient {
+    if (this.grpcClient === undefined) {
+      throw new Error('k8e sandbox: gRPC terminal requires an explicit `endpoint` config')
+    }
+    return this.grpcClient
   }
 }
 

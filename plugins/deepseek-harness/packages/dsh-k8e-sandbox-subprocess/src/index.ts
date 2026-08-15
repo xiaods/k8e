@@ -14,6 +14,7 @@ import type {
   SubprocessOutcome,
   SubprocessSpawnSpec,
   SubprocessTerminalHandle,
+  SubprocessTerminalSignal,
   SubprocessTerminalSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
 
@@ -101,8 +102,72 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
   }
 
   override async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
-    // Phase 2 (depends on KIP-19 sandbox PTY primitive).
-    throw new Error('k8e-sandbox subprocess: spawnTerminal is not implemented in Phase 1')
+    const runtime = this.ctx.k8eSandbox
+    const grpcClient = runtime.getGrpcClient()
+    const sessionId = await runtime.getSession()
+
+    const created = await grpcClient.createTerminal({
+      sessionId,
+      argv: [...spec.argv],
+      workdir: spec.cwd,
+      env: spec.env,
+      rows: spec.rows,
+      cols: spec.cols,
+    })
+
+    const output = new PassThrough()
+    let exitCode: number | null = null
+    let termSignal: NodeJS.Signals | null = null
+    let settled = false
+
+    const done: Promise<SubprocessOutcome> = new Promise((resolve, reject) => {
+      const stream = grpcClient.terminalStream(created.terminalId)
+      stream.on('data', (frame: any) => {
+        if (frame.data !== undefined) {
+          output.write(frame.data)
+        } else if (frame.exit !== undefined) {
+          exitCode = frame.exit.exitCode ?? null
+          termSignal = frame.exit.signal ? (frame.exit.signal as NodeJS.Signals) : null
+          output.end()
+          settled = true
+          resolve({ exitCode, signal: termSignal })
+        }
+      })
+      stream.on('error', (err) => {
+        output.destroy(err instanceof Error ? err : new Error(String(err)))
+        if (!settled) {
+          settled = true
+          reject(err instanceof Error ? err : new Error(String(err)))
+        }
+      })
+      stream.on('end', () => {
+        output.end()
+        if (!settled) {
+          settled = true
+          resolve({ exitCode: exitCode ?? 0, signal: termSignal })
+        }
+      })
+    })
+
+    return {
+      pid: created.pid,
+      output,
+      done,
+      async write(data: string): Promise<void> {
+        await grpcClient.terminalWrite(created.terminalId, new TextEncoder().encode(data))
+      },
+      async inspectForeground() {
+        const fg = await grpcClient.terminalForeground(created.terminalId)
+        if (fg.processGroupId < 0) return undefined
+        return { processGroupId: fg.processGroupId, inputWaiting: fg.inputWaiting }
+      },
+      async signalForeground(signal: SubprocessTerminalSignal): Promise<number> {
+        return grpcClient.terminalSignal(created.terminalId, signal)
+      },
+      async terminate(): Promise<void> {
+        await grpcClient.terminalDestroy(created.terminalId, spec.graceMs)
+      },
+    }
   }
 }
 
