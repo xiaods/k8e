@@ -65,6 +65,12 @@ export class K8eSandboxRuntime extends Service {
 
   /** Validated remote working directory shared by provider adapters. */
   readonly cwd: string
+  /** gRPC gateway endpoint (undefined = CLI local auto-discovery). */
+  readonly endpoint: string | undefined
+  /** mTLS material dir for the direct gRPC terminal client. */
+  readonly certDir: string | undefined
+  /** RuntimeClass for the session pod. */
+  readonly runtimeClass: string
 
   private readonly config: ResolvedConfig
   private readonly client: CliK8eClient
@@ -84,6 +90,9 @@ export class K8eSandboxRuntime extends Service {
       pauseOnDispose: resolved.pauseOnDispose,
     }
     this.cwd = this.config.cwd
+    this.endpoint = config.endpoint
+    this.certDir = config.certDir
+    this.runtimeClass = this.config.runtimeClass
     this.client = new CliK8eClient({
       bin: process.env.K8E_SANDBOX_CLI_BIN,
       profile: config.profile,

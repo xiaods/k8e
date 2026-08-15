@@ -43,11 +43,15 @@ function makeGrpcClient() {
 }
 
 function makeCtx(owner) {
+  const emitted = []
   const ctx = {
     k8eSandbox: owner,
     reflect: { provide() { return () => {} } },
     effect() { return () => {} },
+    emit(name, payload) { emitted.push([name, payload]) },
+    on() { return () => false },
   }
+  ctx.emitted = emitted
   return ctx
 }
 
@@ -160,7 +164,8 @@ function makeCtx(owner) {
     getSession: async () => 's1',
     getClient: () => ({ run: async (code, opts) => { cliCalls.push([code, opts]); return { stdout: 'cli-out\n', stderr: '', exitCode: 7 } } }),
   }
-  const runtime = new K8eSubprocessRuntime(makeCtx(owner))
+  const ctx = makeCtx(owner)
+  const runtime = new K8eSubprocessRuntime(ctx)
   const handle = runtime.spawn({
     argv: ['echo', 'hi'],
     cwd: '/workspace',
@@ -175,6 +180,15 @@ function makeCtx(owner) {
   assert.equal(Buffer.concat(chunks).toString('utf8'), 'cli-out\n')
   assert.equal(cliCalls.length, 1, 'CLI fallback used exactly once')
   assert.equal(cliCalls[0][0], "'echo' 'hi'", 'argv is shell-quoted into one command')
+
+  // M3: the activity side-channel emits start / output / exit events.
+  const execEvents = ctx.emitted.filter(([name]) => name === 'k8e-sandbox/exec').map(([, payload]) => payload)
+  assert.equal(execEvents[0].phase, 'start')
+  assert.equal(execEvents[0].command, "'echo' 'hi'")
+  assert.ok(execEvents.some((e) => e.phase === 'output' && e.stream === 'stdout' && e.data === 'cli-out\n'))
+  const exitEvent = execEvents[execEvents.length - 1]
+  assert.equal(exitEvent.phase, 'exit')
+  assert.equal(exitEvent.exitCode, 7)
 }
 
 console.log('✔ subprocess fake-ctx test passed (spawnTerminal mapping, stream frames, spawn gRPC + CLI fallback)')
