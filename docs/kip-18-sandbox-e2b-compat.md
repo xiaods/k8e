@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-14 | Accepted (implemented with #561) |
+| @xiaods | 2026-08-15 | Accepted — implemented in PR #541 |
 
 ## Summary
 
@@ -10,10 +10,10 @@ Make the **official `e2b` SDK** (JS and Python, unmodified) work against K8E by
 speaking the E2B protocol: the control plane at the **root** (CubeSandbox
 style, so `apiUrl` is the bare origin), the envd surface under `/e2b/envd`,
 and a signed-file door at `/files` (the `/e2b/api` prefix remains as a
-compatibility alias). A new long-running command, `k8e e2b-server`, is an
-HTTP front door that translates E2B protocol calls into the existing
-`sandbox.v1.SandboxService` gRPC gateway. Migrating an E2B application to K8E
-is configuration, not code:
+compatibility alias). The protocol layer translates every call into the
+existing `sandbox.v1.SandboxService` gRPC gateway and, for primitives with no
+gateway RPC, down into the in-pod `sandboxd` daemon. Migrating an E2B
+application to K8E is configuration, not code:
 
 ```ts
 import { Sandbox } from 'e2b';
@@ -31,6 +31,12 @@ unsupported surface answers a machine-readable
 `unimplemented`/`invalid_argument` with a hint, never a silent partial
 behavior; lifecycle and timeout semantics (pause / resume / auto-pause /
 NEVER_TIMEOUT / fine-grained errors) follow CubeSandbox.
+
+**This KIP is implemented.** PR #541 ships the final architecture below
+(embedded e2b + embedded sandbox-matrix controller behind the Cilium Gateway
+API, with the E2B protocol surface split between the host e2b layer and
+`sandboxd`). The implementation-status section (§8) lists exactly what the PR
+lands and what remains as honest 501s.
 
 ## Motivation
 
@@ -50,31 +56,78 @@ This KIP does **not** replace the gRPC gateway; the E2B server is a thin
 protocol adapter on top of it (the same relationship Dormice has between its
 native API and its E2B compat layer).
 
-## Design
+## 1. Architecture (final, implemented)
 
-### Part A — Where it runs
+Two architectural decisions were made together and are both shipped:
 
-`k8e e2b-server` is a standalone long-running subcommand (registered in the
-main `k8e` binary alongside `server`). It dials the local gRPC gateway the
-same way the sandbox CLI does — mTLS bootstrap with the API key, local
-auto-discovery (`127.0.0.1:50051`) by default, `--endpoint`/`--apikey` for
-remote gateways — and listens for HTTP on `--listen` (default
-`127.0.0.1:3676`, Dormice's port, so the two-URL migration in the Summary
-needs no port change).
+1. **envd (E2B ecosystem) capabilities move into k8e's `sandboxd`** — the
+   in-pod daemon becomes the real "Environment Daemon": it owns the process
+   table (pids are the sandbox's own, node-independent), the native
+   filesystem/process-control primitives, and the E2B watch trio; the
+   host-side e2b layer keeps protocol translation (auth, envelope, error
+   dialect, deadline registry) and transparently proxies what sandboxd owns.
+2. **sandbox-matrix AND e2b-server both embed in k8e-server; the Cilium
+   Gateway API is the only external door.** The Gateway API fronts ALL
+   external gRPC (:50051) and HTTP (:80/:443) traffic, so neither the
+   controller nor the e2b surface is extracted into a separate process — they
+   stay in k8e-server (e2b is on by default; `--disable-e2b` to turn off) and
+   the Gateway routes to the host-resident services via headless Service +
+   Endpoints.
 
-**Routing** follows CubeSandbox: the control plane is mounted **at the root**
-(`/sandboxes`, `/v2/sandboxes`, …) because the official SDK points `apiUrl`
-at the bare origin — the way it builds paths is `new URL('/sandboxes',
-apiUrl)`, and a prefix survives only because the SDK treats apiUrl as opaque.
-The `/e2b/api` prefix is kept as a compatibility alias for clients already
-wired to it (same handlers, same auth). The envd surface stays under
-`/e2b/envd` and signed files at `/files`; a root `/health` probe serves
-orchestrators (CubeSandbox-style).
+### 1.1 One process: sandbox-matrix + e2b both embed in k8e-server
 
-**Cluster ingress (Cilium Gateway API).** Every externally exposed sandbox
-port flows through a **Cilium Gateway API** front door in the sandbox-matrix
-namespace (`manifests/sandbox-matrix/e2b-gateway.yaml`): a `GatewayClass`
-(`io.cilium/gateway-controller`) + a `Gateway` with three listeners:
+```
+external clients
+  e2b SDK (apiUrl → Gateway)          CLI / SDK (endpoint → Gateway)
+  │ HTTP :80/:443                       │ gRPC :50051 (mTLS)
+  ▼                                     ▼
+Cilium Gateway API (GatewayClass e2b / Gateway :80,:443,:50051)
+  │ HTTPRoute → controller Service      │ TCPRoute (L4 passthrough, mTLS kept)
+  ▼                                     ▼
+┌──────────────────────────────────────────────────────────────┐
+│ k8e-server host process                                       │
+│   ┌────────────────┐   ┌──────────────────────────────────┐  │
+│   │ e2b (embedded) │   │ sandbox-matrix controller       │  │
+│   │  protocol       │   │  - warm pool reconciler         │  │
+│   │  translation,   │──▶│  - GC / idle reaper / resetting │  │
+│   │  process views, │   │  - gRPC SandboxService :50051   │  │
+│   │  deadline reg   │   │  - leader election (Lease)      │  │
+│   └────────────────┘   └──────────────────────────────────┘  │
+│   :3676 (e2b HTTP)          :50051 (gRPC, mTLS)              │
+│   (dial loopback gateway)                                    │
+└──────────────────────────────────────────────────────────────┘
+  │ gRPC / HTTP (native downshift, pod IP)
+  ▼
+sandboxd (:2024 in-pod)  ← the real Environment Daemon
+   ├─ /exec, /exec/stream, /files/{read,write,list}
+   ├─ /files/{stat,mkdir,move,remove}   (native fs)
+   ├─ /exec/stdin*, /exec/signal        (process control)
+   ├─ /exec/processes, /exec/attach     (process table, node-independent)
+   ├─ /watch/{create,events,remove}     (inotify watch trio)
+   └─ in-stream exit frame (data: {"exit":N}) — no marker files
+```
+
+Key properties:
+
+- **One process** (k8e-server) owns both the E2B protocol translation and the
+  sandbox orchestration. e2b logic dials the in-process gateway over
+  loopback (`127.0.0.1:<GRPCPort>`); no separate Deployment, no extra image.
+- **The Gateway API is the only external door.** :50051 gRPC and :80/:443
+  e2b HTTP both enter through Cilium, routed to host-resident services via
+  headless Service + Endpoints (`e2b-server`, `sandbox-grpc-gateway`).
+- **sandboxd stays the single in-sandbox daemon** (one process per sandbox,
+  PID 1), now with the process table, native fs/process-control primitives,
+  and the watch trio on top of its existing surface.
+- **k8e-server keeps everything embedded** — sandbox CA issuance, orchestrator,
+  warm-pool reconcilers (leader-gated), gRPC gateway, and (with e2b enabled
+  by default) the e2b HTTP surface.
+
+### 1.2 Gateway ingress (from the original Part A)
+
+Every externally exposed sandbox port flows through a **Cilium Gateway API**
+front door in the sandbox-matrix namespace (`manifests/sandbox-matrix/
+e2b-gateway.yaml`): a `GatewayClass` (`io.cilium/gateway-controller`) + a
+`Gateway` with three listeners:
 
 - **HTTP :80** — e2b control plane (`/` → `e2b-server` Service);
 - **HTTPS :443** — envd surface (`/e2b`, `/e2b/api`, `/files` → `e2b-server`
@@ -94,15 +147,114 @@ requires the Gateway API CRDs (`gateway-api-crds.yaml`, v1.6.1 standard +
 experimental TLSRoute/TCPRoute — required by Cilium 1.20) staged before the
 Cilium HelmChart and `gatewayAPI.enabled: true` in `manifests/cilium.yaml`.
 
-Two deployment shapes are supported:
+### 1.3 sandboxd-as-envd: where each capability lives
 
-1. **Host process** (default, zero cluster resources): `k8e e2b-server`
-   runs on the server host, `apiUrl` = `http://127.0.0.1:3676`.
-2. **In-cluster Deployment** (multi-replica capable): `e2b-server` runs as
-   a pod behind the Gateway API; it dials the in-cluster gateway Service
-   `sandbox-grpc-gateway.sandbox-matrix.svc:50051` (a headless Service +
-   Endpoints pointing at the host's `--advertise-address`), because the
-   gRPC gateway itself runs in the k8e-server host process, not as a pod.
+| E2B envd capability | Owner | Implementation |
+|---|---|---|
+| `process.Process/Start` (stream) | sandboxd | Connect-RPC stream, in-stream exit frame (`data: {"exit":N}`), first frame carries the in-guest pid |
+| `process.Process/Connect` | sandboxd | reattach via `/exec/attach` — SSE replay of the buffered output (buffer-replay is the correct semantic; see §8) |
+| `process.Process/List` | sandboxd | `/exec/processes` → `{pid, alive, config}` (sandbox-owned, node-independent) |
+| `process.Process/SendInput` / `CloseStdin` / `SendSignal` | sandboxd | native `/exec/stdin`, `/exec/stdin/close`, `/exec/signal` |
+| `filesystem.Filesystem/*` | sandboxd | native `/files/{stat,mkdir,move,remove,list}`; `ListDir` depth-aware; `Stat` returns `symlink_target` |
+| `filesystem.Filesystem/WatchDir` | sandboxd | **501** (streaming surface); the SDK's polling trio below is what the SDK actually uses |
+| `CreateWatcher` / `GetWatcherEvents` / `RemoveWatcher` | sandboxd | inotify per-watcher event ring: `/watch/create`, `/watch/events` (incremental cursor), `/watch/remove` |
+| `/files` upload/download | e2b layer → sandboxd | `ReadFile`/`WriteFile` (multipart/octet/gzip/Range) |
+| Signed URLs / HMAC auth | e2b layer | protocol-level auth, not a sandbox primitive |
+| Connect-RPC envelope *authentication* (HMAC tokens, signed URLs) | e2b layer | per-sandbox credentials minted by the controller; sandboxd has no cluster context |
+| Control plane REST (create/connect/kill/pause/resume/list/timeout) | e2b layer | the sandbox lifecycle, not a sandbox primitive |
+| Error dialect translation (gRPC code → `{code,message}`) | e2b layer | at the boundary |
+| Deadline registry / pause / metadata persistence | e2b layer via `stateStore` | CRD-backed in embedded mode (`crdStateStore`); in-memory standalone |
+
+The controller (e2b layer) is a **transparent proxy** for everything sandboxd
+owns: it verifies the HMAC token, then forwards the request to sandboxd
+unchanged and streams the response back — no re-enveloping, no SSE stripping,
+no marker files. The one exception is the in-process gateway hop for the
+gRPC-backed RPCs (session lifecycle, exec, file read/write/list), which is
+what the gateway itself already provides.
+
+### 1.4 Multi-node consistency
+
+With sandbox-matrix and e2b both embedded, every control-plane node runs an
+e2b instance. The E2B bookkeeping must not live in per-process maps that
+diverge when the Gateway API routes a request to a different node:
+
+| State | Standalone (per-node) | Embedded (multi-node consistent) |
+|---|---|---|
+| E2B kill deadline (`deadlineAt`, `onDeadline`) | in-memory `sandboxRegistry` map | SandboxSession annotation `sandbox.k8e.io/e2b-state` (JSON) |
+| Explicit pause (`pausedByUser`) | in-memory | same annotation (CRD `Phase: Paused` is the authoritative lifecycle flag) |
+| Idempotent-create name index (`metadata.name` → sandboxID) | in-memory `byName` map | annotation `sandbox.k8e.io/e2b-name` + List-scan fallback |
+| createdAt / metadata / runtimeName echoed in views | in-memory | same `e2b-state` annotation |
+
+Implementation:
+
+- `stateStore` interface (`pkg/sandbox/e2b/state_store.go`) is the persistence
+  contract; `sandboxRegistry` (in-memory) and `crdStateStore`
+  (`pkg/sandbox/e2b/crd_state.go`) both implement it. The e2b `Server`
+  accepts a `Config.StateStore`; the embedded mode injects the CRD store
+  (built from the kubeconfig via `dynamic.Interface`), the standalone
+  `k8e e2b-server` command falls back to the in-memory store (single-node
+  semantics, documented).
+- GC: every node's `gcLoop` scans the CRD-backed `ids()` and enforces
+  deadlines with idempotent `PauseSession`/`DestroySession` calls — no
+  leader-gating needed because the underlying RPCs are already idempotent
+  (a second node observing the same expired session finds it already
+  paused/destroyed).
+- The process table is **sandbox-owned** (§5): `Process/List` and
+  `Process/Connect` are served from sandboxd's table (`/exec/processes`,
+  `/exec/attach`), so they are node-independent. The subscriber broadcast
+  (output fan-out to live HTTP streams) stays per-node — it is
+  connection-local by nature.
+
+### 1.5 Why embed (vs the earlier extract direction)
+
+| Criterion | Embed in k8e-server (final) | Standalone Deployment (earlier draft) |
+|---|---|---|
+| Single binary, zero extra deploy surface | ✅ (k8e's core positioning) | ❌ another Deployment + RBAC + Secret |
+| Gateway API already fronts ports | ✅ Gateway is the ingress | ✅ same |
+| e2b ↔ gateway hop | loopback in-process (cheap) | socket gRPC (also cheap) |
+| Failure domain | e2b dies with server | isolated |
+| Horizontal scaling of e2b | ❌ tied to server | ✅ multi-replica |
+| `k8e e2b-server` standalone command | kept for compat (same logic) | kept for compat |
+
+For k8e's single-binary distribution the embed path is the right trade: the
+e2b surface is not a scale hotspot (agent sessions, not mass traffic), and
+keeping it in-process preserves the zero-ops story. The standalone
+`k8e e2b-server` command stays as a thin wrapper for existing users.
+
+## 2. Deployment and flags
+
+**Embedded (default).** e2b starts inside k8e-server after
+`sandboxmatrix.Register` returns, unless `--disable-sandbox-matrix`
+(e2b dials the sandbox gRPC gateway, which is part of the matrix) or
+`--disable-e2b` (`K8E_DISABLE_E2B`) is set. It dials the in-process gRPC
+gateway over loopback (`127.0.0.1:<GRPCPort>`) via the existing
+`client.NewClientWithEndpoint` — zero new Gateway-interface work, the trust
+model is unchanged (loopback + LocalAuth).
+
+**`--e2b-listen`** (new flag, `K8E_E2B_LISTEN`, default `0.0.0.0:3676`): the
+e2b HTTP listen address. Must be 0.0.0.0 (or the advertise IP) so the
+cluster's headless e2b-server Service/Endpoints can reach it; the Gateway
+API is the only external door. **No separate Deployment:** `e2b-gateway.yaml`
+uses headless Service + Endpoints pointing at `--advertise-address` for BOTH
+the e2b HTTP (:3676) and the sandbox gRPC (:50051) host services — same
+pattern as the existing `sandbox-grpc-gateway` bridge.
+
+**Standalone compat wrapper.** `k8e e2b-server` remains a long-running
+subcommand (registered in the main `k8e` binary alongside `server`); it dials
+the gRPC gateway the same way the sandbox CLI does — mTLS bootstrap with the
+API key, local auto-discovery (`127.0.0.1:50051`) by default,
+`--endpoint`/`--apikey` for remote gateways — and listens for HTTP on
+`--listen` (default `127.0.0.1:3676`, Dormice's port). In standalone mode it
+uses the in-memory `stateStore` (single-node semantics, documented).
+
+**Routing** follows CubeSandbox: the control plane is mounted **at the root**
+(`/sandboxes`, `/v2/sandboxes`, …) because the official SDK points `apiUrl`
+at the bare origin — the way it builds paths is `new URL('/sandboxes',
+apiUrl)`, and a prefix survives only because the SDK treats apiUrl as opaque.
+The `/e2b/api` prefix is kept as a compatibility alias for clients already
+wired to it (same handlers, same auth). The envd surface stays under
+`/e2b/envd` and signed files at `/files`; a root `/health` probe serves
+orchestrators (CubeSandbox-style).
 
 ```
 e2b SDK / CLI / browser
@@ -113,22 +265,25 @@ Cilium Gateway API (GatewayClass e2b / Gateway :80,:443,:50051)
    │ HTTPRoute / → e2b-server Service  (control plane)   │ TCPRoute (L4 passthrough)
    │ HTTPRoute /e2b*, /files → e2b-server Service        │   ↓ mTLS preserved
    ▼                                                     ▼
-k8e e2b-server (net/http)                        sandbox-grpc-gateway Service
-   │ gRPC (mTLS bootstrap via pkg/sandbox/client)          │ Endpoints → host
+k8e-server (embedded e2b, net/http)              sandbox-grpc-gateway Service
+   │ gRPC (loopback dial via pkg/sandbox/client)         │ Endpoints → host
    ▼                                                     ▼
 sandbox.v1.SandboxService gateway ──► sandboxd (:2024 in-pod)
                                          ├─ /exec, /exec/stream, /files/{read,write,list}
                                          ├─ /files/{stat,mkdir,move,remove}   (native fs)
-                                         └─ /exec/stdin*, /exec/signal        (process control)
+                                         ├─ /exec/stdin*, /exec/signal        (process control)
+                                         ├─ /exec/processes, /exec/attach     (process table)
+                                         └─ /watch/{create,events,remove}     (inotify watch trio)
 ```
 
 The left hop is the gateway for everything that has a gRPC RPC (session
 lifecycle, exec, file read/write/list); the right hop is `sandboxdClient`,
 which dials sandboxd's HTTP API directly for the primitives that have no
-gateway RPC (fs stat/mkdir/move/remove, process stdin/signal). Both resolve
-the pod IP from `GetSession` — the same source the gateway uses.
+gateway RPC (fs stat/mkdir/move/remove, process stdin/signal, process
+table/attach, watch). Both resolve the pod IP from `GetSession` — the same
+source the gateway uses.
 
-### Part B — Protocol surface
+## 3. Protocol surface
 
 | Prefix | What lives there | Auth |
 |--------|------------------|------|
@@ -162,11 +317,11 @@ upload octet-stream — which we support — and refuse xattr metadata options
 client-side — which we do not support — instead of us accepting data and
 silently dropping it).
 
-### Part C — Mapping to K8E gRPC
+## 4. Mapping to K8E gRPC
 
-| E2B verb | K8E RPC | Notes |
+| E2B verb | K8E RPC / sandboxd | Notes |
 |----------|---------|-------|
-| `POST /sandboxes` (create) | `CreateSession` | `envVars→env`; `templateID→runtime_class` (`base`/absent → default runtime; known runtimes `gvisor|kata|firecracker` accepted, else 404 `template not found`); `metadata.name` becomes the k8e `session_id` → **idempotent create** (same name ⇒ same sandbox, Dormice extension); `timeout` → daemon-side deadline registry |
+| `POST /sandboxes` (create) | `CreateSession` | `envVars→env`; `templateID→runtime_class` (`base`/absent → default runtime; known runtimes `gvisor|kata|firecracker` accepted, else 404 `template not found`); `metadata.name` becomes the k8e `session_id` → **idempotent create** (same name ⇒ same sandbox, Dormice extension); `timeout` → daemon-side deadline registry (stateStore-backed) |
 | `POST /sandboxes/:id/connect` | `GetSession` | wake/extend deadline; returns session view (201 if resumed) |
 | `GET /sandboxes/:id` | `GetSession` | info view: `sandboxID, clientID, templateID, metadata, state, startedAt, endAt, cpuCount, memoryMB, diskSizeMB, envdVersion` |
 | `DELETE /sandboxes/:id` (kill) | `DestroySession` | 204; second kill → 404 (SDK's `kill()===false` keys on it) |
@@ -176,29 +331,34 @@ silently dropping it).
 | `GET /sandboxes/:id/metrics` | — | **`[]`** — K8E has no metrics pipeline yet; honest absence |
 | `GET /v2/sandboxes` (list) | `ListSessions` | phase/state filter, `x-next-token` pagination |
 | `GET /e2b/envd/health` | `GetSession` | 204 running / 502 not |
-| `process.Process/Start` (stream) | `ExecStream` | live SSE streaming; sandboxd reports the in-guest pid in the first frame; exit code via wrapper file (§Process) |
-| `process.Process/Connect` (stream) | process table | reattach, no replay |
-| `process.Process/List` | process table | living processes only |
-| `process.Process/SendInput` | sandboxd `/exec/stdin` | base64 stdin → the process's live stdin pipe (native, §Process) |
+| `process.Process/Start` (stream) | `ExecStream` → sandboxd | live SSE streaming; sandboxd reports the in-guest pid in the first frame; **exit code in-stream** (`data: {"exit":N}`), no marker files |
+| `process.Process/Connect` (stream) | sandboxd `/exec/attach` | reattach to a (possibly already-finished) process: SSE replay of the buffered output; falls back to sandboxd when the local table has no record (cross-node) |
+| `process.Process/List` | sandboxd `/exec/processes` | sandbox-owned process table — living processes only, node-independent |
+| `process.Process/SendInput` | sandboxd `/exec/stdin` | base64 stdin → the process's live stdin pipe (native) |
 | `process.Process/CloseStdin` | sandboxd `/exec/stdin/close` | EOF on the process's stdin pipe |
-| `process.Process/SendSignal` | sandboxd `/exec/signal` | SIGKILL / SIGTERM by in-guest pid |
-| `process.Process/Update`, `StreamInput`, `UpdatePTY` | — | **501 `unimplemented`** — no PTY in sandboxd |
-| `filesystem.Filesystem/Stat`, `MakeDir`, `Move`, `Remove` | sandboxd `/files/{stat,mkdir,move,remove}` | native in-pod syscalls (no shell), paths resolve under `/workspace` |
-| `filesystem.Filesystem/ListDir` | sandboxd `/files/list` + depth-1 stat | depth-1 `EntryInfo` listing |
-| `filesystem.Filesystem/WatchDir`, `CreateWatcher`, `GetWatcherEvents`, `RemoveWatcher` | — | **501 `unimplemented`** — no watch in K8E |
+| `process.Process/SendSignal` | sandboxd `/exec/signal` | SIGKILL / SIGTERM by in-guest pid (proto3 JSON enum names accepted) |
+| `process.Process/Update`, `StreamInput`, `UpdatePTY` | — | **501 `unimplemented`** — no PTY in sandboxd; `StreamInput` is a **permanent 501** (no SDK calls it — see §8) |
+| `filesystem.Filesystem/Stat`, `MakeDir`, `Move`, `Remove` | sandboxd `/files/{stat,mkdir,move,remove}` | native in-pod syscalls (no shell), paths resolve under `/workspace`; `Stat` returns `symlink_target`; `MakeDir`/`Move` return `EntryInfo` |
+| `filesystem.Filesystem/ListDir` | sandboxd `/files/list` | **depth-aware** `EntryInfo` listing |
+| `filesystem.Filesystem/WatchDir` | — | **501 `unimplemented`** (streaming surface; the SDK does not use it) |
+| `filesystem.Filesystem/CreateWatcher`, `GetWatcherEvents`, `RemoveWatcher` | sandboxd `/watch/{create,events,remove}` | inotify per-watcher event ring; `GetWatcherEvents` is incremental (SDK `WatchHandle` semantics) |
 | `GET/POST /e2b/envd/files` | `ReadFile`/`WriteFile` | multipart + octet-stream + gzip; Range on download |
 | `GET/POST /files` (signed URLs) | `ReadFile`/`WriteFile` | Dormice signature scheme (§Signing) |
 
 **Deadline registry.** K8E's `CreateSession` takes no per-sandbox TTL (the TTL
 comes from the `SandboxMatrix` CRD). E2B `timeout` semantics are enforced by
-the e2b server itself: an in-memory `sandboxID → deadline` map, extended by
+the e2b server itself: a `sandboxID → deadline` map, extended by
 `connect`/`timeout`, cleared by the `-1` NEVER_TIMEOUT sentinel, with a GC
 loop that calls `DestroySession` (kill deadline) or `PauseSession`
-(autoPause deadline) when it passes. In-memory is honest and documented: a
-server restart loses the registry (sessions survive, GC defaults to K8E's own
-`ExpiresAt`). `autoPause` at the deadline releases the pod and keeps the PVC
-— exactly E2B's `lifecycle.on_timeout="pause"` (CubeSandbox's auto-pause);
-an ephemeral session that cannot pause degrades to kill, honestly.
+(autoPause deadline) when it passes. **Persistence** is via the `stateStore`
+interface: embedded mode uses the CRD-backed `crdStateStore` (SandboxSession
+annotation `sandbox.k8e.io/e2b-state`), so a control-plane node restart keeps
+E2B TTL semantics and any node can enforce deadlines; the standalone
+`k8e e2b-server` uses the honest in-memory registry (a restart loses the
+registry, sessions survive, GC defaults to K8E's own `ExpiresAt`).
+`autoPause` at the deadline releases the pod and keeps the PVC — exactly
+E2B's `lifecycle.on_timeout="pause"` (CubeSandbox's auto-pause); an ephemeral
+session that cannot pause degrades to kill, honestly.
 
 **Session view fields.** The Python SDK's generated models hard-require
 `clientID` and the full info-view field set (`cpuCount, diskSizeMB, endAt,
@@ -211,14 +371,34 @@ deadline registry. `endAt` is **omitted** for never-timeout sandboxes
 "expires soon" to SDK arithmetic); paused sandboxes report `state: paused`
 and survive a `connect`.
 
-### Part D — Process surface
+## 5. Process surface
 
 E2B's defining behavior — `background: true` is the same wire as a foreground
 run, `disconnect()` never kills, `connect(pid)` reattaches — means a
-process's lifetime must be decoupled from any HTTP response. The e2b server
-keeps a **daemon-side process table** (synthetic pids from 1000, subscriber
-broadcast, no replay, not persisted — a restart empties it, honest and
-documented, matching Dormice).
+process's lifetime must be decoupled from any HTTP response. The process
+table is **owned by sandboxd** (KIP-18 P1): pids are the sandbox's own, so
+they are node-independent and survive the e2b layer entirely.
+
+- **sandboxd table** (`execctl.zig`): every exec registers an Entry — the
+  command snapshot (for `Process/List`) + a 64 KiB ring buffer of recent
+  output (for attach) + a done flag. `GET /exec/processes` returns
+  `{pid, alive, config}`; `GET /exec/attach?pid=N` replays the buffered
+  output as SSE; the stream closes with `data: {"exit":N}` carrying the exit
+  code after `wait4` (retiring the marker-file hack).
+- **e2b layer**: `Process/List` reads the sandbox-owned table (cross-node
+  consistent, fallback to the local subscriber table); `Process/Connect`
+  falls back to `/exec/attach` when the local table has no record
+  (cross-node Start); `runProcessStream` captures the in-stream exit code
+  (`parseExitFrame`).
+- **In-guest pid bridge.** The first SSE frame of `/exec/stream` carries the
+  in-guest pid (`data: {"pid":N}`); the e2b server parses it and records it
+  on the process record (table-mutex-guarded). Until the frame arrives the
+  control verbs answer `not_found` honestly — the process exists but its
+  in-guest pid is not known yet. This is why `SendInput`/`SendSignal` are
+  **native**, not 501: sandboxd's process-control table maps in-guest pid →
+  open stdin pipe via `/exec/stdin` (base64 → pipe write), `/exec/stdin/close`
+  (EOF), and `/exec/signal` (SIGKILL/SIGTERM; a pid that already exited reaps
+  to `not_found` so the SDK sees `kill() === false`).
 
 `Process/Start` maps to k8e's `ExecStream`:
 
@@ -226,11 +406,8 @@ documented, matching Dormice).
    `-c` argument becomes the sandboxd command; any other shape is an
    in-stream `invalid_argument` ("only shell commands are supported").
 2. The command runs as-is; the exit code arrives **in-stream**: sandboxd's
-   `/exec/stream` closes with a `data: {"exit":N}
-
-` SSE frame (KIP-18 P1,
-   retiring the old marker-file hack). Absent (killed by timeout / SIGKILL /
-   stream cut) ⇒ `exitCode: -1, status: killed`.
+   `/exec/stream` closes with a `data: {"exit":N}` SSE frame. Absent (killed
+   by timeout / SIGKILL / stream cut) ⇒ `exitCode: -1, status: killed`.
 3. Output frames are `{event:{data:{stdout: <base64>}}}`. K8E's `/exec/stream`
    merges stdout+stderr into one pipe, so all output rides the `stdout`
    channel (documented limitation; the SDK concatenates stdout anyway).
@@ -240,29 +417,21 @@ documented, matching Dormice).
    `FLAG_END_STREAM` frame. A nonzero exit is a result on the wire, never an
    error frame.
 
-**In-guest pid bridge.** The process table's synthetic pid (from 1000) is an
-e2b-server invention — it is not the sandbox's real pid, so it cannot address
-`/exec/stdin` or `/exec/signal` in sandboxd. The bridge is the first SSE frame
-of `/exec/stream`: sandboxd emits `data: {"pid":N}\n\n` before any output, the
-e2b server parses it (`{"pid":` prefix, one frame) and records it on the
-process record (table-mutex-guarded, since the stream goroutine writes it
-while request goroutines read it). Until the frame arrives the control verbs
-answer `not_found` honestly — the process exists but its in-guest pid is not
-known yet. This is why `SendInput`/`SendSignal` are **native**, not 501:
-sandboxd gained a process-control table (in-guest pid → open stdin pipe) with
-`/exec/stdin` (base64 → pipe write), `/exec/stdin/close` (EOF), and
-`/exec/signal` (SIGKILL/SIGTERM; a pid that already exited reaps to
-`not_found` so the SDK sees `kill() === false`). PTY stays unsupported:
-sandboxd has no PTY and the SDK's `pty.create` path cannot be faked
-honestly.
+`Process/Connect` semantics (P1 follow-up, decided): k8e's `Process/Start` is
+a foreground stream that runs until the process exits (its output rides the
+Start stream); `Connect` therefore reconnects to an *already-finished*
+process's buffered output — exactly what `/exec/attach` replays. Live tailing
+a still-running process from a second consumer would only matter for sandboxd
+*background* processes (`/exec/background`), which have their own poll
+surface; not a gap for the E2B Connect path. A keepalive decorator
+(`keepaliveSubscriber`, mutex-guarded, idle 15 s) keeps long streams alive
+through proxy timeouts. PTY stays unsupported: sandboxd has no PTY and the
+SDK's `pty.create` path cannot be faked honestly.
 
-`Process/Connect` opens a stream to a living pid (start frame first, no
-replay of past output), exactly like the SDK's `commands.connect`.
-
-### Part E — Filesystem surface
+## 6. Filesystem surface
 
 K8E's sandboxd originally had `write`/`read`/`list` only — no `stat`, `mkdir`,
-`move`, `remove`. This KIP **downshifts those four operations into sandboxd**
+`move`, `remove`. KIP-18 **downshifts those four operations into sandboxd**
 (native syscalls in the in-pod daemon, no shell, no `Exec` round-trip): new
 `/files/stat`, `/files/mkdir` (409 `already exists`), `/files/move` (rename),
 `/files/remove` (recursive) endpoints, with **path resolution under
@@ -275,11 +444,13 @@ credential.
 
 | RPC | sandboxd | Notes |
 |-----|----------|-------|
-| `Stat` | `/files/stat` | `statx` → `EntryInfo` (type, size, mode, uid, gid, mtime) |
-| `ListDir` | `/files/list` + depth-1 stat | depth-1 `EntryInfo` listing |
-| `MakeDir` | `/files/mkdir` | existing ⇒ `already_exists` (SDK reads it as `makeDir()===false`) |
-| `Move` | `/files/move` | `rename`; missing source ⇒ `not_found` |
+| `Stat` | `/files/stat` | `statx` → `EntryInfo` (type, size, mode, uid, gid, mtime) + **`symlink_target`** (readlink, Linux-tested) |
+| `ListDir` | `/files/list` | **depth-aware** `EntryInfo` listing (P1 audit item, resolved) |
+| `MakeDir` | `/files/mkdir` | existing ⇒ `already_exists` (SDK reads it as `makeDir()===false`); returns `EntryInfo` |
+| `Move` | `/files/move` | `rename`; missing source ⇒ `not_found`; **returns a real `EntryInfo`** (stat-after-move) |
 | `Remove` | `/files/remove` | recursive delete (missing ⇒ no-op, like `rm -rf`) |
+| `WatchDir` | — | **501** (streaming); the SDK's polling trio is what ships (below) |
+| `CreateWatcher` / `GetWatcherEvents` / `RemoveWatcher` | `/watch/{create,events,remove}` | inotify per-watcher event ring; `GetWatcherEvents` is incremental with a cursor (SDK `WatchHandle` semantics) |
 
 Doing these natively (instead of GNU `stat`/`mkdir`/`mv`/`rm` via a shell)
 removes the shell-piping and quoting surface, makes failures precise
@@ -292,7 +463,7 @@ the destination path in the filename; octet-stream takes `?path=`; gzip
 Downloads get extension-based `Content-Type` and single-range `Range` support
 (206 + `Content-Range`).
 
-### Part F — Auth and signing
+## 7. Auth and signing
 
 - **Control plane**: `X-API-KEY: e2b_<token>`. The `e2b_` prefix is the SDK's
   convention, not a secret; the bare token is compared (constant-time)
@@ -310,19 +481,81 @@ Downloads get extension-based `Content-Type` and single-range `Range` support
   `=` padding stripped. Verified constant-time; the signature itself
   identifies the sandbox (no headers needed — browsers add none).
 
-### Part G — CLI
+## 8. Implementation status — what PR #541 ships
 
-`k8e e2b-server` follows the standard subcommand pattern (four layers):
-`AppCommandFuncs.E2BServer` field → `NewE2BServerCommand` in
-`pkg/cli/cmds/e2b_server.go` → wired in `Funcs()` and `cmd/k8e/main.go`.
+### 8.1 Done
 
-Flags: `--listen` (default `127.0.0.1:3676`), `--endpoint` (gRPC gateway,
-default local auto-discovery), `--apikey` (`K8E_SANDBOX_APIKEY`), `--node-id`
-(default `k8e`), `--signing-secret` (`K8E_E2B_SIGNING_SECRET`), `--timeout-ms`
-per-request connect deadline default. Long-running command: blocks on a
-signal context like `server.Run`.
+- **P1 — sandboxd-owned process table (complete).** `execctl.zig` Entry:
+  command snapshot (for `Process/List`) + 64 KiB ring buffer of recent output
+  (for attach) + done flag; `GET /exec/processes` returns `{pid, alive,
+  config}`; `GET /exec/attach?pid=N` replays the buffered output as SSE;
+  `data: {"exit":N}` closes the stream with the exit code (retiring the
+  marker-file hack). Pids are the sandbox's own — node-independent.
+  `exec.zig` registers with the command, appends output to the ring buffer,
+  marks done on reap, and emits the exit frame after `wait4`. The e2b layer:
+  `Process/List` reads the sandbox-owned table (cross-node consistent,
+  fallback to the local subscriber table); `Process/Connect` falls back to
+  `/exec/attach` when the local table has no record; `runProcessStream`
+  captures the in-stream exit code (`parseExitFrame`). `wrapWithExitCode` /
+  `readExitCode` / marker files removed.
+- **P1 follow-ups (decided and shipped):**
+  - **`Connect` attach = buffer replay is the correct semantic** (see §5).
+  - **`StreamInput` is a permanent 501, documented.** Verified against the
+    official SDK sources: neither `packages/python-sdk` nor `packages/js-sdk`
+    ever calls `StreamInput` — `send_stdin` goes through the unary
+    `SendInput` RPC. Implementing HTTP/2 client_stream in sandboxd (Zig)
+    would cost significant work with zero SDK consumers. The 501 hint tells
+    clients to use `SendInput`. Custom low-level clients needing streamed
+    stdin are out of scope.
+  - **Watch trio (shipped).** `watch.zig` implements per-watcher inotify
+    event rings with `/watch/create`, `/watch/events` (incremental cursor —
+    SDK `WatchHandle` semantics), `/watch/remove`; the e2b layer wires
+    `CreateWatcher` / `GetWatcherEvents` / `RemoveWatcher` to them.
+    Streaming `WatchDir` remains 501 (the SDK does not use it).
+  - **KeepAlive heartbeat (shipped).** `keepaliveSubscriber` (mutex-guarded
+    writes, idle 15 s) keeps Start/Connect streams alive through proxy
+    timeouts.
+  - **P2 semantic details (all shipped):** `Move` returns a real `EntryInfo`
+    (stat-after-move); `MakeDir` returns an entry too; `symlink_target`
+    implemented (sandboxd readlink + e2b passthrough, Linux-tested);
+    `SendSignal` numeric-enum wire confirmed compatible (proto3 JSON enum
+    names `SIGNAL_SIGKILL`/`SIGNAL_SIGTERM` accepted); `ListDir` is
+    depth-aware.
+- **P2 — embedded e2b in k8e-server (complete).** `runEmbeddedE2B`
+  (`pkg/server/e2b_embedded.go`) starts the e2b HTTP server inside
+  k8e-server after `sandboxmatrix.Register`, dialing the in-process gRPC
+  gateway over loopback, with the CRD-backed `crdStateStore` injected. On by
+  default; `--disable-e2b` (`K8E_DISABLE_E2B`) or `--disable-sandbox-matrix`
+  turns it off; `--e2b-listen` (`K8E_E2B_LISTEN`, default `0.0.0.0:3676`)
+  sets the listen address.
+- **Multi-node consistency (shipped).** `stateStore` interface with the
+  in-memory `sandboxRegistry` and the CRD-backed `crdStateStore`
+  (SandboxSession annotation `sandbox.k8e.io/e2b-state`); every node's
+  `gcLoop` enforces deadlines with idempotent `PauseSession`/`DestroySession`
+  (no leader-gating needed); the process table is sandbox-owned so
+  `Process/List`/`Connect` are node-independent. Reconcilers stay
+  leader-gated (`leader.go`).
+- **Gateway manifests (shipped).** `manifests/sandbox-matrix/e2b-gateway.yaml`:
+  HTTPRoute :80/:443 → e2b-server headless Service + Endpoints (host
+  `--advertise-address`), TCPRoute :50051 L4 passthrough → headless
+  `sandbox-grpc-gateway` (mTLS preserved).
+- **`k8e e2b-server` kept as a thin compat wrapper** (same logic, in-memory
+  store, documented single-node semantics).
 
-## Compatibility notes (what is and is not supported)
+### 8.2 Remaining 501s / honest absences (by design)
+
+| Surface | Status | Why |
+|---|---|---|
+| PTY: `process.Process/Update`, `UpdatePTY`, SDK `pty.create` | 501 | sandboxd has no PTY; cannot be faked honestly |
+| `process.Process/StreamInput` | 501 (**permanent**) | no official SDK calls it (verified); `send_stdin` uses unary `SendInput` |
+| `filesystem.Filesystem/WatchDir` (streaming) | 501 | the SDK uses the polling trio, which is shipped |
+| `GET /sandboxes/:id/metrics` | `[]` | K8E has no metrics pipeline yet — honest absence |
+| xattr `metadata` (`user.e2b.*`) | not returned | no SDK surface depends on it for the supported flows |
+| `domain` in the create response | omitted | SDK tolerates absence (`isinstance str` else `None`); k8e's sandboxUrl is explicit |
+| `Connect` by tag (`ProcessSelector.tag`) | unimplemented | SDK never sends tag (verified) |
+| Basic auth (`Authorization: Basic`) | not needed | k8e claims envd 0.6.1 ≥ 0.4.0, so the SDK never sends Basic (verified) |
+
+## 9. Compatibility notes
 
 **Works with the official SDK out of the box:** create → connect → getInfo →
 list → kill → timeout (incl. `-1` NEVER_TIMEOUT) → **pause → resume**
@@ -330,39 +563,44 @@ list → kill → timeout (incl. `-1` NEVER_TIMEOUT) → **pause → resume**
 auto-resume on the next request (connect / exec / file I/O), live
 `commands.run` streaming, `commands.list`, `commands.connect`, file
 write/read/list/stat/rename/makeDir/remove, byte round-trips, signed-URL
-download/upload, `metadata.name` idempotency.
+download/upload, watch (`watchDir` via the polling trio), `metadata.name`
+idempotency.
 
 **Honest 501s (SDK methods throw, with a machine-readable hint):** PTY
-(`pty.create`), `process.Process/Update`, `StreamInput`, `UpdatePTY`, watch
-(`watchDir` and the polling trio), metrics (returns `[]`), templates
-registry (only runtime-class names accepted as `templateID`), pause of an
-ephemeral (EmptyDir) sandbox (409 — no persistent workspace to survive the
-release).
+(`pty.create`), `process.Process/Update`, `StreamInput`, `UpdatePTY`,
+streaming `WatchDir` (the polling trio works), metrics (returns `[]`),
+templates registry (only runtime-class names accepted as `templateID`),
+pause of an ephemeral (EmptyDir) sandbox (409 — no persistent workspace to
+survive the release).
 
 `sendStdin`/`closeStdin` and `sendSignal`/`handle.kill` are **not** in that
-list anymore: sandboxd gained a process-control table plus
-`/exec/stdin`, `/exec/stdin/close`, `/exec/signal`, and the e2b server wires
+list: sandboxd gained a process-control table plus `/exec/stdin`,
+`/exec/stdin/close`, `/exec/signal`, and the e2b server wires
 `SendInput`/`CloseStdin`/`SendSignal` to them natively, with the in-guest pid
 bridged through the first `/exec/stream` frame. The remaining 501s are all
-K8E-runtime gaps (no PTY/watch/metrics in sandboxd), not protocol gaps;
-closing them in sandboxd un-gates the surface. Pause/resume requires a
-**persistent session** (tenant set → workspace PVC); ephemeral sessions
-cannot pause without losing their files, so the refusal is honest
-(CubeSandbox deletes a paused sandbox without waking it for the same
-reason).
+K8E-runtime gaps (no PTY/metrics in sandboxd, `StreamInput` and streaming
+`WatchDir` deliberately not implemented — no SDK consumers), not protocol
+gaps. Pause/resume requires a **persistent session** (tenant set → workspace
+PVC); ephemeral sessions cannot pause without losing their files, so the
+refusal is honest (CubeSandbox deletes a paused sandbox without waking it for
+the same reason).
 
-## Alternatives considered
+## 10. Alternatives considered
 
 - **Extend sandboxd (Zig) to speak envd in-pod** — rejected as a full move:
   the gateway already provides pod-IP resolution, session env/secret
   injection, TLS, and truncation; duplicating that in a second runtime
   surface is more surface for the same protocol. **Adopted partially** as
-  "ability downshift": the *primitive* operations that have no gateway RPC —
-  filesystem stat/mkdir/move/remove and process stdin/signal — are native
-  sandboxd endpoints (`/files/*`, `/exec/stdin*`, `/exec/signal`), while the
-  protocol translation (auth, envelope, error dialect, pause/resume, signed
-  URLs) stays in the e2b server. This is the compromise that unlocks
-  `SendInput`/`SendSignal` without rewriting the control plane in Zig.
+  "ability downshift" and then as **sandboxd-as-envd for the primitives
+  sandboxd should own**: the process table (`/exec/processes`, `/exec/attach`,
+  in-stream exit), the native filesystem/process-control endpoints
+  (`/files/*`, `/exec/stdin*`, `/exec/signal`), and the watch trio are
+  sandboxd's, while protocol translation (auth, envelope, error dialect,
+  pause/resume, signed URLs, deadline registry) stays in the e2b layer.
+- **Extract the controller + e2b into one standalone Deployment** — the
+  earlier direction; rejected in favor of **embedding both in k8e-server**
+  with the Gateway API as the only door (§1.5 — single-binary positioning,
+  the Gateway already provides ingress, and e2b is not a scale hotspot).
 - **A grpc-gateway / Connect-go plugin** — the E2B wire is hand-rolled
   JSON-codec Connect-RPC with a specific envelope; Dormice's measured
   behavior (and its quirks, like `data: ` SSE leakage) is easier to match
@@ -370,38 +608,53 @@ reason).
 - **Adopt the native gRPC API in the SDKs** — ecosystem agents already speak
   E2B; a compat layer reaches them with zero client changes.
 
-## Open items / future work
+## 11. Test plan
 
-- sandboxd: add PTY, watch, metrics → un-gate the remaining 501 surfaces
-  (stdin, signal, and the fs operations are done via the ability downshift).
-- sandboxd `/exec/stream` in-stream exit code is done (KIP-18 P1); the
-  marker-file hack is retired.
-- Pause with memory retention (CubeSandbox's full snapshot pause / resume)
-  would need a VM snapshot engine (CubeCoW-style); today's pause is the
-  honest filesystem-only variant (release pod, keep PVC, cold-boot resume).
-- Persist the deadline registry (a small SQLite/JSON ledger) so a restart
-  keeps E2B TTL semantics.
-- Template registry: map E2B template names to k8e session images.
-- e2e suite: run the official `e2b` package against a live cluster
-  (Dormice's `e2e/src/e2b.test.ts` and CubeSandbox's SDK tests are the
-  models).
-- Validate the Cilium Gateway API ingress on a live cluster: `Gateway`
-  programmed status, HTTPRoute → e2b-server Service reachability, HTTPS
-  listener with the `sandbox-e2b` TLS secret, and the envd Connect stream
-  end-to-end through the Gateway (ALPN/HTTP2).
-- **Architecture evolution** — `docs/kip-18-sandbox-matrix-controller.md`
-  plans two changes: (1) the envd protocol surface moves into sandboxd (the
-  in-pod daemon becomes the real E2B Environment Daemon, e2b-server becomes
-  a transparent proxy); (2) the sandbox-matrix controller is extracted from
-  k8e-server and merged with the e2b logic into one standalone
-  `sandbox-matrix-controller` service behind the Gateway API.
-- The **Appendix** below is the CubeSandbox borrowable-ideas backlog: 56
-  items across security (A), correctness (B), capabilities (C), ops (D),
-  e2e harness (E) and SDK compat (F), each with CubeSandbox source
-  references, K8E relevance, effort, and a recommended landing order.
-  Turn items into follow-up KIPs as they get scheduled.
+- **sandboxd (Zig):** Connect codec envelope round-trips and frame-boundary
+  splitting; process surface (Start/Connect/List/SendInput/SendSignal
+  semantics); in-stream exitCode; execctl ring buffer / attach / done;
+  watch per-watcher event ring (create/events/remove, incremental cursor);
+  files stat/mkdir/move/remove/list (depth, symlink); transcript replay.
+  Baseline: **44/44 on Linux** (OrbStack debian runner — the macOS sandbox
+  blocks fork tests); cross-compiles for x86_64/aarch64/riscv64-linux-musl.
+- **e2b (Go):** existing suite against the sandboxd stub — control plane
+  lifecycle, deadline registry + GC, pause/resume, idempotent create, process
+  Start/Connect cross-node (attach fallback), watch trio handlers, keepalive,
+  signed URLs, error dialect, envd stream parsing. **Full suite + `-race`
+  green.**
+- **controller:** Go unit tests for the embedded wiring (e2b HTTP server
+  starts after `sandboxmatrix.Register`; both listeners on :50051 and
+  :3676), loopback gateway dial, `--disable-e2b` skipping, leader election
+  still gating reconcilers only.
+- **deploy:** manifest assertions (Gateway routes point at the host headless
+  Services, TCPRoute passthrough).
+- **live cluster** (open item, as before): Gateway programmed, :50051 mTLS
+  passthrough, :443 envd Connect, pause/resume through Gateway, official
+  `e2b` SDK end-to-end (Dormice's `e2b.test.ts` and CubeSandbox's SDK tests
+  are the models).
 
+## 12. Risks / open questions
 
+- **Cert bootstrap**: sandboxd connecting requires the controller to hold the
+  sandbox CA. Secret rotation path must be defined (currently host files).
+- **Loopback gateway dial**: embedded e2b dials `127.0.0.1:<GRPCPort>` via
+  the existing sandbox client (mTLS + LocalAuth). This is a real socket hop
+  inside the process, but it reuses the battle-tested client path and keeps a
+  clean seam if a future in-process `Gateway` adapter replaces it.
+- **PTY / metrics backlog**: sandboxd has no PTY and K8E has no metrics
+  pipeline; adding them un-gates the remaining 501 surfaces. `StreamInput`
+  and streaming `WatchDir` are deliberately not scheduled (no SDK consumers).
+- **Pause with memory retention** (CubeSandbox's full snapshot pause /
+  resume) would need a VM snapshot engine (CubeCoW-style); today's pause is
+  the honest filesystem-only variant (release pod, keep PVC, cold-boot
+  resume).
+- **Template registry**: map E2B template names to k8e session images
+  (runtime-class names are accepted today).
+- **e2e suite**: run the official `e2b` package against a live cluster and
+  validate the Cilium Gateway API ingress (Gateway programmed status,
+  HTTPRoute → e2b-server Service reachability, HTTPS listener with the
+  `sandbox-e2b` TLS secret, envd Connect stream end-to-end through the
+  Gateway with ALPN/HTTP2).
 
 ## Appendix — Borrowable ideas from CubeSandbox (deep review)
 
@@ -439,7 +692,17 @@ NEVER_TIMEOUT `-1` with `endAt` omission, fine-grained errors (503+Retry-After,
 409, 404), Bearer / `X-API-Key` / `X-API-KEY: e2b_<key>` auth, envd HMAC tokens
 (`E2b-Sandbox-Id` + `X-Access-Token`), pause/resume (filesystem-only, keep PVC),
 auto-pause at deadline, auto-resume on traffic, native sandboxd fs/process
-downshift, process table, exit-code marker files, honest 501s, metrics `[]`.
+downshift, process table, honest 501s, metrics `[]`.
+
+**Resolved by PR #541 after this review:** the exit-code marker files are
+retired (sandboxd emits in-stream `data: {"exit":N}` frames — F7's "emit
+`exitCode` explicitly" recommendation is done), the watch polling trio is
+implemented via sandboxd inotify (C4's polling trio, §6), the process table
+is sandbox-owned and node-independent (C2's stale-state concern is bounded by
+the CRD state store, §1.4), and the deadline registry is persisted through
+`stateStore` (the "persist the deadline registry" open item, §4). Items still
+open from this backlog are marked as such in their entries; the rest remain
+input for follow-up KIPs.
 
 ---
 
@@ -1094,8 +1357,9 @@ envd serializes process end events as proto3 JSON, which omits a zero-valued
 
 **K8E:** if k8e's sandboxd/process API emits Connect events with proto3-style
 JSON (or any JSON that omits default values), clients will misread exit 0 as
-"no exit code". Adopt the tolerant parser or, better, always emit `exitCode`
-explicitly from sandboxd (see KIP-18 open item on retiring the marker file).
+"no exit code". **Resolved in PR #541:** sandboxd emits the exit code
+explicitly (`data: {"exit":N}` in-stream frame; the marker file is retired,
+§5) — keep the tolerant parser on the SDK side for real envd servers.
 
 #### F8. Config/env compat: `CUBE_*` with `E2B_*` fallback + omit-when-None — effort S
 
@@ -1157,15 +1421,28 @@ agent team workspaces.
 
 ## References
 
+- **KIP-18 (this document)** — architecture: embedded e2b + embedded
+  sandbox-matrix controller behind the Cilium Gateway API; sandboxd-as-envd.
 - Dormice — `packages/server/src/e2b/{index,control,protocol,envd,process-table,signing}.ts`,
   `packages/server/src/e2b/envd/{process,files,filesystem,watch,shared}.ts`,
   `packages/server/src/e2b/compat.test.ts`,
   `e2e/src/e2b.test.ts` (official-SDK black-box suite).
+- E2B — `spec/envd/process/process.proto`,
+  `spec/envd/filesystem/filesystem.proto`,
+  `packages/python-sdk/e2b/envd/{process,filesystem}/*_connect.py`
+  (connectrpc Endpoint wiring), `packages/python-sdk/e2b/envd/utils.py`
+  (Basic auth `authentication_header`), `packages/python-sdk/e2b/envd/
+  versions.py` (ENVD_DEFAULT_USER threshold).
 - K8E — `proto/sandbox/v1/sandbox.proto`,
   `pkg/sandboxmatrix/grpc/{server,orchestrator,env}.go`,
-  `pkg/sandbox/e2b/{server,control,envd,files,process,registry,sandboxd}.go`,
-  `sandboxd/src/{main,exec,execctl,files,background,processes}.zig`,
-  `pkg/sandbox/client/client.go`.
+  `pkg/sandboxmatrix/{controller,leader}.go`,
+  `pkg/sandbox/e2b/{server,control,envd,files,process,registry,sandboxd,
+  gateway,protocol,gwerror,state_store,crd_state}.go`,
+  `pkg/server/e2b_embedded.go`, `pkg/cli/cmds/e2b_server.go`,
+  `sandboxd/src/{main,exec,execctl,files,watch,events,background,processes,
+  transcript}.zig`,
+  `pkg/sandbox/client/client.go`,
+  `manifests/sandbox-matrix/e2b-gateway.yaml`.
 - CubeSandbox — `CubeAPI/src/{routes,handlers/sandboxes,middleware/{auth,rate_limit}}.rs`,
   `CubeAPI/src/{services/sandboxes,error/mod,models/mod}.rs`,
   `CubeProxy/lua/*.lua` (rewrite, path_rewrite, sandbox_backend,
