@@ -1,0 +1,30 @@
+{
+  "name": "@k8e/dsh-k8e-sandbox",
+  "version": "0.1.0",
+  "description": "k8e-sandbox owner service for DeepSeek Harness (ctx.k8eSandbox).",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": ["lib"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@k8e/dsh-k8e-sandbox-client": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*",
+    "typescript": "^5.6.0"
+  }
+}

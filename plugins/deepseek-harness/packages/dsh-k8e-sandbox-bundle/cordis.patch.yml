@@ -1,0 +1,16 @@
+# Mounts the k8e-sandbox execution world: one sandbox owner service plus the
+# filesystem and subprocess providers. Loading order matters — the owner must
+# mount first (fs/subprocess inject `k8eSandbox`), which Cordis dependency
+# injection guarantees regardless of row order.
+- insert:
+    - id: k8e-sandbox
+      name: '@k8e/dsh-k8e-sandbox'
+      config:
+        # endpoint / profile resolve like k8e-sandbox-cli; leave unset for
+        # local auto-discovery via ~/.k8e/sandbox (KIP-17).
+        cwd: /workspace
+        runtimeClass: gvisor
+    - id: k8e-sandbox-fs
+      name: '@k8e/dsh-k8e-sandbox-fs'
+    - id: k8e-sandbox-subprocess
+      name: '@k8e/dsh-k8e-sandbox-subprocess'
