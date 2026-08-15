@@ -165,7 +165,7 @@ func (t *ProcessTable) Unsubscribe(pid int, sub ProcessSubscriber) {
 // ReplaceSubscriber swaps one subscriber for another on a process's stream
 // (used to wrap a raw subscriber with a keepalive decorator). No-op if the
 // original is not present.
-func (t *ProcessTable) ReplaceSubscriber(pid int, old, new ProcessSubscriber) {
+func (t *ProcessTable) ReplaceSubscriber(pid int, old, fresh ProcessSubscriber) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	rec, ok := t.records[pid]
@@ -174,7 +174,7 @@ func (t *ProcessTable) ReplaceSubscriber(pid int, old, new ProcessSubscriber) {
 	}
 	for i, s := range rec.Subs {
 		if s == old {
-			rec.Subs[i] = new
+			rec.Subs[i] = fresh
 			return
 		}
 	}

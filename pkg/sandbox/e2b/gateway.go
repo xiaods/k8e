@@ -1,6 +1,7 @@
 package e2b
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -254,7 +255,7 @@ func stripDataPrefix(line []byte) []byte {
 }
 
 func indexOf(b []byte, sub string) int {
-	return strings.Index(string(b), sub)
+	return bytes.Index(b, []byte(sub))
 }
 
 // resolveSandboxPath maps an E2B-relative path onto the k8e workspace root.
