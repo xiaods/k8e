@@ -1,7 +1,7 @@
 {
   "name": "@k8e/dsh-k8e-sandbox-client",
   "version": "0.1.0",
-  "description": "k8e-sandbox transport: Phase 1 CLI client (wraps k8e-sandbox-cli).",
+  "description": "k8e-sandbox transport: CLI client (Phase 1) + gRPC terminal client (Phase 2).",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -9,11 +9,19 @@
     ".": {
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
+    },
+    "./grpc": {
+      "types": "./lib/grpc.d.ts",
+      "default": "./lib/grpc.js"
     }
   },
-  "files": ["lib"],
+  "files": ["lib", "proto"],
   "scripts": {
     "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.13"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
