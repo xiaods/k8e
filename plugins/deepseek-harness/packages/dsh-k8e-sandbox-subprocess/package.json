@@ -1,0 +1,30 @@
+{
+  "name": "@k8e/dsh-k8e-sandbox-subprocess",
+  "version": "0.1.0",
+  "description": "k8e-sandbox subprocess seam provider for DeepSeek Harness (ctx.subprocess).",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": ["lib"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@k8e/dsh-k8e-sandbox": "workspace:*"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-subprocess": "*"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-subprocess": "*",
+    "typescript": "^5.6.0"
+  }
+}

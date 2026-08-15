@@ -1,0 +1,17 @@
+{
+  "name": "@k8e/dsh-k8e-sandbox-bundle",
+  "version": "0.1.0",
+  "description": "Installable dsh bundle mounting the k8e-sandbox execution world (KIP-20).",
+  "type": "module",
+  "files": ["cordis.patch.yml"],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@k8e/dsh-k8e-sandbox": "workspace:*",
+    "@k8e/dsh-k8e-sandbox-fs": "workspace:*",
+    "@k8e/dsh-k8e-sandbox-subprocess": "workspace:*"
+  }
+}
