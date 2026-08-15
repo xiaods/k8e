@@ -9,6 +9,8 @@
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { PassThrough } from 'node:stream'
+import type { Readable } from 'node:stream'
 import * as grpc from '@grpc/grpc-js'
 import { loadPackageDefinition, loadSync } from '@grpc/proto-loader'
 
@@ -30,6 +32,13 @@ export interface TerminalForegroundResponse {
   inputWaiting: boolean
 }
 
+export interface ExecStreamResult {
+  /** Merged stdout+stderr, decoded from the gateway's SSE stream. */
+  stdout: Readable
+  /** Resolves when the process exits (exit frame observed or stream closed). */
+  done: Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>
+}
+
 export interface GrpcK8eClientOptions {
   /** gRPC gateway `host:port`. */
   endpoint: string
@@ -48,6 +57,8 @@ interface SandboxServiceClient {
   terminalSignal(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
   terminalDestroy(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
   terminalStream(request: unknown, metadata: grpc.Metadata): grpc.ClientReadableStream<any>
+  execStream(request: unknown, metadata: grpc.Metadata): grpc.ClientReadableStream<any>
+  exec(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
 }
 
 function defaultCertDir(): string {
@@ -158,6 +169,60 @@ export class GrpcK8eClient {
   /** Open the terminal output stream; the stream yields data frames then a final exit frame. */
   terminalStream(terminalId: string): grpc.ClientReadableStream<any> {
     return this.client.terminalStream({ terminal_id: terminalId }, this.metadata)
+  }
+
+  /**
+   * Run one command with streaming merged output. The gateway forwards
+   * sandboxd's SSE (`data: {"pid":N}`, `data: <raw>`, `data: {"exit":N}`) as
+   * raw chunks; this decodes them into a clean stdout stream plus an exit
+   * promise.
+   */
+  execStream(sessionId: string, command: string): ExecStreamResult {
+    const stdout = new PassThrough()
+    const stream = this.client.execStream({ session_id: sessionId, command }, this.metadata)
+
+    let buffer = ''
+    let exitCode: number | null = null
+    let settled = false
+
+    const done = new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      const settle = (signal: NodeJS.Signals | null): void => {
+        stdout.end()
+        if (!settled) {
+          settled = true
+          resolve({ exitCode, signal })
+        }
+      }
+      stream.on('data', (chunk: Buffer | string) => {
+        buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        while (true) {
+          const idx = buffer.indexOf('\n\n')
+          if (idx < 0) break
+          const event = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          if (!event.startsWith('data: ')) continue
+          const payload = event.slice('data: '.length)
+          if (payload.startsWith('{"pid"')) continue
+          if (payload.startsWith('{"exit"')) {
+            const m = /"exit":(-?\d+)/.exec(payload)
+            exitCode = m === null ? 0 : Number(m[1])
+            settle(null)
+            continue
+          }
+          stdout.write(payload)
+        }
+      })
+      stream.on('error', (err) => {
+        stdout.destroy(err instanceof Error ? err : new Error(String(err)))
+        if (!settled) {
+          settled = true
+          reject(err instanceof Error ? err : new Error(String(err)))
+        }
+      })
+      stream.on('end', () => settle(null))
+    })
+
+    return { stdout, done }
   }
 
   close(): void {

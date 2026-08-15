@@ -17,6 +17,7 @@ import type {
   SubprocessTerminalSignal,
   SubprocessTerminalSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
+import type { GrpcK8eClient } from '@k8e/dsh-k8e-sandbox-client/grpc'
 
 /** Quote one opaque argument for the CLI's `/bin/sh -c` layer. */
 function shellQuote(value: string): string {
@@ -53,15 +54,35 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
   }
 
   override spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
-    // Phase 1: argv is re-quoted into a single shell command; the CLI executes
-    // it and returns only after completion, so the handle is already settled.
     const command = spec.argv.map(shellQuote).join(' ')
-    const client = this.ctx.k8eSandbox.getClient()
     const stdout = new PassThrough()
     const stderr = new PassThrough()
+    let grpcClient: GrpcK8eClient | undefined
+    try {
+      grpcClient = this.ctx.k8eSandbox.getGrpcClient()
+    } catch {
+      grpcClient = undefined
+    }
     let settled = false
 
     const done: Promise<SubprocessOutcome> = (async () => {
+      if (grpcClient !== undefined) {
+        // Phase 2: streaming exec via gRPC (sandboxd merges stderr into stdout).
+        try {
+          const sid = await this.ctx.k8eSandbox.getSession()
+          const result = grpcClient.execStream(sid, command)
+          result.stdout.pipe(stdout)
+          return await result.done
+        } catch (cause) {
+          const error = cause instanceof Error ? cause : new Error(String(cause))
+          stdout.destroy(error)
+          return { exitCode: 1, signal: null }
+        } finally {
+          settled = true
+        }
+      }
+      // Phase 1 fallback: single-shot CLI run.
+      const client = this.ctx.k8eSandbox.getClient()
       try {
         const sid = await this.ctx.k8eSandbox.getSession()
         const result = await client.run(command, { sessionId: sid, timeout: Math.ceil(spec.graceMs / 1000) })
