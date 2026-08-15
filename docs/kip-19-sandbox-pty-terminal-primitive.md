@@ -4,7 +4,7 @@
 |--------|---------|--------|
 | @xiaods | 2026-08-15 | Draft |
 
-> 关联 KIP：KIP-14（mTLS 动态证书）、KIP-16（沙箱架构教训 / catalog M9）、KIP-18（E2B 兼容）、**KIP-20（k8e-sandbox-dsh 插件——其 Phase 2 的 `spawnTerminal` 依赖本 KIP 先行）**。
+> 关联 KIP：KIP-14（mTLS 动态证书）、KIP-16（沙箱架构教训 / catalog M9）、KIP-18（E2B 兼容）、**KIP-20（dsh-k8e-sandbox 插件——其 Phase 2 的 `spawnTerminal` 依赖本 KIP 先行）**。
 > 本 KIP 是 KIP-20 已决问题 #2 的展开：为 k8e sandbox 增加 PTY 原语，使 dsh 的 terminal seam（以及 E2B SDK 的 `pty.*` 面）能被完整实现。
 
 ## 摘要
@@ -299,7 +299,7 @@ E2B 兼容层（KIP-18）用 `pid` 寻址，而本原语只暴露 canonical `ter
 | M1 | sandboxd：`pty.zig`（分配/启动/输入/输出泵/尺寸/前台/信号/销毁）+ 终端会话表 + 路由 | `sandboxd/src/pty.zig`、`main.zig` |
 | M1 | gateway：7 个 RPC 处理器 + `TerminalStream` SSE 代理 + terminal_id 路由注册表 + mTLS 登记 | `pkg/sandboxmatrix/grpc/server.go`（+ 新 `terminal.go`） |
 | M2 | 单元/集成测试 | `sandboxd/src/pty_test.zig`、`pkg/sandboxmatrix/grpc/*_test.go` |
-| M3 | dsh 消费：KIP-20 `spawnTerminal` 接本原语 | `plugins/deepseek-harness/packages/k8e-sandbox-dsh-subprocess` |
+| M3 | dsh 消费：KIP-20 `spawnTerminal` 接本原语 | `plugins/deepseek-harness/packages/dsh-k8e-sandbox-subprocess` |
 | M4 | E2B 兼容层 `pty.*` 闭合 | KIP-18 兼容层 |
 
 ## 测试计划

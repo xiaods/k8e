@@ -1,4 +1,4 @@
-# KIP-20: k8e-sandbox-dsh — 让 DeepSeek Harness 以插件方式调用 k8e-sandbox
+# KIP-20: dsh-k8e-sandbox — 让 DeepSeek Harness 以插件方式调用 k8e-sandbox
 
 | Author | Updated | Status |
 |--------|---------|--------|
@@ -9,7 +9,7 @@
 
 ## 摘要
 
-本 KIP 提出 `k8e-sandbox-dsh`：一个**完全树外（out-of-tree）**的 dsh 插件族，让 DeepSeek Harness 把"执行世界"（文件读写 + 进程执行）整体搬到 k8e-sandbox 里，与 k8e 现有的 `k8e-sandbox-cli` / gRPC 网关 / 温暖池共用同一套基础设施。
+本 KIP 提出 `dsh-k8e-sandbox`：一个**完全树外（out-of-tree）**的 dsh 插件族，让 DeepSeek Harness 把"执行世界"（文件读写 + 进程执行）整体搬到 k8e-sandbox 里，与 k8e 现有的 `k8e-sandbox-cli` / gRPC 网关 / 温暖池共用同一套基础设施。
 
 核心结论有三条：
 
@@ -89,18 +89,18 @@ k8e-sandbox 与 E2B 在抽象层面是同一类东西：一个远端 Linux 执�
 ```
 plugins/deepseek-harness/
 ├── packages/
-│   ├── k8e-sandbox-dsh/            # 所有者服务：ctx.k8eSandbox（会话生命周期 + 共享客户端）
-│   ├── k8e-sandbox-dsh-fs/         # ctx.fs provider（K8eFileSystem extends FileSystem）
-│   ├── k8e-sandbox-dsh-subprocess/ # ctx.subprocess provider（K8eSubprocessRuntime extends SubprocessRuntime）
-│   ├── k8e-sandbox-dsh-client/     # 内部传输抽象：CliClient / GrpcClient 共用一个接口
-│   ├── k8e-sandbox-dsh-tool/       # 可选：模型面工具（session/snapshot/confirm/ps 等沙箱专属动词）
-│   └── k8e-sandbox-dsh-bundle/     # bundle 包：dsh.bundle.patch → cordis.patch.yml，挂载上面所有行
+│   ├── dsh-k8e-sandbox/            # 所有者服务：ctx.k8eSandbox（会话生命周期 + 共享客户端）
+│   ├── dsh-k8e-sandbox-fs/         # ctx.fs provider（K8eFileSystem extends FileSystem）
+│   ├── dsh-k8e-sandbox-subprocess/ # ctx.subprocess provider（K8eSubprocessRuntime extends SubprocessRuntime）
+│   ├── dsh-k8e-sandbox-client/     # 内部传输抽象：CliClient / GrpcClient 共用一个接口
+│   ├── dsh-k8e-sandbox-tool/       # 可选：模型面工具（session/snapshot/confirm/ps 等沙箱专属动词）
+│   └── dsh-k8e-sandbox-bundle/     # bundle 包：dsh.bundle.patch → cordis.patch.yml，挂载上面所有行
 ├── package.json                    # pnpm workspace
 ├── pnpm-workspace.yaml
 └── tsconfig.base.json
 ```
 
-> npm scope 统一为 `@k8e/`，发布名按 `@k8e/dsh-*`：所有者 `@k8e/dsh-k8e-sandbox`、fs `@k8e/dsh-k8e-sandbox-fs`、subprocess `@k8e/dsh-k8e-sandbox-subprocess`、client `@k8e/dsh-k8e-sandbox-client`、tool `@k8e/dsh-k8e-sandbox-tool`、bundle `@k8e/dsh-k8e-sandbox-bundle`。目录短名（`k8e-sandbox-dsh*`）不变。
+> npm scope 统一为 `@k8e/`，命名统一为 `dsh-k8e-sandbox`：所有者 `@k8e/dsh-k8e-sandbox`、fs `@k8e/dsh-k8e-sandbox-fs`、subprocess `@k8e/dsh-k8e-sandbox-subprocess`、client `@k8e/dsh-k8e-sandbox-client`、tool `@k8e/dsh-k8e-sandbox-tool`、bundle `@k8e/dsh-k8e-sandbox-bundle`；目录短名与之对齐（`dsh-k8e-sandbox*`）。
 
 ### 加载方式（非侵入通道）
 
@@ -117,7 +117,7 @@ dsh --profile k8e --dump-config
 dsh --profile k8e
 ```
 
-`k8e-sandbox-dsh-bundle/package.json` 声明 `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`；`cordis.patch.yml` 插入四行（顺序关键——先所有者，再 fs/subprocess，后可选工具）：
+`dsh-k8e-sandbox-bundle/package.json` 声明 `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`；`cordis.patch.yml` 插入四行（顺序关键——先所有者，再 fs/subprocess，后可选工具）：
 
 ```yaml
 - insert:
@@ -192,7 +192,7 @@ dsh --profile k8e
 
 这正是 E2B README 描述的"换 provider 换掉整个执行世界"。
 
-### 7.5 可选：模型面工具 `k8e-sandbox-dsh-tool`
+### 7.5 可选：模型面工具 `dsh-k8e-sandbox-tool`
 
 fs/subprocess 覆盖不了 k8e 的**沙箱专属动词**。提供一个模型面工具（挂 `ctx.tools`，schema 随 prompt 装配），暴露：`session`（create/get/list/destroy/pause/resume）、`snapshot`（save/list/restore/delete）、`ps`、`confirm`/`approve`、`poll`。这些是 k8e 独有能力，不进 fs/subprocess 缝，作为 Consumer 补齐"缝"的第三角。Phase 1 可先省（SKILL 已覆盖），Phase 2 再上。
 
@@ -200,7 +200,7 @@ fs/subprocess 覆盖不了 k8e 的**沙箱专属动词**。提供一个模型面
 
 ### 客户端抽象
 
-fs/subprocess 不直接依赖"CLI 还是 gRPC"。`k8e-sandbox-dsh-client` 定义一个内部接口（最小方法集：`createSession/destroySession/exec/execStream/writeFile/readFile/listFiles/pollRun/getProcesses/...`），两个实现：
+fs/subprocess 不直接依赖"CLI 还是 gRPC"。`dsh-k8e-sandbox-client` 定义一个内部接口（最小方法集：`createSession/destroySession/exec/execStream/writeFile/readFile/listFiles/pollRun/getProcesses/...`），两个实现：
 
 - `CliK8eClient`：包装 `k8e-sandbox-cli`（spawn 子进程，解析 JSON / `--raw` 流）。
 - `GrpcK8eClient`：从 `proto/sandbox/v1/sandbox.proto` 生成 TS（`@grpc/grpc-js` + `ts-proto` 或 `protobuf-ts`），mTLS 读 `~/.k8e/sandbox/` 证书，到期经 `Login` RPC 惰性续期。
@@ -213,7 +213,7 @@ fs/subprocess 不直接依赖"CLI 还是 gRPC"。`k8e-sandbox-dsh-client` 定义
 
 ### Phase 2：直连 gRPC（补保真度）
 
-- 从 proto 生成 TS 客户端（放在 `k8e-sandbox-dsh-client/`，随 proto 一起由 `make generate` 触发）。
+- 从 proto 生成 TS 客户端（放在 `dsh-k8e-sandbox-client/`，随 proto 一起由 `make generate` 触发）。
 - mTLS 材料与 CLI 共享（同一 cert 目录 / 同一 profile），续期逻辑复用 KIP-14 语义。
 - 用 `ExecStream` 做流式 stdout，`PollRun`/`GetTranscript` 做增量与后台，`GetProcesses` + `Exec kill` 做进程组终止，逼近 E2B 的保真度。
 
@@ -234,7 +234,7 @@ fs/subprocess 不直接依赖"CLI 还是 gRPC"。`k8e-sandbox-dsh-client` 定义
 
 ## 配置面
 
-Schemastery schema（`k8e-sandbox-dsh` 的 `Config`），字段尽量与 CLI flag 对齐：
+Schemastery schema（`dsh-k8e-sandbox` 的 `Config`），字段尽量与 CLI flag 对齐：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
@@ -262,7 +262,7 @@ Schemastery schema（`k8e-sandbox-dsh` 的 `Config`），字段尽量与 CLI fla
 
 ## 验收标准
 
-- [ ] 树外 bundle 能通过 `dsh plugin --profile k8e add …` 安装并 `dsh --profile k8e --dump-config` 显示 `k8e-sandbox-dsh` 层。
+- [ ] 树外 bundle 能通过 `dsh plugin --profile k8e add …` 安装并 `dsh --profile k8e --dump-config` 显示 `dsh-k8e-sandbox` 层。
 - [ ] 挂载后 `ctx.fs` / `ctx.subprocess` 被 k8e 实现占据，dsh 的 `bash` 与文件工具在沙箱 pod 内执行（用 `ps`/`list` 验证是沙箱而非 host）。
 - [ ] fs：`read/write/edit/list/stat` 通过 `WriteFile/ReadFile/ListFiles/Exec` 正确映射；原子写与版本守卫有单测。
 - [ ] subprocess：`spawn` 单次 exec 返回正确 stdout/stderr/exit_code；`terminate` 走 kill+存活观察；`resolveExecutable` 正确。
@@ -276,12 +276,12 @@ Schemastery schema（`k8e-sandbox-dsh` 的 `Config`），字段尽量与 CLI fla
 
 | 阶段 | 内容 | 位置 |
 |---|---|---|
-| Phase 1 | 所有者服务 + CLI 客户端抽象 | `plugins/deepseek-harness/packages/k8e-sandbox-dsh{,-client}` |
-| Phase 1 | fs provider（CLI 传输） | `.../k8e-sandbox-dsh-fs` |
-| Phase 1 | subprocess provider（单次 exec + 后台） | `.../k8e-sandbox-dsh-subprocess` |
-| Phase 1 | bundle 包 + cordis.patch.yml | `.../k8e-sandbox-dsh-bundle` |
-| Phase 2 | gRPC TS 客户端（proto 生成 + mTLS 续期） | `.../k8e-sandbox-dsh-client/src/grpc`，proto 生成接 `make generate` |
-| Phase 2 | 流式 stdio / 进程组终止 / 模型面工具 | subprocess、`k8e-sandbox-dsh-tool` |
+| Phase 1 | 所有者服务 + CLI 客户端抽象 | `plugins/deepseek-harness/packages/dsh-k8e-sandbox{,-client}` |
+| Phase 1 | fs provider（CLI 传输） | `.../dsh-k8e-sandbox-fs` |
+| Phase 1 | subprocess provider（单次 exec + 后台） | `.../dsh-k8e-sandbox-subprocess` |
+| Phase 1 | bundle 包 + cordis.patch.yml | `.../dsh-k8e-sandbox-bundle` |
+| Phase 2 | gRPC TS 客户端（proto 生成 + mTLS 续期） | `.../dsh-k8e-sandbox-client/src/grpc`，proto 生成接 `make generate` |
+| Phase 2 | 流式 stdio / 进程组终止 / 模型面工具 | subprocess、`dsh-k8e-sandbox-tool` |
 | Phase 2 | `spawnTerminal`（**依赖 KIP-19（sandbox PTY 终端原语）先落地**） | subprocess + k8e 侧 PTY RPC |
 | 后续 | — | — |
 
