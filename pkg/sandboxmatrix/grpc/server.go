@@ -142,6 +142,10 @@ type Server struct {
 	localAuth     bool
 	rateLimiter   *ratelimit.Limiter
 	layerStore    *sandboxlayer.Store
+	// terminal registry (KIP-19): branded terminal_id → sandboxd terminal.
+	terminalsMu sync.RWMutex
+	terminals   map[string]terminalEntry
+	terminalSeq uint64
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -159,6 +163,7 @@ func NewServer(cfg ServerConfig) *Server {
 		serverKeyFile:  cfg.ServerKeyFile,
 		localAuth:      cfg.LocalAuth,
 		rateLimiter:    ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
+		terminals:      make(map[string]terminalEntry),
 	}
 	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
 	if cfg.FQDNEnabled {
