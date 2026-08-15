@@ -9,6 +9,7 @@ const events = @import("events.zig");
 const processes = @import("processes.zig");
 const execctl = @import("execctl.zig");
 const watch = @import("watch.zig");
+const pty = @import("pty.zig");
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -211,6 +212,21 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
     } else if (std.mem.eql(u8, path, "/watch/remove") and std.mem.eql(u8, method, "POST")) {
         // E2B Filesystem/RemoveWatcher.
         try watch.handleRemove(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/pty/create") and std.mem.eql(u8, method, "POST")) {
+        // PTY terminal primitive (KIP-19): allocate + start controlling-terminal session leader.
+        try pty.handleCreate(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/pty/input") and std.mem.eql(u8, method, "POST")) {
+        try pty.handleInput(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/pty/resize") and std.mem.eql(u8, method, "POST")) {
+        try pty.handleResize(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/pty/foreground") and std.mem.eql(u8, method, "GET")) {
+        try pty.handleForeground(allocator, client_fd, query);
+    } else if (std.mem.eql(u8, path, "/pty/signal") and std.mem.eql(u8, method, "POST")) {
+        try pty.handleSignal(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/pty/destroy") and std.mem.eql(u8, method, "POST")) {
+        try pty.handleDestroy(allocator, client_fd, body);
+    } else if (std.mem.eql(u8, path, "/pty/stream") and std.mem.eql(u8, method, "GET")) {
+        try pty.handleStream(allocator, client_fd, query);
     } else {
         try writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"not found\"}");
     }
