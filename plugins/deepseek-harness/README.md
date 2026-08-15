@@ -21,6 +21,26 @@ Phase 1 (CLI transport) and Phase 2 (direct gRPC: `spawnTerminal` + streaming
 runtime e2e against a live K8E gateway is still pending — the procedure is in
 [`e2e.md`](e2e.md).
 
+## Test
+
+Fake-ctx runtime tests (no harness, gateway, or cluster): `npm test` mounts the
+fs/subprocess providers on a fake `ctx` with a fake owner + fake client and
+asserts their mapping, and unit-tests the exec SSE decoder
+(`tests/{fs,subprocess,grpc-sse}.test.mjs`, bundled on the fly by
+`scripts/test.mjs`).
+
+One-time setup:
+
+```sh
+npm install               # devDependencies: esbuild + @grpc/grpc-js + @grpc/proto-loader
+scripts/setup-links.sh    # symlink @deepseek-ai/* -> the dsh checkout's lib/
+npm test                  # bundle + run tests/*.test.mjs
+```
+
+`npm install` prunes extraneous `node_modules` symlinks, so re-run
+`scripts/setup-links.sh` after any reinstall. `DSH_CHECKOUT` overrides the dsh
+path (default `../../../deepseek-harness`).
+
 ## Typecheck
 
 The TypeScript packages target dsh's in-box types (`@deepseek-ai/dsh-fs`,

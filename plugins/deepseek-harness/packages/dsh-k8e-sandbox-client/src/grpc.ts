@@ -39,6 +39,42 @@ export interface ExecStreamResult {
   done: Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>
 }
 
+export interface ExecSSEEvent {
+  data?: string
+  exit?: number
+}
+
+/**
+ * Incremental decoder for the gateway's /exec/stream SSE framing
+ * (`data: {"pid":N}`, `data: <raw>`, `data: {"exit":N}`). Chunks may split an
+ * event anywhere; `push` returns only complete events.
+ */
+export class ExecSSEDecoder {
+  private buffer = ''
+
+  /** Feed one chunk; returns the decoded data/exit events in delivery order. */
+  push(chunk: string): ExecSSEEvent[] {
+    this.buffer += chunk
+    const events: ExecSSEEvent[] = []
+    while (true) {
+      const idx = this.buffer.indexOf('\n\n')
+      if (idx < 0) break
+      const event = this.buffer.slice(0, idx)
+      this.buffer = this.buffer.slice(idx + 2)
+      if (!event.startsWith('data: ')) continue
+      const payload = event.slice('data: '.length)
+      if (payload.startsWith('{"pid"')) continue
+      if (payload.startsWith('{"exit"')) {
+        const m = /"exit":(-?\d+)/.exec(payload)
+        events.push({ exit: m === null ? 0 : Number(m[1]) })
+        continue
+      }
+      events.push({ data: payload })
+    }
+    return events
+  }
+}
+
 export interface GrpcK8eClientOptions {
   /** gRPC gateway `host:port`. */
   endpoint: string
@@ -181,7 +217,7 @@ export class GrpcK8eClient {
     const stdout = new PassThrough()
     const stream = this.client.execStream({ session_id: sessionId, command }, this.metadata)
 
-    let buffer = ''
+    const decoder = new ExecSSEDecoder()
     let exitCode: number | null = null
     let settled = false
 
@@ -194,22 +230,14 @@ export class GrpcK8eClient {
         }
       }
       stream.on('data', (chunk: Buffer | string) => {
-        buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
-        while (true) {
-          const idx = buffer.indexOf('\n\n')
-          if (idx < 0) break
-          const event = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
-          if (!event.startsWith('data: ')) continue
-          const payload = event.slice('data: '.length)
-          if (payload.startsWith('{"pid"')) continue
-          if (payload.startsWith('{"exit"')) {
-            const m = /"exit":(-?\d+)/.exec(payload)
-            exitCode = m === null ? 0 : Number(m[1])
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        for (const event of decoder.push(text)) {
+          if (event.exit !== undefined) {
+            exitCode = event.exit
             settle(null)
-            continue
+          } else if (event.data !== undefined) {
+            stdout.write(event.data)
           }
-          stdout.write(payload)
         }
       })
       stream.on('error', (err) => {

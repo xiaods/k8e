@@ -2,3 +2,5 @@ node_modules/
 lib/
 *.tsbuildinfo
 tsconfig.check.json
+tests/.bundle-*
+package-lock.json

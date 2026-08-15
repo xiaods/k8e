@@ -2,5 +2,13 @@
   "name": "dsh-k8e-sandbox-workspace",
   "private": true,
   "version": "0.1.0",
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/test.mjs"
+  },
+  "devDependencies": {
+    "@grpc/grpc-js": "^1.12.0",
+    "@grpc/proto-loader": "^0.7.13",
+    "esbuild": "^0.28.2"
+  }
 }
