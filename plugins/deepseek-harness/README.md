@@ -23,11 +23,23 @@ runtime e2e against a live K8E gateway is still pending — the procedure is in
 
 ## Test
 
-`npm test` runs a fake-ctx runtime test (no harness, no gateway): it mounts
-`K8eSubprocessRuntime` on a fake `ctx` with a fake owner + fake gRPC client and
-asserts the `spawnTerminal` / `spawn` mapping (`tests/subprocess.test.mjs`,
-bundled on the fly by `scripts/test.mjs`). It needs the same `@deepseek-ai/*`
-symlinks + `esbuild` + `@grpc/*` deps as the Typecheck step below.
+Fake-ctx runtime tests (no harness, gateway, or cluster): `npm test` mounts the
+fs/subprocess providers on a fake `ctx` with a fake owner + fake client and
+asserts their mapping, and unit-tests the exec SSE decoder
+(`tests/{fs,subprocess,grpc-sse}.test.mjs`, bundled on the fly by
+`scripts/test.mjs`).
+
+One-time setup:
+
+```sh
+npm install               # devDependencies: esbuild + @grpc/grpc-js + @grpc/proto-loader
+scripts/setup-links.sh    # symlink @deepseek-ai/* -> the dsh checkout's lib/
+npm test                  # bundle + run tests/*.test.mjs
+```
+
+`npm install` prunes extraneous `node_modules` symlinks, so re-run
+`scripts/setup-links.sh` after any reinstall. `DSH_CHECKOUT` overrides the dsh
+path (default `../../../deepseek-harness`).
 
 ## Typecheck
 
