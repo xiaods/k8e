@@ -249,42 +249,60 @@ func (s *Server) TerminalStream(req *pb.TerminalStreamRequest, stream pb.Sandbox
 		}
 		payload := strings.TrimPrefix(line, "data: ")
 
-		if strings.HasPrefix(payload, "{") {
-			var frame struct {
-				PID       *int32 `json:"pid"`
-				Exit      *int32 `json:"exit"`
-				Signal    string `json:"signal"`
-				Truncated bool   `json:"truncated"`
-			}
-			if err := json.Unmarshal([]byte(payload), &frame); err != nil {
-				return status.Errorf(codes.Internal, "pty stream frame decode: %v", err)
-			}
-			if frame.Exit != nil {
-				if err := stream.Send(&pb.TerminalStreamResponse{
-					Frame: &pb.TerminalStreamResponse_Exit{
-						Exit: &pb.TerminalExit{ExitCode: *frame.Exit, Signal: frame.Signal},
-					},
-				}); err != nil {
-					return err
-				}
-				return nil
-			}
-			// pid frame: ignore
-			continue
-		}
-
-		decoded, err := base64.StdEncoding.DecodeString(payload)
+		frame, err := parsePTYStreamFrame(payload)
 		if err != nil {
-			return status.Errorf(codes.Internal, "pty stream base64 decode: %v", err)
+			return status.Errorf(codes.Internal, "pty stream frame: %v", err)
 		}
-		if err := stream.Send(&pb.TerminalStreamResponse{
-			Frame: &pb.TerminalStreamResponse_Data{Data: decoded},
-		}); err != nil {
-			return err
+		if frame.exit != nil {
+			if err := stream.Send(&pb.TerminalStreamResponse{
+				Frame: &pb.TerminalStreamResponse_Exit{Exit: frame.exit},
+			}); err != nil {
+				return err
+			}
+			return nil
 		}
+		if frame.data != nil {
+			if err := stream.Send(&pb.TerminalStreamResponse{
+				Frame: &pb.TerminalStreamResponse_Data{Data: frame.data},
+			}); err != nil {
+				return err
+			}
+		}
+		// pid frame (both fields nil): nothing to forward
 	}
 	if err := scanner.Err(); err != nil {
 		return status.Errorf(codes.Internal, "pty stream read: %v", err)
 	}
 	return nil
+}
+
+// ptyStreamFrame is one parsed /pty/stream SSE data payload.
+type ptyStreamFrame struct {
+	data []byte           // base64-decoded output (nil for control frames)
+	exit *pb.TerminalExit // terminal exit frame (nil until the final frame)
+}
+
+// parsePTYStreamFrame decodes one sandboxd SSE data payload into a stream
+// frame. JSON payloads carry control facts (pid, then exit); any other payload
+// is a base64-encoded output chunk.
+func parsePTYStreamFrame(payload string) (ptyStreamFrame, error) {
+	if strings.HasPrefix(payload, "{") {
+		var frame struct {
+			PID    *int32 `json:"pid"`
+			Exit   *int32 `json:"exit"`
+			Signal string `json:"signal"`
+		}
+		if err := json.Unmarshal([]byte(payload), &frame); err != nil {
+			return ptyStreamFrame{}, fmt.Errorf("frame decode: %w", err)
+		}
+		if frame.Exit != nil {
+			return ptyStreamFrame{exit: &pb.TerminalExit{ExitCode: *frame.Exit, Signal: frame.Signal}}, nil
+		}
+		return ptyStreamFrame{}, nil // pid frame
+	}
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return ptyStreamFrame{}, fmt.Errorf("base64 decode: %w", err)
+	}
+	return ptyStreamFrame{data: decoded}, nil
 }

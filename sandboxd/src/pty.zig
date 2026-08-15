@@ -25,7 +25,7 @@ const BUFFER_MAX = 64 * 1024; // output ring buffer per terminal (attach/replay)
 const MAX_TERMINALS = 64;
 const POLL_NSEC: isize = 50 * 1_000_000; // 50ms stream poll cadence
 
-const Terminal = struct {
+pub const Terminal = struct {
     id: u32,
     master_fd: i32,
     pid: i32, // session leader
@@ -80,7 +80,7 @@ const Pty = struct {
     slave: i32,
 };
 
-fn openPty() !Pty {
+pub fn openPty() !Pty {
     var ptmx_buf: [64]u8 = undefined;
     const ptmx = std.fmt.bufPrintZ(&ptmx_buf, "/dev/ptmx", .{}) catch return error.PathTooLong;
     const master_rc = std.os.linux.open(ptmx.ptr, std.os.linux.O{ .ACCMODE = .RDWR, .NOCTTY = true, .CLOEXEC = true }, 0);
@@ -126,7 +126,7 @@ fn argvStrings(allocator: std.mem.Allocator, value: std.json.Value) ![][]const u
 
 // ── spawn: fork a controlling-terminal session leader ───────────────────────
 
-fn spawnTerminal(
+pub fn spawnTerminal(
     allocator: std.mem.Allocator,
     argv: []const []const u8,
     workdir: []const u8,
@@ -201,7 +201,7 @@ fn spawnTerminal(
 
 // ── terminal table ──────────────────────────────────────────────────────────
 
-fn register(term: Terminal) ?u32 {
+pub fn register(term: Terminal) ?u32 {
     lockTable();
     defer unlockTable();
     if (count >= terminals.len) {
@@ -223,7 +223,7 @@ fn register(term: Terminal) ?u32 {
     return null;
 }
 
-fn unregister(id: u32) void {
+pub fn unregister(id: u32) void {
     lockTable();
     defer unlockTable();
     for (&terminals) |*slot| {
@@ -238,7 +238,7 @@ fn unregister(id: u32) void {
     }
 }
 
-fn appendOutput(id: u32, data: []const u8) void {
+pub fn appendOutput(id: u32, data: []const u8) void {
     lockTable();
     defer unlockTable();
     if (findTerminal(id)) |t| {
@@ -251,7 +251,7 @@ fn appendOutput(id: u32, data: []const u8) void {
     }
 }
 
-fn markDone(id: u32, exit_code: i32) void {
+pub fn markDone(id: u32, exit_code: i32) void {
     lockTable();
     defer unlockTable();
     if (findTerminal(id)) |t| {
@@ -262,7 +262,7 @@ fn markDone(id: u32, exit_code: i32) void {
 
 /// Copy the most recent `out.len` buffered bytes (in delivery order) into
 /// `out`; returns the number of bytes written.
-fn readTail(id: u32, out: []u8) usize {
+pub fn readTail(id: u32, out: []u8) usize {
     lockTable();
     defer unlockTable();
     const t = findTerminal(id) orelse return 0;
