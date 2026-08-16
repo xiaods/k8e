@@ -71,11 +71,13 @@ metadata:
     app.kubernetes.io/managed-by: k8e
 spec:
   # The E2B HTTP server runs embedded in the k8e-server host process
-  # (embedded in k8e-server, on by default), not as a pod. This headless
-  # Service + Endpoints makes it
-  # reachable from the Cilium Gateway API by the stable DNS name
-  # e2b-server.sandbox-matrix.svc. Endpoints point at the host's advertise IP
-  # on the e2b listen port (default 127.0.0.1:3676 — the Gateway fronts it).
+  # (embedded in k8e-server, on by default; --e2b-listen to override,
+  # default 0.0.0.0:3676), not as a pod. This headless Service + Endpoints
+  # makes it reachable from the Cilium Gateway API by the stable DNS name
+  # e2b-server.sandbox-matrix.svc. Endpoints point at the host's advertise
+  # IP (--advertise-address, default node-ip) on the e2b listen port — the
+  # address is substituted at stage time and is never loopback (Kubernetes
+  # does not allow Endpoints to use loopback addresses).
   clusterIP: None
   ports:
   - name: http

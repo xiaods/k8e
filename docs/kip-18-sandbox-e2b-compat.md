@@ -137,6 +137,16 @@ e2b-gateway.yaml`): a `GatewayClass` (`io.cilium/gateway-controller`) + a
   passthrough)** to the headless `sandbox-grpc-gateway` Service + Endpoints
   pointing at the host's `--advertise-address`.
 
+> **Errata (KIP-21):** the Endpoints address is resolved **loopback-proof** —
+> `advertiseIP()` never emits loopback (`127.0.0.1`/`::1`) because Kubernetes
+> rejects loopback Endpoint addresses, which left the Gateway with no healthy
+> backends on a flag-less default install. Resolution order:
+> `--advertise-address` → non-loopback `--bind-address` → default-route
+> interface (`utilnet.ChooseHostInterface`). If no routable address can be
+> resolved, `e2b-gateway.yaml` is **not staged** and the server logs an
+> actionable `--advertise-address <node-ip>` hint. See
+> [docs/kip-21-host-advertise-ip-resolution.md](kip-21-host-advertise-ip-resolution.md).
+
 The gRPC listener is deliberately L4 passthrough, **not** GRPCRoute with TLS
 termination: the gateway speaks strong mTLS (client certs signed by the sandbox
 CA, verified by `mTLSAuthInterceptor`), and terminating TLS at the Gateway

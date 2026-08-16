@@ -62,6 +62,19 @@ func TestE2BGatewayAPIManifestsStaged(t *testing.T) {
 		}
 	}
 
+	// KIP-21: the Endpoints address must come from the %{ADVERTISE_IP}%
+	// template (resolved at stage time to a routable host address), and the
+	// manifest must never contain a literal loopback — Kubernetes does not
+	// allow Endpoints to use 127.0.0.1/::1 (unreachable from pods).
+	if n := bytes.Count(gw, []byte("%{ADVERTISE_IP}%")); n != 2 {
+		t.Fatalf("e2b-gateway.yaml must template %%%%{ADVERTISE_IP}%%%% into both Endpoints subsets, got %d occurrences", n)
+	}
+	for _, loopback := range []string{"127.0.0.1", "::1"} {
+		if bytes.Contains(gw, []byte(loopback)) {
+			t.Fatalf("e2b-gateway.yaml must not contain literal %q (KIP-21: Endpoints cannot use loopback)", loopback)
+		}
+	}
+
 	// The CRD bundle must include TCPRoute (L4 passthrough listener).
 	crds, err := Asset("sandbox-matrix/gateway-api-crds.yaml")
 	if err != nil {
