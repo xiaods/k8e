@@ -55,3 +55,46 @@ func TestStageSkipsE2BGatewayWhenAdvertiseUnresolvable(t *testing.T) {
 		t.Fatalf("other manifests must still stage: %v", err)
 	}
 }
+
+// TestStageSkipsRemovesStaleCopy verifies the fail-closed transition
+// (Greptile review on PR #550): a manifest left on disk by an earlier
+// successful run must be REMOVED when it becomes skip-listed, otherwise the
+// deploy watcher would re-apply the stale file and its obsolete Endpoints.
+func TestStageSkipsRemovesStaleCopy(t *testing.T) {
+	dir := t.TempDir()
+
+	// First run stages the manifest (advertise IP resolvable).
+	if err := Stage(dir, map[string]string{"%{ADVERTISE_IP}%": "10.1.2.3"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(dir, "sandbox-matrix", "e2b-gateway.yaml")
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("first stage should create e2b-gateway.yaml: %v", err)
+	}
+
+	// Second run: advertise IP unresolvable -> manifest skip-listed. The
+	// stale copy must be removed so the watcher cannot re-apply it.
+	if err := Stage(dir, map[string]string{}, map[string]bool{
+		"sandbox-matrix/e2b-gateway.yaml": true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("skip-listed manifest must be removed from disk, stat err = %v", err)
+	}
+	// Other manifests survive the transition.
+	if _, err := os.Stat(filepath.Join(dir, "coredns.yaml")); err != nil {
+		t.Fatalf("other manifests must still be staged after skip: %v", err)
+	}
+}
+
+// TestStageSkipsRemovalToleratesMissingCopy verifies the removal is a
+// no-op (and not an error) when the skip-listed manifest was never staged.
+func TestStageSkipsRemovalToleratesMissingCopy(t *testing.T) {
+	dir := t.TempDir()
+	if err := Stage(dir, map[string]string{}, map[string]bool{
+		"sandbox-matrix/e2b-gateway.yaml": true,
+	}); err != nil {
+		t.Fatalf("staging with skip on a fresh dir must not error: %v", err)
+	}
+}

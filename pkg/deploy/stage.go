@@ -17,6 +17,13 @@ staging:
 	for _, name := range AssetNames() {
 		nameNoExtension := strings.TrimSuffix(name, filepath.Ext(name))
 		if skips[name] || skips[nameNoExtension] {
+			// Fail closed: a skipped manifest must not linger on disk either.
+			// The deploy watcher applies whatever it finds on disk, so a stale
+			// copy left by an earlier successful run would otherwise be
+			// re-applied with its obsolete (possibly loopback) endpoint
+			// addresses. Best effort — a removal failure must not block
+			// staging the remaining manifests.
+			removeStagedCopy(dataDir, name)
 			continue staging
 		}
 		namePath := strings.Split(name, string(os.PathSeparator))
@@ -43,4 +50,19 @@ staging:
 	}
 
 	return nil
+}
+
+// removeStagedCopy best-effort deletes a previously staged manifest copy.
+// The manifest watcher applies whatever is on disk, so skip-listed manifests
+// must not leave a stale file behind (see Stage's skip branch).
+func removeStagedCopy(dataDir, name string) {
+	p := filepath.Join(dataDir, name)
+	if _, err := os.Stat(p); os.IsNotExist(err) {
+		return
+	}
+	if err := os.Remove(p); err != nil {
+		logrus.Warnf("failed to remove stale staged manifest %s: %v", p, err)
+		return
+	}
+	logrus.Warnf("removed stale staged manifest %s (manifest is skip-listed)", p)
 }

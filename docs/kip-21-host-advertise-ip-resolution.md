@@ -142,7 +142,25 @@ When `advertiseIP(controlConfig) == ""`:
   (`--advertise-address <node-ip>`);
 - add `sandbox-matrix/e2b-gateway.yaml` to a **copy** of the `skips` map so
   the invalid Endpoints manifest is never staged (all other manifests are
-  unaffected). `deploy.Stage` already supports per-asset skips.
+  unaffected). `deploy.Stage` already supports per-asset skips;
+- **fail closed across restarts**: a skip-listed manifest is also **removed
+  from disk** if an earlier successful run left a copy behind
+  (`deploy.Stage` skip branch → `removeStagedCopy`). This matters because
+  the manifest watcher applies whatever it finds on disk every 15s — a
+  stale `e2b-gateway.yaml` would otherwise be re-applied with its obsolete
+  (possibly loopback) endpoint addresses.
+
+Residual (documented limitation): objects already applied to the cluster
+from a previous successful run (the `e2b-gateway.yaml` Addon and its owned
+Gateway/Route/Service/Endpoints) are owned by the `k8e.sh/v1` Addon CR and
+are not pruned by this stage-time removal — the watcher only acts on files
+present on disk. In practice the unresolvable-IP state requires no
+`--advertise-address`, a loopback/unspecified bind, and no default-route
+interface, so the previous successful staging's address is still the
+last-known-good door; the operator restoring `--advertise-address`
+re-stages and re-applies. Deleting the Addon to prune its objects is
+intentionally out of scope for the stage-time path (no cluster client at
+that point in the lifecycle).
 
 ### Manifest comment fix
 
@@ -163,7 +181,9 @@ the host advertise IP, never loopback.
 3. `isRoutableAdvertiseIP` rejects loopback/link-local/unspecified/multicast
    and accepts private + public unicast (unit-test table).
 4. On a host with no resolvable routable IP, `e2b-gateway.yaml` is **not**
-   staged and the log contains an actionable `--advertise-address` hint.
+   staged, any previously staged copy is **removed from disk** (so the
+   manifest watcher cannot re-apply it), and the log contains an actionable
+   `--advertise-address` hint.
 5. `pkg/deploy` bindata test asserts the manifest Endpoints use the
    `%{ADVERTISE_IP}%` template and contain no literal loopback.
 6. `go build ./pkg/...`, `go vet ./pkg/server/...`, and
