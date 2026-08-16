@@ -54,7 +54,11 @@ type Config struct {
 	Listen string
 	// Endpoint is the k8e gRPC gateway endpoint ("" = local auto-discovery).
 	Endpoint string
-	// APIKey authenticates to the gateway; also the accepted E2B API key.
+	// APIKey is the accepted E2B API key (bare token) for control-plane
+	// requests. Official e2b SDKs present it as "e2b_"+token; the prefix is
+	// stripped before the constant-time comparison. Must be hex-only to be
+	// usable from an unmodified SDK (see ValidateE2BAPIKey). Empty disables
+	// control-plane auth (every request is rejected with 401).
 	APIKey string
 	// NodeID is the value reported as clientID (default "k8e").
 	NodeID string
@@ -103,9 +107,13 @@ func NewServer(cfg Config, gw Gateway) *Server {
 			runtimes[r] = struct{}{}
 		}
 	}
+	// The configured key is normalized to its bare token: the official e2b
+	// SDK always presents the key as "e2b_<token>" (client-side format
+	// validation), so accepting the key with or without that prefix keeps
+	// server config and SDK usage consistent.
 	var apiKeys []string
-	if cfg.APIKey != "" {
-		apiKeys = append(apiKeys, cfg.APIKey)
+	if key := NormalizeE2BAPIKey(cfg.APIKey); key != "" {
+		apiKeys = append(apiKeys, key)
 	}
 	registry := cfg.StateStore
 	if registry == nil {

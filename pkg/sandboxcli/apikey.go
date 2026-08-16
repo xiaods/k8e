@@ -63,10 +63,16 @@ func writeAPIKeys(store map[string]apikey.Record) error {
 	return err
 }
 
+// generateAPIKey returns a 64-character lowercase hex token (32 random
+// bytes). It is deliberately hex-only (no "k8e-" prefix): the official e2b
+// SDKs validate the key client-side as /^e2b_[0-9a-f]+$/ before any request,
+// so a single generated key works everywhere — the sandbox-apikeys Secret
+// (gRPC gateway login), the e2b-server --apikey, and e2b SDK clients as
+// "e2b_"+key.
 func generateAPIKey() string {
 	b := make([]byte, 32)
 	rand.Read(b) //nolint:errcheck
-	return "k8e-" + hex.EncodeToString(b)
+	return hex.EncodeToString(b)
 }
 
 var cachedK8sClient kubernetes.Interface

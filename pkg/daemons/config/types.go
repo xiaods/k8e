@@ -214,6 +214,12 @@ type SandboxConfig struct {
 	// Cilium Gateway API (HTTPRoute/TCPRoute), never a direct host port.
 	DisableE2B bool
 	E2BListen  string
+	// E2BAPIKey authenticates control-plane requests to the embedded E2B
+	// server (KIP-18). The official e2b SDKs require "e2b_" + hex characters
+	// (client-side validateApiKey); the bare token must therefore be hex-only
+	// and is compared after stripping the "e2b_" prefix. Empty disables
+	// control-plane auth (every request is rejected with 401).
+	E2BAPIKey string
 }
 
 type Control struct {

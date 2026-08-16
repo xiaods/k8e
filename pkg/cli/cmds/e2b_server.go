@@ -38,7 +38,7 @@ var (
 		},
 		cli.StringFlag{
 			Name:        "apikey",
-			Usage:       "(e2b) API key to authenticate to the gateway and accept as the E2B API key (K8E_SANDBOX_APIKEY)",
+			Usage:       "(e2b) The single API key for this deployment (K8E_SANDBOX_APIKEY): it is accepted from e2b SDK clients (as \"e2b_\"+key) and used to log in to the sandbox gRPC gateway, so the same key must be provisioned in the sandbox-apikeys Secret. Generate it with `k8e sandbox-apikey create <name>` — keys are 64 hex characters, which is exactly what official e2b SDKs require (client-side validateApiKey /^e2b_[0-9a-f]+$/) — then pass \"e2b_\"+key to the SDK; the server strips the prefix",
 			Destination: &E2BServer.APIKey,
 			EnvVar:      "K8E_SANDBOX_APIKEY",
 		},
