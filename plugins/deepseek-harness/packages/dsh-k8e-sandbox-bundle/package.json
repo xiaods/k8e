@@ -12,6 +12,8 @@
   "dependencies": {
     "@k8e/dsh-k8e-sandbox": "workspace:*",
     "@k8e/dsh-k8e-sandbox-fs": "workspace:*",
-    "@k8e/dsh-k8e-sandbox-subprocess": "workspace:*"
+    "@k8e/dsh-k8e-sandbox-subprocess": "workspace:*",
+    "@k8e/dsh-k8e-sandbox-host-ui": "workspace:*",
+    "@k8e/dsh-k8e-sandbox-client-ui": "workspace:*"
   }
 }

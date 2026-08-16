@@ -9,6 +9,16 @@
   "devDependencies": {
     "@grpc/grpc-js": "^1.12.0",
     "@grpc/proto-loader": "^0.7.13",
-    "esbuild": "^0.28.2"
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/ws": "^8.5.10",
+    "@xterm/addon-fit": "^0.10.0",
+    "esbuild": "^0.28.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "typescript": "^5.6.0",
+    "ws": "^8.18.0",
+    "xterm": "^5.3.0"
   }
 }

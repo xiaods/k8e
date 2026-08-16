@@ -24,6 +24,29 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll('\'', `'"'"'`)}'`
 }
 
+let execIdCounter = 0
+function nextExecId(): string {
+  execIdCounter += 1
+  return `exec-${process.pid}-${execIdCounter}`
+}
+
+/**
+ * One sandbox execution activity, broadcast on the `k8e-sandbox/exec` event.
+ * The host-ui bridge forwards it to the browser so the terminal panel can show
+ * running commands live and auto-open on activity (KIP-20 M3).
+ */
+export type K8eExecEvent =
+  | { phase: 'start'; id: string; command: string; cwd?: string; at: number }
+  | { phase: 'output'; id: string; stream: 'stdout' | 'stderr'; data: string; at: number }
+  | { phase: 'exit'; id: string; exitCode: number | null; signal: string | null; at: number }
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /** A sandbox execution advanced (started / emitted output / exited). @mode emit */
+    'k8e-sandbox/exec'(event: K8eExecEvent): void
+  }
+}
+
 /** k8e-sandbox command manager registered as `ctx.subprocess`. */
 export class K8eSubprocessRuntime extends SubprocessRuntime {
   static inject = ['k8eSandbox']
@@ -55,6 +78,11 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
 
   override spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     const command = spec.argv.map(shellQuote).join(' ')
+    const id = nextExecId()
+    const cwd = this.ctx.k8eSandbox.cwd
+    const emit = (event: K8eExecEvent): void => { this.ctx.emit('k8e-sandbox/exec', event) }
+    emit({ phase: 'start', id, command, cwd, at: Date.now() })
+
     const stdout = new PassThrough()
     const stderr = new PassThrough()
     let grpcClient: GrpcK8eClient | undefined
@@ -71,11 +99,17 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
         try {
           const sid = await this.ctx.k8eSandbox.getSession()
           const result = grpcClient.execStream(sid, command)
+          result.stdout.on('data', (chunk: Buffer) => {
+            emit({ phase: 'output', id, stream: 'stdout', data: chunk.toString('utf8'), at: Date.now() })
+          })
           result.stdout.pipe(stdout)
-          return await result.done
+          const outcome = await result.done
+          emit({ phase: 'exit', id, exitCode: outcome.exitCode, signal: outcome.signal, at: Date.now() })
+          return outcome
         } catch (cause) {
           const error = cause instanceof Error ? cause : new Error(String(cause))
           stdout.destroy(error)
+          emit({ phase: 'exit', id, exitCode: 1, signal: null, at: Date.now() })
           return { exitCode: 1, signal: null }
         } finally {
           settled = true
@@ -88,11 +122,15 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
         const result = await client.run(command, { sessionId: sid, timeout: Math.ceil(spec.graceMs / 1000) })
         stdout.end(result.stdout)
         stderr.end(result.stderr)
+        if (result.stdout.length > 0) emit({ phase: 'output', id, stream: 'stdout', data: result.stdout, at: Date.now() })
+        if (result.stderr.length > 0) emit({ phase: 'output', id, stream: 'stderr', data: result.stderr, at: Date.now() })
+        emit({ phase: 'exit', id, exitCode: result.exitCode, signal: null, at: Date.now() })
         return { exitCode: result.exitCode, signal: null }
       } catch (cause) {
         const error = cause instanceof Error ? cause : new Error(String(cause))
         stdout.destroy(error)
         stderr.destroy(error)
+        emit({ phase: 'exit', id, exitCode: 1, signal: null, at: Date.now() })
         return { exitCode: 1, signal: null }
       } finally {
         settled = true
