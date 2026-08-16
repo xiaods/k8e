@@ -62,7 +62,7 @@ fi
 
 VERSION_CNIPLUGINS="v1.6.0-k3s1"
 
-VERSION_CILIUM_CHART="1.17.1"
+VERSION_CILIUM_CHART="1.20.0"
 
 DEPENDENCIES_URL="https://raw.githubusercontent.com/kubernetes/kubernetes/${VERSION_K8S}/build/dependencies.yaml"
 if command -v yq >/dev/null 2>&1 && yq --version >/dev/null 2>&1; then
