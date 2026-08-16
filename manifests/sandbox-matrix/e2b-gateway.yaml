@@ -5,9 +5,9 @@
 # external door for every sandbox port:
 #
 #   :80/:443  e2b HTTP (control plane + envd + signed files) via HTTPRoute
-#             -> headless e2b-server Service/Endpoints -> host :3676
+#             -> headless e2b-server Service/EndpointSlice -> host :3676
 #   :50051    sandbox gRPC (SandboxService) via TCPRoute (L4 passthrough)
-#             -> headless sandbox-grpc-gateway Service/Endpoints -> host :50051
+#             -> headless sandbox-grpc-gateway Service/EndpointSlice -> host :50051
 #
 # The gRPC gateway speaks strong mTLS (client certs signed by the sandbox CA,
 # verified by mTLSAuthInterceptor), so the Gateway must NOT terminate its TLS:
@@ -24,8 +24,9 @@
 #     enabled (0.0.0.0:50051)
 #
 # Both host services are bridged into the cluster via headless Service +
-# Endpoints pointing at --advertise-address, because they run in the
-# k8e-server host process, not as pods.
+# discovery.k8s.io/v1 EndpointSlice pointing at --advertise-address (KIP-21:
+# never loopback — Kubernetes does not allow loopback Endpoint addresses),
+# because they run in the k8e-server host process, not as pods.
 ---
 
 apiVersion: v1
@@ -37,30 +38,35 @@ metadata:
     app.kubernetes.io/managed-by: k8e
 spec:
   # The sandbox gRPC gateway runs in the k8e-server host process on :50051,
-  # not as a pod. This headless Service + Endpoints makes it reachable from
+  # not as a pod. This headless Service + EndpointSlice makes it reachable from
   # cluster pods (e.g. the e2b-server Deployment) by the stable DNS name
-  # sandbox-grpc-gateway.sandbox-matrix.svc. The Endpoints point at the
-  # host's advertise IP (--advertise-address, default node-ip).
+  # sandbox-grpc-gateway.sandbox-matrix.svc. The EndpointSlice address points
+  # at the host's advertise IP (--advertise-address, default node-ip).
   clusterIP: None
   ports:
   - name: grpc
     port: 50051
     protocol: TCP
 ---
-apiVersion: v1
-kind: Endpoints
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
 metadata:
   name: sandbox-grpc-gateway
   namespace: sandbox-matrix
   labels:
+    kubernetes.io/service-name: sandbox-grpc-gateway
+    endpointslice.kubernetes.io/managed-by: k8e
     app.kubernetes.io/managed-by: k8e
-subsets:
+addressType: IPv4
+endpoints:
 - addresses:
-  - ip: %{ADVERTISE_IP}%
-  ports:
-  - name: grpc
-    port: 50051
-    protocol: TCP
+  - "%{ADVERTISE_IP}%"
+  conditions:
+    ready: true
+ports:
+- name: grpc
+  port: 50051
+  protocol: TCP
 ---
 apiVersion: v1
 kind: Service
@@ -71,33 +77,37 @@ metadata:
     app.kubernetes.io/managed-by: k8e
 spec:
   # The E2B HTTP server runs embedded in the k8e-server host process
-  # (embedded in k8e-server, on by default; --e2b-listen to override,
-  # default 0.0.0.0:3676), not as a pod. This headless Service + Endpoints
-  # makes it reachable from the Cilium Gateway API by the stable DNS name
-  # e2b-server.sandbox-matrix.svc. Endpoints point at the host's advertise
-  # IP (--advertise-address, default node-ip) on the e2b listen port — the
-  # address is substituted at stage time and is never loopback (Kubernetes
-  # does not allow Endpoints to use loopback addresses).
+  # (embedded in k8e-server, on by default; --e2b-listen to override, default
+  # 0.0.0.0:3676), not as a pod. This headless Service + EndpointSlice makes
+  # it reachable from the Cilium Gateway API by the stable DNS name
+  # e2b-server.sandbox-matrix.svc. The EndpointSlice address points at the
+  # host's advertise IP (--advertise-address, default node-ip) on the e2b
+  # listen port — substituted at stage time and never loopback.
   clusterIP: None
   ports:
   - name: http
     port: 3676
     protocol: TCP
 ---
-apiVersion: v1
-kind: Endpoints
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
 metadata:
   name: e2b-server
   namespace: sandbox-matrix
   labels:
+    kubernetes.io/service-name: e2b-server
+    endpointslice.kubernetes.io/managed-by: k8e
     app.kubernetes.io/managed-by: k8e
-subsets:
+addressType: IPv4
+endpoints:
 - addresses:
-  - ip: %{ADVERTISE_IP}%
-  ports:
-  - name: http
-    port: 3676
-    protocol: TCP
+  - "%{ADVERTISE_IP}%"
+  conditions:
+    ready: true
+ports:
+- name: http
+  port: 3676
+  protocol: TCP
 
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass

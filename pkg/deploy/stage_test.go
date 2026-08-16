@@ -7,10 +7,10 @@ import (
 	"testing"
 )
 
-// TestStageAdvertiseIPSubstitution verifies the KIP-21 staged output: the
-// %{ADVERTISE_IP}% template is substituted into the e2b-gateway.yaml
-// Endpoints and the resulting manifest carries the routable (non-loopback)
-// address.
+// TestStageAdvertiseIPSubstitution verifies the staged output of the
+// EndpointSlice bridge: the %{ADVERTISE_IP}% template is substituted into
+// both EndpointSlice addresses and the resulting manifest carries the
+// routable (non-loopback) address.
 func TestStageAdvertiseIPSubstitution(t *testing.T) {
 	dir := t.TempDir()
 	vars := map[string]string{
@@ -26,7 +26,7 @@ func TestStageAdvertiseIPSubstitution(t *testing.T) {
 	if strings.Contains(string(b), "%{ADVERTISE_IP}%") {
 		t.Fatalf("template %%%%{ADVERTISE_IP}%%%% not substituted")
 	}
-	for _, want := range []string{"ip: 10.1.2.3", "port: 50051", "port: 3676"} {
+	for _, want := range []string{"10.1.2.3", "port: 50051", "port: 3676", "addressType: IPv4"} {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("staged e2b-gateway.yaml missing %q", want)
 		}
@@ -37,9 +37,8 @@ func TestStageAdvertiseIPSubstitution(t *testing.T) {
 }
 
 // TestStageSkipsE2BGatewayWhenAdvertiseUnresolvable verifies that when no
-// routable advertise IP exists, e2b-gateway.yaml is skipped (KIP-21 hard
-// failure instead of writing a broken manifest) while other manifests still
-// stage.
+// routable advertise IP exists, e2b-gateway.yaml is skipped while other
+// manifests still stage.
 func TestStageSkipsE2BGatewayWhenAdvertiseUnresolvable(t *testing.T) {
 	dir := t.TempDir()
 	skips := map[string]bool{
@@ -56,10 +55,10 @@ func TestStageSkipsE2BGatewayWhenAdvertiseUnresolvable(t *testing.T) {
 	}
 }
 
-// TestStageSkipsRemovesStaleCopy verifies the fail-closed transition
-// (Greptile review on PR #550): a manifest left on disk by an earlier
-// successful run must be REMOVED when it becomes skip-listed, otherwise the
-// deploy watcher would re-apply the stale file and its obsolete Endpoints.
+// TestStageSkipsRemovesStaleCopy verifies the fail-closed transition: a
+// manifest left on disk by an earlier successful run is REMOVED when it
+// becomes skip-listed (the deploy watcher would otherwise re-apply the
+// stale file).
 func TestStageSkipsRemovesStaleCopy(t *testing.T) {
 	dir := t.TempDir()
 
@@ -82,7 +81,6 @@ func TestStageSkipsRemovesStaleCopy(t *testing.T) {
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("skip-listed manifest must be removed from disk, stat err = %v", err)
 	}
-	// Other manifests survive the transition.
 	if _, err := os.Stat(filepath.Join(dir, "coredns.yaml")); err != nil {
 		t.Fatalf("other manifests must still be staged after skip: %v", err)
 	}
