@@ -5,69 +5,99 @@ import (
 	"testing"
 )
 
+// TestE2BGatewayAPIManifestsStaged verifies the e2b ingress manifest bundle
+// is complete and staged with the KIP-21 loopback-safe advertise-IP bridge.
+// Kept as a thin composition of small helpers to stay under DeepSource's
+// cognitive-complexity bound (GO-R1005).
 func TestE2BGatewayAPIManifestsStaged(t *testing.T) {
 	for _, name := range []string{
 		"sandbox-matrix/e2b-gateway.yaml",
 		"sandbox-matrix/gateway-api-crds.yaml",
 	} {
-		b, err := Asset(name)
-		if err != nil {
-			t.Fatalf("Asset(%s): %v", name, err)
-		}
-		if len(b) == 0 {
-			t.Fatalf("Asset(%s) empty", name)
-		}
+		assetNonEmpty(t, name)
 	}
-	cilium, err := Asset("cilium.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(cilium, []byte("gatewayAPI:")) {
-		t.Fatalf("cilium.yaml missing gatewayAPI block:\n%s", cilium)
-	}
-	if !bytes.Contains(cilium, []byte("enabled: true")) {
-		t.Fatalf("cilium.yaml gatewayAPI not enabled")
-	}
+
+	cilium := assetBytes(t, "cilium.yaml")
+	assertContains(t, cilium, "gatewayAPI:", "cilium.yaml")
+	assertContains(t, cilium, "enabled: true", "cilium.yaml")
 
 	// The e2b ingress manifest must bridge BOTH host-resident services
 	// (e2b HTTP :3676, sandbox gRPC :50051) into the cluster via headless
-	// Service + Endpoints — sandbox-matrix and e2b-server both embed in the
-	// k8e-server host process (final KIP-18 architecture); no e2b Deployment.
-	gw, err := Asset("sandbox-matrix/e2b-gateway.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
+	// Service + discovery.k8s.io/v1 EndpointSlice — sandbox-matrix and
+	// e2b-server both embed in the k8e-server host process (final KIP-18
+	// architecture); no e2b Deployment, no legacy core v1 Endpoints.
+	gw := assetBytes(t, "sandbox-matrix/e2b-gateway.yaml")
+	assertAllContain(t, gw, "e2b-gateway.yaml", []string{
 		"sandbox-grpc-gateway",
 		"gateway.networking.k8s.io/v1",
 		"io.cilium/gateway-controller",
-		"e2b-server",
+		"discovery.k8s.io/v1",
 		"kind: TCPRoute",
 		"sectionName: grpc",
 		"port: 50051",
 		"port: 3676",
-	} {
-		if !bytes.Contains(gw, []byte(want)) {
-			t.Fatalf("e2b-gateway.yaml missing %q", want)
-		}
-	}
-	// Both host services must have Endpoints (headless bridge), and there
-	// must be NO e2b-server Deployment (embedded in k8e-server instead).
-	if bytes.Contains(gw, []byte("kind: Deployment")) {
-		t.Fatalf("e2b-gateway.yaml must not contain a Deployment (e2b embeds in k8e-server)")
-	}
+	})
+	assertNoneContain(t, gw, "e2b-gateway.yaml", []string{"kind: Deployment", "kind: Endpoints"})
 	for _, ep := range []string{"e2b-server", "sandbox-grpc-gateway"} {
-		if !bytes.Contains(gw, []byte("name: "+ep)) {
-			t.Fatalf("e2b-gateway.yaml missing Endpoints for %q", ep)
-		}
+		assertContains(t, gw, "kubernetes.io/service-name: "+ep, "e2b-gateway.yaml")
 	}
+	assertCount(t, gw, "kind: EndpointSlice", 2, "e2b-gateway.yaml")
+	assertCount(t, gw, "addressType: IPv4", 2, "e2b-gateway.yaml")
+
+	// KIP-21: the EndpointSlice address must come from the %{ADVERTISE_IP}%
+	// template (resolved at stage time to a routable host address), and the
+	// manifest must never contain a literal loopback — Kubernetes does not
+	// allow loopback endpoint addresses (unreachable from pods).
+	assertCount(t, gw, "%{ADVERTISE_IP}%", 2, "e2b-gateway.yaml")
+	assertNoneContain(t, gw, "e2b-gateway.yaml", []string{"127.0.0.1", "::1"})
 
 	// The CRD bundle must include TCPRoute (L4 passthrough listener).
-	crds, err := Asset("sandbox-matrix/gateway-api-crds.yaml")
-	if err != nil {
-		t.Fatal(err)
+	crds := assetBytes(t, "sandbox-matrix/gateway-api-crds.yaml")
+	assertContains(t, crds, "tcproutes.gateway.networking.k8s.io", "gateway-api-crds.yaml")
+}
+
+func assetNonEmpty(t *testing.T, name string) {
+	t.Helper()
+	if len(assetBytes(t, name)) == 0 {
+		t.Fatalf("Asset(%s) empty", name)
 	}
-	if !bytes.Contains(crds, []byte("tcproutes.gateway.networking.k8s.io")) {
-		t.Fatalf("gateway-api-crds.yaml missing TCPRoute CRD")
+}
+
+func assetBytes(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := Asset(name)
+	if err != nil {
+		t.Fatalf("Asset(%s): %v", name, err)
+	}
+	return b
+}
+
+func assertContains(t *testing.T, content []byte, want, name string) {
+	t.Helper()
+	if !bytes.Contains(content, []byte(want)) {
+		t.Fatalf("%s missing %q", name, want)
+	}
+}
+
+func assertAllContain(t *testing.T, content []byte, name string, wants []string) {
+	t.Helper()
+	for _, want := range wants {
+		assertContains(t, content, want, name)
+	}
+}
+
+func assertNoneContain(t *testing.T, content []byte, name string, banned []string) {
+	t.Helper()
+	for _, b := range banned {
+		if bytes.Contains(content, []byte(b)) {
+			t.Fatalf("%s must not contain %q", name, b)
+		}
+	}
+}
+
+func assertCount(t *testing.T, content []byte, token string, want int, name string) {
+	t.Helper()
+	if n := bytes.Count(content, []byte(token)); n != want {
+		t.Fatalf("%s must contain %q exactly %d times, got %d", name, token, want, n)
 	}
 }

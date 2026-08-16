@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -35,6 +36,7 @@ import (
 	"github.com/xiaods/k8e/pkg/version"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	utilnet "k8s.io/apimachinery/pkg/util/net"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -304,12 +306,33 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		"%{API_SERVER_PORT}%":             fmt.Sprint(controlConfig.HTTPSPort),
 		"%{KUBERNETES_API}%":              fmt.Sprintf("%s:%d", controlConfig.Loopback(true), controlConfig.HTTPSPort),
 		"%{K8E_VERSION}%":                 version.Version,
-		"%{ADVERTISE_IP}%":                advertiseIP(controlConfig),
 	}
 
-	skip := controlConfig.Skips
-	if err := deploy.Stage(dataDir, templateVars, skip); err != nil {
-		return err
+	// The e2b HTTP :3676 and sandbox gRPC :50051 servers embed in the
+	// k8e-server host process; e2b-gateway.yaml bridges them into the
+	// cluster via headless Service + Endpoints. The Endpoints address must
+	// be routable from pods — Kubernetes rejects loopback Endpoint
+	// addresses, so a loopback advertise IP would silently leave the
+	// KIP-18 Gateway API with no healthy backends. If no routable host IP
+	// can be resolved, skip staging e2b-gateway.yaml and tell the operator
+	// to set --advertise-address instead of writing a broken manifest.
+	hostAdvertiseIP := advertiseIP(controlConfig)
+	if hostAdvertiseIP == "" {
+		logrus.Warnf("cannot resolve a routable advertise IP for the sandbox ingress; skipping manifests/sandbox-matrix/e2b-gateway.yaml (set --advertise-address <node-ip> to enable the E2B/gRPC Gateway API door)")
+		skip := make(map[string]bool, len(controlConfig.Skips)+1)
+		for k, v := range controlConfig.Skips {
+			skip[k] = v
+		}
+		skip["sandbox-matrix/e2b-gateway.yaml"] = true
+		skip["sandbox-matrix/e2b-gateway"] = true
+		if err := deploy.Stage(dataDir, templateVars, skip); err != nil {
+			return err
+		}
+	} else {
+		templateVars["%{ADVERTISE_IP}%"] = hostAdvertiseIP
+		if err := deploy.Stage(dataDir, templateVars, controlConfig.Skips); err != nil {
+			return err
+		}
 	}
 
 	restConfig, err := clientcmd.BuildConfigFromFlags("", controlConfig.Runtime.KubeConfigSupervisor)
@@ -528,17 +551,44 @@ func printToken(httpsPort int, advertiseIP, prefix, cmd, varName string) {
 
 // advertiseIP resolves the host IP that cluster pods can use to reach the
 // k8e-server process: --advertise-address if set, else the apiserver bind
-// address when it is not loopback, else loopback. Used to build the
-// sandbox-grpc-gateway Service Endpoints (the gRPC gateway runs in the
-// server host process, not as a pod).
+// address when it is not loopback, else the default-route interface address.
+// Used to build the sandbox-grpc-gateway and e2b-server Service Endpoints
+// (the gRPC gateway and the embedded e2b server run in the k8e-server host
+// process, not as pods). It never returns a loopback address: Kubernetes
+// does not allow Endpoints to use 127.0.0.1/::1 (not routable from pods), so
+// a loopback value would silently break the KIP-18 Gateway API ingress.
+// Returns "" when no routable address can be determined; the caller then
+// skips staging e2b-gateway.yaml and asks for --advertise-address.
 func advertiseIP(cfg *config.Control) string {
 	if cfg.AdvertiseIP != "" {
-		return cfg.AdvertiseIP
+		if isRoutableAdvertiseIP(cfg.AdvertiseIP) {
+			return cfg.AdvertiseIP
+		}
+		logrus.Warnf("ignoring non-routable --advertise-address %q (loopback/link-local/unspecified/multicast addresses are not valid Endpoints targets)", cfg.AdvertiseIP)
 	}
-	if ip := cfg.APIServerBindAddress; ip != "" && ip != "0.0.0.0" && ip != "::" {
+	if ip := cfg.APIServerBindAddress; ip != "" && isRoutableAdvertiseIP(ip) {
 		return ip
 	}
-	return cfg.Loopback(false)
+	if hostIP, err := utilnet.ChooseHostInterface(); err == nil && isRoutableAdvertiseIP(hostIP.String()) {
+		return hostIP.String()
+	}
+	return ""
+}
+
+// isRoutableAdvertiseIP reports whether ip is a unicast address that cluster
+// pods can route to. Loopback, link-local, unspecified, and multicast
+// addresses are rejected: Endpoints carrying them are either rejected by
+// Kubernetes (loopback) or unreachable from pods.
+func isRoutableAdvertiseIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+	return !parsed.IsLoopback() &&
+		!parsed.IsLinkLocalUnicast() &&
+		!parsed.IsLinkLocalMulticast() &&
+		!parsed.IsUnspecified() &&
+		!parsed.IsMulticast()
 }
 
 func writeToken(token, file, certs string) error {
