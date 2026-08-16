@@ -148,7 +148,10 @@ When `advertiseIP(controlConfig) == ""`:
   (`deploy.Stage` skip branch → `removeStagedCopy`). This matters because
   the manifest watcher applies whatever it finds on disk every 15s — a
   stale `e2b-gateway.yaml` would otherwise be re-applied with its obsolete
-  (possibly loopback) endpoint addresses.
+  (possibly loopback) endpoint addresses. If the stale copy **cannot be
+  removed** (permissions, read-only filesystem), `deploy.Stage` **fails
+  loudly** — silently proceeding would let the watcher re-apply the stale
+  manifest while the operator believes it is skip-listed.
 
 Residual (documented limitation): objects already applied to the cluster
 from a previous successful run (the `e2b-gateway.yaml` Addon and its owned

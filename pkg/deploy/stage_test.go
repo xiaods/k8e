@@ -98,3 +98,21 @@ func TestStageSkipsRemovalToleratesMissingCopy(t *testing.T) {
 		t.Fatalf("staging with skip on a fresh dir must not error: %v", err)
 	}
 }
+
+// TestStageSkipRemovalFailureFailsStaging verifies that when the stale copy
+// cannot be removed, Stage fails loudly instead of silently leaving the file
+// for the deploy watcher to re-apply (Greptile P1 follow-up on PR #550). A
+// non-empty directory at the manifest path makes os.Remove fail with
+// ENOTEMPTY deterministically on every platform.
+func TestStageSkipRemovalFailureFailsStaging(t *testing.T) {
+	dir := t.TempDir()
+	stale := filepath.Join(dir, "sandbox-matrix", "e2b-gateway.yaml")
+	if err := os.MkdirAll(filepath.Join(stale, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Stage(dir, map[string]string{}, map[string]bool{
+		"sandbox-matrix/e2b-gateway.yaml": true,
+	}); err == nil {
+		t.Fatalf("Stage must fail when the stale copy cannot be removed")
+	}
+}

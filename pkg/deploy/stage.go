@@ -21,9 +21,12 @@ staging:
 			// The deploy watcher applies whatever it finds on disk, so a stale
 			// copy left by an earlier successful run would otherwise be
 			// re-applied with its obsolete (possibly loopback) endpoint
-			// addresses. Best effort — a removal failure must not block
-			// staging the remaining manifests.
-			removeStagedCopy(dataDir, name)
+			// addresses. A removal failure is fatal: silently proceeding
+			// would let the watcher re-apply the stale manifest while the
+			// operator believes it is skip-listed.
+			if err := removeStagedCopy(dataDir, name); err != nil {
+				return errors.Wrapf(err, "failed to remove stale staged manifest %s", filepath.Join(dataDir, name))
+			}
 			continue staging
 		}
 		namePath := strings.Split(name, string(os.PathSeparator))
@@ -52,17 +55,20 @@ staging:
 	return nil
 }
 
-// removeStagedCopy best-effort deletes a previously staged manifest copy.
-// The manifest watcher applies whatever is on disk, so skip-listed manifests
-// must not leave a stale file behind (see Stage's skip branch).
-func removeStagedCopy(dataDir, name string) {
+// removeStagedCopy deletes a previously staged manifest copy. The manifest
+// watcher applies whatever is on disk, so skip-listed manifests must not
+// leave a stale file behind (see Stage's skip branch). Returns nil when the
+// file is already absent or was removed; returns the removal error otherwise
+// so Stage can fail closed instead of silently leaving the stale copy for
+// the watcher to re-apply.
+func removeStagedCopy(dataDir, name string) error {
 	p := filepath.Join(dataDir, name)
 	if _, err := os.Stat(p); os.IsNotExist(err) {
-		return
+		return nil
 	}
 	if err := os.Remove(p); err != nil {
-		logrus.Warnf("failed to remove stale staged manifest %s: %v", p, err)
-		return
+		return err
 	}
 	logrus.Warnf("removed stale staged manifest %s (manifest is skip-listed)", p)
+	return nil
 }
