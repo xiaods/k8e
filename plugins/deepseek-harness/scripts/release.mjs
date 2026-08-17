@@ -30,6 +30,10 @@ import { tmpdir } from 'node:os'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dryRun = process.argv.includes('--dry-run')
+const otpArg = (() => {
+  const i = process.argv.indexOf('--otp')
+  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : null
+})()
 const versionArg = (() => {
   const i = process.argv.indexOf('--version')
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : null
@@ -167,6 +171,7 @@ try {
     console.log(`── ${data.name}@${data.version}`)
     const args = ['publish', '--no-git-checks']
     if (dryRun) args.push('--dry-run')
+    if (otpArg) args.push('--otp', otpArg)
     run(PNPM, args, { cwd: join(root, 'packages', name) })
     published.push(data.name)
   }
