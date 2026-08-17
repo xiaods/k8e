@@ -3,7 +3,7 @@
  * primitive. Loads the bundled `sandbox.proto` at runtime via
  * @grpc/proto-loader; mTLS material comes from the CLI's cert dir
  * (~/.k8e/sandbox, KIP-14/KIP-17), shared with `k8e-sandbox-cli`.
- * @module @k8e/dsh-k8e-sandbox-client/grpc
+ * @module @k8e-sandbox/dsh-k8e-sandbox-client/grpc
  */
 
 import { readFileSync } from 'node:fs'

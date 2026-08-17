@@ -2,7 +2,7 @@
  * k8e-sandbox Service Provider for the subprocess capability seam. Phase 1
  * maps `spawn` to a single-shot `k8e-sandbox-cli run`; streaming stdio and
  * `spawnTerminal` arrive in Phase 2 (direct gRPC + KIP-19 PTY).
- * @module @k8e/dsh-k8e-sandbox-subprocess
+ * @module @k8e-sandbox/dsh-k8e-sandbox-subprocess
  */
 
 import { posix } from 'node:path'
@@ -17,7 +17,9 @@ import type {
   SubprocessTerminalSignal,
   SubprocessTerminalSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
-import type { GrpcK8eClient } from '@k8e/dsh-k8e-sandbox-client/grpc'
+import type { GrpcK8eClient } from '@k8e-sandbox/dsh-k8e-sandbox-client/grpc'
+// Side-effect import pulls in the cordis Context augmentation (ctx.k8eSandbox).
+import '@k8e-sandbox/dsh-k8e-sandbox'
 
 /** Quote one opaque argument for the CLI's `/bin/sh -c` layer. */
 function shellQuote(value: string): string {
@@ -168,8 +170,8 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
     const created = await grpcClient.createTerminal({
       sessionId,
       argv: [...spec.argv],
-      workdir: spec.cwd,
-      env: spec.env,
+      ...(spec.cwd !== undefined ? { workdir: spec.cwd } : {}),
+      ...(spec.env !== undefined ? { env: spec.env } : {}),
       rows: spec.rows,
       cols: spec.cols,
     })
@@ -192,7 +194,7 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
           resolve({ exitCode, signal: termSignal })
         }
       })
-      stream.on('error', (err) => {
+      stream.on('error', (err: unknown) => {
         output.destroy(err instanceof Error ? err : new Error(String(err)))
         if (!settled) {
           settled = true

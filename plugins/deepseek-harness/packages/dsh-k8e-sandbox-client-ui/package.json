@@ -1,9 +1,11 @@
 {
-  "name": "@k8e/dsh-k8e-sandbox-client-ui",
+  "name": "@k8e-sandbox/dsh-k8e-sandbox-client-ui",
   "version": "0.1.0",
   "description": "k8e-sandbox client half: settings section + terminal panel (KIP-20 M2).",
   "type": "module",
-  "files": ["lib"],
+  "files": [
+    "lib"
+  ],
   "exports": {
     "./client": "./lib/client.js",
     "./client-terminal": "./lib/client-terminal.js",
@@ -35,5 +37,8 @@
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "typescript": "^5.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

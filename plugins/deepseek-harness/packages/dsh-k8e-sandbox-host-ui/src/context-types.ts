@@ -4,11 +4,11 @@
  * type packages publish broken dependency chains on npm, so a third-party
  * plugin declares the documented harness faces locally. Drift is contained to
  * this file.
- * @module @k8e/dsh-k8e-sandbox-host-ui/context-types
+ * @module @k8e-sandbox/dsh-k8e-sandbox-host-ui/context-types
  */
 
 export type { Context } from '@deepseek-ai/cordis'
-import type { K8eSandboxRuntime } from '@k8e/dsh-k8e-sandbox'
+import type { K8eSandboxRuntime } from '@k8e-sandbox/dsh-k8e-sandbox'
 
 /** The HTTP request face (structural subset of node's IncomingMessage). */
 export interface SandboxHttpRequest {

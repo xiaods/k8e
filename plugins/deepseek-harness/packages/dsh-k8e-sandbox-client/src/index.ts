@@ -3,7 +3,7 @@
  * mTLS, profile, and session-state handling. Each operation is one process
  * spawn; Phase 2 replaces this with a direct gRPC client for streaming
  * fidelity (KIP-20).
- * @module @k8e/dsh-k8e-sandbox-client
+ * @module @k8e-sandbox/dsh-k8e-sandbox-client
  */
 
 import { spawn } from 'node:child_process'

@@ -1,5 +1,5 @@
 // Test runner: bundles each tests/*.test.mjs entry (which imports the plugin
-// source) with esbuild, resolving @k8e/* to src via alias and @deepseek-ai/*
+// source) with esbuild, resolving @k8e-sandbox/* to src via alias and @deepseek-ai/*
 // via the node_modules symlinks (see README), leaving @grpc/* external, then
 // imports and runs each bundle. Usage: node scripts/test.mjs [tests/<file>]
 import { readdir } from 'node:fs/promises'
@@ -24,11 +24,11 @@ for (const file of files) {
     sourcemap: false,
     external: ['@grpc/grpc-js', '@grpc/proto-loader'],
     alias: {
-      '@k8e/dsh-k8e-sandbox': join(ROOT, 'packages/dsh-k8e-sandbox/src/index.ts'),
-      '@k8e/dsh-k8e-sandbox-client': join(ROOT, 'packages/dsh-k8e-sandbox-client/src/index.ts'),
-      '@k8e/dsh-k8e-sandbox-client/grpc': join(ROOT, 'packages/dsh-k8e-sandbox-client/src/grpc.ts'),
-      '@k8e/dsh-k8e-sandbox-fs': join(ROOT, 'packages/dsh-k8e-sandbox-fs/src/index.ts'),
-      '@k8e/dsh-k8e-sandbox-subprocess': join(ROOT, 'packages/dsh-k8e-sandbox-subprocess/src/index.ts'),
+      '@k8e-sandbox/dsh-k8e-sandbox': join(ROOT, 'packages/dsh-k8e-sandbox/src/index.ts'),
+      '@k8e-sandbox/dsh-k8e-sandbox-client': join(ROOT, 'packages/dsh-k8e-sandbox-client/src/index.ts'),
+      '@k8e-sandbox/dsh-k8e-sandbox-client/grpc': join(ROOT, 'packages/dsh-k8e-sandbox-client/src/grpc.ts'),
+      '@k8e-sandbox/dsh-k8e-sandbox-fs': join(ROOT, 'packages/dsh-k8e-sandbox-fs/src/index.ts'),
+      '@k8e-sandbox/dsh-k8e-sandbox-subprocess': join(ROOT, 'packages/dsh-k8e-sandbox-subprocess/src/index.ts'),
     },
   })
   const outfile = join(testsDir, `.bundle-${file}`)

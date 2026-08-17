@@ -8,11 +8,11 @@ via `dsh plugin --profile <name> add`.
 
 | Package | Role | `ctx` key |
 |---|---|---|
-| [`@k8e/dsh-k8e-sandbox`](packages/dsh-k8e-sandbox) | Sandbox owner service (session lifecycle + shared CLI/gRPC client) | `ctx.k8eSandbox` |
-| [`@k8e/dsh-k8e-sandbox-client`](packages/dsh-k8e-sandbox-client) | Transport: `CliK8eClient` (Phase 1) + `GrpcK8eClient` (Phase 2) | library |
-| [`@k8e/dsh-k8e-sandbox-fs`](packages/dsh-k8e-sandbox-fs) | Filesystem seam provider | `ctx.fs` |
-| [`@k8e/dsh-k8e-sandbox-subprocess`](packages/dsh-k8e-sandbox-subprocess) | Subprocess seam provider (streaming exec + `spawnTerminal`) | `ctx.subprocess` |
-| [`@k8e/dsh-k8e-sandbox-bundle`](packages/dsh-k8e-sandbox-bundle) | Installable bundle (`dsh.bundle.patch` → `cordis.patch.yml`) | — |
+| [`@k8e-sandbox/dsh-k8e-sandbox`](packages/dsh-k8e-sandbox) | Sandbox owner service (session lifecycle + shared CLI/gRPC client) | `ctx.k8eSandbox` |
+| [`@k8e-sandbox/dsh-k8e-sandbox-client`](packages/dsh-k8e-sandbox-client) | Transport: `CliK8eClient` (Phase 1) + `GrpcK8eClient` (Phase 2) | library |
+| [`@k8e-sandbox/dsh-k8e-sandbox-fs`](packages/dsh-k8e-sandbox-fs) | Filesystem seam provider | `ctx.fs` |
+| [`@k8e-sandbox/dsh-k8e-sandbox-subprocess`](packages/dsh-k8e-sandbox-subprocess) | Subprocess seam provider (streaming exec + `spawnTerminal`) | `ctx.subprocess` |
+| [`@k8e-sandbox/dsh-k8e-sandbox-bundle`](packages/dsh-k8e-sandbox-bundle) | Installable bundle (`dsh.bundle.patch` → `cordis.patch.yml`) | — |
 
 ## Status
 
@@ -69,11 +69,11 @@ paths = {
   '@deepseek-ai/cosmokit': [os.path.join(DSH,'vendor','cosmokit','lib','types','index.d.ts')],
   '@deepseek-ai/schemastery': [os.path.join(DSH,'vendor','schemastery','lib','types','index.d.ts')],
   '@deepseek-ai/dsh-*': [os.path.join(DSH,'packages',g,'*','lib','types','index.d.ts') for g in groups],
-  '@k8e/dsh-k8e-sandbox': [os.path.join(K8E,'packages','dsh-k8e-sandbox','src')],
-  '@k8e/dsh-k8e-sandbox-client': [os.path.join(K8E,'packages','dsh-k8e-sandbox-client','src')],
-  '@k8e/dsh-k8e-sandbox-client/grpc': [os.path.join(K8E,'packages','dsh-k8e-sandbox-client','src','grpc.ts')],
-  '@k8e/dsh-k8e-sandbox-fs': [os.path.join(K8E,'packages','dsh-k8e-sandbox-fs','src')],
-  '@k8e/dsh-k8e-sandbox-subprocess': [os.path.join(K8E,'packages','dsh-k8e-sandbox-subprocess','src')],
+  '@k8e-sandbox/dsh-k8e-sandbox': [os.path.join(K8E,'packages','dsh-k8e-sandbox','src')],
+  '@k8e-sandbox/dsh-k8e-sandbox-client': [os.path.join(K8E,'packages','dsh-k8e-sandbox-client','src')],
+  '@k8e-sandbox/dsh-k8e-sandbox-client/grpc': [os.path.join(K8E,'packages','dsh-k8e-sandbox-client','src','grpc.ts')],
+  '@k8e-sandbox/dsh-k8e-sandbox-fs': [os.path.join(K8E,'packages','dsh-k8e-sandbox-fs','src')],
+  '@k8e-sandbox/dsh-k8e-sandbox-subprocess': [os.path.join(K8E,'packages','dsh-k8e-sandbox-subprocess','src')],
 }
 json.dump({'compilerOptions': {
   'target': 'es2024', 'module': 'esnext', 'moduleResolution': 'bundler',
@@ -87,3 +87,29 @@ PY
 # 3. Run dsh's TypeScript:
 /path/to/deepseek-harness/node_modules/.bin/tsc -p tsconfig.check.json
 ```
+
+## Release
+
+All seven packages are published to npmjs.com under the `@k8e-sandbox`
+scope. `scripts/release.mjs` publishes them in dependency-topological order
+(dependencies first), so consumers always resolve real published versions;
+`pnpm publish` rewrites the in-workspace `workspace:*` ranges to the actual
+published versions automatically.
+
+```sh
+# Verify the payloads without touching the registry:
+node scripts/release.mjs --dry-run
+
+# Bump every package to a shared version and publish (requires npm login +
+# @k8e-sandbox org access):
+node scripts/release.mjs --version 0.2.0
+
+# Publish the current package.json versions as-is:
+node scripts/release.mjs
+```
+
+The publishing identity must be logged in to npm (`npm whoami`) and have
+publish rights on the `@k8e-sandbox` scope. Scoped packages publish as
+public with `--access public`; the `files` whitelist in each package.json
+keeps the payloads minimal (only `lib/` and, for the bundle, the
+`cordis.patch.yml`).
