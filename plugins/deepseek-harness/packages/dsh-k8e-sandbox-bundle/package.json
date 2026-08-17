@@ -1,6 +1,6 @@
 {
   "name": "@k8e-sandbox/dsh-k8e-sandbox-bundle",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Installable dsh bundle mounting the k8e-sandbox execution world (KIP-20).",
   "type": "module",
   "files": [
