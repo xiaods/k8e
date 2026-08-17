@@ -152,11 +152,17 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 Install the runtime shim **before** K8E so it is auto-detected on first startup. **gVisor is recommended** — no KVM required.
 
 ```bash
-curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
-  https://storage.googleapis.com/gvisor/releases release main" \
-  > /etc/apt/sources.list.d/gvisor.list
-apt-get update && apt-get install -y runsc
+# Download runsc + containerd-shim-runsc-v1 directly from the gVisor release bucket (requires wget)
+ARCH=$(uname -m)   # x86_64 on most servers, aarch64 on ARM
+URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
+
+wget ${URL}/runsc ${URL}/runsc.sha512 \
+     ${URL}/containerd-shim-runsc-v1 ${URL}/containerd-shim-runsc-v1.sha512
+
+sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512   # both must print OK
+chmod +x runsc containerd-shim-runsc-v1
+sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin/
+ls -l /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1   # verify both installed
 ```
 
 > K8E detects `runsc` at startup and automatically injects the gVisor stanza into its containerd config (`/var/lib/k8e/agent/etc/containerd/config.toml`). Do **not** run `runsc install` — K8E manages its own containerd configuration.
@@ -232,15 +238,20 @@ K8E auto-detects installed runtimes and registers the corresponding `RuntimeClas
 ### gVisor — Recommended Default
 
 ```bash
-curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
-  https://storage.googleapis.com/gvisor/releases release main" \
-  > /etc/apt/sources.list.d/gvisor.list
-apt-get update && apt-get install -y runsc
+# Download runsc + containerd-shim-runsc-v1 directly from the gVisor release bucket (requires wget)
+ARCH=$(uname -m)   # x86_64 on most servers, aarch64 on ARM
+URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
+
+wget ${URL}/runsc ${URL}/runsc.sha512 \
+     ${URL}/containerd-shim-runsc-v1 ${URL}/containerd-shim-runsc-v1.sha512
+
+sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512   # both must print OK
+chmod +x runsc containerd-shim-runsc-v1
+sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin/
+ls -l /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1   # verify both installed
 ```
 
 > Do **not** run `runsc install` — K8E manages its own containerd config at `/var/lib/k8e/agent/etc/containerd/config.toml` and auto-injects the gVisor stanza on startup.
-```
 
 ### Kata Containers
 

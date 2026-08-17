@@ -41,30 +41,45 @@ fatal() { echo "[ERROR] $*" >&2; exit 1; }
 
 # ── gVisor runtime ────────────────────────────────────────────────────────────
 install_gvisor() {
-    if command -v runsc >/dev/null 2>&1; then
+    # Require BOTH runsc and the containerd shim (the apt package ships runsc only)
+    if command -v runsc >/dev/null 2>&1 && command -v containerd-shim-runsc-v1 >/dev/null 2>&1; then
         info "gVisor already installed: $(runsc version 2>/dev/null | head -1)"
         return
     fi
 
-    if ! command -v apt-get >/dev/null 2>&1; then
-        warn "apt-get not found, skipping gVisor install"
+    if ! command -v curl >/dev/null 2>&1 || ! command -v sha512sum >/dev/null 2>&1; then
+        warn "curl/sha512sum not found, skipping gVisor install"
         return
     fi
 
-    info "Installing gVisor (runsc)..."
-    $SUDO apt-get update -qq
-    $SUDO apt-get install -y -qq curl gpg 2>/dev/null
+    info "Installing gVisor (runsc + containerd-shim-runsc-v1)..."
 
-    curl -fsSL https://gvisor.dev/archive.key \
-        | gpg --dearmor \
-        | $SUDO tee /usr/share/keyrings/gvisor-archive-keyring.gpg >/dev/null
+    ARCH=$(uname -m)
+    case "${ARCH}" in
+        x86_64|amd64)      ARCH=x86_64 ;;
+        aarch64|arm64)     ARCH=aarch64 ;;
+        *) warn "Unsupported architecture for gVisor: ${ARCH}, skipping"; return ;;
+    esac
 
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] \
-  https://storage.googleapis.com/gvisor/releases release main" \
-        | $SUDO tee /etc/apt/sources.list.d/gvisor.list >/dev/null
+    URL="https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}"
+    TMP_DIR=$(mktemp -d)
+    trap 'rm -rf "${TMP_DIR}"' EXIT
 
-    $SUDO apt-get update -qq
-    $SUDO apt-get install -y -qq runsc
+    for f in runsc runsc.sha512 containerd-shim-runsc-v1 containerd-shim-runsc-v1.sha512; do
+        if ! curl -fsSL -o "${TMP_DIR}/${f}" "${URL}/${f}"; then
+            warn "Failed to download ${f} from ${URL}, skipping gVisor install"
+            return
+        fi
+    done
+
+    if ! (cd "${TMP_DIR}" && sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512); then
+        warn "gVisor checksum verification failed, skipping install"
+        return
+    fi
+
+    chmod +x "${TMP_DIR}/runsc" "${TMP_DIR}/containerd-shim-runsc-v1"
+    $SUDO mv "${TMP_DIR}/runsc" "${TMP_DIR}/containerd-shim-runsc-v1" /usr/local/bin/
+
     info "gVisor installed: $(runsc version 2>/dev/null | head -1)"
 }
 
