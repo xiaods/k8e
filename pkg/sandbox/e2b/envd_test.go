@@ -206,7 +206,7 @@ func buildStartRequest(t *testing.T, ts *httptest.Server, s *Server, sandboxID, 
 	return req
 }
 
-func TestEnvdProcessStartRejectsPTY(t *testing.T) {
+func TestEnvdProcessStartWithPTY(t *testing.T) {
 	gw := newFakeGateway()
 	s, ts := testServer(t, gw)
 	id := createSandboxID(t, ts)
@@ -215,7 +215,7 @@ func TestEnvdProcessStartRejectsPTY(t *testing.T) {
 		"process": map[string]any{
 			"cmd":  "/bin/bash",
 			"args": []string{"-i", "-l"},
-			"envs": map[string]string{},
+			"envs": map[string]string{"TERM": "xterm-256color"},
 		},
 		"pty": map[string]any{"size": map[string]int{"cols": 80, "rows": 24}},
 	}
@@ -233,13 +233,88 @@ func TestEnvdProcessStartRejectsPTY(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(frames) != 1 {
-		t.Fatalf("expected single error frame, got %d", len(frames))
+	if len(frames) < 1 {
+		t.Fatalf("expected frames, got %d", len(frames))
 	}
-	errObj := frames[0].json["error"].(map[string]any)
-	if errObj["code"] != "invalid_argument" {
-		t.Fatalf("expected invalid_argument, got %v", errObj)
+
+	// First frame: start with the E2B-facing pid.
+	startPID := envelopeStartPID(t, frames[0])
+	if startPID == 0 {
+		t.Fatalf("pty start pid must be non-zero")
 	}
+
+	// The gateway received the terminal create with the right argv/size.
+	assertPtyCreateRequest(t, gw, id)
+
+	// Terminal streamed a data frame then exited.
+	if got := ptyStreamedData(t, frames); string(got) != "hello tty" {
+		t.Fatalf("pty streamed data = %q, want %q", got, "hello tty")
+	}
+	if !envelopeHasEvent(frames, "end") {
+		t.Fatalf("missing end frame")
+	}
+	// The pty row is dropped after the stream exits.
+	if _, ok := s.ptyFor(startPID); ok {
+		t.Fatalf("pty row must be dropped after exit")
+	}
+}
+
+// assertPtyCreateRequest checks the gateway received exactly one
+// CreateTerminal for the sandbox with the SDK's argv and window size.
+func assertPtyCreateRequest(t *testing.T, gw *fakeGateway, sandboxID string) {
+	t.Helper()
+	if len(gw.term.created) != 1 {
+		t.Fatalf("expected 1 CreateTerminal, got %d", len(gw.term.created))
+	}
+	cr := gw.term.created[0]
+	if cr.SessionId != sandboxID || len(cr.Argv) != 3 || cr.Argv[0] != "/bin/bash" {
+		t.Fatalf("unexpected CreateTerminalRequest: %+v", cr)
+	}
+	if cr.Rows != 24 || cr.Cols != 80 {
+		t.Fatalf("pty size = %dx%d, want 24x80", cr.Rows, cr.Cols)
+	}
+}
+
+// envelopeStartPID extracts the pid from a start event frame, or 0.
+func envelopeStartPID(t *testing.T, f frame) int {
+	t.Helper()
+	ev, ok := f.json["event"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	start, ok := ev["start"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	return int(start["pid"].(float64))
+}
+
+// envelopeHasEvent reports whether any frame carries the named event.
+func envelopeHasEvent(frames []frame, event string) bool {
+	for _, f := range frames {
+		if ev, ok := f.json["event"].(map[string]any); ok {
+			if _, ok := ev[event]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ptyStreamedData concatenates base64 stdout data frames.
+func ptyStreamedData(t *testing.T, frames []frame) []byte {
+	t.Helper()
+	var got []byte
+	for _, f := range frames {
+		if ev, ok := f.json["event"].(map[string]any); ok {
+			if data, ok := ev["data"].(map[string]any); ok {
+				if b64, ok := data["stdout"].(string); ok {
+					got = append(got, mustB64Decode(t, b64)...)
+				}
+			}
+		}
+	}
+	return got
 }
 
 func TestEnvdProcessStartUnknownShape(t *testing.T) {
@@ -291,15 +366,14 @@ func TestUnimplementedSurfaces(t *testing.T) {
 	s, ts := testServer(t, gw)
 	id := createSandboxID(t, ts)
 
-	// SendSignal/SendInput/CloseStdin and the polling watch trio
-	// (CreateWatcher/GetWatcherEvents/RemoveWatcher) are now implemented;
-	// the streaming WatchDir, PTY resize, and streamed stdin stay 501.
+	// SendSignal/SendInput/CloseStdin, PTY Update (resize), and the polling
+	// watch trio (CreateWatcher/GetWatcherEvents/RemoveWatcher) are now
+	// implemented; the streaming WatchDir and streamed stdin stay 501.
 	cases := []struct {
 		path string
 		body string
 	}{
 		{"/filesystem.Filesystem/WatchDir", `{}`},
-		{"/process.Process/Update", `{}`},
 		{"/process.Process/StreamInput", `{}`},
 	}
 	for _, c := range cases {

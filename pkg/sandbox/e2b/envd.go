@@ -1,7 +1,9 @@
 package e2b
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -55,9 +57,11 @@ func (s *Server) handleProcessStart(w http.ResponseWriter, r *http.Request) {
 	envs, _ := proc["envs"].(map[string]any)
 	cwd, _ := proc["cwd"].(string)
 
-	// A pty block makes this a terminal session — K8E has no PTY support.
-	if _, hasPty := body["pty"]; hasPty {
-		writeEnvdStreamError(w, connectError("invalid_argument", "PTY sessions are not supported"))
+	// A pty block makes this a terminal session (E2B SDK pty.create): the
+	// process runs as a controlling-terminal session leader via the KIP-19
+	// PTY primitive instead of the pipe-based exec path.
+	if ptyBlock, hasPty := body["pty"].(map[string]any); hasPty {
+		s.runPtyStart(w, r, sandboxIDOf(r), proc, ptyBlock)
 		return
 	}
 	// Without a pty, the SDK always sends /bin/bash [-l] -c <command>;
@@ -108,9 +112,7 @@ func (s *Server) handleProcessStart(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/connect+json\r\n\r\n")
 
-	writeEnvelopeRaw(buf, envelope(FlagMessage, map[string]any{
-		"event": map[string]any{"start": map[string]int{"pid": rec.PID}},
-	}))
+	writeStreamStartFrame(buf, rec.PID)
 
 	sub := &streamSubscriber{pid: rec.PID, w: buf}
 	if !s.processes.Subscribe(rec.PID, sub) {
@@ -140,6 +142,136 @@ func (s *Server) handleProcessStart(w http.ResponseWriter, r *http.Request) {
 		},
 	}))
 	writeEnvelopeRaw(buf, envelope(FlagEndStream, map[string]any{}))
+}
+
+// runPtyStart implements the E2B pty.create path (KIP-19 M4): it creates a
+// PTY terminal via the gateway, streams output frames back over the Connect
+// stream, and registers the pid -> terminal_id bridge so SendInput / Update /
+// SendSignal / Connect address the terminal by the SDK-facing pid.
+func (s *Server) runPtyStart(w http.ResponseWriter, r *http.Request, sandboxID string, proc, ptyBlock map[string]any) {
+	if sandboxID == "" {
+		writeEnvdStreamError(w, connectError("unauthenticated", "missing E2b-Sandbox-Id header"))
+		return
+	}
+	// Auto-resume a paused sandbox before the terminal lands.
+	if _, _, e2e := s.wakeForTraffic(r, sandboxID); e2e != nil {
+		writeEnvdStreamError(w, e2e)
+		return
+	}
+
+	cmd, _ := proc["cmd"].(string)
+	args := stringSlice(proc["args"])
+	envs, _ := proc["envs"].(map[string]any)
+	cwd, _ := proc["cwd"].(string)
+	argv := append([]string{cmd}, args...)
+	if len(argv) == 0 || argv[0] == "" {
+		writeEnvdStreamError(w, connectError("invalid_argument", "missing process cmd"))
+		return
+	}
+
+	// pty: { size: { rows, cols } } (E2B SDK pty.create). Defaults 24x80.
+	rows, cols := ptyWindowSize(ptyBlock)
+
+	resp, err := s.gw.CreateTerminal(r.Context(), &pb.CreateTerminalRequest{
+		SessionId: sandboxID,
+		Argv:      argv,
+		Workdir:   cwd,
+		Env:       toStringMap(envs),
+		Rows:      rows,
+		Cols:      cols,
+	})
+	if err != nil {
+		writeEnvdStreamError(w, connectError("internal", "create terminal failed: "+err.Error()))
+		return
+	}
+	terminalID := resp.TerminalId
+
+	// Register the process (SDK pid addressing) and the pid -> terminal_id
+	// bridge. The E2B-facing pid is the table pid; the in-sandbox session
+	// leader is resp.Pid (what List/Connect expose for process management).
+	cfg := ProcessConfig{Cmd: cmd, Args: args, Envs: toStringMap(envs), Cwd: cwd, Pty: true}
+	rec := s.processes.Start(sandboxID, cfg)
+	s.processes.SetGuestPID(rec.PID, int(resp.Pid))
+	s.registerPty(&ptyRow{terminalID: terminalID, sandboxID: sandboxID, pid: rec.PID, rows: rows, cols: cols})
+
+	// Stream the terminal: start frame, subscriber broadcast (keepalive-
+	// aware so pty.connect can reattach), terminal frames, end frame.
+	exitCode := s.streamTerminalOverHTTP(w, r, rec.PID, func(buf *bufio.ReadWriter) int32 {
+		sub := &streamSubscriber{pid: rec.PID, w: buf}
+		if !s.processes.Subscribe(rec.PID, sub) {
+			return -1
+		}
+		defer s.processes.Unsubscribe(rec.PID, sub)
+		ksub, stopKeepalive := newKeepaliveSubscriber(sub, buf)
+		s.processes.ReplaceSubscriber(rec.PID, sub, ksub)
+		defer stopKeepalive()
+		return s.drainTerminalStream(r.Context(), terminalID, func(data []byte) {
+			s.processes.Broadcast(rec.PID, ChannelStdout, data)
+		})
+	})
+	s.processes.End(rec.PID, ProcessEnd{ExitCode: int(exitCode)})
+	s.dropPty(rec.PID)
+}
+
+// streamTerminalOverHTTP hijacks the response, writes the start frame, runs
+// the stream callback (which drains the TerminalStream and returns the exit
+// code) and writes the end frame. The shared response shape of pty.create
+// and pty.connect.
+func (s *Server) streamTerminalOverHTTP(w http.ResponseWriter, r *http.Request, pid int, run func(*bufio.ReadWriter) int32) int32 {
+	hijack, ok := w.(http.Hijacker)
+	if !ok {
+		return -1
+	}
+	conn, buf, err := hijack.Hijack()
+	if err != nil {
+		return -1
+	}
+	defer conn.Close()
+	_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/connect+json\r\n\r\n")
+	writeStreamStartFrame(buf, pid)
+	exitCode := run(buf)
+	writeStreamEndFrame(buf, exitCode)
+	return exitCode
+}
+
+// drainTerminalStream reads a TerminalStream until exit, invoking onData for
+// every output frame, and returns the exit code (-1 when the stream cut or
+// could not be opened).
+func (s *Server) drainTerminalStream(ctx context.Context, terminalID string, onData func([]byte)) int32 {
+	stream, err := s.gw.TerminalStream(ctx, &pb.TerminalStreamRequest{TerminalId: terminalID})
+	if err != nil {
+		return -1
+	}
+	exitCode := int32(-1)
+	for {
+		frame, recvErr := stream.Recv()
+		if recvErr != nil {
+			break
+		}
+		if data := frame.GetData(); len(data) > 0 {
+			onData(data)
+		}
+		if exit := frame.GetExit(); exit != nil {
+			exitCode = exit.ExitCode
+			break
+		}
+	}
+	return exitCode
+}
+
+// runPtyStream re-opens a TerminalStream for a living PTY and streams its
+// frames to a hijacked Connect response (used by pty.connect reconnects).
+func (s *Server) runPtyStream(w http.ResponseWriter, r *http.Request, sandboxID string, pid int) {
+	row, ok := s.ptyFor(pid)
+	if !ok {
+		writeEnvdStreamError(w, connectError("not_found", fmt.Sprintf("process not found: %d", pid)))
+		return
+	}
+	s.streamTerminalOverHTTP(w, r, pid, func(buf *bufio.ReadWriter) int32 {
+		return s.drainTerminalStream(r.Context(), row.terminalID, func(data []byte) {
+			writeStreamDataFrame(buf, ChannelStdout, data)
+		})
+	})
 }
 
 // runProcessStream executes the command via ExecStream, stripping sandboxd
@@ -246,14 +378,30 @@ func (s *Server) handleProcessConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proc, _ := body["process"].(map[string]any)
-	pidFloat, ok := proc["pid"].(float64)
-	if !ok {
+	// Accept both the flat pid shape and the SDK selector shape
+	// ({selector: {case: "pid", value: N}}).
+	var pid int
+	if f, ok := proc["pid"].(float64); ok {
+		pid = int(f)
+	} else if sel, ok := proc["selector"].(map[string]any); ok {
+		if f, ok := sel["value"].(float64); ok {
+			pid = int(f)
+		}
+	}
+	if pid == 0 {
 		writeEnvdStreamError(w, connectError("invalid_argument", "missing process pid"))
 		return
 	}
-	pid := int(pidFloat)
 	sandboxID := sandboxIDOf(r)
 	rec := s.processes.Get(sandboxID, pid)
+
+	// PTY reconnect: pull a fresh TerminalStream (the sandboxd side replays
+	// the ring buffer) instead of subscribing to the (possibly gone) Start
+	// broadcast.
+	if rec != nil && rec.Config.Pty {
+		s.runPtyStream(w, r, sandboxID, pid)
+		return
+	}
 
 	// Cross-node Connect: the process's Start stream may have been served by
 	// a different control-plane node, so this node's local process table has
@@ -276,9 +424,7 @@ func (s *Server) handleProcessConnect(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 	_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/connect+json\r\n\r\n")
 
-	writeEnvelopeRaw(buf, envelope(FlagMessage, map[string]any{
-		"event": map[string]any{"start": map[string]int{"pid": pid}},
-	}))
+	writeStreamStartFrame(buf, pid)
 
 	sub := &streamSubscriber{pid: pid, w: buf}
 	if !s.processes.Subscribe(pid, sub) {
@@ -363,36 +509,47 @@ func (s *Server) requireGuestPID(sandboxID string, pid int) (int, *E2bError) {
 // handleProcessSendInput implements process.Process/SendInput: write stdin
 // to the running process via sandboxd's /exec/stdin.
 func (s *Server) handleProcessSendInput(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Process struct {
-			PID int `json:"pid"`
-		} `json:"process"`
-		Input struct {
-			Stdin string `json:"stdin"`
-		} `json:"input"`
+	// The official SDK sends the selector shape
+	//   {process: {selector: {case: "pid", value: N}}, input: {input: {case: "pty", value: <b64>}}}
+	// (KIP-18 earlier clients used {process: {pid}, input: {stdin}}). Accept both.
+	body, ok := s.readUnaryBody(w, r)
+	if !ok {
+		return
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Process.PID == 0 {
+	pid := pidFromBody(body)
+	if pid == 0 {
 		s.writeEnvdError(w, connectError("invalid_argument", "missing process pid"))
 		return
 	}
+	data := inputData(body)
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		s.writeEnvdError(w, connectError("invalid_argument", "invalid base64 input"))
+		return
+	}
+
+	// PTY sessions route input to the terminal (KIP-19 M4); everything else
+	// goes through sandboxd's stdin pipe.
+	if row, isPty := s.ptyFor(pid); isPty {
+		if _, err := s.gw.TerminalWrite(r.Context(), &pb.TerminalWriteRequest{TerminalId: row.terminalID, Data: decoded}); err != nil {
+			s.writeEnvdError(w, connectError("internal", "terminal write failed: "+err.Error()))
+			return
+		}
+		writeJSONOK(w)
+		return
+	}
+
 	sandboxID := sandboxIDOf(r)
-	guestPID, e2e := s.requireGuestPID(sandboxID, body.Process.PID)
+	guestPID, e2e := s.requireGuestPID(sandboxID, pid)
 	if e2e != nil {
 		s.writeEnvdError(w, e2e)
 		return
 	}
-	data, err := base64.StdEncoding.DecodeString(body.Input.Stdin)
-	if err != nil {
-		s.writeEnvdError(w, connectError("invalid_argument", "invalid base64 stdin"))
-		return
-	}
-	if err := s.sandboxd.sendStdin(r.Context(), sandboxID, guestPID, data); err != nil {
+	if err := s.sandboxd.sendStdin(r.Context(), sandboxID, guestPID, decoded); err != nil {
 		s.writeEnvdError(w, connectError("internal", "send stdin failed: "+err.Error()))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte("{}"))
+	writeJSONOK(w)
 }
 
 // handleProcessCloseStdin implements process.Process/CloseStdin: EOF.
@@ -424,49 +581,149 @@ func (s *Server) handleProcessCloseStdin(w http.ResponseWriter, r *http.Request)
 // handleProcessSendSignal implements process.Process/SendSignal: SIGKILL /
 // SIGTERM via sandboxd's /exec/signal.
 func (s *Server) handleProcessSendSignal(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Process struct {
-			PID int `json:"pid"`
-		} `json:"process"`
-		Signal string `json:"signal"`
+	// Accept both the SDK selector shape ({process: {selector: {case: "pid",
+	// value: N}}, signal: 9}) and the earlier flat shape ({process: {pid},
+	// signal: "SIGKILL"}).
+	body, ok := s.readUnaryBody(w, r)
+	if !ok {
+		return
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Process.PID == 0 {
+	pid := pidFromBody(body)
+	if pid == 0 {
 		s.writeEnvdError(w, connectError("invalid_argument", "missing process pid"))
 		return
 	}
-	sig := ""
-	switch body.Signal {
-	case "SIGNAL_SIGKILL", "SIGKILL", "9":
-		sig = "SIGKILL"
-	case "SIGNAL_SIGTERM", "SIGTERM", "15":
-		sig = "SIGTERM"
-	default:
-		s.writeEnvdError(w, connectError("invalid_argument",
-			"unsupported signal: only SIGKILL and SIGTERM are supported"))
-		return
+	var signal struct {
+		Signal json.RawMessage `json:"signal"`
 	}
-	sandboxID := sandboxIDOf(r)
-	guestPID, e2e := s.requireGuestPID(sandboxID, body.Process.PID)
+	_ = json.Unmarshal(body, &signal)
+	sig, e2e := parseSignal(signal.Signal)
 	if e2e != nil {
 		s.writeEnvdError(w, e2e)
 		return
 	}
-	if err := s.sandboxd.signal(r.Context(), sandboxID, guestPID, sig); err != nil {
+
+	// PTY sessions signal the terminal session (KIP-19 M4); pty.kill uses
+	// SIGKILL (9) against the whole session tree.
+	if row, isPty := s.ptyFor(pid); isPty {
+		if _, err := s.gw.TerminalSignal(r.Context(), &pb.TerminalSignalRequest{TerminalId: row.terminalID, Signal: sig}); err != nil {
+			s.writeEnvdError(w, connectError("internal", "terminal signal failed: "+err.Error()))
+			return
+		}
+		writeJSONOK(w)
+		return
+	}
+
+	sandboxID := sandboxIDOf(r)
+	// The pipe-based /exec/signal path supports KILL/TERM only; SIGINT is
+	// reserved for PTY sessions (the controlling-terminal signal path).
+	if sig == pb.TerminalSignal_TERMINAL_SIGNAL_INT {
+		s.writeEnvdError(w, connectError("invalid_argument", "unsupported signal: SIGINT requires a PTY session"))
+		return
+	}
+	guestPID, e2e := s.requireGuestPID(sandboxID, pid)
+	if e2e != nil {
+		s.writeEnvdError(w, e2e)
+		return
+	}
+	if err := s.sandboxd.signal(r.Context(), sandboxID, guestPID, sigName(sig)); err != nil {
 		if errors.Is(err, errNotFound) {
-			s.writeEnvdError(w, connectError("not_found", fmt.Sprintf("process not found: %d", body.Process.PID)))
+			s.writeEnvdError(w, connectError("not_found", fmt.Sprintf("process not found: %d", pid)))
 			return
 		}
 		s.writeEnvdError(w, connectError("internal", "signal failed: "+err.Error()))
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte("{}"))
+	writeJSONOK(w)
+}
+
+// parseSignal accepts the string forms the envd layer spoke before
+// ("SIGKILL", "SIGTERM", "9") and the numeric JSON form the official SDK
+// sends (9 = SIGKILL, 15 = SIGTERM).
+func parseSignal(raw json.RawMessage) (pb.TerminalSignal, *E2bError) {
+	if len(raw) == 0 {
+		return 0, connectError("invalid_argument", "missing signal")
+	}
+	if raw[0] == '"' {
+		switch strings.Trim(string(raw), "\"") {
+		case "SIGNAL_SIGKILL", "SIGKILL", "9":
+			return pb.TerminalSignal_TERMINAL_SIGNAL_KILL, nil
+		case "SIGNAL_SIGTERM", "SIGTERM", "15":
+			return pb.TerminalSignal_TERMINAL_SIGNAL_TERM, nil
+		case "SIGNAL_SIGINT", "SIGINT", "2":
+			return pb.TerminalSignal_TERMINAL_SIGNAL_INT, nil
+		default:
+			return 0, connectError("invalid_argument", "unsupported signal")
+		}
+	}
+	var n int
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return 0, connectError("invalid_argument", "invalid signal")
+	}
+	switch n {
+	case 9:
+		return pb.TerminalSignal_TERMINAL_SIGNAL_KILL, nil
+	case 15:
+		return pb.TerminalSignal_TERMINAL_SIGNAL_TERM, nil
+	case 2:
+		return pb.TerminalSignal_TERMINAL_SIGNAL_INT, nil
+	default:
+		return 0, connectError("invalid_argument", fmt.Sprintf("unsupported signal: %d", n))
+	}
+}
+
+// sigName maps a pb.TerminalSignal back to the sandboxd signal string used
+// by the pipe-based /exec/signal path.
+func sigName(sig pb.TerminalSignal) string {
+	switch sig {
+	case pb.TerminalSignal_TERMINAL_SIGNAL_KILL:
+		return "SIGKILL"
+	case pb.TerminalSignal_TERMINAL_SIGNAL_TERM:
+		return "SIGTERM"
+	case pb.TerminalSignal_TERMINAL_SIGNAL_INT:
+		return "SIGINT"
+	default:
+		return "SIGTERM"
+	}
+}
+
+// handleProcessUpdate implements process.Process/Update — the SDK's pty
+// resize path ({process: {selector: {case: "pid", value: N}}, pty: {size:
+// {cols, rows}}}). Only meaningful for PTY sessions (KIP-19 M4); pipe-based
+// processes have no window size.
+func (s *Server) handleProcessUpdate(w http.ResponseWriter, r *http.Request) {
+	// The SDK's pty resize path: {process: {selector: {case: "pid", value:
+	// N}}, pty: {size: {cols, rows}}}.
+	body, ok := s.readUnaryBody(w, r)
+	if !ok {
+		return
+	}
+	pid := pidFromBody(body)
+	if pid == 0 {
+		s.writeEnvdError(w, connectError("invalid_argument", "missing process pid"))
+		return
+	}
+	row, isPty := s.ptyFor(pid)
+	if !isPty {
+		s.writeEnvdError(w, connectError("invalid_argument", "resize requires a PTY session"))
+		return
+	}
+	rows, cols := resizeSize(body)
+	if rows < 1 || cols < 1 {
+		s.writeEnvdError(w, connectError("invalid_argument", "invalid window size"))
+		return
+	}
+	if _, err := s.gw.TerminalResize(r.Context(), &pb.TerminalResizeRequest{TerminalId: row.terminalID, Rows: rows, Cols: cols}); err != nil {
+		s.writeEnvdError(w, connectError("internal", "terminal resize failed: "+err.Error()))
+		return
+	}
+	row.rows, row.cols = rows, cols
+	writeJSONOK(w)
 }
 
 // handleUnimplementedProcess answers a Connect RPC with the honest
-// unimplemented code and a hint (PTY resize / streamed stdin remain unsupported:
-// sandboxd has no PTY and the SDK sends stdin via SendInput).
+// unimplemented code and a hint (streamed stdin remains unsupported: the SDK
+// sends stdin via SendInput; Update/UpdatePTY are PTY-only now implemented).
 func (s *Server) handleUnimplementedProcess(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.writeEnvdError(w, connectError("unimplemented", name+" is not supported"))
@@ -756,6 +1013,118 @@ func (s *Server) handleFSRemove(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("{}"))
 }
 
+// asMap decodes a JSON object body into a plain map (nil-safe).
+func asMap(body []byte) map[string]any {
+	var v map[string]any
+	_ = json.Unmarshal(body, &v)
+	return v
+}
+
+// pidFromBody extracts the SDK-facing pid from either the flat
+// {process: {pid}} shape or the selector {process: {selector: {case: "pid",
+// value: N}}} shape the official SDK sends.
+func pidFromBody(body []byte) int {
+	proc, _ := asMap(body)["process"].(map[string]any)
+	if f, ok := proc["pid"].(float64); ok && int(f) != 0 {
+		return int(f)
+	}
+	if sel, ok := proc["selector"].(map[string]any); ok {
+		if f, ok := sel["value"].(float64); ok {
+			return int(f)
+		}
+	}
+	return 0
+}
+
+// inputData extracts the base64 input payload from a SendInput body: the
+// SDK selector shape {input: {input: {case: "pty", value}}} or the earlier
+// flat {input: {stdin}} shape.
+func inputData(body []byte) string {
+	input, _ := asMap(body)["input"].(map[string]any)
+	if s, ok := input["stdin"].(string); ok && s != "" {
+		return s
+	}
+	if inner, ok := input["input"].(map[string]any); ok {
+		if s, ok := inner["value"].(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// resizeSize extracts rows/cols from an Update (pty resize) body's
+// {pty: {size: {cols, rows}}} object.
+func resizeSize(body []byte) (rows, cols int32) {
+	pty, _ := asMap(body)["pty"].(map[string]any)
+	size, _ := pty["size"].(map[string]any)
+	if f, ok := size["rows"].(float64); ok {
+		rows = int32(f)
+	}
+	if f, ok := size["cols"].(float64); ok {
+		cols = int32(f)
+	}
+	return rows, cols
+}
+
+// writeJSONOK answers a unary envd RPC with an empty 200 JSON body.
+func writeJSONOK(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte("{}"))
+}
+
+// ptyWindowSize extracts rows/cols from the pty block's size object,
+// defaulting to 24x80 when absent or invalid.
+func ptyWindowSize(ptyBlock map[string]any) (rows, cols int32) {
+	rows, cols = 24, 80
+	if size, ok := ptyBlock["size"].(map[string]any); ok {
+		if v, ok := size["rows"].(float64); ok && v > 0 {
+			rows = int32(v)
+		}
+		if v, ok := size["cols"].(float64); ok && v > 0 {
+			cols = int32(v)
+		}
+	}
+	return rows, cols
+}
+
+// writeStreamDataFrame writes one envelope data frame (base64 stdout).
+func writeStreamDataFrame(w io.Writer, channel OutputChannel, data []byte) {
+	writeEnvelopeRaw(w, envelope(FlagMessage, map[string]any{
+		"event": map[string]any{"data": map[string]string{string(channel): base64.StdEncoding.EncodeToString(data)}},
+	}))
+}
+
+// writeStreamStartFrame writes the start event frame (SDK-facing pid).
+func writeStreamStartFrame(w io.Writer, pid int) {
+	writeEnvelopeRaw(w, envelope(FlagMessage, map[string]any{
+		"event": map[string]any{"start": map[string]int{"pid": pid}},
+	}))
+}
+
+// writeStreamEndFrame writes the end event + end-stream frames.
+func writeStreamEndFrame(w io.Writer, exitCode int32) {
+	writeEnvelopeRaw(w, envelope(FlagMessage, map[string]any{
+		"event": map[string]any{
+			"end": map[string]any{
+				"exitCode": exitCode,
+				"exited":   true,
+				"status":   exitStatus(int(exitCode)),
+			},
+		},
+	}))
+	writeEnvelopeRaw(w, envelope(FlagEndStream, map[string]any{}))
+}
+
+// readUnaryBody reads a unary envd request body, answering 400 on failure.
+func (s *Server) readUnaryBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		s.writeEnvdError(w, connectError("invalid_argument", "read body failed"))
+		return nil, false
+	}
+	return body, true
+}
+
 // --- helpers --------------------------------------------------------------
 
 // streamSubscriber writes enveloped frames to a hijacked connection.
@@ -765,9 +1134,7 @@ type streamSubscriber struct {
 }
 
 func (ss *streamSubscriber) OnOutput(channel OutputChannel, data []byte) {
-	writeEnvelopeRaw(ss.w, envelope(FlagMessage, map[string]any{
-		"event": map[string]any{"data": map[string]string{string(channel): base64.StdEncoding.EncodeToString(data)}},
-	}))
+	writeStreamDataFrame(ss.w, channel, data)
 }
 
 func (ss *streamSubscriber) OnEnd(end ProcessEnd) {}
@@ -903,9 +1270,7 @@ func (s *Server) attachRemote(w http.ResponseWriter, r *http.Request, sandboxID 
 			pidSeen = true
 		}
 		if len(out) > 0 {
-			writeEnvelopeRaw(buf, envelope(FlagMessage, map[string]any{
-				"event": map[string]any{"data": map[string]any{"stdout": base64.StdEncoding.EncodeToString(out)}},
-			}))
+			writeStreamDataFrame(buf, ChannelStdout, out)
 		}
 	}
 

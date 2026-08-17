@@ -28,6 +28,9 @@ type ProcessConfig struct {
 	Args []string
 	Envs map[string]string
 	Cwd  string
+	// Pty marks a KIP-19 terminal session (E2B pty.create). Such processes
+	// are addressed via the pid -> terminal_id bridge in Server.ptys.
+	Pty bool
 }
 
 // OutputChannel is one of the two wire channels a subscriber may receive.

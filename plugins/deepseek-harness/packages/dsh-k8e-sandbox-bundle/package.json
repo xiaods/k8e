@@ -16,7 +16,8 @@
     "@k8e-sandbox/dsh-k8e-sandbox-fs": "workspace:*",
     "@k8e-sandbox/dsh-k8e-sandbox-subprocess": "workspace:*",
     "@k8e-sandbox/dsh-k8e-sandbox-host-ui": "workspace:*",
-    "@k8e-sandbox/dsh-k8e-sandbox-client-ui": "workspace:*"
+    "@k8e-sandbox/dsh-k8e-sandbox-client-ui": "workspace:*",
+    "@k8e-sandbox/dsh-k8e-sandbox-tool": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

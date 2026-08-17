@@ -44,7 +44,7 @@ const versionArg = (() => {
 /** All workspace packages with their @k8e-sandbox/* dependencies. */
 function loadPackages() {
   const dirs = []
-  for (const name of ['dsh-k8e-sandbox-client', 'dsh-k8e-sandbox-client-ui', 'dsh-k8e-sandbox', 'dsh-k8e-sandbox-fs', 'dsh-k8e-sandbox-subprocess', 'dsh-k8e-sandbox-host-ui', 'dsh-k8e-sandbox-bundle']) {
+  for (const name of ['dsh-k8e-sandbox-client', 'dsh-k8e-sandbox-client-ui', 'dsh-k8e-sandbox', 'dsh-k8e-sandbox-fs', 'dsh-k8e-sandbox-subprocess', 'dsh-k8e-sandbox-host-ui', 'dsh-k8e-sandbox-tool', 'dsh-k8e-sandbox-bundle']) {
     const p = join(root, 'packages', name, 'package.json')
     if (!existsSync(p)) throw new Error(`missing package.json: ${p}`)
     const data = JSON.parse(readFileSync(p, 'utf8'))

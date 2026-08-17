@@ -19,5 +19,6 @@ link packages/llm/llm                     dsh-llm
 link packages/util/timeout                dsh-timeout
 link packages/runtime-diagnostics/invariants dsh-invariants
 link packages/util/brand                  dsh-brand
+link packages/core/tools                   dsh-tools
 
 echo "linked dsh runtime packages from $DSH"

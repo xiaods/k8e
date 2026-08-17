@@ -19,6 +19,12 @@ type ExecStreamReader interface {
 	Recv() (*pb.ExecStreamResponse, error)
 }
 
+// TerminalStreamReader is the subset of the gRPC server-streaming client for
+// TerminalStream: Recv returns the next terminal frame (data or exit).
+type TerminalStreamReader interface {
+	Recv() (*pb.TerminalStreamResponse, error)
+}
+
 // Gateway is the k8e backend contract the E2B layer translates to: the
 // sandbox gRPC gateway. A narrow subset of pb.SandboxServiceClient so tests
 // can fake it with a small stub.
@@ -34,6 +40,13 @@ type Gateway interface {
 	ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.ListFilesResponse, error)
 	PauseSession(ctx context.Context, req *pb.PauseSessionRequest) (*pb.PauseSessionResponse, error)
 	ResumeSession(ctx context.Context, req *pb.ResumeSessionRequest) (*pb.ResumeSessionResponse, error)
+	// KIP-19 PTY terminal primitive surface (closed by the E2B pty.* compat).
+	CreateTerminal(ctx context.Context, req *pb.CreateTerminalRequest) (*pb.CreateTerminalResponse, error)
+	TerminalStream(ctx context.Context, req *pb.TerminalStreamRequest) (TerminalStreamReader, error)
+	TerminalWrite(ctx context.Context, req *pb.TerminalWriteRequest) (*pb.TerminalWriteResponse, error)
+	TerminalResize(ctx context.Context, req *pb.TerminalResizeRequest) (*pb.TerminalResizeResponse, error)
+	TerminalSignal(ctx context.Context, req *pb.TerminalSignalRequest) (*pb.TerminalSignalResponse, error)
+	TerminalDestroy(ctx context.Context, req *pb.TerminalDestroyRequest) (*pb.TerminalDestroyResponse, error)
 }
 
 // grpcGateway adapts the real k8e gRPC client to the Gateway contract.
@@ -83,6 +96,30 @@ func (g *grpcGateway) PauseSession(ctx context.Context, req *pb.PauseSessionRequ
 
 func (g *grpcGateway) ResumeSession(ctx context.Context, req *pb.ResumeSessionRequest) (*pb.ResumeSessionResponse, error) {
 	return g.client.SandboxServiceClient.ResumeSession(ctx, req)
+}
+
+func (g *grpcGateway) CreateTerminal(ctx context.Context, req *pb.CreateTerminalRequest) (*pb.CreateTerminalResponse, error) {
+	return g.client.SandboxServiceClient.CreateTerminal(ctx, req)
+}
+
+func (g *grpcGateway) TerminalStream(ctx context.Context, req *pb.TerminalStreamRequest) (TerminalStreamReader, error) {
+	return g.client.SandboxServiceClient.TerminalStream(ctx, req)
+}
+
+func (g *grpcGateway) TerminalWrite(ctx context.Context, req *pb.TerminalWriteRequest) (*pb.TerminalWriteResponse, error) {
+	return g.client.SandboxServiceClient.TerminalWrite(ctx, req)
+}
+
+func (g *grpcGateway) TerminalResize(ctx context.Context, req *pb.TerminalResizeRequest) (*pb.TerminalResizeResponse, error) {
+	return g.client.SandboxServiceClient.TerminalResize(ctx, req)
+}
+
+func (g *grpcGateway) TerminalSignal(ctx context.Context, req *pb.TerminalSignalRequest) (*pb.TerminalSignalResponse, error) {
+	return g.client.SandboxServiceClient.TerminalSignal(ctx, req)
+}
+
+func (g *grpcGateway) TerminalDestroy(ctx context.Context, req *pb.TerminalDestroyRequest) (*pb.TerminalDestroyResponse, error) {
+	return g.client.SandboxServiceClient.TerminalDestroy(ctx, req)
 }
 
 // --- session views --------------------------------------------------------

@@ -3,6 +3,7 @@ package e2b
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -34,6 +35,13 @@ type fakeGateway struct {
 	getErrs map[string]error
 	paused  []string
 	resumed []string
+
+	// term records KIP-19 terminal RPCs for pty.* compat tests.
+	term *terminalRows
+	// hangTerminals makes unseeded TerminalStream calls hang forever (no
+	// frames) so a pty.create stays alive across sendInput/resize/kill
+	// tests, mirroring a long-running bash session.
+	hangTerminals bool
 }
 
 func newFakeGateway() *fakeGateway {
@@ -187,6 +195,112 @@ func (f *fakeGateway) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (
 		out = append(out, &pb.FileEntry{Path: path, Modified: 0})
 	}
 	return &pb.ListFilesResponse{Files: out}, nil
+}
+
+// --- KIP-19 terminal primitive fakes ---------------------------------------
+
+// terminalRows records terminal RPCs for pty.* compat tests.
+type terminalRows struct {
+	created   []*pb.CreateTerminalRequest
+	writes    []*pb.TerminalWriteRequest
+	resizes   []*pb.TerminalResizeRequest
+	signals   []*pb.TerminalSignalRequest
+	destroyed []string
+	streams   map[string][]*pb.TerminalStreamResponse
+}
+
+func (f *fakeGateway) CreateTerminal(ctx context.Context, req *pb.CreateTerminalRequest) (*pb.CreateTerminalResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		f.term = &terminalRows{streams: map[string][]*pb.TerminalStreamResponse{}}
+	}
+	id := req.SessionId + "/t" + strconv.Itoa(len(f.term.created)+1)
+	f.term.created = append(f.term.created, req)
+	return &pb.CreateTerminalResponse{TerminalId: id, Pid: int32(5000 + len(f.term.created))}, nil
+}
+
+func (f *fakeGateway) TerminalStream(ctx context.Context, req *pb.TerminalStreamRequest) (TerminalStreamReader, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil, errors.New("no terminal")
+	}
+	chunks := f.term.streams[req.TerminalId]
+	if len(chunks) == 0 && f.hangTerminals {
+		return &hangingTermStream{}, nil
+	}
+	// Default frames when a test did not seed a stream: one output chunk
+	// then a clean exit, so pty.create/connect paths have a deterministic
+	// stream to drain.
+	if len(chunks) == 0 {
+		chunks = []*pb.TerminalStreamResponse{
+			{Frame: &pb.TerminalStreamResponse_Data{Data: []byte("hello tty")}},
+			{Frame: &pb.TerminalStreamResponse_Exit{Exit: &pb.TerminalExit{ExitCode: 0}}},
+		}
+	}
+	return &fakeTermStream{chunks: chunks}, nil
+}
+
+// hangingTermStream blocks forever — a terminal whose process is still
+// running (no exit frame yet).
+type hangingTermStream struct{}
+
+func (h *hangingTermStream) Recv() (*pb.TerminalStreamResponse, error) {
+	<-make(chan struct{})
+	return nil, nil
+}
+
+func (f *fakeGateway) TerminalWrite(ctx context.Context, req *pb.TerminalWriteRequest) (*pb.TerminalWriteResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil, errors.New("no terminal")
+	}
+	f.term.writes = append(f.term.writes, req)
+	return &pb.TerminalWriteResponse{Ok: true}, nil
+}
+
+func (f *fakeGateway) TerminalResize(ctx context.Context, req *pb.TerminalResizeRequest) (*pb.TerminalResizeResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil, errors.New("no terminal")
+	}
+	f.term.resizes = append(f.term.resizes, req)
+	return &pb.TerminalResizeResponse{Ok: true}, nil
+}
+
+func (f *fakeGateway) TerminalSignal(ctx context.Context, req *pb.TerminalSignalRequest) (*pb.TerminalSignalResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil, errors.New("no terminal")
+	}
+	f.term.signals = append(f.term.signals, req)
+	return &pb.TerminalSignalResponse{ProcessGroupId: 1}, nil
+}
+
+func (f *fakeGateway) TerminalDestroy(ctx context.Context, req *pb.TerminalDestroyRequest) (*pb.TerminalDestroyResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.term.destroyed = append(f.term.destroyed, req.TerminalId)
+	return &pb.TerminalDestroyResponse{Ok: true}, nil
+}
+
+// fakeTermStream yields canned terminal frames then EOF.
+type fakeTermStream struct {
+	chunks []*pb.TerminalStreamResponse
+	i      int
+}
+
+func (f *fakeTermStream) Recv() (*pb.TerminalStreamResponse, error) {
+	if f.i >= len(f.chunks) {
+		return nil, errors.New("EOF")
+	}
+	c := f.chunks[f.i]
+	f.i++
+	return c, nil
 }
 
 // fakeStream yields canned chunks then EOF.

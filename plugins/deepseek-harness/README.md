@@ -12,6 +12,7 @@ via `dsh plugin --profile <name> add`.
 | [`@k8e-sandbox/dsh-k8e-sandbox-client`](packages/dsh-k8e-sandbox-client) | Transport: `CliK8eClient` (Phase 1) + `GrpcK8eClient` (Phase 2) | library |
 | [`@k8e-sandbox/dsh-k8e-sandbox-fs`](packages/dsh-k8e-sandbox-fs) | Filesystem seam provider | `ctx.fs` |
 | [`@k8e-sandbox/dsh-k8e-sandbox-subprocess`](packages/dsh-k8e-sandbox-subprocess) | Subprocess seam provider (streaming exec + `spawnTerminal`) | `ctx.subprocess` |
+| [`@k8e-sandbox/dsh-k8e-sandbox-tool`](packages/dsh-k8e-sandbox-tool) | Model-surface tools (session status/destroy, exec, background + poll) | `ctx.tools` |
 | [`@k8e-sandbox/dsh-k8e-sandbox-bundle`](packages/dsh-k8e-sandbox-bundle) | Installable bundle (`dsh.bundle.patch` → `cordis.patch.yml`) | — |
 
 ## Status

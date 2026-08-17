@@ -35,6 +35,14 @@ type Server struct {
 	registry  stateStore
 	processes *ProcessTable
 
+	// ptys maps the E2B-facing session-leader pid to its canonical
+	// terminal_id (KIP-19). The E2B SDK addresses pty handles by pid;
+	// the gateway only speaks terminal_id, so this map is the compat
+	// layer's pid -> terminal_id bridge, built at pty.create and torn
+	// down on exit/destroy.
+	ptysMu sync.Mutex
+	ptys   map[int]*ptyRow
+
 	// sandboxd is the direct in-pod HTTP client for native operations the
 	// gRPC gateway does not expose (filesystem stat/mkdir/mv/rm, process
 	// stdin/signal) — KIP-18 "ability downshift".
@@ -131,6 +139,7 @@ func NewServer(cfg Config, gw Gateway) *Server {
 		runtimes:        runtimes,
 		registry:        registry,
 		processes:       NewProcessTable(),
+		ptys:            map[int]*ptyRow{},
 		sandboxd:        newSandboxdClient(gw),
 		lastErr:         map[string]error{},
 		logf:            func(format string, args ...any) { logrus.Infof("e2b: "+format, args...) },
@@ -167,6 +176,7 @@ func (s *Server) Handle() http.Handler {
 	envd.HandleFunc("/process.Process/SendInput", s.handleProcessSendInput)
 	envd.HandleFunc("/process.Process/CloseStdin", s.handleProcessCloseStdin)
 	envd.HandleFunc("/process.Process/SendSignal", s.handleProcessSendSignal)
+	envd.HandleFunc("/process.Process/Update", s.handleProcessUpdate)
 	envd.HandleFunc("/process.Process/Update", s.handleUnimplementedProcess("Update"))
 	envd.HandleFunc("/process.Process/StreamInput", s.handleStreamInputUnimplemented)
 	envd.HandleFunc("/process.Process/UpdatePTY", s.handleUnimplementedProcess("UpdatePTY"))

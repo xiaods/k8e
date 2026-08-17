@@ -14,6 +14,11 @@
       name: '@k8e-sandbox/dsh-k8e-sandbox-fs'
     - id: k8e-sandbox-subprocess
       name: '@k8e-sandbox/dsh-k8e-sandbox-subprocess'
+    # Model-surface tools (ctx.tools): session status/destroy, foreground
+    # exec, background exec + poll. Injects `k8eSandbox`, so it mounts after
+    # the owner regardless of row order.
+    - id: k8e-sandbox-tool
+      name: '@k8e-sandbox/dsh-k8e-sandbox-tool'
     - id: k8e-sandbox-host-ui
       name: '@k8e-sandbox/dsh-k8e-sandbox-host-ui'
     # Browser half: registers the settings page + terminal panel. The modules
