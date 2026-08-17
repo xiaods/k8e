@@ -162,6 +162,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		CiliumDNSProxyEnabled: cfg.CiliumDNSProxyEnabled,
 		DisableE2B:            cfg.DisableE2B,
 		E2BListen:             cfg.E2BListen,
+		E2BAPIKey:             cfg.E2BAPIKey,
 	}
 	serverConfig.ControlConfig.EtcdExposeMetrics = cfg.EtcdExposeMetrics
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots

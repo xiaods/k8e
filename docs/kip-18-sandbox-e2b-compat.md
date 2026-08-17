@@ -475,11 +475,47 @@ Downloads get extension-based `Content-Type` and single-range `Range` support
 
 ## 7. Auth and signing
 
-- **Control plane**: `X-API-KEY: e2b_<token>`. The `e2b_` prefix is the SDK's
-  convention, not a secret; the bare token is compared (constant-time)
-  against the API key(s) the e2b server is configured with — same keys the
-  gateway validates (`--apikey` / `K8E_SANDBOX_APIKEY`, plus the
-  `sandbox-apikeys` Secret loader when running in-cluster).
+- **Control plane**: `X-API-KEY: e2b_<token>` (or bare `X-API-Key` /
+  `Authorization: Bearer`). The `e2b_` prefix is the SDK's convention, not a
+  secret; the bare token is compared (constant-time) against the API key(s)
+  the e2b server is configured with — same keys the gateway validates
+  (`--apikey` / `K8E_SANDBOX_APIKEY` for `k8e e2b-server`, `--e2b-apikey` /
+  `K8E_E2B_APIKEY` for the embedded server, plus the `sandbox-apikeys` Secret
+  loader when running in-cluster).
+
+  **The key is hex-only — by design.** The official `e2b` SDKs validate the
+  key client-side (`validateApiKey`, `/^e2b_[0-9a-f]+$/`) *before* any
+  request, so a key containing non-hex characters (e.g. an old `k8e-…`
+  token) can never be presented by an unmodified SDK — the SDK throws
+  `AuthenticationError` locally. K8E's own key generator
+  (`k8e sandbox-apikey create <name>`) therefore emits a bare 64-hex token:
+  **one key serves every role** — the gRPC gateway `sandbox-apikeys` Secret
+  (login), the e2b server's `--apikey` / `K8E_E2B_APIKEY`, and e2b SDK
+  clients (as `e2b_` + key):
+
+  ```bash
+  export K8E_SANDBOX_APIKEY=$(k8e sandbox-apikey create e2b --ttl never | jq -r .key)
+  # or for the embedded server:
+  export K8E_E2B_APIKEY=$(k8e sandbox-apikey create e2b --ttl never | jq -r .key)
+  ```
+
+  ```ts
+  const sbx = await Sandbox.create({
+    apiKey: `e2b_${process.env.K8E_SANDBOX_APIKEY}`,  // or K8E_E2B_APIKEY
+    apiUrl: 'http://127.0.0.1:3676',
+    sandboxUrl: 'http://127.0.0.1:3676/e2b/envd',
+  });
+  ```
+
+  The server strips the `e2b_` prefix from both the configured key and the
+  presented credential, so configuring the key with or without the prefix is
+  equivalent. `k8e e2b-server` warns at startup when `--apikey` is not
+  hex-compatible (the embedded server warns for `--e2b-apikey`) and still
+  starts: a legacy `k8e-…` key remains valid for the gRPC gateway login,
+  only SDK clients cannot use it — rotate to a hex key
+  (`k8e sandbox-apikey create`) for SDK access. If no key is configured, the
+  control plane rejects every request with 401 (embedded mode logs a warning
+  about this).
 - **envd**: `E2b-Sandbox-Id` header + `X-Access-Token`
   `HMAC(signingSecret, "envd:"+sandboxID)` — stateless verify, minted at
   create and echoed in the session view. The signing secret comes from

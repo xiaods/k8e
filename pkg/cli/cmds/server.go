@@ -108,6 +108,7 @@ type Server struct {
 	DisableSandboxMatrix     bool
 	DisableE2B               bool
 	E2BListen                string
+	E2BAPIKey                string
 	SandboxDefaultRuntime    string
 	SandboxDefaultImage      string
 	SandboxDefaultCPU        string
@@ -552,6 +553,12 @@ var ServerFlags = []cli.Flag{
 		Value:       "0.0.0.0:3676",
 		Destination: &ServerConfig.E2BListen,
 		EnvVar:      "K8E_E2B_LISTEN",
+	},
+	&cli.StringFlag{
+		Name:        "e2b-apikey",
+		Usage:       "(sandbox) API key for the embedded E2B-compatible server (KIP-18). Official e2b SDKs require the key to be \"e2b_\" + hex characters (client-side validateApiKey); configure the bare hex token here (e.g. from `openssl rand -hex 32`) and pass \"e2b_\"+token to the SDK — the server strips the prefix. K8E_E2B_APIKEY",
+		Destination: &ServerConfig.E2BAPIKey,
+		EnvVar:      "K8E_E2B_APIKEY",
 	},
 	&cli.StringFlag{
 		Name:        "sandbox-default-runtime",

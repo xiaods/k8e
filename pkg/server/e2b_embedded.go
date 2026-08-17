@@ -55,11 +55,18 @@ func runEmbeddedE2B(ctx context.Context, cfg config.SandboxConfig, kubeconfig st
 	srv := sandboxe2b.NewServer(sandboxe2b.Config{
 		Listen:          cfg.E2BListen,
 		Endpoint:        gatewayAddr,
+		APIKey:          cfg.E2BAPIKey,
 		DefaultCPUs:     1,
 		DefaultMemoryMB: 512,
 		DefaultDiskMB:   10 * 1024,
 		StateStore:      store,
 	}, sandboxe2b.GatewayFromClient(c))
+
+	if cfg.E2BAPIKey == "" {
+		logrus.Warnf("e2b (embedded): no --e2b-apikey configured; control-plane requests from the official e2b SDK will be rejected (401) — set K8E_E2B_APIKEY to a hex token (k8e sandbox-apikey create) and pass e2b_+token to the SDK")
+	} else if err := sandboxe2b.ValidateE2BAPIKey(cfg.E2BAPIKey); err != nil {
+		logrus.Warnf("e2b (embedded): %v; official e2b SDK clients will not be able to authenticate — generate a hex key with `k8e sandbox-apikey create <name>` and set K8E_E2B_APIKEY to it", err)
+	}
 
 	logrus.Infof("e2b (embedded): serving on %s via gateway %s (Gateway API fronted; state=%T)", cfg.E2BListen, gatewayAddr, store)
 	if err := srv.Start(ctx); err != nil && ctx.Err() == nil {
