@@ -157,6 +157,9 @@ func ResolveConn(flagEndpoint, flagAPIKey, flagProfile, flagDevice string) (*Res
 	}
 	name := SelectProfileName(file, flagProfile)
 	if name == "" || file == nil {
+		// No profile selected: a gateway connected before profiles.yaml
+		// existed (config.json) may still supply the endpoint. Safe here —
+		// there is no explicitly selected local profile to redirect.
 		return resolveConnFallback(out), nil
 	}
 	prof, ok := file.Profiles[name]
@@ -173,7 +176,10 @@ func ResolveConn(flagEndpoint, flagAPIKey, flagProfile, flagDevice string) (*Res
 	if out.DeviceName == "" {
 		out.DeviceName = strings.TrimSpace(prof.DeviceName)
 	}
-	return resolveConnFallback(out), nil
+	// An explicitly selected profile is authoritative: an endpoint-less
+	// (local) profile must NOT be redirected to a stale remote gateway
+	// (Greptile) — no config.json fallback here.
+	return out, nil
 }
 
 // resolveConnFallback fills the endpoint from the connection config written
@@ -263,7 +269,14 @@ func SaveConnectProfile(endpoint string) error {
 	if file.Profiles == nil {
 		file.Profiles = map[string]Profile{}
 	}
-	file.Profiles["default"] = Profile{Endpoint: strings.TrimSpace(endpoint)}
+	// Preserve the existing default profile's cert/device settings; only the
+	// endpoint and the active selection change (Greptile).
+	existing := file.Profiles["default"]
+	file.Profiles["default"] = Profile{
+		Endpoint:   strings.TrimSpace(endpoint),
+		CertDir:    existing.CertDir,
+		DeviceName: existing.DeviceName,
+	}
 	file.CurrentProfile = "default"
 	return SaveProfileFile(file, path)
 }

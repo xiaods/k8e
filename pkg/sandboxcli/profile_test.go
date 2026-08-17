@@ -292,3 +292,71 @@ func TestResolveConnFallsBackToConnectionConfig(t *testing.T) {
 		t.Fatalf("ResolveConn endpoint = %q, want config.json fallback", resolved.Endpoint)
 	}
 }
+
+func TestSaveConnectProfilePreservesDefaultMetadata(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+
+	path, err := DefaultProfilesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	// Default profile already carries cert_dir/device_name (manual setup).
+	if err := os.WriteFile(path, []byte("version: 1\ncurrent_profile: default\nprofiles:\n  default:\n    endpoint: old:50051\n    cert_dir: ~/.k8e/custom-certs\n    device_name: laptop\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveConnectProfile("10.0.0.3:50051"); err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := LoadProfileFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := file.Profiles["default"]
+	if d.Endpoint != "10.0.0.3:50051" {
+		t.Fatalf("endpoint = %q", d.Endpoint)
+	}
+	if d.CertDir != "~/.k8e/custom-certs" {
+		t.Fatalf("cert_dir dropped: %q", d.CertDir)
+	}
+	if d.DeviceName != "laptop" {
+		t.Fatalf("device_name dropped: %q", d.DeviceName)
+	}
+}
+
+func TestResolveConnLocalProfileNotRedirected(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+
+	// config.json points at a remote gateway (stale connect).
+	cfg := &ConnectionConfig{Mode: "remote", Endpoint: "192.168.1.10:50051"}
+	if err := SaveConnectionConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// An explicitly selected local profile (no endpoint) exists.
+	path, err := DefaultProfilesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("version: 1\ncurrent_profile: local\nprofiles:\n  local:\n    device_name: devbox\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := ResolveConn("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Profile != "local" {
+		t.Fatalf("profile = %q, want local", resolved.Profile)
+	}
+	if resolved.Endpoint != "" {
+		t.Fatalf("local profile must stay endpoint-less, got %q (redirected to stale remote)", resolved.Endpoint)
+	}
+}
