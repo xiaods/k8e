@@ -24,7 +24,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 
@@ -92,8 +92,31 @@ function bumpVersion(packages, version) {
 
 function run(cmd, args, opts = {}) {
   console.log(`$ ${cmd} ${args.join(' ')}`)
-  return execFileSync(cmd, args, { stdio: 'inherit', ...opts })
+  return execFileSync(cmd, args, { stdio: 'inherit', env: SAFE_ENV, ...opts })
 }
+
+/**
+ * Resolve a binary to an absolute path from the ambient PATH, then rebuild a
+ * SAFE_PATH that only contains the binary's own directory plus fixed system
+ * directories. SonarCloud flags passing an untrusted PATH to exec* (S5310);
+ * using absolute binaries with a locked-down PATH keeps the release script
+ * from executing anything other than the installed npm/pnpm.
+ */
+function resolveBin(name) {
+  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
+    const cand = join(dir, name)
+    if (existsSync(cand)) return cand
+  }
+  throw new Error(`${name} not found on PATH`)
+}
+
+const NPM = resolveBin('npm')
+const PNPM = resolveBin('pnpm')
+const BIN_DIR = dirname(NPM)
+const SAFE_PATH = [BIN_DIR, '/usr/local/bin', '/usr/bin', '/bin']
+  .filter((d) => existsSync(d))
+  .join(delimiter)
+const SAFE_ENV = { ...process.env, PATH: SAFE_PATH }
 
 const packages = loadPackages()
 const order = topoSort(packages)
@@ -107,21 +130,20 @@ if (!dryRun) {
   // Fail fast with a clear message instead of a confusing 401 per package.
   const token = process.env.NPM_TOKEN
   const userNpmrc = join(process.env.HOME ?? '', '.npmrc')
-  const env = { ...process.env }
   if (token) {
     // Minimal temp userconfig so the token is never written into the repo.
     const tmp = mkdtempSync(join(tmpdir(), 'k8e-release-'))
     const rc = join(tmp, '.npmrc')
     writeFileSync(rc, `//registry.npmjs.org/:_authToken=${token}\n`)
-    env.NPM_CONFIG_USERCONFIG = rc
+    SAFE_ENV.NPM_CONFIG_USERCONFIG = rc
     try {
-      const who = execFileSync('npm', ['whoami'], { encoding: 'utf8', env }).trim()
+      const who = execFileSync(NPM, ['whoami'], { encoding: 'utf8', env: SAFE_ENV }).trim()
       console.log(`\nAuthenticated as ${who} on the npm registry (NPM_TOKEN).`)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
   } else if (existsSync(userNpmrc)) {
-    const who = execFileSync('npm', ['whoami'], { encoding: 'utf8', env }).trim()
+    const who = execFileSync(NPM, ['whoami'], { encoding: 'utf8', env: SAFE_ENV }).trim()
     console.log(`\nAuthenticated as ${who} on the npm registry.`)
   } else {
     console.error('\nNot logged in to npm. Run `npm login` or set NPM_TOKEN first.')
@@ -134,7 +156,7 @@ for (const { name, data } of order) {
   console.log(`── ${data.name}@${data.version}`)
   const args = ['publish', '--no-git-checks']
   if (dryRun) args.push('--dry-run')
-  run('pnpm', args, { cwd: join(root, 'packages', name) })
+  run(PNPM, args, { cwd: join(root, 'packages', name) })
 }
 
 console.log(`\n${dryRun ? 'Dry run' : 'Release'} complete: ${order.map((p) => p.data.name).join(', ')}`)
