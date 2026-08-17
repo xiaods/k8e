@@ -99,14 +99,17 @@ function bumpVersion(packages, version) {
 /**
  * Rewrite in-workspace `workspace:*` ranges to the actual published versions
  * so the registry payload is installable (npm publish does NOT rewrite them,
- * unlike pnpm). Returns a restore callback.
+ * unlike pnpm). Operates on a JSON copy — never mutates the in-memory
+ * package data — so a later version-rollback serialization can not persist
+ * rewritten ranges. Returns a restore callback.
  */
 function rewriteWorkspaceDeps(pkg) {
   const path = join(root, 'packages', pkg.name, 'package.json')
   const original = readFileSync(path, 'utf8')
+  const rewritten = JSON.parse(original)
   let changed = false
   for (const section of ['dependencies', 'devDependencies', 'peerDependencies']) {
-    const deps = pkg.data[section]
+    const deps = rewritten[section]
     if (!deps) continue
     for (const [dep, range] of Object.entries(deps)) {
       if (dep.startsWith('@k8e-sandbox/') && (range === 'workspace:*' || range === 'workspace:^')) {
@@ -118,7 +121,7 @@ function rewriteWorkspaceDeps(pkg) {
     }
   }
   if (changed) {
-    writeFileSync(path, JSON.stringify(pkg.data, null, 2) + '\n')
+    writeFileSync(path, JSON.stringify(rewritten, null, 2) + '\n')
   }
   return () => writeFileSync(path, original)
 }
