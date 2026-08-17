@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @pi-agent-e2b-gateway | 2026-08-16 | Draft — awaiting maintainer review |
+| @pi-agent-e2b-gateway | 2026-08-17 | Accepted — implemented (merged via PR #550); EndpointSlice bridge landed as KIP-21 follow-up |
 
 ## Summary
 

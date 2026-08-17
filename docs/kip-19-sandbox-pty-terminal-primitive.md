@@ -2,10 +2,17 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-15 | Draft |
+| @xiaods | 2026-08-17 | Accepted — M1–M3 已实现（proto 7 RPC、sandboxd `pty.zig`、gateway `terminal.go`、dsh `spawnTerminal`）；M4（E2B 兼容层 `pty.*` 闭合）待落地 |
 
 > 关联 KIP：KIP-14（mTLS 动态证书）、KIP-16（沙箱架构教训 / catalog M9）、KIP-18（E2B 兼容）、**KIP-20（dsh-k8e-sandbox 插件——其 Phase 2 的 `spawnTerminal` 依赖本 KIP 先行）**。
 > 本 KIP 是 KIP-20 已决问题 #2 的展开：为 k8e sandbox 增加 PTY 原语，使 dsh 的 terminal seam（以及 E2B SDK 的 `pty.*` 面）能被完整实现。
+
+## 实现状态（2026-08-17）
+
+- **M1 proto / sandboxd / gateway**：已实现并合入 main（PR #544）。`proto/sandbox/v1/sandbox.proto` 含 7 个 `Terminal*` RPC；`sandboxd/src/pty.zig`（PTY 分配 / 会话首领启动 / 输入输出泵 / `TIOCSWINSZ` 尺寸 / 前台组 / 信号 / 会话树 TERM→KILL）+ 终端会话表；`pkg/sandboxmatrix/grpc/terminal.go`（RPC 处理器 + `TerminalStream` SSE 代理 + terminal_id 路由注册表）。
+- **M2 测试**：`sandboxd/src/pty_test.zig`、`pkg/sandboxmatrix/grpc/terminal_test.go`。
+- **M3 dsh 消费**：`@k8e-sandbox/dsh-k8e-sandbox-subprocess` 的 `spawnTerminal` 已实现（直连 gRPC `createTerminal`，随 `@k8e-sandbox/*@0.1.1` 发布）。
+- **M4 E2B 兼容层 `pty.*` 闭合**：**未实现**——`pkg/sandbox/e2b/envd.go` 仍拒绝 `pty` 请求（“PTY sessions are not supported”），待 KIP-18 兼容层接入本原语。
 
 ## 摘要
 
