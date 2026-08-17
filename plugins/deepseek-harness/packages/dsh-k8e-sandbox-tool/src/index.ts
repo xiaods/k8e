@@ -20,6 +20,15 @@ function resultSchema<const S extends ParameterSchemaSpec>(properties: S) {
   return { type: 'object', additionalProperties: false, properties } as const
 }
 
+/** Output fields shared by foreground exec and background poll results. */
+const execResultProps = {
+  stdout: { type: 'string' },
+  stderr: { type: 'string' },
+  exitCode: { type: 'number' },
+  durationMs: { type: 'number' },
+  truncated: { type: 'boolean' },
+} as const
+
 /** Pure Native rendering of one validated canonical value. */
 function renderValue(_args: unknown, value: unknown): ContentBlock[] {
   return [{ type: 'text', text: JSON.stringify(value) }]
@@ -81,11 +90,7 @@ export class K8eSandboxTools extends Service {
       },
       output: {
         schema: resultSchema({
-          stdout: { type: 'string' },
-          stderr: { type: 'string' },
-          exitCode: { type: 'number' },
-          durationMs: { type: 'number' },
-          truncated: { type: 'boolean' },
+          ...execResultProps,
         }),
         render: renderValue,
       },
@@ -135,11 +140,7 @@ export class K8eSandboxTools extends Service {
         schema: resultSchema({
           runId: { type: 'string' },
           status: { type: 'string' },
-          stdout: { type: 'string' },
-          stderr: { type: 'string' },
-          exitCode: { type: 'number' },
-          durationMs: { type: 'number' },
-          truncated: { type: 'boolean' },
+          ...execResultProps,
         }),
         render: renderValue,
       },

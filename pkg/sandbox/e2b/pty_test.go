@@ -75,17 +75,12 @@ func readOneEnvelope(br *bufio.Reader) (frame, error) {
 	return frame{flags: int(header[0]), json: payload}, nil
 }
 
-func TestEnvdPtySendInput(t *testing.T) {
-	gw := newFakeGateway()
-	s, ts := testServer(t, gw)
-	pid, sid := ptySetup(t, s, ts)
-
-	// SDK sendInput selector shape: input routed to TerminalWrite.
-	payload, _ := json.Marshal(map[string]any{
-		"process": map[string]any{"selector": map[string]any{"case": "pid", "value": pid}},
-		"input":   map[string]any{"input": map[string]any{"case": "pty", "value": base64.StdEncoding.EncodeToString([]byte("ls\r"))}},
-	})
-	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd/process.Process/SendInput", bytes.NewReader(payload))
+// ptyRequest posts a unary envd RPC with the sandbox headers and returns
+// the status code.
+func ptyRequest(t *testing.T, ts *httptest.Server, s *Server, sid, path string, body any) int {
+	t.Helper()
+	payload, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd"+path, bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	for k, v := range envdHeaders(t, s, sid) {
 		req.Header.Set(k, v)
@@ -94,10 +89,23 @@ func TestEnvdPtySendInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.StatusCode != 200 {
-		t.Fatalf("sendInput: want 200, got %d", resp.StatusCode)
+	defer resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestEnvdPtySendInput(t *testing.T) {
+	gw := newFakeGateway()
+	s, ts := testServer(t, gw)
+	pid, sid := ptySetup(t, s, ts)
+
+	// SDK sendInput selector shape: input routed to TerminalWrite.
+	code := ptyRequest(t, ts, s, sid, "/process.Process/SendInput", map[string]any{
+		"process": map[string]any{"selector": map[string]any{"case": "pid", "value": pid}},
+		"input":   map[string]any{"input": map[string]any{"case": "pty", "value": base64.StdEncoding.EncodeToString([]byte("ls\r"))}},
+	})
+	if code != 200 {
+		t.Fatalf("sendInput: want 200, got %d", code)
 	}
-	resp.Body.Close()
 	if len(gw.term.writes) != 1 {
 		t.Fatalf("expected 1 TerminalWrite, got %d", len(gw.term.writes))
 	}
@@ -112,23 +120,13 @@ func TestEnvdPtyResize(t *testing.T) {
 	pid, sid := ptySetup(t, s, ts)
 
 	// SDK resize shape: process.Process/Update with pty.size.
-	payload, _ := json.Marshal(map[string]any{
+	code := ptyRequest(t, ts, s, sid, "/process.Process/Update", map[string]any{
 		"process": map[string]any{"selector": map[string]any{"case": "pid", "value": pid}},
 		"pty":     map[string]any{"size": map[string]int{"cols": 132, "rows": 43}},
 	})
-	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd/process.Process/Update", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range envdHeaders(t, s, sid) {
-		req.Header.Set(k, v)
+	if code != 200 {
+		t.Fatalf("resize: want 200, got %d", code)
 	}
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 200 {
-		t.Fatalf("resize: want 200, got %d", resp.StatusCode)
-	}
-	resp.Body.Close()
 	if len(gw.term.resizes) != 1 {
 		t.Fatalf("expected 1 TerminalResize, got %d", len(gw.term.resizes))
 	}
@@ -144,23 +142,13 @@ func TestEnvdPtyKill(t *testing.T) {
 	pid, sid := ptySetup(t, s, ts)
 
 	// SDK pty.kill: sendSignal with numeric 9 (SIGKILL).
-	payload, _ := json.Marshal(map[string]any{
+	code := ptyRequest(t, ts, s, sid, "/process.Process/SendSignal", map[string]any{
 		"process": map[string]any{"selector": map[string]any{"case": "pid", "value": pid}},
 		"signal":  9,
 	})
-	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd/process.Process/SendSignal", bytes.NewReader(payload))
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range envdHeaders(t, s, sid) {
-		req.Header.Set(k, v)
+	if code != 200 {
+		t.Fatalf("kill: want 200, got %d", code)
 	}
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 200 {
-		t.Fatalf("kill: want 200, got %d", resp.StatusCode)
-	}
-	resp.Body.Close()
 	if len(gw.term.signals) != 1 {
 		t.Fatalf("expected 1 TerminalSignal, got %d", len(gw.term.signals))
 	}
