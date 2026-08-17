@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @pi-agent-e2b-gateway | 2026-08-16 | Design consideration — deferred (P2), pending KIP-21 PR #550 merge |
+| @pi-agent-e2b-gateway | 2026-08-17 | Accepted — implemented (merged via PR #550/#551); `e2b-gateway.yaml` now ships `discovery.k8s.io/v1 EndpointSlice` |
 
 ## Summary
 
@@ -13,12 +13,15 @@ note evaluates migrating that bridge to `discovery.k8s.io/v1 EndpointSlice`
 — the modern, non-deprecated replacement — and documents the exact design so
 the switch can be made independently of the KIP-21 loopback fix.
 
-**Decision: defer.** The KIP-21 correctness fix (loopback-proof
-`advertiseIP()`) is resource-agnostic and must land first (PR #550). The
-`v1 Endpoints` API carries no deprecation annotation in the vendored
-k8s v1.35.5-k3s1 tree, so there is no removal pressure. The migration below
-is low-risk but touches the same manifest, and doing both in one change set
-would couple a correctness fix to a resource migration.
+**Decision (updated): implemented.** The original decision deferred the
+migration until the KIP-21 correctness fix (loopback-proof `advertiseIP()`)
+landed via PR #550. Both shipped together: PR #551 (folded into #550 before
+merge) replaced the `v1 Endpoints` objects with `discovery.k8s.io/v1
+EndpointSlice` (`kubernetes.io/service-name` labels, `addressType: IPv4`,
+`%{ADVERTISE_IP}%` template), verified by the bindata check test and the
+stage tests. The `v1 Endpoints` API carries no deprecation annotation in the
+vendored k8s v1.35.5-k3s1 tree, so the migration was low-risk and removed
+coupling by landing with the correctness fix in one change set.
 
 ## Why the migration is safe and feasible
 
