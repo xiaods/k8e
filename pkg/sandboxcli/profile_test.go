@@ -6,6 +6,32 @@ import (
 	"strings"
 	"testing"
 )
+// profileTestDir returns a temp sandbox data dir isolated for the test.
+func profileTestDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+	return dir
+}
+
+// writeProfileFile seeds a profiles.yaml in an isolated test dir and returns
+// its path.
+func writeProfileFile(t *testing.T, content string) string {
+	t.Helper()
+	profileTestDir(t)
+	path, err := DefaultProfilesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 
 func TestSelectProfileName(t *testing.T) {
 	f := &ProfileFile{
@@ -199,8 +225,7 @@ func TestDefaultProfilesPath(t *testing.T) {
 }
 
 func TestSaveConnectProfileWritesDefault(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+	profileTestDir(t)
 
 	if err := SaveConnectProfile("10.0.0.1:50051"); err != nil {
 		t.Fatal(err)
@@ -231,20 +256,7 @@ func TestSaveConnectProfileWritesDefault(t *testing.T) {
 }
 
 func TestSaveConnectProfilePreservesOtherProfiles(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
-
-	// Pre-seed a manually managed profile file.
-	path, err := DefaultProfilesPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("version: 1\ncurrent_profile: prod\nprofiles:\n  prod:\n    endpoint: prod:50051\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeProfileFile(t, "version: 1\ncurrent_profile: prod\nprofiles:\n  prod:\n    endpoint: prod:50051\n")
 
 	if err := SaveConnectProfile("10.0.0.2:50051"); err != nil {
 		t.Fatal(err)
@@ -265,8 +277,7 @@ func TestSaveConnectProfilePreservesOtherProfiles(t *testing.T) {
 }
 
 func TestSaveConnectProfileLocalNoOp(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+	dir := profileTestDir(t)
 	if err := SaveConnectProfile(""); err != nil {
 		t.Fatal(err)
 	}
@@ -276,8 +287,7 @@ func TestSaveConnectProfileLocalNoOp(t *testing.T) {
 }
 
 func TestResolveConnFallsBackToConnectionConfig(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+	profileTestDir(t)
 
 	// No profiles.yaml; only the legacy config.json from an earlier connect.
 	cfg := &ConnectionConfig{Mode: "remote", Endpoint: "192.168.1.10:50051"}
@@ -294,20 +304,7 @@ func TestResolveConnFallsBackToConnectionConfig(t *testing.T) {
 }
 
 func TestSaveConnectProfilePreservesDefaultMetadata(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
-
-	path, err := DefaultProfilesPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	// Default profile already carries cert_dir/device_name (manual setup).
-	if err := os.WriteFile(path, []byte("version: 1\ncurrent_profile: default\nprofiles:\n  default:\n    endpoint: old:50051\n    cert_dir: ~/.k8e/custom-certs\n    device_name: laptop\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeProfileFile(t, "version: 1\ncurrent_profile: default\nprofiles:\n  default:\n    endpoint: old:50051\n    cert_dir: ~/.k8e/custom-certs\n    device_name: laptop\n")
 
 	if err := SaveConnectProfile("10.0.0.3:50051"); err != nil {
 		t.Fatal(err)
@@ -329,8 +326,7 @@ func TestSaveConnectProfilePreservesDefaultMetadata(t *testing.T) {
 }
 
 func TestResolveConnLocalProfileNotRedirected(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+	profileTestDir(t)
 
 	// config.json points at a remote gateway (stale connect).
 	cfg := &ConnectionConfig{Mode: "remote", Endpoint: "192.168.1.10:50051"}
@@ -338,16 +334,7 @@ func TestResolveConnLocalProfileNotRedirected(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An explicitly selected local profile (no endpoint) exists.
-	path, err := DefaultProfilesPath()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("version: 1\ncurrent_profile: local\nprofiles:\n  local:\n    device_name: devbox\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeProfileFile(t, "version: 1\ncurrent_profile: local\nprofiles:\n  local:\n    device_name: devbox\n")
 
 	resolved, err := ResolveConn("", "", "", "")
 	if err != nil {

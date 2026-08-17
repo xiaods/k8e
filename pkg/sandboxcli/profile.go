@@ -224,8 +224,10 @@ func expandHome(path string) string {
 	}
 	return path
 }
-// SaveProfileFile writes a ProfileFile to the given path with mode 0600,
-// creating the parent directory if needed.
+// SaveProfileFile writes a ProfileFile to the given path with mode 0600 via
+// an atomic temp-file + rename, creating the parent directory if needed. An
+// interrupted or concurrent write therefore never leaves a truncated
+// profiles.yaml nor silently drops another process's update (Greptile).
 func SaveProfileFile(file *ProfileFile, path string) error {
 	if file.Profiles == nil {
 		file.Profiles = map[string]Profile{}
@@ -234,11 +236,32 @@ func SaveProfileFile(file *ProfileFile, path string) error {
 	if err != nil {
 		return fmt.Errorf("marshal profiles: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("create profiles dir: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("write profiles: %w", err)
+	tmp, err := os.CreateTemp(dir, ".profiles-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp profiles: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("chmod temp profiles: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp profiles: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp profiles: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp profiles: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replace profiles: %w", err)
 	}
 	return nil
 }
