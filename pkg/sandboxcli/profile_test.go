@@ -6,6 +6,32 @@ import (
 	"strings"
 	"testing"
 )
+// profileTestDir returns a temp sandbox data dir isolated for the test.
+func profileTestDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+	return dir
+}
+
+// writeProfileFile seeds a profiles.yaml in an isolated test dir and returns
+// its path.
+func writeProfileFile(t *testing.T, content string) string {
+	t.Helper()
+	profileTestDir(t)
+	path, err := DefaultProfilesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 
 func TestSelectProfileName(t *testing.T) {
 	f := &ProfileFile{
@@ -195,5 +221,129 @@ func TestDefaultProfilesPath(t *testing.T) {
 	want := filepath.Join(home, ".k8e", "sandbox", profilesFileName)
 	if p != want {
 		t.Fatalf("got %q want %q", p, want)
+	}
+}
+
+func TestSaveConnectProfileWritesDefault(t *testing.T) {
+	profileTestDir(t)
+
+	if err := SaveConnectProfile("10.0.0.1:50051"); err != nil {
+		t.Fatal(err)
+	}
+	path, err := DefaultProfilesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "10.0.0.1:50051") {
+		t.Fatalf("profiles.yaml missing endpoint:\n%s", data)
+	}
+
+	// A later ResolveConn (no flags/env) must pick up the endpoint.
+	resolved, err := ResolveConn("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Endpoint != "10.0.0.1:50051" {
+		t.Fatalf("ResolveConn endpoint = %q, want 10.0.0.1:50051", resolved.Endpoint)
+	}
+	if resolved.Profile != "default" {
+		t.Fatalf("ResolveConn profile = %q, want default", resolved.Profile)
+	}
+}
+
+func TestSaveConnectProfilePreservesOtherProfiles(t *testing.T) {
+	writeProfileFile(t, "version: 1\ncurrent_profile: prod\nprofiles:\n  prod:\n    endpoint: prod:50051\n")
+
+	if err := SaveConnectProfile("10.0.0.2:50051"); err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := LoadProfileFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Profiles["prod"].Endpoint != "prod:50051" {
+		t.Fatalf("prod profile overwritten: %+v", file.Profiles["prod"])
+	}
+	if file.Profiles["default"].Endpoint != "10.0.0.2:50051" {
+		t.Fatalf("default profile = %+v", file.Profiles["default"])
+	}
+	if file.CurrentProfile != "default" {
+		t.Fatalf("current_profile = %q, want default", file.CurrentProfile)
+	}
+}
+
+func TestSaveConnectProfileLocalNoOp(t *testing.T) {
+	dir := profileTestDir(t)
+	if err := SaveConnectProfile(""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "profiles.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("local connect must not write profiles.yaml (err=%v)", err)
+	}
+}
+
+func TestResolveConnFallsBackToConnectionConfig(t *testing.T) {
+	profileTestDir(t)
+
+	// No profiles.yaml; only the legacy config.json from an earlier connect.
+	cfg := &ConnectionConfig{Mode: "remote", Endpoint: "192.168.1.10:50051"}
+	if err := SaveConnectionConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveConn("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Endpoint != "192.168.1.10:50051" {
+		t.Fatalf("ResolveConn endpoint = %q, want config.json fallback", resolved.Endpoint)
+	}
+}
+
+func TestSaveConnectProfilePreservesDefaultMetadata(t *testing.T) {
+	writeProfileFile(t, "version: 1\ncurrent_profile: default\nprofiles:\n  default:\n    endpoint: old:50051\n    cert_dir: ~/.k8e/custom-certs\n    device_name: laptop\n")
+
+	if err := SaveConnectProfile("10.0.0.3:50051"); err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := LoadProfileFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := file.Profiles["default"]
+	if d.Endpoint != "10.0.0.3:50051" {
+		t.Fatalf("endpoint = %q", d.Endpoint)
+	}
+	if d.CertDir != "~/.k8e/custom-certs" {
+		t.Fatalf("cert_dir dropped: %q", d.CertDir)
+	}
+	if d.DeviceName != "laptop" {
+		t.Fatalf("device_name dropped: %q", d.DeviceName)
+	}
+}
+
+func TestResolveConnLocalProfileNotRedirected(t *testing.T) {
+	profileTestDir(t)
+
+	// config.json points at a remote gateway (stale connect).
+	cfg := &ConnectionConfig{Mode: "remote", Endpoint: "192.168.1.10:50051"}
+	if err := SaveConnectionConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// An explicitly selected local profile (no endpoint) exists.
+	writeProfileFile(t, "version: 1\ncurrent_profile: local\nprofiles:\n  local:\n    device_name: devbox\n")
+
+	resolved, err := ResolveConn("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Profile != "local" {
+		t.Fatalf("profile = %q, want local", resolved.Profile)
+	}
+	if resolved.Endpoint != "" {
+		t.Fatalf("local profile must stay endpoint-less, got %q (redirected to stale remote)", resolved.Endpoint)
 	}
 }

@@ -157,7 +157,10 @@ func ResolveConn(flagEndpoint, flagAPIKey, flagProfile, flagDevice string) (*Res
 	}
 	name := SelectProfileName(file, flagProfile)
 	if name == "" || file == nil {
-		return out, nil
+		// No profile selected: a gateway connected before profiles.yaml
+		// existed (config.json) may still supply the endpoint. Safe here —
+		// there is no explicitly selected local profile to redirect.
+		return resolveConnFallback(out), nil
 	}
 	prof, ok := file.Profiles[name]
 	if !ok {
@@ -173,7 +176,24 @@ func ResolveConn(flagEndpoint, flagAPIKey, flagProfile, flagDevice string) (*Res
 	if out.DeviceName == "" {
 		out.DeviceName = strings.TrimSpace(prof.DeviceName)
 	}
+	// An explicitly selected profile is authoritative: an endpoint-less
+	// (local) profile must NOT be redirected to a stale remote gateway
+	// (Greptile) — no config.json fallback here.
 	return out, nil
+}
+
+// resolveConnFallback fills the endpoint from the connection config written
+// by `connect` (config.json) when neither flags, env, nor a profile supplied
+// one — so a gateway connected before profiles.yaml existed (or with a
+// missing default profile) still works without repeating --endpoint.
+func resolveConnFallback(out *ResolvedConn) *ResolvedConn {
+	if strings.TrimSpace(out.Endpoint) != "" {
+		return out
+	}
+	if cfg, err := LoadConnectionConfig(); err == nil && cfg != nil {
+		out.Endpoint = strings.TrimSpace(cfg.Endpoint)
+	}
+	return out
 }
 
 // ApplyResolvedConn exports cert_dir / device_name into process env so
@@ -203,4 +223,83 @@ func expandHome(path string) string {
 		}
 	}
 	return path
+}
+// SaveProfileFile writes a ProfileFile to the given path with mode 0600 via
+// an atomic temp-file + rename, creating the parent directory if needed. An
+// interrupted or concurrent write therefore never leaves a truncated
+// profiles.yaml nor silently drops another process's update (Greptile).
+func SaveProfileFile(file *ProfileFile, path string) error {
+	if file.Profiles == nil {
+		file.Profiles = map[string]Profile{}
+	}
+	data, err := yaml.Marshal(file)
+	if err != nil {
+		return fmt.Errorf("marshal profiles: %w", err)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create profiles dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".profiles-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp profiles: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("chmod temp profiles: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp profiles: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp profiles: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp profiles: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replace profiles: %w", err)
+	}
+	return nil
+}
+
+// SaveConnectProfile persists the just-connected gateway as the active
+// "default" profile (KIP-17) so later CLI invocations dial the same gateway
+// without repeating --endpoint. Local mode (empty endpoint) is left alone:
+// the local auto-discovery needs no endpoint. Existing manually managed
+// profiles are preserved; only the default profile and current selection
+// are updated.
+func SaveConnectProfile(endpoint string) error {
+	if strings.TrimSpace(endpoint) == "" {
+		return nil
+	}
+	file, path, err := LoadProfileFile()
+	if err != nil {
+		return err
+	}
+	if file == nil {
+		file = &ProfileFile{Version: 1, Profiles: map[string]Profile{}}
+	}
+	if path == "" {
+		path, err = DefaultProfilesPath()
+		if err != nil {
+			return err
+		}
+	}
+	if file.Profiles == nil {
+		file.Profiles = map[string]Profile{}
+	}
+	// Preserve the existing default profile's cert/device settings; only the
+	// endpoint and the active selection change (Greptile).
+	existing := file.Profiles["default"]
+	file.Profiles["default"] = Profile{
+		Endpoint:   strings.TrimSpace(endpoint),
+		CertDir:    existing.CertDir,
+		DeviceName: existing.DeviceName,
+	}
+	file.CurrentProfile = "default"
+	return SaveProfileFile(file, path)
 }
