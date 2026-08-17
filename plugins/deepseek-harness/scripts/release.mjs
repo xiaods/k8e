@@ -223,13 +223,17 @@ try {
       continue
     }
     // npm publish does not rewrite workspace:* ranges; swap them for the
-    // real published versions just for this publish, then restore.
+    // real published versions just for this publish, then restore in a
+    // finally so a failed npm command never leaves rewritten ranges behind.
     const restoreDeps = rewriteWorkspaceDeps({ name, data })
-    console.log(`── ${data.name}@${data.version}`)
-    const args = dryRun ? ['pack', '--dry-run'] : ['publish', '--no-git-checks']
-    if (!dryRun && otpArg) args.push('--otp', otpArg)
-    run(PUBLISH_BIN, args, { cwd: join(root, 'packages', name) })
-    restoreDeps()
+    try {
+      console.log(`── ${data.name}@${data.version}`)
+      const args = dryRun ? ['pack', '--dry-run'] : ['publish', '--no-git-checks']
+      if (!dryRun && otpArg) args.push('--otp', otpArg)
+      run(PUBLISH_BIN, args, { cwd: join(root, 'packages', name) })
+    } finally {
+      restoreDeps()
+    }
     published.push(data.name)
   }
 } catch (err) {
