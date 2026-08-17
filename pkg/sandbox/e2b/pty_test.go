@@ -156,3 +156,66 @@ func TestEnvdPtyKill(t *testing.T) {
 		t.Fatalf("signal = %v, want KILL", gw.term.signals[0].Signal)
 	}
 }
+
+// TestEnvdPtyOwnershipEnforced verifies a pty RPC from a different sandbox
+// credential cannot drive the terminal (Greptile security review).
+func TestEnvdPtyOwnershipEnforced(t *testing.T) {
+	gw := newFakeGateway()
+	s, ts := testServer(t, gw)
+	pid, _ := ptySetup(t, s, ts)
+	otherID := createSandboxID(t, ts) // different sandbox
+
+	code := ptyRequest(t, ts, s, otherID, "/process.Process/SendInput", map[string]any{
+		"process": map[string]any{"selector": map[string]any{"case": "pid", "value": pid}},
+		"input":   map[string]any{"input": map[string]any{"case": "pty", "value": base64.StdEncoding.EncodeToString([]byte("ls\r"))}},
+	})
+	if code != 404 {
+		t.Fatalf("cross-sandbox sendInput: want 404, got %d", code)
+	}
+	if len(gw.term.writes) != 0 {
+		t.Fatalf("cross-sandbox sendInput must not reach TerminalWrite, got %d writes", len(gw.term.writes))
+	}
+
+	code = ptyRequest(t, ts, s, otherID, "/process.Process/Update", map[string]any{
+		"process": map[string]any{"selector": map[string]any{"case": "pid", "value": pid}},
+		"pty":     map[string]any{"size": map[string]int{"cols": 100, "rows": 40}},
+	})
+	if code != 404 && code != 400 {
+		t.Fatalf("cross-sandbox resize: want 4xx, got %d", code)
+	}
+	if len(gw.term.resizes) != 0 {
+		t.Fatalf("cross-sandbox resize must not reach TerminalResize, got %d", len(gw.term.resizes))
+	}
+}
+
+// TestEnvdPtyDestroyedOnExit verifies the backend terminal is released after
+// the pty.create stream completes (Greptile security review).
+func TestEnvdPtyDestroyedOnExit(t *testing.T) {
+	gw := newFakeGateway()
+	s, ts := testServer(t, gw)
+	id := createSandboxID(t, ts)
+
+	msg := map[string]any{
+		"process": map[string]any{"cmd": "/bin/bash", "args": []string{"-i", "-l"}},
+		"pty":     map[string]any{"size": map[string]int{"cols": 80, "rows": 24}},
+	}
+	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd/process.Process/Start", bytes.NewReader(envelope(FlagMessage, msg)))
+	req.Header.Set("Content-Type", "application/connect+json")
+	for k, v := range envdHeaders(t, s, id) {
+		req.Header.Set(k, v)
+	}
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = readBody(t, resp)
+
+	if len(gw.term.created) != 1 {
+		t.Fatalf("expected 1 CreateTerminal, got %d", len(gw.term.created))
+	}
+	// fakeGateway derives the terminal id from the session + counter.
+	want := id + "/t1"
+	if len(gw.term.destroyed) != 1 || gw.term.destroyed[0] != want {
+		t.Fatalf("expected TerminalDestroy(%q), got %v", want, gw.term.destroyed)
+	}
+}

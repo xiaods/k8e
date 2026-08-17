@@ -209,6 +209,11 @@ func (s *Server) runPtyStart(w http.ResponseWriter, r *http.Request, sandboxID s
 			s.processes.Broadcast(rec.PID, ChannelStdout, data)
 		})
 	})
+	// Release the backend terminal on every completion and failure path
+	// (idempotent; a normally exited session finds an empty group set) so a
+	// stream error or abandoned pty.create cannot leak a bounded sandboxd
+	// terminal entry (Greptile security review).
+	s.destroyPty(r.Context(), terminalID)
 	s.processes.End(rec.PID, ProcessEnd{ExitCode: int(exitCode)})
 	s.dropPty(rec.PID)
 }
@@ -262,7 +267,7 @@ func (s *Server) drainTerminalStream(ctx context.Context, terminalID string, onD
 // runPtyStream re-opens a TerminalStream for a living PTY and streams its
 // frames to a hijacked Connect response (used by pty.connect reconnects).
 func (s *Server) runPtyStream(w http.ResponseWriter, r *http.Request, sandboxID string, pid int) {
-	row, ok := s.ptyFor(pid)
+	row, ok := s.ptyForSandbox(pid, sandboxID)
 	if !ok {
 		writeEnvdStreamError(w, connectError("not_found", fmt.Sprintf("process not found: %d", pid)))
 		return
@@ -529,8 +534,10 @@ func (s *Server) handleProcessSendInput(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// PTY sessions route input to the terminal (KIP-19 M4); everything else
-	// goes through sandboxd's stdin pipe.
-	if row, isPty := s.ptyFor(pid); isPty {
+	// goes through sandboxd's stdin pipe. The terminal must belong to the
+	// authenticated sandbox (Greptile security review).
+	sandboxID := sandboxIDOf(r)
+	if row, isPty := s.ptyForSandbox(pid, sandboxID); isPty {
 		if _, err := s.gw.TerminalWrite(r.Context(), &pb.TerminalWriteRequest{TerminalId: row.terminalID, Data: decoded}); err != nil {
 			s.writeEnvdError(w, connectError("internal", "terminal write failed: "+err.Error()))
 			return
@@ -539,7 +546,6 @@ func (s *Server) handleProcessSendInput(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	sandboxID := sandboxIDOf(r)
 	guestPID, e2e := s.requireGuestPID(sandboxID, pid)
 	if e2e != nil {
 		s.writeEnvdError(w, e2e)
@@ -604,8 +610,10 @@ func (s *Server) handleProcessSendSignal(w http.ResponseWriter, r *http.Request)
 	}
 
 	// PTY sessions signal the terminal session (KIP-19 M4); pty.kill uses
-	// SIGKILL (9) against the whole session tree.
-	if row, isPty := s.ptyFor(pid); isPty {
+	// SIGKILL (9) against the whole session tree. The terminal must belong to
+	// the authenticated sandbox (Greptile security review).
+	sandboxID := sandboxIDOf(r)
+	if row, isPty := s.ptyForSandbox(pid, sandboxID); isPty {
 		if _, err := s.gw.TerminalSignal(r.Context(), &pb.TerminalSignalRequest{TerminalId: row.terminalID, Signal: sig}); err != nil {
 			s.writeEnvdError(w, connectError("internal", "terminal signal failed: "+err.Error()))
 			return
@@ -614,7 +622,6 @@ func (s *Server) handleProcessSendSignal(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	sandboxID := sandboxIDOf(r)
 	// The pipe-based /exec/signal path supports KILL/TERM only; SIGINT is
 	// reserved for PTY sessions (the controlling-terminal signal path).
 	if sig == pb.TerminalSignal_TERMINAL_SIGNAL_INT {
@@ -703,9 +710,9 @@ func (s *Server) handleProcessUpdate(w http.ResponseWriter, r *http.Request) {
 		s.writeEnvdError(w, connectError("invalid_argument", "missing process pid"))
 		return
 	}
-	row, isPty := s.ptyFor(pid)
+	row, isPty := s.ptyForSandbox(pid, sandboxIDOf(r))
 	if !isPty {
-		s.writeEnvdError(w, connectError("invalid_argument", "resize requires a PTY session"))
+		s.writeEnvdError(w, connectError("invalid_argument", "resize requires a PTY session in this sandbox"))
 		return
 	}
 	rows, cols := resizeSize(body)
