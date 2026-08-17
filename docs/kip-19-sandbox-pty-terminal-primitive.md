@@ -15,7 +15,7 @@
 
 它一次性服务两个消费者：
 
-1. **dsh 的 `spawnTerminal`**（`SubprocessRuntime.spawnTerminal` → `SubprocessTerminalHandle`），让 KIP-20 的 `@k8e/dsh-k8e-sandbox-subprocess` 在 Phase 2 真正实现 terminal seam，进而让 dsh 的 `terminal-bash`（持久终端）跑进 gVisor/Kata/Firecracker pod。
+1. **dsh 的 `spawnTerminal`**（`SubprocessRuntime.spawnTerminal` → `SubprocessTerminalHandle`），让 KIP-20 的 `@k8e-sandbox/dsh-k8e-sandbox-subprocess` 在 Phase 2 真正实现 terminal seam，进而让 dsh 的 `terminal-bash`（持久终端）跑进 gVisor/Kata/Firecracker pod。
 2. **E2B SDK 的 `pty.create` / `pty.sendInput` / `pty.resize` / `pty.kill`**（KIP-18 E2B 兼容面当前缺的一角），与已有的 `/exec/stream` + `/exec/processes` + `/exec/attach` 补齐 E2B 进程控制面。
 
 ## 背景与动机
@@ -228,7 +228,7 @@ terminal_id → {
 
 ## 与 dsh terminal seam 的映射
 
-`@k8e/dsh-k8e-sandbox-subprocess`（KIP-20 Phase 2）实现 `SubprocessRuntime.spawnTerminal`，映射如下：
+`@k8e-sandbox/dsh-k8e-sandbox-subprocess`（KIP-20 Phase 2）实现 `SubprocessRuntime.spawnTerminal`，映射如下：
 
 | dsh `SubprocessTerminalHandle` | k8e RPC |
 |---|---|
@@ -287,7 +287,7 @@ E2B 兼容层（KIP-18）用 `pid` 寻址，而本原语只暴露 canonical `ter
 - [ ] `TerminalDestroy`：TERM→grace→KILL 升级，返回时 `ps` 证明该会话无存活进程组；幂等，重复 destroy 干净 not-found。
 - [ ] `TerminalStream` 断线重连回放环形缓冲；`truncated` 在缓冲溢出时置位；终帧 exit_code/signal 正确。
 - [ ] 网关：terminal_id 路由注册表在 create/destroy/session 销毁时正确增删；`TerminalStream` 走 mTLS 且被未认证调用拒绝。
-- [ ] dsh 快照：`@k8e/dsh-k8e-sandbox-subprocess` 的 `spawnTerminal` 在 mock/真实网关上演 `bash` 终端，验证 write/read/Ctrl-C/resize/destroy 全链路。
+- [ ] dsh 快照：`@k8e-sandbox/dsh-k8e-sandbox-subprocess` 的 `spawnTerminal` 在 mock/真实网关上演 `bash` 终端，验证 write/read/Ctrl-C/resize/destroy 全链路。
 - [ ] E2B 兼容：`pty.create/sendInput/resize/kill` 经兼容层闭合（KIP-18）。
 - [ ] 文档：本 KIP + proto 注释 + `SKILL.md`/README 一处更新说明 PTY 面。
 
