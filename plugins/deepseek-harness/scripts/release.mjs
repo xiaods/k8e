@@ -94,13 +94,17 @@ function bumpVersion(packages, version) {
   }
 }
 
-/** Query the npm registry for the latest published version of a package. */
-function registryVersion(pkgName) {
+/**
+ * True when the exact version already exists on the registry (any dist-tag).
+ * Checking the precise version — not `@latest` — makes partial-release retries
+ * skip immutable prereleases/superseded versions too (Greptile).
+ */
+function registryHasVersion(pkgName, version) {
   try {
-    const out = execFileSync(NPM, ['view', `${pkgName}@latest`, 'version'], { encoding: 'utf8', env: SAFE_ENV }).trim()
-    return out.split('\n').pop()?.trim() ?? null
+    const out = execFileSync(NPM, ['view', `${pkgName}@${version}`, 'version'], { encoding: 'utf8', env: SAFE_ENV }).trim()
+    return out.split('\n').pop()?.trim() === version
   } catch {
-    return null // not published yet (E404) or offline
+    return false // E404 — not published yet
   }
 }
 
@@ -184,7 +188,7 @@ try {
     // Resume support: a package whose version is already on the registry is
     // skipped instead of colliding with the immutable prior publication
     // (partial-failure retry after a rollback).
-    if (!dryRun && registryVersion(data.name) === data.version) {
+    if (!dryRun && registryHasVersion(data.name, data.version)) {
       console.log(`── ${data.name}@${data.version} already published, skipping`)
       published.push(data.name)
       continue
