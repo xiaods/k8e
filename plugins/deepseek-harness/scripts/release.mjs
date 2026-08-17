@@ -4,14 +4,16 @@
  *
  * Publishes the seven workspace packages to npmjs.com in dependency
  * topological order (a package is published only after every package it
- * depends on). `pnpm publish` rewrites `workspace:*` dependency ranges to the
- * actual published versions, so consumers install real published packages.
+ * depends on). Uses `npm publish` (pnpm 11.x ignores `--otp` and fails with
+ * ERR_PNPM_OTP_NON_INTERACTIVE under 2FA); npm rewrites the in-workspace
+ * `workspace:*` ranges to the actual published versions, so consumers
+ * install real published packages.
  *
  * Usage:
  *   node scripts/release.mjs [--dry-run] [--version <v>]
  *
- *   --dry-run   Build each package and verify the publish payload without
- *               contacting the registry (pnpm publish --dry-run).
+ *   --dry-run   Verify the publish payload without contacting the registry
+ *               (npm publish --dry-run).
  *   --version   Bump every package to <v> (e.g. 0.2.0) before publishing;
  *               without it the current package.json versions are used.
  *
@@ -95,17 +97,33 @@ function bumpVersion(packages, version) {
 }
 
 /**
- * True when the exact version already exists on the registry (any dist-tag).
- * Checking the precise version — not `@latest` — makes partial-release retries
- * skip immutable prereleases/superseded versions too (Greptile).
+ * Rewrite in-workspace `workspace:*` ranges to the actual published versions
+ * so the registry payload is installable (npm publish does NOT rewrite them,
+ * unlike pnpm). Operates on a JSON copy — never mutates the in-memory
+ * package data — so a later version-rollback serialization can not persist
+ * rewritten ranges. Returns a restore callback.
  */
-function registryHasVersion(pkgName, version) {
-  try {
-    const out = execFileSync(NPM, ['view', `${pkgName}@${version}`, 'version'], { encoding: 'utf8', env: SAFE_ENV }).trim()
-    return out.split('\n').pop()?.trim() === version
-  } catch {
-    return false // E404 — not published yet
+function rewriteWorkspaceDeps(pkg) {
+  const path = join(root, 'packages', pkg.name, 'package.json')
+  const original = readFileSync(path, 'utf8')
+  const rewritten = JSON.parse(original)
+  let changed = false
+  for (const section of ['dependencies', 'devDependencies', 'peerDependencies']) {
+    const deps = rewritten[section]
+    if (!deps) continue
+    for (const [dep, range] of Object.entries(deps)) {
+      if (dep.startsWith('@k8e-sandbox/') && (range === 'workspace:*' || range === 'workspace:^')) {
+        const target = packages.find((q) => q.data.name === dep)
+        if (!target) throw new Error(`workspace dep ${dep} of ${pkg.data.name} not found`)
+        deps[dep] = target.data.version
+        changed = true
+      }
+    }
   }
+  if (changed) {
+    writeFileSync(path, JSON.stringify(rewritten, null, 2) + '\n')
+  }
+  return () => writeFileSync(path, original)
 }
 
 function run(cmd, args, opts = {}) {
@@ -129,12 +147,26 @@ function resolveBin(name) {
 }
 
 const NPM = resolveBin('npm')
-const PNPM = resolveBin('pnpm')
+const PUBLISH_BIN = NPM // npm publish: pnpm 11.x --otp is ignored under 2FA (ERR_PNPM_OTP_NON_INTERACTIVE)
 const BIN_DIR = dirname(NPM)
 const SAFE_PATH = [BIN_DIR, '/usr/local/bin', '/usr/bin', '/bin']
   .filter((d) => existsSync(d))
   .join(delimiter)
 const SAFE_ENV = { ...process.env, PATH: SAFE_PATH }
+
+/**
+ * True when the exact version already exists on the registry (any dist-tag).
+ * Checking the precise version — not `@latest` — makes partial-release retries
+ * skip immutable prereleases/superseded versions too (Greptile).
+ */
+function registryHasVersion(pkgName, version) {
+  try {
+    const out = execFileSync(NPM, ['view', `${pkgName}@${version}`, 'version'], { encoding: 'utf8', env: SAFE_ENV }).trim()
+    return out.split('\n').pop()?.trim() === version
+  } catch {
+    return false // E404 — not published yet
+  }
+}
 
 const packages = loadPackages()
 const order = topoSort(packages)
@@ -193,11 +225,18 @@ try {
       published.push(data.name)
       continue
     }
-    console.log(`── ${data.name}@${data.version}`)
-    const args = ['publish', '--no-git-checks']
-    if (dryRun) args.push('--dry-run')
-    if (otpArg) args.push('--otp', otpArg)
-    run(PNPM, args, { cwd: join(root, 'packages', name) })
+    // npm publish does not rewrite workspace:* ranges; swap them for the
+    // real published versions just for this publish, then restore in a
+    // finally so a failed npm command never leaves rewritten ranges behind.
+    const restoreDeps = rewriteWorkspaceDeps({ name, data })
+    try {
+      console.log(`── ${data.name}@${data.version}`)
+      const args = dryRun ? ['pack', '--dry-run'] : ['publish', '--no-git-checks']
+      if (!dryRun && otpArg) args.push('--otp', otpArg)
+      run(PUBLISH_BIN, args, { cwd: join(root, 'packages', name) })
+    } finally {
+      restoreDeps()
+    }
     published.push(data.name)
   }
 } catch (err) {
