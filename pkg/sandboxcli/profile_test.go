@@ -197,3 +197,98 @@ func TestDefaultProfilesPath(t *testing.T) {
 		t.Fatalf("got %q want %q", p, want)
 	}
 }
+
+func TestSaveConnectProfileWritesDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+
+	if err := SaveConnectProfile("10.0.0.1:50051"); err != nil {
+		t.Fatal(err)
+	}
+	path, err := DefaultProfilesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "10.0.0.1:50051") {
+		t.Fatalf("profiles.yaml missing endpoint:\n%s", data)
+	}
+
+	// A later ResolveConn (no flags/env) must pick up the endpoint.
+	resolved, err := ResolveConn("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Endpoint != "10.0.0.1:50051" {
+		t.Fatalf("ResolveConn endpoint = %q, want 10.0.0.1:50051", resolved.Endpoint)
+	}
+	if resolved.Profile != "default" {
+		t.Fatalf("ResolveConn profile = %q, want default", resolved.Profile)
+	}
+}
+
+func TestSaveConnectProfilePreservesOtherProfiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+
+	// Pre-seed a manually managed profile file.
+	path, err := DefaultProfilesPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("version: 1\ncurrent_profile: prod\nprofiles:\n  prod:\n    endpoint: prod:50051\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SaveConnectProfile("10.0.0.2:50051"); err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := LoadProfileFile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Profiles["prod"].Endpoint != "prod:50051" {
+		t.Fatalf("prod profile overwritten: %+v", file.Profiles["prod"])
+	}
+	if file.Profiles["default"].Endpoint != "10.0.0.2:50051" {
+		t.Fatalf("default profile = %+v", file.Profiles["default"])
+	}
+	if file.CurrentProfile != "default" {
+		t.Fatalf("current_profile = %q, want default", file.CurrentProfile)
+	}
+}
+
+func TestSaveConnectProfileLocalNoOp(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+	if err := SaveConnectProfile(""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "profiles.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("local connect must not write profiles.yaml (err=%v)", err)
+	}
+}
+
+func TestResolveConnFallsBackToConnectionConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", dir)
+
+	// No profiles.yaml; only the legacy config.json from an earlier connect.
+	cfg := &ConnectionConfig{Mode: "remote", Endpoint: "192.168.1.10:50051"}
+	if err := SaveConnectionConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveConn("", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Endpoint != "192.168.1.10:50051" {
+		t.Fatalf("ResolveConn endpoint = %q, want config.json fallback", resolved.Endpoint)
+	}
+}

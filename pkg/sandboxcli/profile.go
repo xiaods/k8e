@@ -157,7 +157,7 @@ func ResolveConn(flagEndpoint, flagAPIKey, flagProfile, flagDevice string) (*Res
 	}
 	name := SelectProfileName(file, flagProfile)
 	if name == "" || file == nil {
-		return out, nil
+		return resolveConnFallback(out), nil
 	}
 	prof, ok := file.Profiles[name]
 	if !ok {
@@ -173,7 +173,21 @@ func ResolveConn(flagEndpoint, flagAPIKey, flagProfile, flagDevice string) (*Res
 	if out.DeviceName == "" {
 		out.DeviceName = strings.TrimSpace(prof.DeviceName)
 	}
-	return out, nil
+	return resolveConnFallback(out), nil
+}
+
+// resolveConnFallback fills the endpoint from the connection config written
+// by `connect` (config.json) when neither flags, env, nor a profile supplied
+// one — so a gateway connected before profiles.yaml existed (or with a
+// missing default profile) still works without repeating --endpoint.
+func resolveConnFallback(out *ResolvedConn) *ResolvedConn {
+	if strings.TrimSpace(out.Endpoint) != "" {
+		return out
+	}
+	if cfg, err := LoadConnectionConfig(); err == nil && cfg != nil {
+		out.Endpoint = strings.TrimSpace(cfg.Endpoint)
+	}
+	return out
 }
 
 // ApplyResolvedConn exports cert_dir / device_name into process env so
@@ -203,4 +217,53 @@ func expandHome(path string) string {
 		}
 	}
 	return path
+}
+// SaveProfileFile writes a ProfileFile to the given path with mode 0600,
+// creating the parent directory if needed.
+func SaveProfileFile(file *ProfileFile, path string) error {
+	if file.Profiles == nil {
+		file.Profiles = map[string]Profile{}
+	}
+	data, err := yaml.Marshal(file)
+	if err != nil {
+		return fmt.Errorf("marshal profiles: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return fmt.Errorf("create profiles dir: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("write profiles: %w", err)
+	}
+	return nil
+}
+
+// SaveConnectProfile persists the just-connected gateway as the active
+// "default" profile (KIP-17) so later CLI invocations dial the same gateway
+// without repeating --endpoint. Local mode (empty endpoint) is left alone:
+// the local auto-discovery needs no endpoint. Existing manually managed
+// profiles are preserved; only the default profile and current selection
+// are updated.
+func SaveConnectProfile(endpoint string) error {
+	if strings.TrimSpace(endpoint) == "" {
+		return nil
+	}
+	file, path, err := LoadProfileFile()
+	if err != nil {
+		return err
+	}
+	if file == nil {
+		file = &ProfileFile{Version: 1, Profiles: map[string]Profile{}}
+	}
+	if path == "" {
+		path, err = DefaultProfilesPath()
+		if err != nil {
+			return err
+		}
+	}
+	if file.Profiles == nil {
+		file.Profiles = map[string]Profile{}
+	}
+	file.Profiles["default"] = Profile{Endpoint: strings.TrimSpace(endpoint)}
+	file.CurrentProfile = "default"
+	return SaveProfileFile(file, path)
 }

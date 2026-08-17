@@ -104,6 +104,12 @@ func connectAction(ctx *cli.Context) error {
 	if err := SaveConnectionConfig(cfg); err != nil {
 		return printErrorExit("save connection config: "+err.Error(), 1)
 	}
+	// Persist the gateway as the active profile (KIP-17) so later CLI
+	// invocations dial it without repeating --endpoint. Non-fatal: a
+	// profiles.yaml write failure degrades to the config.json fallback.
+	if err := SaveConnectProfile(cfgEndpoint); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠ save default profile: %v\n", err)
+	}
 
 	printConnectSuccess(mode, cfgEndpoint, cliPath, installedAgents, installResults)
 	return nil
@@ -251,7 +257,7 @@ func printConnectSuccess(mode, endpoint, cliPath string, agents []string, result
 	fmt.Fprintf(os.Stderr, "✓ Connected to K8E sandbox (%s)\n", mode)
 	fmt.Fprintf(os.Stderr, "  Endpoint: %s\n", ep)
 	fmt.Fprintf(os.Stderr, "  Config:   ~/.k8e/sandbox/config.json (last connect)\n")
-	fmt.Fprintf(os.Stderr, "  Profiles: ~/.k8e/sandbox/profiles.yaml (CLI only; server uses /etc/k8e/config.yaml)\n")
+	fmt.Fprintf(os.Stderr, "  Profiles: ~/.k8e/sandbox/profiles.yaml — default profile set (later CLI calls need no --endpoint)\n")
 	if mode == "remote" {
 		fmt.Fprintf(os.Stderr, "  Creds:    ~/.k8e/sandbox/{ca.crt,client.crt,client.key} (or profile cert_dir)\n")
 	}
