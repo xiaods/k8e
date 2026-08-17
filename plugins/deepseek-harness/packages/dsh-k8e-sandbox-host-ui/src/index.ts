@@ -4,7 +4,7 @@
  * (`/k8e-sandbox/bundle/<name>.js`), and a `/k8e-sandbox/ws/terminal`
  * WebSocket that bridges the sandbox's remote PTY (KIP-19 spawnTerminal) to a
  * browser terminal. The config page itself lives in the client half.
- * @module @k8e/dsh-k8e-sandbox-host-ui
+ * @module @k8e-sandbox/dsh-k8e-sandbox-host-ui
  */
 
 import { readFile } from 'node:fs/promises'
@@ -49,7 +49,7 @@ function parseRequestUrl(req: SandboxHttpRequest): { pathname: string; searchPar
  */
 const require_ = createRequire(import.meta.url)
 const CHUNK_RESOLVER: Record<string, string> = {
-  terminal: '@k8e/dsh-k8e-sandbox-client-ui/client-terminal',
+  terminal: '@k8e-sandbox/dsh-k8e-sandbox-client-ui/client-terminal',
 }
 
 async function serveChunk(req: SandboxHttpRequest, res: SandboxHttpResponse): Promise<void> {
@@ -121,7 +121,7 @@ function recordExecStart(event: ExecStartEvent, entries: Map<string, ExecLogEntr
   entries.set(event.id, {
     id: event.id,
     command: event.command,
-    cwd: event.cwd,
+    ...(event.cwd !== undefined ? { cwd: event.cwd } : {}),
     startedAt: event.at,
     stdout: '',
     stderr: '',

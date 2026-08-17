@@ -3,7 +3,7 @@
  * page (`settings.section`) with locale dictionaries. The terminal panel is a
  * lazy chunk (see chunk-loader.ts / terminal.tsx) so xterm never ships in this
  * core bundle.
- * @module @k8e/dsh-k8e-sandbox-client-ui/client
+ * @module @k8e-sandbox/dsh-k8e-sandbox-client-ui/client
  */
 
 import type { Context } from './context-types.ts'

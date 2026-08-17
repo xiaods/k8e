@@ -1,5 +1,5 @@
 {
-  "name": "@k8e/dsh-k8e-sandbox-fs",
+  "name": "@k8e-sandbox/dsh-k8e-sandbox-fs",
   "version": "0.1.0",
   "description": "k8e-sandbox filesystem seam provider for DeepSeek Harness (ctx.fs).",
   "type": "module",
@@ -11,12 +11,14 @@
       "default": "./lib/index.js"
     }
   },
-  "files": ["lib"],
+  "files": [
+    "lib"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@k8e/dsh-k8e-sandbox": "workspace:*"
+    "@k8e-sandbox/dsh-k8e-sandbox": "workspace:*"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "*",
@@ -26,5 +28,8 @@
     "@deepseek-ai/cordis": "*",
     "@deepseek-ai/dsh-fs": "*",
     "typescript": "^5.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

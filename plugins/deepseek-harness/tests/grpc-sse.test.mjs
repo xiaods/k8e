@@ -1,6 +1,6 @@
 // Pure-unit test for the /exec/stream SSE decoder (no harness, no gRPC).
 import assert from 'node:assert/strict'
-import { ExecSSEDecoder } from '@k8e/dsh-k8e-sandbox-client/grpc'
+import { ExecSSEDecoder } from '@k8e-sandbox/dsh-k8e-sandbox-client/grpc'
 
 // pid frame is dropped; data + exit are emitted in order.
 {

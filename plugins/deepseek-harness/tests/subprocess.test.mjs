@@ -4,7 +4,7 @@
 // the handle maps correctly. No harness, no gateway, no cluster.
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
-import { K8eSubprocessRuntime } from '@k8e/dsh-k8e-sandbox-subprocess'
+import { K8eSubprocessRuntime } from '@k8e-sandbox/dsh-k8e-sandbox-subprocess'
 
 function makeGrpcClient() {
   const calls = []

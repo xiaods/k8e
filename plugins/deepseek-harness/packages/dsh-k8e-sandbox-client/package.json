@@ -1,5 +1,5 @@
 {
-  "name": "@k8e/dsh-k8e-sandbox-client",
+  "name": "@k8e-sandbox/dsh-k8e-sandbox-client",
   "version": "0.1.0",
   "description": "k8e-sandbox transport: CLI client (Phase 1) + gRPC terminal client (Phase 2).",
   "type": "module",
@@ -15,7 +15,10 @@
       "default": "./lib/grpc.js"
     }
   },
-  "files": ["lib", "proto"],
+  "files": [
+    "lib",
+    "proto"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
@@ -26,5 +29,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

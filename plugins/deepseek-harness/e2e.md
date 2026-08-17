@@ -48,12 +48,12 @@ k8e-sandbox-cli run 'echo hi'   # -> {"stdout":"hi\n", "exit_code":0, ...}
 dsh plugin --profile k8e add ./packages/dsh-k8e-sandbox-bundle
 
 # verify the layer, then boot
-dsh --profile k8e --dump-config    # shows a "# == @k8e/dsh-k8e-sandbox-bundle" layer
+dsh --profile k8e --dump-config    # shows a "# == @k8e-sandbox/dsh-k8e-sandbox-bundle" layer
 dsh --profile k8e
 ```
 
-The bundle's `cordis.patch.yml` mounts `@k8e/dsh-k8e-sandbox` (owner),
-`@k8e/dsh-k8e-sandbox-fs`, and `@k8e/dsh-k8e-sandbox-subprocess`.
+The bundle's `cordis.patch.yml` mounts `@k8e-sandbox/dsh-k8e-sandbox` (owner),
+`@k8e-sandbox/dsh-k8e-sandbox-fs`, and `@k8e-sandbox/dsh-k8e-sandbox-subprocess`.
 
 > The profile's own `cordis.patch.yml` (`$DSH_HOME/profiles/k8e/cordis.patch.yml`)
 > can override the owner row by `id: k8e-sandbox` to set `endpoint` (see below).
@@ -69,7 +69,7 @@ Add to the profile patch (restate the fields you keep):
 ```yaml
 # $DSH_HOME/profiles/k8e/cordis.patch.yml
 - id: k8e-sandbox
-  name: '@k8e/dsh-k8e-sandbox'
+  name: '@k8e-sandbox/dsh-k8e-sandbox'
   config:
     endpoint: 127.0.0.1:50051     # or the remote gateway host:port
     cwd: /workspace

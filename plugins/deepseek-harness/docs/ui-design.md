@@ -1,7 +1,7 @@
 # dsh-k8e-sandbox 客户端半身设计：配置页 + 沙盒终端页
 
 > 参考实现：[DSH-better-sidebar](https://github.com/omdsh-dev/DSH-better-sidebar)（v0.12.x）。
-> 目标：给 `@k8e/dsh-k8e-sandbox` 补上 **client 半身**——① 一个配置页面；② 一个调用 sandbox 时出现的终端页，实时显示运行命令与输出。对应 issue #542 的「侧边栏集成」。
+> 目标：给 `@k8e-sandbox/dsh-k8e-sandbox` 补上 **client 半身**——① 一个配置页面；② 一个调用 sandbox 时出现的终端页，实时显示运行命令与输出。对应 issue #542 的「侧边栏集成」。
 
 ## 0. 现状与差距
 
@@ -25,7 +25,7 @@ KIP-20 目前只有 **host 半身**（`ctx.fs` / `ctx.subprocess` / `ctx.k8eSand
 ## 2. 总体架构
 
 ```
-浏览器（client half，@k8e/dsh-k8e-sandbox/client）
+浏览器（client half，@k8e-sandbox/dsh-k8e-sandbox/client）
   ├── 设置页 section（配置页）：endpoint / certDir / runtimeClass / rows / cols
   ├── 沙盒终端面板：xterm.js，实时渲染命令输出 + 可交互 PTY
   │     │ WebSocket (/k8e-sandbox/ws/terminal)

@@ -2,7 +2,7 @@
  * k8e-sandbox Service Provider for the filesystem capability seam. Paths and
  * contents live in the sandbox workspace; operations shell out to
  * `k8e-sandbox-cli` in Phase 1 (KIP-20).
- * @module @k8e/dsh-k8e-sandbox-fs
+ * @module @k8e-sandbox/dsh-k8e-sandbox-fs
  */
 
 import { Buffer } from 'node:buffer'
@@ -19,7 +19,7 @@ import type {
   FsWriteIntent,
   FsWriteOutcome,
 } from '@deepseek-ai/dsh-fs'
-import type { K8eSandboxRuntime } from '@k8e/dsh-k8e-sandbox'
+import type { K8eSandboxRuntime } from '@k8e-sandbox/dsh-k8e-sandbox'
 
 /** Stat facts returned by the single `stat -c` probe. */
 interface StatFacts {

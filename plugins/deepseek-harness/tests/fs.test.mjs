@@ -2,7 +2,7 @@
 // fake ctx with a fake owner + fake CliK8eClient (an in-memory file map), then
 // assert resolve/read/write/edit/list map correctly.
 import assert from 'node:assert/strict'
-import { K8eFileSystem } from '@k8e/dsh-k8e-sandbox-fs'
+import { K8eFileSystem } from '@k8e-sandbox/dsh-k8e-sandbox-fs'
 
 function makeCliClient(files) {
   const calls = []

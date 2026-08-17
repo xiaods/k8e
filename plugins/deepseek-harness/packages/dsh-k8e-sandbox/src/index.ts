@@ -2,13 +2,13 @@
  * Shared ownership of one k8e-sandbox session. Capability adapters await the
  * same session handle, so filesystem and process operations inhabit one remote
  * Linux world (mirrors the E2B POC's `ctx.e2b` owner).
- * @module @k8e/dsh-k8e-sandbox
+ * @module @k8e-sandbox/dsh-k8e-sandbox
  */
 
 import { Context, Service } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { CliK8eClient } from '@k8e/dsh-k8e-sandbox-client'
-import { GrpcK8eClient } from '@k8e/dsh-k8e-sandbox-client/grpc'
+import { CliK8eClient } from '@k8e-sandbox/dsh-k8e-sandbox-client'
+import { GrpcK8eClient } from '@k8e-sandbox/dsh-k8e-sandbox-client/grpc'
 
 /** Configuration for the shared k8e-sandbox owner. */
 export interface Config {
@@ -85,8 +85,8 @@ export class K8eSandboxRuntime extends Service {
     this.config = {
       cwd: resolved.cwd,
       runtimeClass: resolved.runtimeClass,
-      tenant: config.tenant,
-      allowedHosts: config.allowedHosts,
+      ...(config.tenant !== undefined ? { tenant: config.tenant } : {}),
+      ...(config.allowedHosts !== undefined ? { allowedHosts: config.allowedHosts } : {}),
       pauseOnDispose: resolved.pauseOnDispose,
     }
     this.cwd = this.config.cwd
@@ -94,12 +94,12 @@ export class K8eSandboxRuntime extends Service {
     this.certDir = config.certDir
     this.runtimeClass = this.config.runtimeClass
     this.client = new CliK8eClient({
-      bin: process.env.K8E_SANDBOX_CLI_BIN,
-      profile: config.profile,
-      endpoint: config.endpoint,
+      ...(process.env.K8E_SANDBOX_CLI_BIN !== undefined ? { bin: process.env.K8E_SANDBOX_CLI_BIN } : {}),
+      ...(config.profile !== undefined ? { profile: config.profile } : {}),
+      ...(config.endpoint !== undefined ? { endpoint: config.endpoint } : {}),
     })
     this.grpcClient = config.endpoint !== undefined
-      ? new GrpcK8eClient({ endpoint: config.endpoint, certDir: config.certDir })
+      ? new GrpcK8eClient({ endpoint: config.endpoint, ...(config.certDir !== undefined ? { certDir: config.certDir } : {}) })
       : undefined
 
     ctx.effect(() => async () => {
@@ -122,8 +122,8 @@ export class K8eSandboxRuntime extends Service {
     if (this.sessionId !== undefined) return this.sessionId
     const created = await this.client.createSession({
       runtimeClass: this.config.runtimeClass,
-      tenant: this.config.tenant,
-      allowedHosts: this.config.allowedHosts,
+      ...(this.config.tenant !== undefined ? { tenant: this.config.tenant } : {}),
+      ...(this.config.allowedHosts !== undefined ? { allowedHosts: this.config.allowedHosts } : {}),
     })
     if (this.disposed) {
       await this.client.destroySession(created.sessionId).catch(() => undefined)

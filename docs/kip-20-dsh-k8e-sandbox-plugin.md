@@ -76,9 +76,9 @@ k8e-sandbox 与 E2B 在抽象层面是同一类东西：一个远端 Linux 执�
 
 | E2B POC 包 | `ctx` key | k8e 对应包（本 KIP） |
 |---|---|---|
-| `@deepseek-ai/dsh-e2b` | `ctx.e2b` | `@k8e/dsh-k8e-sandbox`（`ctx.k8eSandbox`） |
-| `@deepseek-ai/dsh-fs-e2b` | `ctx.fs` | `@k8e/dsh-k8e-sandbox-fs` |
-| `@deepseek-ai/dsh-subprocess-e2b` | `ctx.subprocess` | `@k8e/dsh-k8e-sandbox-subprocess` |
+| `@deepseek-ai/dsh-e2b` | `ctx.e2b` | `@k8e-sandbox/dsh-k8e-sandbox`（`ctx.k8eSandbox`） |
+| `@deepseek-ai/dsh-fs-e2b` | `ctx.fs` | `@k8e-sandbox/dsh-k8e-sandbox-fs` |
+| `@deepseek-ai/dsh-subprocess-e2b` | `ctx.subprocess` | `@k8e-sandbox/dsh-k8e-sandbox-subprocess` |
 
 差别只在**传输层**：E2B 用其 SDK（API key），k8e 用 `k8e-sandbox-cli`（Phase 1）或直连 gRPC + mTLS（Phase 2）。
 
@@ -100,7 +100,7 @@ plugins/deepseek-harness/
 └── tsconfig.base.json
 ```
 
-> npm scope 统一为 `@k8e/`，命名统一为 `dsh-k8e-sandbox`：所有者 `@k8e/dsh-k8e-sandbox`、fs `@k8e/dsh-k8e-sandbox-fs`、subprocess `@k8e/dsh-k8e-sandbox-subprocess`、client `@k8e/dsh-k8e-sandbox-client`、tool `@k8e/dsh-k8e-sandbox-tool`、bundle `@k8e/dsh-k8e-sandbox-bundle`；目录短名与之对齐（`dsh-k8e-sandbox*`）。
+> npm scope 统一为 `@k8e-sandbox/`，命名统一为 `dsh-k8e-sandbox`：所有者 `@k8e-sandbox/dsh-k8e-sandbox`、fs `@k8e-sandbox/dsh-k8e-sandbox-fs`、subprocess `@k8e-sandbox/dsh-k8e-sandbox-subprocess`、client `@k8e-sandbox/dsh-k8e-sandbox-client`、tool `@k8e-sandbox/dsh-k8e-sandbox-tool`、bundle `@k8e-sandbox/dsh-k8e-sandbox-bundle`；目录短名与之对齐（`dsh-k8e-sandbox*`）。
 
 ### 加载方式（非侵入通道）
 
@@ -110,7 +110,7 @@ plugins/deepseek-harness/
 # 初始化 profile（首次会自动引入 @deepseek-ai/dsh-base）
 dsh plugin --profile k8e add <path-or-tarball-or-github>
 # 或发布到 npm 后：
-dsh plugin --profile k8e add @k8e/dsh-k8e-sandbox-bundle
+dsh plugin --profile k8e add @k8e-sandbox/dsh-k8e-sandbox-bundle
 
 # 验证层 + 启动
 dsh --profile k8e --dump-config
@@ -122,15 +122,15 @@ dsh --profile k8e
 ```yaml
 - insert:
     - id: k8e-sandbox
-      name: '@k8e/dsh-k8e-sandbox'
+      name: '@k8e-sandbox/dsh-k8e-sandbox'
       config:
         # endpoint / apikey / profile / cert_dir 走与 CLI 相同的解析；留空则用 ~/.k8e/sandbox
         cwd: /workspace
         runtimeClass: gvisor
     - id: k8e-sandbox-fs
-      name: '@k8e/dsh-k8e-sandbox-fs'
+      name: '@k8e-sandbox/dsh-k8e-sandbox-fs'
     - id: k8e-sandbox-subprocess
-      name: '@k8e/dsh-k8e-sandbox-subprocess'
+      name: '@k8e-sandbox/dsh-k8e-sandbox-subprocess'
 ```
 
 依赖注入与 E2B 相同：`K8eFileSystem` 和 `K8eSubprocessRuntime` 都 `static inject = ['k8eSandbox']`，靠 Cordis 的依赖声明保证加载顺序（不需要手工 boot 序列）。挂载这两行后，dsh 的 `ctx.fs` / `ctx.subprocess` 即被 k8e 实现占据——dsh 里所有委托这两条缝的消费者自动进入沙箱。
@@ -306,6 +306,6 @@ Schemastery schema（`dsh-k8e-sandbox` 的 `Config`），字段尽量与 CLI fla
 
 | # | 问题 | 决定 |
 |---|---|---|
-| 1 | npm scope | 统一 `@k8e/dsh-*`（所有者 `@k8e/dsh-k8e-sandbox` 等，见"包结构"） |
+| 1 | npm scope | 统一 `@k8e-sandbox/dsh-*`（所有者 `@k8e-sandbox/dsh-k8e-sandbox` 等，见"包结构"） |
 | 2 | PTY 时间表 | `spawnTerminal` 放在 Phase 2，且**依赖 KIP-19（sandbox PTY 终端原语）先行**；本 KIP 只到"非 PTY 子进程" |
 | 3 | session 复用粒度 | **每 dsh 会话一个 k8e session（E2B 语义）**；`tenant` 仅作显式跨进程复用开关，不作默认全局共享 |

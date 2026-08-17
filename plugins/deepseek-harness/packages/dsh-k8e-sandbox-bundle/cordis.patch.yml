@@ -4,20 +4,20 @@
 # injection guarantees regardless of row order.
 - insert:
     - id: k8e-sandbox
-      name: '@k8e/dsh-k8e-sandbox'
+      name: '@k8e-sandbox/dsh-k8e-sandbox'
       config:
         # endpoint / profile resolve like k8e-sandbox-cli; leave unset for
         # local auto-discovery via ~/.k8e/sandbox (KIP-17).
         cwd: /workspace
         runtimeClass: gvisor
     - id: k8e-sandbox-fs
-      name: '@k8e/dsh-k8e-sandbox-fs'
+      name: '@k8e-sandbox/dsh-k8e-sandbox-fs'
     - id: k8e-sandbox-subprocess
-      name: '@k8e/dsh-k8e-sandbox-subprocess'
+      name: '@k8e-sandbox/dsh-k8e-sandbox-subprocess'
     - id: k8e-sandbox-host-ui
-      name: '@k8e/dsh-k8e-sandbox-host-ui'
+      name: '@k8e-sandbox/dsh-k8e-sandbox-host-ui'
     # Browser half: registers the settings page + terminal panel. The modules
     # node half scans this row's `dsh.client` declaration into __DSH_BOOT__ and
-    # serves /plugins/@k8e/dsh-k8e-sandbox-client-ui/client.js.
+    # serves /plugins/@k8e-sandbox/dsh-k8e-sandbox-client-ui/client.js.
     - id: k8e-sandbox-client-ui
-      name: '@k8e/dsh-k8e-sandbox-client-ui'
+      name: '@k8e-sandbox/dsh-k8e-sandbox-client-ui'

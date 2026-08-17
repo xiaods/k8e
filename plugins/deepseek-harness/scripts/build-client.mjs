@@ -19,7 +19,7 @@ const PKG = join(ROOT, 'packages', 'dsh-k8e-sandbox-client-ui')
 const CLIENT_DIR = join(PKG, 'src', 'client')
 const OUT_DIR = join(PKG, 'lib')
 
-const CLIENT_ID = '@k8e/dsh-k8e-sandbox-client-ui'
+const CLIENT_ID = '@k8e-sandbox/dsh-k8e-sandbox-client-ui'
 
 const PLATFORM_EXTERNALS = ['react', 'react/jsx-runtime', 'react-dom/client']
 
