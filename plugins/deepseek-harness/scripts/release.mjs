@@ -94,6 +94,16 @@ function bumpVersion(packages, version) {
   }
 }
 
+/** Query the npm registry for the latest published version of a package. */
+function registryVersion(pkgName) {
+  try {
+    const out = execFileSync(NPM, ['view', `${pkgName}@latest`, 'version'], { encoding: 'utf8', env: SAFE_ENV }).trim()
+    return out.split('\n').pop()?.trim() ?? null
+  } catch {
+    return null // not published yet (E404) or offline
+  }
+}
+
 function run(cmd, args, opts = {}) {
   console.log(`$ ${cmd} ${args.join(' ')}`)
   return execFileSync(cmd, args, { stdio: 'inherit', env: SAFE_ENV, ...opts })
@@ -154,20 +164,31 @@ if (!dryRun) {
 }
 
 // Version bump happens only for a real release (never on --dry-run), after
-// auth succeeded, and is rolled back if publishing fails (Greptile).
+// auth succeeded, and is rolled back if publishing fails (Greptile). The
+// whole post-auth flow — bump AND publish — sits inside one try/finally so a
+// throw anywhere (including version validation) still removes the temporary
+// token userconfig (Greptile security review).
 const originalVersions = new Map()
-if (!dryRun && versionArg) {
-  console.log(`\nBumping all packages to ${versionArg}:\n`)
-  for (const { name, data } of packages) {
-    originalVersions.set(data.name, data.version)
-  }
-  bumpVersion(packages, versionArg)
-}
-
 const published = []
 try {
+  if (!dryRun && versionArg) {
+    console.log(`\nBumping all packages to ${versionArg}:\n`)
+    for (const { name, data } of packages) {
+      originalVersions.set(data.name, data.version)
+    }
+    bumpVersion(packages, versionArg)
+  }
+
   console.log(`\nPublishing ${order.length} packages in topological order${dryRun ? ' (dry run)' : ''}:\n`)
   for (const { name, data } of order) {
+    // Resume support: a package whose version is already on the registry is
+    // skipped instead of colliding with the immutable prior publication
+    // (partial-failure retry after a rollback).
+    if (!dryRun && registryVersion(data.name) === data.version) {
+      console.log(`── ${data.name}@${data.version} already published, skipping`)
+      published.push(data.name)
+      continue
+    }
     console.log(`── ${data.name}@${data.version}`)
     const args = ['publish', '--no-git-checks']
     if (dryRun) args.push('--dry-run')
@@ -183,7 +204,7 @@ try {
       writeFileSync(join(root, 'packages', name, 'package.json'), JSON.stringify(data, null, 2) + '\n')
     }
   }
-  const done = published.length ? `\nAlready published (not rolled back on npm): ${published.join(', ')}` : ''
+  const done = published.length ? `\nAlready published (immutable on npm, skipped on retry): ${published.join(', ')}` : ''
   console.error(`\nRelease failed at ${order[published.length]?.data.name ?? '?'} — package.json versions restored.${done}`)
   throw err
 } finally {
