@@ -121,13 +121,11 @@ const SAFE_ENV = { ...process.env, PATH: SAFE_PATH }
 const packages = loadPackages()
 const order = topoSort(packages)
 
-if (versionArg) {
-  console.log(`\nBumping all packages to ${versionArg}:\n`)
-  bumpVersion(packages, versionArg)
-}
-
+// Credentials are established BEFORE any version mutation, and the token
+// userconfig (when used) lives for the whole publish loop — deleting it after
+// `npm whoami` would leave `pnpm publish` unauthenticated (Greptile).
+let cleanupUserconfig = null
 if (!dryRun) {
-  // Fail fast with a clear message instead of a confusing 401 per package.
   const token = process.env.NPM_TOKEN
   const userNpmrc = join(process.env.HOME ?? '', '.npmrc')
   if (token) {
@@ -136,27 +134,55 @@ if (!dryRun) {
     const rc = join(tmp, '.npmrc')
     writeFileSync(rc, `//registry.npmjs.org/:_authToken=${token}\n`)
     SAFE_ENV.NPM_CONFIG_USERCONFIG = rc
-    try {
-      const who = execFileSync(NPM, ['whoami'], { encoding: 'utf8', env: SAFE_ENV }).trim()
-      console.log(`\nAuthenticated as ${who} on the npm registry (NPM_TOKEN).`)
-    } finally {
-      rmSync(tmp, { recursive: true, force: true })
-    }
-  } else if (existsSync(userNpmrc)) {
+    cleanupUserconfig = () => rmSync(tmp, { recursive: true, force: true })
+  } else if (!existsSync(userNpmrc)) {
+    console.error('\nNot logged in to npm. Run `npm login` or set NPM_TOKEN first.')
+    process.exit(1)
+  }
+  try {
     const who = execFileSync(NPM, ['whoami'], { encoding: 'utf8', env: SAFE_ENV }).trim()
     console.log(`\nAuthenticated as ${who} on the npm registry.`)
-  } else {
+  } catch {
+    cleanupUserconfig?.()
     console.error('\nNot logged in to npm. Run `npm login` or set NPM_TOKEN first.')
     process.exit(1)
   }
 }
 
-console.log(`\nPublishing ${order.length} packages in topological order${dryRun ? ' (dry run)' : ''}:\n`)
-for (const { name, data } of order) {
-  console.log(`── ${data.name}@${data.version}`)
-  const args = ['publish', '--no-git-checks']
-  if (dryRun) args.push('--dry-run')
-  run(PNPM, args, { cwd: join(root, 'packages', name) })
+// Version bump happens only for a real release (never on --dry-run), after
+// auth succeeded, and is rolled back if publishing fails (Greptile).
+const originalVersions = new Map()
+if (!dryRun && versionArg) {
+  console.log(`\nBumping all packages to ${versionArg}:\n`)
+  for (const { name, data } of packages) {
+    originalVersions.set(data.name, data.version)
+  }
+  bumpVersion(packages, versionArg)
+}
+
+const published = []
+try {
+  console.log(`\nPublishing ${order.length} packages in topological order${dryRun ? ' (dry run)' : ''}:\n`)
+  for (const { name, data } of order) {
+    console.log(`── ${data.name}@${data.version}`)
+    const args = ['publish', '--no-git-checks']
+    if (dryRun) args.push('--dry-run')
+    run(PNPM, args, { cwd: join(root, 'packages', name) })
+    published.push(data.name)
+  }
+} catch (err) {
+  // Roll back the local version bump so a failed release leaves no mutation.
+  for (const { name, data } of packages) {
+    if (originalVersions.has(data.name)) {
+      data.version = originalVersions.get(data.name)
+      writeFileSync(join(root, 'packages', name, 'package.json'), JSON.stringify(data, null, 2) + '\n')
+    }
+  }
+  const done = published.length ? `\nAlready published (not rolled back on npm): ${published.join(', ')}` : ''
+  console.error(`\nRelease failed at ${order[published.length]?.data.name ?? '?'} — package.json versions restored.${done}`)
+  throw err
+} finally {
+  cleanupUserconfig?.()
 }
 
 console.log(`\n${dryRun ? 'Dry run' : 'Release'} complete: ${order.map((p) => p.data.name).join(', ')}`)
