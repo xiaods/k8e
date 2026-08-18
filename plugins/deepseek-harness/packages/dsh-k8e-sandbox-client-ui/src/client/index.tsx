@@ -72,4 +72,7 @@ export function apply(ctx: Context): void {
   registerBetterSidebarTab(ctx)
 }
 
-export default apply
+// Named exports only (no default): the client loader returns the module
+// namespace when there is no `default`, which is how it reads both `apply` and
+// `inject`. An `export default apply` would drop `inject` and fail with
+// "cannot get property ... without inject".
