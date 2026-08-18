@@ -7,6 +7,7 @@
     "lib"
   ],
   "exports": {
+    ".": "./lib/index.js",
     "./client": "./lib/client.js",
     "./client-terminal": "./lib/client-terminal.js",
     "./package.json": "./package.json"

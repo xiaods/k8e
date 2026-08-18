@@ -85,6 +85,14 @@ async function bundleTerminalChunk() {
 }
 
 await mkdir(OUT_DIR, { recursive: true })
+// Host-side loader entry: the browser half lives in `./client`; the host half
+// has no behavior, so this is a no-op apply matching dsh's client-package
+// convention (importable via the `"."` export).
+await writeFile(join(OUT_DIR, 'index.js'), [
+  '/** Host loader entry — no host-side behavior; the browser half lives in `./client`. */',
+  'export function apply() {}',
+  '',
+].join('\n'))
 const coreBytes = await bundleCore()
 const chunkBytes = await bundleTerminalChunk()
 

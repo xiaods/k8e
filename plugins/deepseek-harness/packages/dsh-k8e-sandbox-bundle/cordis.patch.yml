@@ -2,6 +2,17 @@
 # filesystem and subprocess providers. Loading order matters — the owner must
 # mount first (fs/subprocess inject `k8eSandbox`), which Cordis dependency
 # injection guarantees regardless of row order.
+#
+# The k8e providers replace the base profile's local `fs` and `subprocess`
+# services, so those base rows are disabled here (Cordis allows only one
+# provider per service name; leaving them mounted would collide with
+# `k8e-sandbox-fs` / `k8e-sandbox-subprocess` below).
+- id: fs-sandbox
+  disabled: true
+
+- id: subprocess
+  disabled: true
+
 - insert:
     - id: k8e-sandbox
       name: '@k8e-sandbox/dsh-k8e-sandbox'

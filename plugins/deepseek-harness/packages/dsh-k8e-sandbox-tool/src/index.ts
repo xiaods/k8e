@@ -151,3 +151,5 @@ export class K8eSandboxTools extends Service {
     }))
   }
 }
+
+export default K8eSandboxTools

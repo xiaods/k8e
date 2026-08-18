@@ -347,4 +347,7 @@ export function apply(ctx: Context): void {
   ctx.effect(() => () => { wss.close() }, 'k8e-sandbox-host-ui: teardown')
 }
 
-export default apply
+// Named exports only (no default): the loader returns the module namespace when
+// there is no `default`, which is how it reads both `apply` and `inject`. A
+// `export default apply` would drop the `inject` binding and fail with
+// "cannot get property ... without inject".
