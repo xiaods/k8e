@@ -1,6 +1,6 @@
 {
   "name": "@k8e-sandbox/dsh-k8e-sandbox-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "k8e-sandbox transport: CLI client (Phase 1) + gRPC terminal client (Phase 2).",
   "type": "module",
   "main": "lib/index.js",
