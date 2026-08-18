@@ -40,7 +40,7 @@ function renderValue(_args: unknown, value: unknown): ContentBlock[] {
  * the session on first use, and every tool here operates on it.
  */
 export class K8eSandboxTools extends Service {
-  static readonly inject = ['k8eSandbox']
+  static readonly inject = ['k8eSandbox', 'tools']
 
   constructor(ctx: Context, private readonly owner: K8eSandboxRuntime) {
     super(ctx, 'k8eSandboxTools')
