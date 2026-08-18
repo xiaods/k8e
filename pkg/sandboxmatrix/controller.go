@@ -77,15 +77,16 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	// reconciling the same pool would double-create/double-GC/double-reap —
 	// so they run only on the leader elected via a coordination Lease.
 	srv := sandboxgrpc.NewServer(sandboxgrpc.ServerConfig{
-		K8s:            k8s,
-		Dyn:            dyn,
-		CACertFile:     tlsDir + "/sandbox-ca.crt",
-		CAKeyFile:      tlsDir + "/sandbox-ca.key",
-		ServerCertFile: tlsDir + "/sandbox-server.crt",
-		ServerKeyFile:  tlsDir + "/sandbox-server.key",
-		GRPCPort:       cfg.GRPCPort,
-		LayerStoreDir:  cfg.LayerStoreDir,
-		FQDNEnabled:    cfg.CiliumDNSProxyEnabled,
+		K8s:               k8s,
+		Dyn:               dyn,
+		CACertFile:        tlsDir + "/sandbox-ca.crt",
+		CAKeyFile:         tlsDir + "/sandbox-ca.key",
+		ServerCertFile:    tlsDir + "/sandbox-server.crt",
+		ServerKeyFile:     tlsDir + "/sandbox-server.key",
+		GRPCPort:          cfg.GRPCPort,
+		LayerStoreDir:     cfg.LayerStoreDir,
+		FQDNEnabled:       cfg.CiliumDNSProxyEnabled,
+		AdvertiseHostname: cfg.AdvertiseHostname,
 	})
 	go func() {
 		if err := srv.Start(ctx); err != nil {

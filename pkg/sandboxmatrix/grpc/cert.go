@@ -15,11 +15,14 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
+
+	"github.com/xiaods/k8e/pkg/daemons/config"
 )
 
 const caOrg = "K8E Sandbox"
@@ -102,13 +105,21 @@ func pemEncodeECPrivateKey(key *ecdsa.PrivateKey) []byte {
 }
 
 // ensureServerCert ensures the gRPC gateway has a valid server certificate signed by the sandbox CA.
-// If the existing cert has > 30 days of validity, it is reused.
-func ensureServerCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, certFile, keyFile string) error {
+// The existing cert is reused only while it is still valid (> 30 days) AND its SANs still cover the
+// currently configured advertise hostname — so changing --sandbox-advertise-hostname (or
+// K8E_SANDBOX_ADVERTISED_HOSTNAME) forces a regeneration instead of silently serving a stale cert.
+func ensureServerCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, certFile, keyFile, advertiseHostname string) error {
+	hostname, _ := os.Hostname()
+	sans, err := collectServerSANs(hostname, advertiseHostname)
+	if err != nil {
+		return err
+	}
+
 	if existingCert, err := tls.LoadX509KeyPair(certFile, keyFile); err == nil {
 		if len(existingCert.Certificate) > 0 {
 			if c, parseErr := x509.ParseCertificate(existingCert.Certificate[0]); parseErr == nil {
-				if time.Now().Before(c.NotAfter.Add(-30 * 24 * time.Hour)) {
-					return nil // still valid > 30 days
+				if time.Now().Before(c.NotAfter.Add(-30*24*time.Hour)) && sansCoveredBy(c, sans) {
+					return nil // still valid > 30 days and SANs cover the configured names
 				}
 			}
 		}
@@ -118,9 +129,6 @@ func ensureServerCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, certFil
 	if err != nil {
 		return fmt.Errorf("generate server key: %w", err)
 	}
-
-	hostname, _ := os.Hostname()
-	sans := collectServerSANs(hostname)
 
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
@@ -138,10 +146,13 @@ func ensureServerCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, certFil
 		return fmt.Errorf("create server cert: %w", err)
 	}
 
-	if err := os.WriteFile(keyFile, pemEncodeECPrivateKey(key), 0600); err != nil {
+	// Atomic writes: each file is written to a sibling temp and renamed, so a
+	// crash mid-rotation never leaves a truncated cert/key behind (SAN-driven
+	// rotations can now fire on any restart after a config change).
+	if err := atomicWriteFile(keyFile, pemEncodeECPrivateKey(key), 0600); err != nil {
 		return fmt.Errorf("write server key: %w", err)
 	}
-	if err := os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644); err != nil {
+	if err := atomicWriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644); err != nil {
 		return fmt.Errorf("write server cert: %w", err)
 	}
 
@@ -153,7 +164,17 @@ type serverSANs struct {
 	ips      []net.IP
 }
 
-func collectServerSANs(hostname string) serverSANs {
+// collectServerSANs builds the server certificate SAN set: the machine hostname,
+// every non-loopback interface address (in AWS these are the private VPC IPs),
+// and the operator-configured external advertise hostname (--sandbox-advertise-hostname,
+// merged with the legacy K8E_SANDBOX_ADVERTISED_HOSTNAME env var). A value that parses
+// as an IP is added to the IP SANs; anything else is added as a DNS SAN.
+//
+// A malformed advertise hostname (scheme, host:port, path, whitespace, bad DNS
+// label) is a hard error: the gateway must not start with a certificate that
+// cannot authenticate the configured endpoint, so the failure is surfaced to
+// the caller (gateway startup) instead of being silently omitted.
+func collectServerSANs(hostname, advertiseHostname string) (serverSANs, error) {
 	var s serverSANs
 	if hostname != "" {
 		s.dnsNames = append(s.dnsNames, hostname)
@@ -169,11 +190,89 @@ func collectServerSANs(hostname string) serverSANs {
 		}
 	}
 
-	if adv := os.Getenv("K8E_SANDBOX_ADVERTISED_HOSTNAME"); adv != "" {
-		s.dnsNames = append(s.dnsNames, adv)
+	// First-class flag wins; the env var is merged as a fallback for operators
+	// who set it directly in the k8e-server process environment. Either source
+	// is validated — an invalid value fails the gateway startup loudly.
+	for _, adv := range []string{advertiseHostname, os.Getenv("K8E_SANDBOX_ADVERTISED_HOSTNAME")} {
+		adv = strings.TrimSpace(adv)
+		if adv == "" {
+			continue
+		}
+		if ip := net.ParseIP(adv); ip != nil {
+			if !ip.IsLoopback() && !containsIP(s.ips, ip) {
+				s.ips = append(s.ips, ip)
+			}
+			continue
+		}
+		if err := config.ValidateAdvertiseHostname(adv); err != nil {
+			return serverSANs{}, err
+		}
+		if !containsString(s.dnsNames, adv) {
+			s.dnsNames = append(s.dnsNames, adv)
+		}
 	}
 
-	return s
+	return s, nil
+}
+
+// atomicWriteFile writes data to a sibling temp file, fsyncs it, then renames
+// over path so readers never observe a partially written file.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// sansCoveredBy reports whether cert already carries every SAN in want. Extra
+// (stale) SANs on the cert are tolerated — only a missing desired name/IP forces
+// regeneration.
+func sansCoveredBy(cert *x509.Certificate, want serverSANs) bool {
+	for _, d := range want.dnsNames {
+		if !containsString(cert.DNSNames, d) {
+			return false
+		}
+	}
+	for _, ip := range want.ips {
+		if !containsIP(cert.IPAddresses, ip) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsString(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsIP(list []net.IP, want net.IP) bool {
+	for _, ip := range list {
+		if ip.Equal(want) {
+			return true
+		}
+	}
+	return false
 }
 
 // signClientCert signs a client CSR with the sandbox CA.
@@ -192,15 +291,15 @@ func signClientCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, csrPEM, c
 	}
 
 	tmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(time.Now().UnixNano()),
-		Subject:      pkix.Name{CommonName: commonName, Organization: []string{caOrg}},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Duration(ttlDays) * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		SerialNumber:          big.NewInt(time.Now().UnixNano()),
+		Subject:               pkix.Name{CommonName: commonName, Organization: []string{caOrg}},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Duration(ttlDays) * 24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
 		IsCA:                  false,
-		CRLDistributionPoints:  []string{"https://k8e.internal/sandbox/crl"},
+		CRLDistributionPoints: []string{"https://k8e.internal/sandbox/crl"},
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, csr.PublicKey, caKey)

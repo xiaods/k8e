@@ -38,11 +38,27 @@ import (
 )
 
 func Run(app *cli.Context) error {
+	if err := validateSandboxFlags(&cmds.ServerConfig); err != nil {
+		return err
+	}
 	return run(app, &cmds.ServerConfig, server.CustomControllers{}, server.CustomControllers{})
 }
 
 func RunWithControllers(app *cli.Context, leaderControllers server.CustomControllers, controllers server.CustomControllers) error {
+	if err := validateSandboxFlags(&cmds.ServerConfig); err != nil {
+		return err
+	}
 	return run(app, &cmds.ServerConfig, leaderControllers, controllers)
+}
+
+// validateSandboxFlags fails fast when the sandbox gateway's advertise hostname
+// is malformed, before the control plane starts. The gateway's SAN collection
+// (collectServerSANs) re-validates the same value as a last line of defense.
+func validateSandboxFlags(cfg *cmds.Server) error {
+	if err := config.ValidateAdvertiseHostname(cfg.SandboxAdvertiseHostname); err != nil {
+		return fmt.Errorf("invalid --sandbox-advertise-hostname: %w", err)
+	}
+	return nil
 }
 
 func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomControllers, controllers server.CustomControllers) error {
@@ -163,6 +179,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		DisableE2B:            cfg.DisableE2B,
 		E2BListen:             cfg.E2BListen,
 		E2BAPIKey:             cfg.E2BAPIKey,
+		AdvertiseHostname:     cfg.SandboxAdvertiseHostname,
 	}
 	serverConfig.ControlConfig.EtcdExposeMetrics = cfg.EtcdExposeMetrics
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots

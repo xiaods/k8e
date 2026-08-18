@@ -220,6 +220,12 @@ type SandboxConfig struct {
 	// and is compared after stripping the "e2b_" prefix. Empty disables
 	// control-plane auth (every request is rejected with 401).
 	E2BAPIKey string
+	// AdvertiseHostname is the external DNS name (or IP) remote clients dial to reach
+	// the sandbox gRPC gateway; it is added to the gateway's server cert SANs. In AWS
+	// the host's interfaces only carry private VPC IPs, so the public domain/EIP must be
+	// supplied explicitly (--sandbox-advertise-hostname / K8E_SANDBOX_ADVERTISED_HOSTNAME)
+	// for mTLS handshakes against the public name to succeed.
+	AdvertiseHostname string
 }
 
 type Control struct {
