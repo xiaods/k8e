@@ -117,21 +117,27 @@ type ServerConfig struct {
 	// FQDNEnabled enables Cilium toFQDNs egress for sessions with allowedHosts
 	// (requires Cilium DNS proxy; KIP-16 M10 / issue #510).
 	FQDNEnabled bool
+	// AdvertiseHostname is the external DNS name (or IP) remote clients use to reach
+	// the gateway; it is added to the server cert SANs so mTLS handshakes against
+	// that name succeed. In AWS it is typically a public domain/EIP name, distinct
+	// from the private interface IPs (which are also SANs for pod-side dialing).
+	AdvertiseHostname string
 }
 
 // Server implements the SandboxService gRPC interface.
 type Server struct {
 	pb.UnimplementedSandboxServiceServer
-	k8s            kubernetes.Interface
-	dyn            dynamic.Interface
-	orch           *Orchestrator
-	lisAddr        string
-	caCertFile     string
-	caKeyFile      string
-	serverCertFile string
-	serverKeyFile  string
-	caCert         *x509.Certificate
-	caKey          *ecdsa.PrivateKey
+	k8s               kubernetes.Interface
+	dyn               dynamic.Interface
+	orch              *Orchestrator
+	lisAddr           string
+	caCertFile        string
+	caKeyFile         string
+	serverCertFile    string
+	serverKeyFile     string
+	advertiseHostname string
+	caCert            *x509.Certificate
+	caKey             *ecdsa.PrivateKey
 	// apiKeysMu guards apiKeys + apiKeyByToken against concurrent Login reads
 	// while reloadConfigLoop swaps the maps every 30s.
 	apiKeysMu     sync.RWMutex
@@ -154,16 +160,17 @@ func NewServer(cfg ServerConfig) *Server {
 		port = 50051
 	}
 	s := &Server{
-		k8s:            cfg.K8s,
-		dyn:            cfg.Dyn,
-		lisAddr:        fmt.Sprintf("0.0.0.0:%d", port),
-		caCertFile:     cfg.CACertFile,
-		caKeyFile:      cfg.CAKeyFile,
-		serverCertFile: cfg.ServerCertFile,
-		serverKeyFile:  cfg.ServerKeyFile,
-		localAuth:      cfg.LocalAuth,
-		rateLimiter:    ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
-		terminals:      make(map[string]terminalEntry),
+		k8s:               cfg.K8s,
+		dyn:               cfg.Dyn,
+		lisAddr:           fmt.Sprintf("0.0.0.0:%d", port),
+		caCertFile:        cfg.CACertFile,
+		caKeyFile:         cfg.CAKeyFile,
+		serverCertFile:    cfg.ServerCertFile,
+		serverKeyFile:     cfg.ServerKeyFile,
+		advertiseHostname: cfg.AdvertiseHostname,
+		localAuth:         cfg.LocalAuth,
+		rateLimiter:       ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
+		terminals:         make(map[string]terminalEntry),
 	}
 	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
 	if cfg.FQDNEnabled {
@@ -316,7 +323,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.caKey = caKey
 	s.caCert = caCert
 
-	if err := ensureServerCert(s.caKey, s.caCert, s.serverCertFile, s.serverKeyFile); err != nil {
+	if err := ensureServerCert(s.caKey, s.caCert, s.serverCertFile, s.serverKeyFile, s.advertiseHostname); err != nil {
 		return fmt.Errorf("sandbox server cert: %w", err)
 	}
 
