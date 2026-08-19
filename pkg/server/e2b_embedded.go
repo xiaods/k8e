@@ -75,8 +75,9 @@ func runEmbeddedE2B(ctx context.Context, cfg config.SandboxConfig, kubeconfig st
 		StateStore:      store,
 	}, sandboxe2b.GatewayFromClient(c))
 
-	applyE2BAPIKeys(ctx, srv, staticKey, kubeconfig)
-	go reloadE2BAPIKeys(ctx, srv, staticKey, kubeconfig)
+	cache := &e2bAPIKeyCache{static: staticKey}
+	applyE2BAPIKeys(ctx, srv, cache, kubeconfig)
+	go reloadE2BAPIKeys(ctx, srv, cache, kubeconfig)
 
 	if err := sandboxe2b.ValidateE2BAPIKey(staticKey); err != nil {
 		logrus.Warnf("e2b (embedded): %v; official e2b SDK clients will not be able to authenticate — generate a hex key with `k8e sandbox-apikey create <name>` (pass the e2b_key field to the SDK)", err)
@@ -98,48 +99,62 @@ func resolveEmbeddedAPIKey(configured string) string {
 	return strings.TrimSpace(os.Getenv("K8E_SANDBOX_APIKEY"))
 }
 
-func applyE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, static string, kubeconfig string) {
+// e2bAPIKeyCache is the last authoritative sandbox-apikeys snapshot. The
+// reload loop must inherit the startup snapshot: otherwise a failed first
+// refresh leaves haveCache=false and an expired boot-time key stays accepted
+// until a later successful Secret read.
+type e2bAPIKeyCache struct {
+	static    string
+	snapshot  sandboxe2b.SecretKeySet
+	haveCache bool
+}
+
+// refresh updates the snapshot when ok, then returns the merged keyring
+// (static + currently-unexpired Secret tokens). apply=false means there is
+// no snapshot yet, so the caller must leave the current keyring alone.
+func (c *e2bAPIKeyCache) refresh(ok bool, set sandboxe2b.SecretKeySet, now time.Time) (keys []string, apply bool) {
+	if ok {
+		c.snapshot = set
+		c.haveCache = true
+	} else if !c.haveCache {
+		return nil, false
+	}
+	return append([]string{c.static}, c.snapshot.Active(now)...), true
+}
+
+func applyE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIKeyCache, kubeconfig string) {
 	set, ok := loadSandboxAPIKeys(ctx, kubeconfig)
-	if !ok {
-		if static == "" {
+	keys, apply := cache.refresh(ok, set, time.Now())
+	if !apply {
+		if cache.static == "" {
 			logrus.Warnf("e2b (embedded): no --e2b-apikey / K8E_SANDBOX_APIKEY and sandbox-apikeys Secret not readable; official e2b SDK control-plane requests will be rejected (401) — run `k8e sandbox-apikey create <name>` and pass the e2b_key field to the SDK")
 		}
 		return
 	}
-	active := set.Active(time.Now())
-	merged := append([]string{static}, active...)
-	srv.ReplaceAPIKeys(merged)
+	srv.ReplaceAPIKeys(keys)
+	active := cache.snapshot.Active(time.Now())
 	switch {
-	case len(active) == 0 && static == "":
+	case len(active) == 0 && cache.static == "":
 		logrus.Warnf("e2b (embedded): no API keys configured; official e2b SDK control-plane requests will be rejected (401) — run `k8e sandbox-apikey create <name>` and pass the e2b_key field to the SDK")
 	case len(active) > 0:
-		logrus.Infof("e2b (embedded): accepting %d key(s) from sandbox-apikeys Secret (plus static=%t)", len(active), static != "")
+		logrus.Infof("e2b (embedded): accepting %d key(s) from sandbox-apikeys Secret (plus static=%t)", len(active), cache.static != "")
 	}
 }
 
-func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, static string, kubeconfig string) {
+func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIKeyCache, kubeconfig string) {
 	ticker := time.NewTicker(e2bAPIKeyReload)
 	defer ticker.Stop()
-	var cached sandboxe2b.SecretKeySet // last parsed Secret snapshot (retains expiry)
-	haveCache := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			now := time.Now()
-			if set, ok := loadSandboxAPIKeys(ctx, kubeconfig); ok {
-				cached = set
-				haveCache = true
-			} else if !haveCache {
-				continue // nothing cached to re-filter yet; keep current keyring
+			set, ok := loadSandboxAPIKeys(ctx, kubeconfig)
+			keys, apply := cache.refresh(ok, set, time.Now())
+			if !apply {
+				continue
 			}
-			// Re-evaluate expiration against the current time on every tick —
-			// even when the Secret read/parse failed — so an expired key never
-			// stays authenticated just because the Secret became unreadable.
-			active := cached.Active(now)
-			merged := append([]string{static}, active...)
-			srv.ReplaceAPIKeys(merged)
+			srv.ReplaceAPIKeys(keys)
 		}
 	}
 }
