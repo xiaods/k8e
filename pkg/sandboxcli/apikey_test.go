@@ -25,3 +25,11 @@ func TestGenerateAPIKeyHexOnly(t *testing.T) {
 		seen[key] = true
 	}
 }
+
+func TestGenerateAPIKeySDKForm(t *testing.T) {
+	sdk := regexp.MustCompile(`^e2b_[0-9a-f]{64}$`)
+	key := generateAPIKey()
+	if got := "e2b_" + key; !sdk.MatchString(got) {
+		t.Fatalf("official SDK apiKey form %q does not match /^e2b_[0-9a-f]{64}$/", got)
+	}
+}
