@@ -100,31 +100,37 @@ func resolveEmbeddedAPIKey(configured string) string {
 }
 
 // e2bAPIKeyCache is the last authoritative sandbox-apikeys snapshot. The
-// reload loop must inherit the startup snapshot: otherwise a failed first
-// refresh leaves haveCache=false and an expired boot-time key stays accepted
-// until a later successful Secret read.
+// reload loop inherits the startup snapshot so the first failed refresh
+// cannot skip replacement and leave boot-time Secret tokens in the keyring.
 type e2bAPIKeyCache struct {
 	static    string
 	snapshot  sandboxe2b.SecretKeySet
 	haveCache bool
 }
 
-// refresh updates the snapshot when ok, then returns the merged keyring
-// (static + currently-unexpired Secret tokens). apply=false means there is
-// no snapshot yet, so the caller must leave the current keyring alone.
-func (c *e2bAPIKeyCache) refresh(ok bool, set sandboxe2b.SecretKeySet, now time.Time) (keys []string, apply bool) {
+// refresh updates the snapshot when ok. On a failed read:
+//   - no snapshot yet → apply=false (leave NewServer's static keyring)
+//   - snapshot present → fail-closed for Secret-backed tokens (they may have
+//     been deleted). Only the static --e2b-apikey remains until a successful
+//     read. Expiry is still filtered via Active on the success path.
+func (c *e2bAPIKeyCache) refresh(ok bool, set sandboxe2b.SecretKeySet, now time.Time) (keys []string, apply, droppedSecret bool) {
 	if ok {
 		c.snapshot = set
 		c.haveCache = true
-	} else if !c.haveCache {
-		return nil, false
+		return append([]string{c.static}, set.Active(now)...), true, false
 	}
-	return append([]string{c.static}, c.snapshot.Active(now)...), true
+	if !c.haveCache {
+		return nil, false, false
+	}
+	droppedSecret = !c.snapshot.Empty()
+	c.snapshot = sandboxe2b.SecretKeySet{}
+	c.haveCache = false
+	return []string{c.static}, true, droppedSecret
 }
 
 func applyE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIKeyCache, kubeconfig string) {
 	set, ok := loadSandboxAPIKeys(ctx, kubeconfig)
-	keys, apply := cache.refresh(ok, set, time.Now())
+	keys, apply, _ := cache.refresh(ok, set, time.Now())
 	if !apply {
 		if cache.static == "" {
 			logrus.Warnf("e2b (embedded): no --e2b-apikey / K8E_SANDBOX_APIKEY and sandbox-apikeys Secret not readable; official e2b SDK control-plane requests will be rejected (401) — run `k8e sandbox-apikey create <name>` and pass the e2b_key field to the SDK")
@@ -150,9 +156,12 @@ func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPI
 			return
 		case <-ticker.C:
 			set, ok := loadSandboxAPIKeys(ctx, kubeconfig)
-			keys, apply := cache.refresh(ok, set, time.Now())
+			keys, apply, droppedSecret := cache.refresh(ok, set, time.Now())
 			if !apply {
 				continue
+			}
+			if droppedSecret {
+				logrus.Warnf("e2b (embedded): sandbox-apikeys Secret unreadable; dropped cached Secret keys so a revoked token cannot stay authorized (static=%t)", cache.static != "")
 			}
 			srv.ReplaceAPIKeys(keys)
 		}
@@ -161,9 +170,8 @@ func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPI
 
 // loadSandboxAPIKeys reads the sandbox-apikeys Secret snapshot.
 // ok=false means the snapshot is not authoritative (transient API error or
-// corrupt payload); the caller must keep the last parsed set and re-filter it
-// for expiry. ok=true with an empty set is a real empty/missing Secret and may
-// replace the keyring.
+// corrupt payload); the caller fail-closes Secret-backed tokens. ok=true with
+// an empty set is a real empty/missing Secret and may replace the keyring.
 func loadSandboxAPIKeys(ctx context.Context, kubeconfig string) (sandboxe2b.SecretKeySet, bool) {
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {

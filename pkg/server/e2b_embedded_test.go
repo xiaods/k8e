@@ -88,50 +88,80 @@ func mustParseSecretKeys(t *testing.T, records map[string]apikey.Record) sandbox
 	return set
 }
 
-// TestE2BAPIKeyCacheStartupSnapshotUsedOnFailedRefresh is the Greptile
-// finding: reload must inherit the startup Secret snapshot. A failed first
-// refresh after boot still re-filters expiry, so a key that expired after
-// applyE2BAPIKeys cannot stay authorized until a later successful read.
-func TestE2BAPIKeyCacheStartupSnapshotUsedOnFailedRefresh(t *testing.T) {
+// TestE2BAPIKeyCacheFailedRefreshDropsSecretKeys is the Greptile finding:
+// a deleted unexpired Secret token must not stay authorized while later
+// Secret reads fail. Failed refresh fail-closes Secret-backed keys and
+// keeps only the static token.
+func TestE2BAPIKeyCacheFailedRefreshDropsSecretKeys(t *testing.T) {
 	hex := "849a5302e66f98d1d5064ef8501703574af4053b7bf9cf5337f9533326ce2bc9"
 	t0 := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
-	shortExp := t0.Add(10 * time.Minute)
-	longExp := t0.Add(30 * 24 * time.Hour)
 	set := mustParseSecretKeys(t, map[string]apikey.Record{
-		"short": {Key: "deadbeef", CreatedAt: t0, ExpiresAt: &shortExp, TTLDays: 1},
-		"long":  {Key: hex, CreatedAt: t0, ExpiresAt: &longExp, TTLDays: 30},
+		"live": {Key: hex, CreatedAt: t0}, // never-expire — revocation, not TTL
 	})
 
-	cache := &e2bAPIKeyCache{}
-	keys, apply := cache.refresh(true, set, t0) // startup Secret read succeeds
-	if !apply {
-		t.Fatal("startup snapshot must install")
+	cache := &e2bAPIKeyCache{static: "static"}
+	keys, apply, dropped := cache.refresh(true, set, t0)
+	if !apply || dropped {
+		t.Fatalf("startup snapshot: apply=%v dropped=%v", apply, dropped)
 	}
-	if !containsKey(keys, "deadbeef") || !containsKey(keys, hex) {
-		t.Fatalf("both keys live at boot; got %v", keys)
+	if !containsKey(keys, hex) || !containsKey(keys, "static") {
+		t.Fatalf("boot keyring; got %v", keys)
 	}
 	if !cache.haveCache {
-		t.Fatal("startup snapshot must seed haveCache for the reload loop")
+		t.Fatal("startup snapshot must seed haveCache so the first failed refresh can fail-close")
 	}
 
-	later := shortExp.Add(time.Hour)
-	keys, apply = cache.refresh(false, sandboxe2b.SecretKeySet{}, later) // first reload fails
+	keys, apply, dropped = cache.refresh(false, sandboxe2b.SecretKeySet{}, t0.Add(time.Second))
 	if !apply {
-		t.Fatal("failed first refresh must still apply using the startup snapshot")
+		t.Fatal("failed refresh after a snapshot must apply (fail-close), not skip")
+	}
+	if !dropped {
+		t.Fatal("failed refresh must report dropped Secret keys")
+	}
+	if containsKey(keys, hex) {
+		t.Errorf("revoked Secret token must not survive a failed read; got %v", keys)
+	}
+	if !containsKey(keys, "static") {
+		t.Errorf("static --e2b-apikey must remain; got %v", keys)
+	}
+	if cache.haveCache {
+		t.Fatal("fail-close must clear haveCache so later failed ticks leave the static-only keyring")
+	}
+
+	keys, apply, dropped = cache.refresh(false, sandboxe2b.SecretKeySet{}, t0.Add(2*time.Second))
+	if apply || dropped {
+		t.Fatalf("second failed refresh: want apply=false dropped=false, got keys=%v apply=%v dropped=%v", keys, apply, dropped)
+	}
+}
+
+func TestE2BAPIKeyCacheFailedRefreshThenRecovers(t *testing.T) {
+	t0 := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	first := mustParseSecretKeys(t, map[string]apikey.Record{
+		"old": {Key: "deadbeef", CreatedAt: t0},
+	})
+	second := mustParseSecretKeys(t, map[string]apikey.Record{
+		"new": {Key: "cafebabe", CreatedAt: t0},
+	})
+	cache := &e2bAPIKeyCache{static: "static"}
+	cache.refresh(true, first, t0)
+	cache.refresh(false, sandboxe2b.SecretKeySet{}, t0.Add(time.Second))
+	keys, apply, dropped := cache.refresh(true, second, t0.Add(2*time.Second))
+	if !apply || dropped {
+		t.Fatalf("recovering read: apply=%v dropped=%v", apply, dropped)
 	}
 	if containsKey(keys, "deadbeef") {
-		t.Errorf("expired boot-time key must be dropped on failed refresh; got %v", keys)
+		t.Errorf("recovered snapshot must not restore the revoked key; got %v", keys)
 	}
-	if !containsKey(keys, hex) {
-		t.Errorf("unexpired boot-time key must survive; got %v", keys)
+	if !containsKey(keys, "cafebabe") || !containsKey(keys, "static") {
+		t.Errorf("new snapshot + static; got %v", keys)
 	}
 }
 
 func TestE2BAPIKeyCacheNoSnapshotKeepsCurrentKeyring(t *testing.T) {
 	cache := &e2bAPIKeyCache{static: "static-hex"}
-	keys, apply := cache.refresh(false, sandboxe2b.SecretKeySet{}, time.Now())
-	if apply {
-		t.Fatalf("no snapshot: want apply=false so NewServer static keyring is kept, got keys=%v", keys)
+	keys, apply, dropped := cache.refresh(false, sandboxe2b.SecretKeySet{}, time.Now())
+	if apply || dropped {
+		t.Fatalf("no snapshot: want apply=false so NewServer static keyring is kept, got keys=%v apply=%v dropped=%v", keys, apply, dropped)
 	}
 }
 
@@ -144,13 +174,13 @@ func TestE2BAPIKeyCacheSuccessfulReloadReplacesSnapshot(t *testing.T) {
 		"new": {Key: "cafebabe", CreatedAt: t0},
 	})
 	cache := &e2bAPIKeyCache{static: "static"}
-	keys, _ := cache.refresh(true, first, t0)
+	keys, _, _ := cache.refresh(true, first, t0)
 	if !containsKey(keys, "deadbeef") || !containsKey(keys, "static") {
 		t.Fatalf("first snapshot: got %v", keys)
 	}
-	keys, apply := cache.refresh(true, second, t0)
-	if !apply {
-		t.Fatal("successful reload must apply")
+	keys, apply, dropped := cache.refresh(true, second, t0)
+	if !apply || dropped {
+		t.Fatalf("successful reload must apply without dropping; apply=%v dropped=%v", apply, dropped)
 	}
 	if containsKey(keys, "deadbeef") {
 		t.Errorf("replaced snapshot must drop revoked key; got %v", keys)

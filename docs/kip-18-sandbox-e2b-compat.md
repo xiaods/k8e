@@ -483,10 +483,12 @@ Downloads get extension-based `Content-Type` and single-range `Range` support
   **Embedded k8e-server (default) loads the same `sandbox-apikeys` Secret
   the gRPC gateway uses**, reloading every 30s. `k8e sandbox-apikey create`
   is therefore enough — you do **not** also have to set `--e2b-apikey` for
-  official SDK clients to authenticate. The reload keeps the last parsed
-  Secret snapshot and **re-evaluates key expiry every tick even if a later
-  Secret read/parse fails**, so an expired key never stays authenticated
-  just because the Secret became unreadable. Optional extras:
+  official SDK clients to authenticate. A successful read installs the
+  current unexpired tokens. A later **failed** Secret read/parse
+  **fail-closes Secret-backed tokens** (keeps only `--e2b-apikey` /
+  `K8E_SANDBOX_APIKEY`): a deleted unexpired key is indistinguishable from
+  a live one without a successful read, so the cache must not keep serving
+  it. Optional extras:
 
   - `--e2b-apikey` / `K8E_E2B_APIKEY` — extra static token (unioned with the Secret)
   - `K8E_SANDBOX_APIKEY` — fallback when `--e2b-apikey` is empty (same env the CLI uses)

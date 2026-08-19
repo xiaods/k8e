@@ -58,12 +58,19 @@ func SDKAPIKey(bare string) string {
 }
 
 // SecretKeySet is a parsed snapshot of the sandbox-apikeys Secret. It retains
-// each record's expiry so callers can re-evaluate expiration against the
-// current time even when a later Secret read/parse fails — an expired
-// credential must not stay authenticated just because the Secret became
-// unreadable or corrupt.
+// each record's expiry so Active(now) can drop tokens that have since
+// expired. A failed later Secret read must not keep serving this snapshot
+// (a deleted unexpired key is indistinguishable from a live one without a
+// successful read); the embedded server fail-closes Secret-backed tokens
+// on read errors and keeps only the static --e2b-apikey.
 type SecretKeySet struct {
 	records map[string]apikey.Record
+}
+
+// Empty reports whether the snapshot holds no records (missing Secret or
+// unused cache).
+func (s SecretKeySet) Empty() bool {
+	return len(s.records) == 0
 }
 
 // ParseSecretKeys parses a sandbox-apikeys keys.json payload (v2 records or
