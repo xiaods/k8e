@@ -333,7 +333,10 @@ func TestLoopbackClientTrustsSandboxCA(t *testing.T) {
 	emptyPool := x509.NewCertPool()
 
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	srv.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{srvDER}, PrivateKey: key}}}
+	srv.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{srvDER}, PrivateKey: key}},
+		MinVersion:   tls.VersionTLS12,
+	}
 	srv.StartTLS()
 	defer srv.Close()
 	addr := strings.TrimPrefix(srv.URL, "https://")
