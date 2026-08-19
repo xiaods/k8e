@@ -45,6 +45,14 @@ func dialOpts() []grpc.DialOption {
 }
 
 var tlsCandidates = []string{
+	// The sandbox gRPC gateway's server cert is signed by the dedicated sandbox
+	// CA (KIP-14, /var/lib/k8e/server/tls/sandbox-ca.crt), not the apiserver
+	// serving cert. Loopback/local clients — the embedded e2b server and
+	// k8e-sandbox-cli local mode — must trust the sandbox CA to complete the
+	// mTLS handshake; without it the dial fails with
+	// "x509: certificate signed by unknown authority". The apiserver serving
+	// certs are kept as fallback trust anchors for legacy paths.
+	"/var/lib/k8e/server/tls/sandbox-ca.crt",
 	"/var/lib/k8e/server/tls/serving-kube-apiserver.crt",
 	"/etc/k8e/tls/serving-kube-apiserver.crt",
 }

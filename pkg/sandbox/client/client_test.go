@@ -5,10 +5,13 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -270,4 +273,94 @@ func writeTestClientCert(t *testing.T, path string, notAfter time.Time) {
 	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestLoopbackClientTrustsSandboxCA verifies the trust relationship behind the
+// embedded e2b server → sandbox gateway loopback dial: a server cert signed by
+// the sandbox CA handshakes successfully through loopbackTLSConfig when the
+// pool contains that CA, and fails when it does not. Regression for
+// "x509: certificate signed by unknown authority" on the e2b → gateway dial.
+func TestLoopbackClientTrustsSandboxCA(t *testing.T) {
+	now := time.Now()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caTmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "K8E Sandbox CA"},
+		NotBefore:             now,
+		NotAfter:              now.Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srvTmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "node"},
+		NotBefore:    now,
+		NotAfter:     now.Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"node"},
+	}
+	srvDER, err := x509.CreateCertificate(rand.Reader, srvTmpl, caCert, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The pool built from the sandbox CA PEM, exactly as resolveCredsFromTLSFiles
+	// builds it from tlsCandidates.
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})) {
+		t.Fatal("append sandbox CA to pool")
+	}
+	// A pool without the sandbox CA (the regression: system pool / apiserver
+	// serving cert, which cannot verify the gateway's certificate).
+	emptyPool := x509.NewCertPool()
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	srv.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{srvDER}, PrivateKey: key}},
+		MinVersion:   tls.VersionTLS12,
+	}
+	srv.StartTLS()
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "https://")
+
+	if conn, err := tls.Dial("tcp", addr, loopbackTLSConfig(caPool)); err != nil {
+		t.Fatalf("loopback handshake must succeed when the sandbox CA is trusted: %v", err)
+	} else {
+		conn.Close()
+	}
+
+	if _, err := tls.Dial("tcp", addr, loopbackTLSConfig(emptyPool)); err == nil {
+		t.Fatal("loopback handshake must fail when the sandbox CA is not trusted")
+	}
+}
+
+// TestTLSCandidatesIncludeSandboxCA guards the candidate list used by
+// resolveCredsFromTLSFiles: the sandbox CA must be present so local/loopback
+// clients (embedded e2b server, k8e-sandbox-cli local mode) can verify the
+// gateway's server certificate.
+func TestTLSCandidatesIncludeSandboxCA(t *testing.T) {
+	for _, c := range tlsCandidates {
+		if strings.Contains(c, "sandbox-ca.crt") {
+			return
+		}
+	}
+	t.Fatal("tlsCandidates must include the sandbox CA (/var/lib/k8e/server/tls/sandbox-ca.crt)")
 }
