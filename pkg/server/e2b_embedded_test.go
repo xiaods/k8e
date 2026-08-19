@@ -34,3 +34,31 @@ func TestRunEmbeddedE2BListenDefault(t *testing.T) {
 		t.Fatalf("default E2BListen = %q, want 0.0.0.0:3676 (cluster-reachable)", cfg.E2BListen)
 	}
 }
+
+func TestResolveEmbeddedAPIKey(t *testing.T) {
+	hex := "849a5302e66f98d1d5064ef8501703574af4053b7bf9cf5337f9533326ce2bc9"
+	t.Run("configured wins", func(t *testing.T) {
+		t.Setenv("K8E_SANDBOX_APIKEY", "from-env")
+		if got := resolveEmbeddedAPIKey(hex); got != hex {
+			t.Fatalf("got %q want configured", got)
+		}
+	})
+	t.Run("falls back to K8E_SANDBOX_APIKEY", func(t *testing.T) {
+		t.Setenv("K8E_SANDBOX_APIKEY", hex)
+		if got := resolveEmbeddedAPIKey(""); got != hex {
+			t.Fatalf("got %q want env", got)
+		}
+	})
+	t.Run("trims whitespace", func(t *testing.T) {
+		t.Setenv("K8E_SANDBOX_APIKEY", "")
+		if got := resolveEmbeddedAPIKey("  " + hex + "  "); got != hex {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("all empty", func(t *testing.T) {
+		t.Setenv("K8E_SANDBOX_APIKEY", "")
+		if got := resolveEmbeddedAPIKey(""); got != "" {
+			t.Fatalf("got %q want empty", got)
+		}
+	})
+}

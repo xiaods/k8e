@@ -115,7 +115,7 @@ func ApiKeyCommand() cli.Command {
 func apiKeyCreateCommand() cli.Command {
 	return cli.Command{
 		Name:      "create",
-		Usage:     "Create a new API key (default TTL 30 days)",
+		Usage:     "Create a new API key (default TTL 30 days). JSON includes key (bare hex) and e2b_key (official e2b SDK apiKey)",
 		ArgsUsage: "<name>",
 		Flags: []cli.Flag{
 			cli.StringFlag{
@@ -149,6 +149,7 @@ func apiKeyCreateCommand() cli.Command {
 			out := map[string]any{
 				"name":       name,
 				"key":        key,
+				"e2b_key":    "e2b_" + key, // official e2b SDK apiKey (validateApiKey /^e2b_[0-9a-f]+$/)
 				"ttl_days":   rec.TTLDays,
 				"created_at": rec.CreatedAt.UTC().Format(time.RFC3339),
 			}

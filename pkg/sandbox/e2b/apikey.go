@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/xiaods/k8e/pkg/sandbox/apikey"
 )
 
 // e2bAPIKeyPattern mirrors the official `e2b` SDK's client-side validation
@@ -41,4 +44,66 @@ func ValidateE2BAPIKey(key string) error {
 		"(validateApiKey: /^e2b_[0-9a-f]+$/), but the bare token %q contains non-hex characters; "+
 		"generate a compatible key with `openssl rand -hex 32` and configure it "+
 		"without the e2b_ prefix (the server strips it; the SDK prepends it)", key, bare)
+}
+
+// SDKAPIKey returns the official-SDK form of a bare token: "e2b_" + hex.
+// The SDK's validateApiKey (/^e2b_[0-9a-f]+$/) rejects a bare hex key
+// before any request, so this is what operators must pass as apiKey.
+func SDKAPIKey(bare string) string {
+	bare = NormalizeE2BAPIKey(bare)
+	if bare == "" {
+		return ""
+	}
+	return "e2b_" + bare
+}
+
+// SecretKeySet is a parsed snapshot of the sandbox-apikeys Secret. It retains
+// each record's expiry so callers can re-evaluate expiration against the
+// current time even when a later Secret read/parse fails — an expired
+// credential must not stay authenticated just because the Secret became
+// unreadable or corrupt.
+type SecretKeySet struct {
+	records map[string]apikey.Record
+}
+
+// ParseSecretKeys parses a sandbox-apikeys keys.json payload (v2 records or
+// legacy flat map) into a SecretKeySet, retaining expiry information.
+func ParseSecretKeys(data []byte) (SecretKeySet, error) {
+	records, err := apikey.Parse(data)
+	if err != nil {
+		return SecretKeySet{}, err
+	}
+	return SecretKeySet{records: records}, nil
+}
+
+// Active returns the bare tokens still valid at now, normalized the same way
+// as a configured --e2b-apikey (trim + strip "e2b_" + dedupe), so a Secret
+// created by `k8e sandbox-apikey create` can authenticate official e2b SDK
+// clients (which present "e2b_"+token). Expired keys are dropped.
+func (s SecretKeySet) Active(now time.Time) []string {
+	secrets := apikey.ActiveSecrets(s.records, now)
+	keys := make([]string, 0, len(secrets))
+	for _, secret := range secrets {
+		keys = append(keys, secret)
+	}
+	return normalizeKeyList(keys)
+}
+
+// normalizeKeyList trims, strips the SDK prefix, and de-duplicates while
+// preserving first-seen order.
+func normalizeKeyList(keys []string) []string {
+	seen := make(map[string]struct{}, len(keys))
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		k = NormalizeE2BAPIKey(k)
+		if k == "" {
+			continue
+		}
+		if _, ok := seen[k]; ok {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, k)
+	}
+	return out
 }

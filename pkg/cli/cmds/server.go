@@ -557,9 +557,9 @@ var ServerFlags = []cli.Flag{
 	},
 	&cli.StringFlag{
 		Name:        "e2b-apikey",
-		Usage:       "(sandbox) API key for the embedded E2B-compatible server (KIP-18). Official e2b SDKs require the key to be \"e2b_\" + hex characters (client-side validateApiKey); configure the bare hex token here (e.g. from `openssl rand -hex 32`) and pass \"e2b_\"+token to the SDK — the server strips the prefix. K8E_E2B_APIKEY",
+		Usage:       "(sandbox) API key for the embedded E2B-compatible server (KIP-18). Official e2b SDKs require \"e2b_\" + hex (client-side validateApiKey); configure the bare hex token (or omit this flag and let the server load keys from the sandbox-apikeys Secret created by `k8e sandbox-apikey create`). Pass the JSON e2b_key field to the SDK. K8E_E2B_APIKEY, K8E_SANDBOX_APIKEY",
 		Destination: &ServerConfig.E2BAPIKey,
-		EnvVar:      "K8E_E2B_APIKEY",
+		EnvVar:      "K8E_E2B_APIKEY,K8E_SANDBOX_APIKEY",
 	},
 	&cli.StringFlag{
 		Name:        "sandbox-default-runtime",

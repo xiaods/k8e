@@ -24,6 +24,7 @@ type Server struct {
 	listen        string
 	nodeID        string
 	signingSecret string
+	apiKeysMu     sync.RWMutex
 	apiKeys       []string
 
 	defaultCPUs     int
@@ -118,11 +119,9 @@ func NewServer(cfg Config, gw Gateway) *Server {
 	// The configured key is normalized to its bare token: the official e2b
 	// SDK always presents the key as "e2b_<token>" (client-side format
 	// validation), so accepting the key with or without that prefix keeps
-	// server config and SDK usage consistent.
-	var apiKeys []string
-	if key := NormalizeE2BAPIKey(cfg.APIKey); key != "" {
-		apiKeys = append(apiKeys, key)
-	}
+	// server config and SDK usage consistent. ReplaceAPIKeys can later
+	// union this with tokens from the sandbox-apikeys Secret.
+	apiKeys := normalizeKeyList([]string{cfg.APIKey})
 	registry := cfg.StateStore
 	if registry == nil {
 		registry = newSandboxRegistry()
@@ -329,12 +328,24 @@ func (s *Server) acceptKey(bare string) bool {
 	if bare == "" {
 		return false
 	}
+	s.apiKeysMu.RLock()
+	defer s.apiKeysMu.RUnlock()
 	for _, k := range s.apiKeys {
 		if constantTimeEqual(k, bare) {
 			return true
 		}
 	}
 	return false
+}
+
+// ReplaceAPIKeys atomically replaces the accepted control-plane tokens.
+// Each entry is normalized (trim + strip "e2b_"). Empty input means every
+// control-plane request is rejected with 401 — same as an empty Config.APIKey.
+func (s *Server) ReplaceAPIKeys(keys []string) {
+	normalized := normalizeKeyList(keys)
+	s.apiKeysMu.Lock()
+	s.apiKeys = normalized
+	s.apiKeysMu.Unlock()
 }
 
 func constantTimeEqual(a, b string) bool {

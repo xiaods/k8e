@@ -3,14 +3,26 @@ package server
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/sandbox/client"
 	sandboxe2b "github.com/xiaods/k8e/pkg/sandbox/e2b"
+)
+
+const (
+	e2bAPIKeySecretNS   = "sandbox-matrix"
+	e2bAPIKeySecretName = "sandbox-apikeys"
+	e2bAPIKeyReload     = 30 * time.Second
 )
 
 // runEmbeddedE2B starts the KIP-18 E2B-compatible HTTP server inside the
@@ -52,26 +64,118 @@ func runEmbeddedE2B(ctx context.Context, cfg config.SandboxConfig, kubeconfig st
 		logrus.Warnf("e2b (embedded): CRD state store unavailable (%v); using in-memory (single-node semantics)", err)
 	}
 
+	staticKey := resolveEmbeddedAPIKey(cfg.E2BAPIKey)
 	srv := sandboxe2b.NewServer(sandboxe2b.Config{
 		Listen:          cfg.E2BListen,
 		Endpoint:        gatewayAddr,
-		APIKey:          cfg.E2BAPIKey,
+		APIKey:          staticKey,
 		DefaultCPUs:     1,
 		DefaultMemoryMB: 512,
 		DefaultDiskMB:   10 * 1024,
 		StateStore:      store,
 	}, sandboxe2b.GatewayFromClient(c))
 
-	if cfg.E2BAPIKey == "" {
-		logrus.Warnf("e2b (embedded): no --e2b-apikey configured; control-plane requests from the official e2b SDK will be rejected (401) — set K8E_E2B_APIKEY to a hex token (k8e sandbox-apikey create) and pass e2b_+token to the SDK")
-	} else if err := sandboxe2b.ValidateE2BAPIKey(cfg.E2BAPIKey); err != nil {
-		logrus.Warnf("e2b (embedded): %v; official e2b SDK clients will not be able to authenticate — generate a hex key with `k8e sandbox-apikey create <name>` and set K8E_E2B_APIKEY to it", err)
+	applyE2BAPIKeys(ctx, srv, staticKey, kubeconfig)
+	go reloadE2BAPIKeys(ctx, srv, staticKey, kubeconfig)
+
+	if err := sandboxe2b.ValidateE2BAPIKey(staticKey); err != nil {
+		logrus.Warnf("e2b (embedded): %v; official e2b SDK clients will not be able to authenticate — generate a hex key with `k8e sandbox-apikey create <name>` (pass the e2b_key field to the SDK)", err)
 	}
 
 	logrus.Infof("e2b (embedded): serving on %s via gateway %s (Gateway API fronted; state=%T)", cfg.E2BListen, gatewayAddr, store)
 	if err := srv.Start(ctx); err != nil && ctx.Err() == nil {
 		logrus.Errorf("e2b (embedded): %v", err)
 	}
+}
+
+// resolveEmbeddedAPIKey prefers --e2b-apikey / K8E_E2B_APIKEY, then the
+// shared sandbox CLI env K8E_SANDBOX_APIKEY so a single exported key works
+// for `k8e sandbox`, standalone e2b-server, and the embedded surface.
+func resolveEmbeddedAPIKey(configured string) string {
+	if key := strings.TrimSpace(configured); key != "" {
+		return key
+	}
+	return strings.TrimSpace(os.Getenv("K8E_SANDBOX_APIKEY"))
+}
+
+func applyE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, static string, kubeconfig string) {
+	set, ok := loadSandboxAPIKeys(ctx, kubeconfig)
+	if !ok {
+		if static == "" {
+			logrus.Warnf("e2b (embedded): no --e2b-apikey / K8E_SANDBOX_APIKEY and sandbox-apikeys Secret not readable; official e2b SDK control-plane requests will be rejected (401) — run `k8e sandbox-apikey create <name>` and pass the e2b_key field to the SDK")
+		}
+		return
+	}
+	active := set.Active(time.Now())
+	merged := append([]string{static}, active...)
+	srv.ReplaceAPIKeys(merged)
+	switch {
+	case len(active) == 0 && static == "":
+		logrus.Warnf("e2b (embedded): no API keys configured; official e2b SDK control-plane requests will be rejected (401) — run `k8e sandbox-apikey create <name>` and pass the e2b_key field to the SDK")
+	case len(active) > 0:
+		logrus.Infof("e2b (embedded): accepting %d key(s) from sandbox-apikeys Secret (plus static=%t)", len(active), static != "")
+	}
+}
+
+func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, static string, kubeconfig string) {
+	ticker := time.NewTicker(e2bAPIKeyReload)
+	defer ticker.Stop()
+	var cached sandboxe2b.SecretKeySet // last parsed Secret snapshot (retains expiry)
+	haveCache := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now()
+			if set, ok := loadSandboxAPIKeys(ctx, kubeconfig); ok {
+				cached = set
+				haveCache = true
+			} else if !haveCache {
+				continue // nothing cached to re-filter yet; keep current keyring
+			}
+			// Re-evaluate expiration against the current time on every tick —
+			// even when the Secret read/parse failed — so an expired key never
+			// stays authenticated just because the Secret became unreadable.
+			active := cached.Active(now)
+			merged := append([]string{static}, active...)
+			srv.ReplaceAPIKeys(merged)
+		}
+	}
+}
+
+// loadSandboxAPIKeys reads the sandbox-apikeys Secret snapshot.
+// ok=false means the snapshot is not authoritative (transient API error or
+// corrupt payload); the caller must keep the last parsed set and re-filter it
+// for expiry. ok=true with an empty set is a real empty/missing Secret and may
+// replace the keyring.
+func loadSandboxAPIKeys(ctx context.Context, kubeconfig string) (sandboxe2b.SecretKeySet, bool) {
+	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return sandboxe2b.SecretKeySet{}, false
+	}
+	k8s, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return sandboxe2b.SecretKeySet{}, false
+	}
+	secret, err := k8s.CoreV1().Secrets(e2bAPIKeySecretNS).Get(ctx, e2bAPIKeySecretName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return sandboxe2b.SecretKeySet{}, true
+	}
+	if err != nil {
+		logrus.Debugf("e2b (embedded): sandbox-apikeys Secret: %v", err)
+		return sandboxe2b.SecretKeySet{}, false
+	}
+	data, exists := secret.Data["keys.json"]
+	if !exists {
+		return sandboxe2b.SecretKeySet{}, true
+	}
+	parsed, err := sandboxe2b.ParseSecretKeys(data)
+	if err != nil {
+		logrus.Warnf("e2b (embedded): sandbox-apikeys keys.json corrupted: %v", err)
+		return sandboxe2b.SecretKeySet{}, false
+	}
+	return parsed, true
 }
 
 // newEmbeddedStateStore builds the CRD-backed E2B state store for the
