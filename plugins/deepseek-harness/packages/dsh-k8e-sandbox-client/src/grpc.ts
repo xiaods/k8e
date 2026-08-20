@@ -267,16 +267,16 @@ export class GrpcK8eClient {
 
   async createSession(opts: CreateSessionOptions = {}): Promise<{ sessionId: string; podIp: string }> {
     const resp = await this.call<any>(this.client.createSession, {
-      session_id: '',
-      ...(opts.tenant !== undefined ? { tenant_id: opts.tenant } : {}),
-      ...(opts.allowedHosts !== undefined ? { allowed_hosts: opts.allowedHosts } : {}),
-      ...(opts.runtimeClass !== undefined ? { runtime_class: opts.runtimeClass } : {}),
+      sessionId: '',
+      ...(opts.tenant !== undefined ? { tenantId: opts.tenant } : {}),
+      ...(opts.allowedHosts !== undefined ? { allowedHosts: opts.allowedHosts } : {}),
+      ...(opts.runtimeClass !== undefined ? { runtimeClass: opts.runtimeClass } : {}),
     }, 45_000)
-    return { sessionId: resp.session_id as string, podIp: resp.pod_ip as string }
+    return { sessionId: resp.sessionId as string, podIp: resp.podIp as string }
   }
 
   async destroySession(sessionId: string): Promise<void> {
-    await this.call(this.client.destroySession, { session_id: sessionId }, 10_000)
+    await this.call(this.client.destroySession, { sessionId: sessionId }, 10_000)
   }
 
   /**
@@ -286,11 +286,14 @@ export class GrpcK8eClient {
    */
   async status(): Promise<StatusResult> {
     try {
-      await this.call(this.client.destroySession, { session_id: 'healthcheck-probe-noop' }, 5_000)
+      await this.call(this.client.destroySession, { sessionId: 'healthcheck-probe-noop' }, 5_000)
       return { available: true, sessionId: '', tenantId: '', error: '' }
     } catch (err) {
+      // The gateway wraps the noop session lookup in Internal with a
+      // "not found" message (mirroring k8e-sandbox-cli's errSessionNotFound
+      // text match); either signal means the handshake + auth succeeded.
       const code = (err as { code?: number }).code
-      if (code === grpc.status.NOT_FOUND) {
+      if (code === grpc.status.NOT_FOUND || (err instanceof Error && err.message.includes('not found'))) {
         return { available: true, sessionId: '', tenantId: '', error: '' }
       }
       return { available: false, sessionId: '', tenantId: '', error: err instanceof Error ? err.message : String(err) }
@@ -321,7 +324,7 @@ export class GrpcK8eClient {
     const command = await this.prepareCommand(opts.sessionId, code, lang)
     const timeout = opts.timeout ?? 30
     const resp = await this.call<any>(this.client.exec, {
-      session_id: opts.sessionId,
+      sessionId: opts.sessionId,
       command,
       timeout,
       workdir: '/workspace',
@@ -331,10 +334,10 @@ export class GrpcK8eClient {
     return {
       stdout: resp.stdout as string,
       stderr: resp.stderr as string,
-      exitCode: resp.exit_code as number,
-      sessionId: resp.session_id as string,
+      exitCode: resp.exitCode as number,
+      sessionId: resp.sessionId as string,
       status: resp.status as string,
-      durationMs: resp.duration_ms as number,
+      durationMs: resp.durationMs as number,
       truncated: resp.truncated as boolean,
       language: resp.language as string,
     }
@@ -346,25 +349,25 @@ export class GrpcK8eClient {
     const lang = opts.lang ?? 'bash'
     const command = await this.prepareCommand(opts.sessionId, code, lang)
     const resp = await this.call<any>(this.client.exec, {
-      session_id: opts.sessionId,
+      sessionId: opts.sessionId,
       command,
       timeout: 0,
       workdir: '/workspace',
       background: true,
       language: lang,
     }, 15_000)
-    return { runId: resp.run_id as string, status: resp.status as string, sessionId: opts.sessionId }
+    return { runId: resp.runId as string, status: resp.status as string, sessionId: opts.sessionId }
   }
 
   async poll(runId: string): Promise<PollResult> {
-    const resp = await this.call<any>(this.client.pollRun, { run_id: runId }, 15_000)
+    const resp = await this.call<any>(this.client.pollRun, { runId: runId }, 15_000)
     return {
-      runId: resp.run_id as string,
+      runId: resp.runId as string,
       status: resp.status as string,
       stdout: resp.stdout as string,
       stderr: resp.stderr as string,
-      exitCode: resp.exit_code as number,
-      durationMs: resp.duration_ms as number,
+      exitCode: resp.exitCode as number,
+      durationMs: resp.durationMs as number,
       truncated: resp.truncated as boolean,
     }
   }
@@ -372,18 +375,18 @@ export class GrpcK8eClient {
   // ── Files ─────────────────────────────────────────────────────────────────
 
   async read(sessionId: string, path: string): Promise<string> {
-    const resp = await this.call<any>(this.client.readFile, { session_id: sessionId, path }, 15_000)
+    const resp = await this.call<any>(this.client.readFile, { sessionId: sessionId, path }, 15_000)
     return resp.content as string
   }
 
   async write(sessionId: string, path: string, content: string): Promise<void> {
-    await this.call(this.client.writeFile, { session_id: sessionId, path, content }, 15_000)
+    await this.call(this.client.writeFile, { sessionId: sessionId, path, content }, 15_000)
   }
 
   /** List workspace files; the gateway may include type/size per entry. */
   async list(sessionId: string, since?: number): Promise<FileEntry[]> {
     const resp = await this.call<any>(this.client.listFiles, {
-      session_id: sessionId,
+      sessionId: sessionId,
       ...(since !== undefined ? { since } : {}),
     }, 15_000)
     const out: FileEntry[] = []
@@ -401,44 +404,44 @@ export class GrpcK8eClient {
 
   async createTerminal(request: { sessionId: string; argv: string[]; workdir?: string; env?: Record<string, string>; rows: number; cols: number }): Promise<CreateTerminalResponse> {
     const resp = await this.call<any>(this.client.createTerminal, {
-      session_id: request.sessionId,
+      sessionId: request.sessionId,
       argv: request.argv,
       workdir: request.workdir ?? '/workspace',
       env: request.env ?? {},
       rows: request.rows,
       cols: request.cols,
     }, 15_000)
-    return { terminalId: resp.terminal_id as string, pid: resp.pid as number }
+    return { terminalId: resp.terminalId as string, pid: resp.pid as number }
   }
 
   async terminalWrite(terminalId: string, data: Uint8Array): Promise<void> {
-    await this.call(this.client.terminalWrite, { terminal_id: terminalId, data }, 10_000)
+    await this.call(this.client.terminalWrite, { terminalId: terminalId, data }, 10_000)
   }
 
   async terminalResize(terminalId: string, rows: number, cols: number): Promise<void> {
-    await this.call(this.client.terminalResize, { terminal_id: terminalId, rows, cols }, 10_000)
+    await this.call(this.client.terminalResize, { terminalId: terminalId, rows, cols }, 10_000)
   }
 
   async terminalForeground(terminalId: string): Promise<TerminalForegroundResponse> {
-    const resp = await this.call<any>(this.client.terminalForeground, { terminal_id: terminalId }, 10_000)
-    return { processGroupId: resp.process_group_id as number, inputWaiting: resp.input_waiting as boolean }
+    const resp = await this.call<any>(this.client.terminalForeground, { terminalId: terminalId }, 10_000)
+    return { processGroupId: resp.processGroupId as number, inputWaiting: resp.inputWaiting as boolean }
   }
 
   async terminalSignal(terminalId: string, signal: TerminalSignal): Promise<number> {
     const resp = await this.call<any>(this.client.terminalSignal, {
-      terminal_id: terminalId,
+      terminalId: terminalId,
       signal: terminalSignalEnum(signal),
     }, 10_000)
-    return resp.process_group_id as number
+    return resp.processGroupId as number
   }
 
   async terminalDestroy(terminalId: string, graceMs: number): Promise<void> {
-    await this.call(this.client.terminalDestroy, { terminal_id: terminalId, grace_ms: graceMs }, 10_000)
+    await this.call(this.client.terminalDestroy, { terminalId: terminalId, graceMs: graceMs }, 10_000)
   }
 
   /** Open the terminal output stream; the stream yields data frames then a final exit frame. */
   terminalStream(terminalId: string): grpc.ClientReadableStream<any> {
-    return this.client.terminalStream({ terminal_id: terminalId }, this.metadata)
+    return this.client.terminalStream({ terminalId: terminalId }, this.metadata)
   }
 
   /**
@@ -449,7 +452,7 @@ export class GrpcK8eClient {
    */
   execStream(sessionId: string, command: string): ExecStreamResult {
     const stdout = new PassThrough()
-    const stream = this.client.execStream({ session_id: sessionId, command }, this.metadata)
+    const stream = this.client.execStream({ sessionId: sessionId, command }, this.metadata)
 
     const decoder = new ExecSSEDecoder()
     let exitCode: number | null = null

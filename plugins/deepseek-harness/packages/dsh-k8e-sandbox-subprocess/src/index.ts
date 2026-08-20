@@ -104,6 +104,14 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
           result.stdout.on('data', (chunk: Buffer) => {
             emit({ phase: 'output', id, stream: 'stdout', data: chunk.toString('utf8'), at: Date.now() })
           })
+          // The stream's PassThrough is destroyed with the gRPC error when the
+          // gateway rejects the exec (e.g. session gone); without a listener the
+          // 'error' event is unhandled and crashes the whole dsh process. Surface
+          // it as a normal failed exec instead (done rejects below).
+          result.stdout.on('error', (error: Error) => {
+            stdout.destroy(error)
+            emit({ phase: 'exit', id, exitCode: 1, signal: null, at: Date.now() })
+          })
           result.stdout.pipe(stdout)
           const outcome = await result.done
           emit({ phase: 'exit', id, exitCode: outcome.exitCode, signal: outcome.signal, at: Date.now() })
