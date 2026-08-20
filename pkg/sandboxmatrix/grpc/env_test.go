@@ -424,6 +424,63 @@ func TestListFiles_ForwardsSince(t *testing.T) {
 	}
 }
 
+// TestListFiles_EntryFacts verifies the gateway maps sandboxd's per-entry
+// type/size into the ListFiles RPC (dir→directory normalization, symlink
+// passthrough; old sandboxd without type/size leaves them unset).
+func TestListFiles_EntryFacts(t *testing.T) {
+	s := newTestServer()
+	ctx := context.Background()
+	mustCreateSession(t, s.orch, "list-facts")
+	stubSessionPodIP(ctx, t, s.orch, "list-facts", "127.0.0.1")
+
+	old := sandboxdClient
+	defer func() { sandboxdClient = old }()
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/files/list" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"files":[
+			{"path":"/workspace/a.txt","modified":1,"type":"file","size":42},
+			{"path":"/workspace/sub","modified":2,"type":"dir","size":4096},
+			{"path":"/workspace/link","modified":3,"type":"symlink","size":10},
+			{"path":"/workspace/legacy","modified":4}
+		]}`))
+	}))
+	ln, err := net.Listen("tcp", "127.0.0.1:2024")
+	if err != nil {
+		t.Fatalf("bind 2024: %v", err)
+	}
+	srv.Listener = ln
+	srv.Start()
+	defer srv.Close()
+	sandboxdClient = &http.Client{}
+
+	resp, err := s.ListFiles(ctx, &pb.ListFilesRequest{SessionId: "list-facts"})
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	if len(resp.Files) != 4 {
+		t.Fatalf("unexpected files: %+v", resp.Files)
+	}
+	byPath := map[string]*pb.FileEntry{}
+	for _, f := range resp.Files {
+		byPath[f.Path] = f
+	}
+	if f := byPath["/workspace/a.txt"]; f.Type != "file" || f.Size != 42 {
+		t.Errorf("file entry: %+v", f)
+	}
+	if f := byPath["/workspace/sub"]; f.Type != "directory" || f.Size != 4096 {
+		t.Errorf("dir entry normalized: %+v", f)
+	}
+	if f := byPath["/workspace/link"]; f.Type != "symlink" || f.Size != 10 {
+		t.Errorf("symlink entry: %+v", f)
+	}
+	if f := byPath["/workspace/legacy"]; f.Type != "" || f.Size != 0 {
+		t.Errorf("legacy entry must stay unset: %+v", f)
+	}
+}
+
 // TestSandboxMetricsCollector verifies the Prometheus collector surfaces the
 // orchestrator's counters at scrape time (KIP-16 M5).
 func TestSandboxMetricsCollector(t *testing.T) {

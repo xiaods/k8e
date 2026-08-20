@@ -1326,9 +1326,14 @@ func (x *ListFilesResponse) GetFiles() []*FileEntry {
 }
 
 type FileEntry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	Modified      int64                  `protobuf:"varint,2,opt,name=modified,proto3" json:"modified,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Path     string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Modified int64                  `protobuf:"varint,2,opt,name=modified,proto3" json:"modified,omitempty"`
+	// Entry type (file/dir/symlink/other) and size carried by the single
+	// ListFiles RPC so clients can build a directory listing without a
+	// per-entry stat round trip (KIP-20 perf).
+	Type          string `protobuf:"bytes,3,opt,name=type,proto3" json:"type,omitempty"`
+	Size          int64  `protobuf:"varint,4,opt,name=size,proto3" json:"size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1373,6 +1378,20 @@ func (x *FileEntry) GetPath() string {
 func (x *FileEntry) GetModified() int64 {
 	if x != nil {
 		return x.Modified
+	}
+	return 0
+}
+
+func (x *FileEntry) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *FileEntry) GetSize() int64 {
+	if x != nil {
+		return x.Size
 	}
 	return 0
 }
@@ -3658,10 +3677,12 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
 	"\x05since\x18\x02 \x01(\x03R\x05since\"@\n" +
 	"\x11ListFilesResponse\x12+\n" +
-	"\x05files\x18\x01 \x03(\v2\x15.sandbox.v1.FileEntryR\x05files\";\n" +
+	"\x05files\x18\x01 \x03(\v2\x15.sandbox.v1.FileEntryR\x05files\"c\n" +
 	"\tFileEntry\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1a\n" +
-	"\bmodified\x18\x02 \x01(\x03R\bmodified\"N\n" +
+	"\bmodified\x18\x02 \x01(\x03R\bmodified\x12\x12\n" +
+	"\x04type\x18\x03 \x01(\tR\x04type\x12\x12\n" +
+	"\x04size\x18\x04 \x01(\x03R\x04size\"N\n" +
 	"\x11PipInstallRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +

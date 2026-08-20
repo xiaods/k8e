@@ -1,8 +1,14 @@
 /**
- * Phase 2 k8e-sandbox transport: a direct gRPC client (mTLS) for the terminal
- * primitive. Loads the bundled `sandbox.proto` at runtime via
- * @grpc/proto-loader; mTLS material comes from the CLI's cert dir
- * (~/.k8e/sandbox, KIP-14/KIP-17), shared with `k8e-sandbox-cli`.
+ * Phase 2 k8e-sandbox transport: a direct gRPC client (mTLS) for the full
+ * sandbox surface — exec, files, sessions, and the PTY terminal primitive.
+ * Loads the bundled `sandbox.proto` at runtime via @grpc/proto-loader; mTLS
+ * material comes from the CLI's cert dir (~/.k8e/sandbox, KIP-14/KIP-17),
+ * shared with `k8e-sandbox-cli`.
+ *
+ * One `GrpcK8eClient` instance owns one connection: every operation is a gRPC
+ * RPC on that connection instead of spawning a 36MB `k8e-sandbox-cli` process
+ * per call. Every unary call carries a deadline so a dead gateway fails fast
+ * instead of hanging the chat preflight (KIP-20 perf follow-up).
  * @module @k8e-sandbox/dsh-k8e-sandbox-client/grpc
  */
 
@@ -44,6 +50,106 @@ export interface ExecSSEEvent {
   exit?: number
 }
 
+// ── Shared op shapes (mirror @k8e-sandbox/dsh-k8e-sandbox-client) ────────────
+
+export interface ExecResult {
+  stdout: string
+  stderr: string
+  exitCode: number
+  sessionId: string
+  status: string
+  durationMs: number
+  truncated: boolean
+  language: string
+}
+
+export interface BackgroundResult {
+  runId: string
+  status: string
+  sessionId: string
+}
+
+export interface PollResult {
+  runId: string
+  status: string
+  stdout: string
+  stderr: string
+  exitCode: number
+  durationMs: number
+  truncated: boolean
+}
+
+export interface FileEntry {
+  path: string
+  modified: number
+  /** Present when the gateway's ListFiles reports entry facts (KIP-20 perf). */
+  type?: 'file' | 'directory' | 'symlink' | 'other'
+  size?: number
+}
+
+export interface CreateSessionOptions {
+  runtimeClass?: string
+  tenant?: string
+  allowedHosts?: string[]
+}
+
+export interface StatusResult {
+  available: boolean
+  sessionId: string
+  tenantId: string
+  error: string
+}
+
+/** Default deadline for a unary RPC with no explicit budget (ms). */
+export const DEFAULT_RPC_DEADLINE_MS = 30_000
+
+// ── Language wrapping (mirrors pkg/sandboxcli buildCommand) ──────────────────
+
+function isMultiLine(code: string): boolean {
+  return code.includes('\n')
+}
+
+function isInterpretedLang(lang: string | undefined): boolean {
+  switch ((lang ?? '').toLowerCase()) {
+    case 'python': case 'python3': case 'py':
+    case 'node': case 'nodejs': case 'js': case 'javascript':
+    case 'ts': case 'typescript':
+      return true
+    default:
+      return false
+  }
+}
+
+/**
+ * Wrap code for a language the same way `k8e-sandbox-cli run` does: bash
+ * passes through; python/node single-line uses `-c`/`-e`, multi-line runs a
+ * workspace temp file written via WriteFile.
+ */
+export function buildSandboxCommand(lang: string | undefined, code: string): string {
+  switch ((lang ?? 'bash').toLowerCase()) {
+    case 'python': case 'python3': case 'py':
+      return isMultiLine(code) ? 'python3 /workspace/_k8e_run.py' : `python3 -c ${JSON.stringify(code)}`
+    case 'node': case 'nodejs': case 'js': case 'javascript':
+      return isMultiLine(code) ? 'node /workspace/_k8e_run.js' : `node -e ${JSON.stringify(code)}`
+    case 'ts': case 'typescript':
+      return 'TMPDIR=/workspace tsx /workspace/_k8e_run.ts'
+    default: // bash / sh
+      return code
+  }
+}
+
+/** Workspace temp file for multi-line interpreted code (mirrors writeCodeFile). */
+function runFileFor(lang: string | undefined): string {
+  switch ((lang ?? '').toLowerCase()) {
+    case 'node': case 'nodejs': case 'js': case 'javascript':
+      return '/workspace/_k8e_run.js'
+    case 'ts': case 'typescript':
+      return '/workspace/_k8e_run.ts'
+    default:
+      return '/workspace/_k8e_run.py'
+  }
+}
+
 /**
  * Incremental decoder for the gateway's /exec/stream SSE framing
  * (`data: {"pid":N}`, `data: <raw>`, `data: {"exit":N}`). Chunks may split an
@@ -82,19 +188,27 @@ export interface GrpcK8eClientOptions {
   certDir?: string
   /** Path to the bundled sandbox.proto. */
   protoPath?: string
+  /** Default deadline for unary RPCs (ms); dial/reconnect hangs are bounded by this. */
+  deadlineMs?: number
 }
 
 // Dynamic client surface produced by proto-loader; typed loosely here.
 interface SandboxServiceClient {
-  createTerminal(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
-  terminalWrite(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
-  terminalResize(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
-  terminalForeground(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
-  terminalSignal(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
-  terminalDestroy(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  createSession(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  destroySession(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  exec(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  pollRun(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  readFile(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  writeFile(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  listFiles(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  createTerminal(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  terminalWrite(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  terminalResize(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  terminalForeground(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  terminalSignal(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  terminalDestroy(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
   terminalStream(request: unknown, metadata: grpc.Metadata): grpc.ClientReadableStream<any>
   execStream(request: unknown, metadata: grpc.Metadata): grpc.ClientReadableStream<any>
-  exec(request: unknown, metadata: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
 }
 
 function defaultCertDir(): string {
@@ -131,13 +245,22 @@ function terminalSignalEnum(signal: TerminalSignal): number {
   }
 }
 
+type UnaryMethod = (
+  request: unknown,
+  metadata: grpc.Metadata,
+  options: grpc.CallOptions,
+  cb: (err: grpc.ServiceError | null, resp: any) => void,
+) => grpc.ClientUnaryCall
+
 /**
- * Direct gRPC client for the sandbox gateway's PTY terminal primitive. Phase 2
- * uses this for `spawnTerminal`; Phase 1 shells out to the CLI for the rest.
+ * Direct gRPC client for the sandbox gateway. One instance owns one
+ * connection; all fs/exec/session ops are RPCs on it (no per-op CLI spawn).
+ * Every unary call carries a deadline so a dead gateway fails fast.
  */
 export class GrpcK8eClient {
   private readonly client: SandboxServiceClient
   private readonly metadata = new grpc.Metadata()
+  private readonly deadlineMs: number
 
   constructor(private readonly opts: GrpcK8eClientOptions) {
     const protoPath = opts.protoPath ?? join(import.meta.dirname, '..', 'proto', 'sandbox.proto')
@@ -150,20 +273,157 @@ export class GrpcK8eClient {
     })
     const pkg = grpc.loadPackageDefinition(definition) as any
     const SandboxService = pkg.sandbox.v1.SandboxService
-    this.client = new SandboxService(opts.endpoint, createCredentials(opts.certDir ?? defaultCertDir())) as SandboxServiceClient
+    this.deadlineMs = opts.deadlineMs ?? DEFAULT_RPC_DEADLINE_MS
+    // Fast-fail reconnect: a dead endpoint must surface a per-call deadline
+    // quickly instead of sitting in grpc-js exponential backoff.
+    this.client = new SandboxService(opts.endpoint, createCredentials(opts.certDir ?? defaultCertDir()), {
+      'grpc.initial_reconnect_backoff_ms': 200,
+      'grpc.max_reconnect_backoff_ms': 2_000,
+    }) as SandboxServiceClient
   }
 
-  private call<T>(
-    method: (req: unknown, md: grpc.Metadata, cb: (err: grpc.ServiceError | null, resp: any) => void) => grpc.ClientUnaryCall,
-    request: unknown,
-  ): Promise<T> {
+  private call<T>(method: UnaryMethod, request: unknown, deadlineMs?: number): Promise<T> {
     return new Promise((resolve, reject) => {
-      method.call(this.client, request, this.metadata, (err, resp) => {
+      const deadline = Date.now() + (deadlineMs ?? this.deadlineMs)
+      method.call(this.client, request, this.metadata, { deadline }, (err, resp) => {
         if (err !== null) reject(err)
         else resolve(resp as T)
       })
     })
   }
+
+  // ── Sessions ──────────────────────────────────────────────────────────────
+
+  async createSession(opts: CreateSessionOptions = {}): Promise<{ sessionId: string; podIp: string }> {
+    const resp = await this.call<any>(this.client.createSession, {
+      session_id: '',
+      ...(opts.tenant !== undefined ? { tenant_id: opts.tenant } : {}),
+      ...(opts.allowedHosts !== undefined ? { allowed_hosts: opts.allowedHosts } : {}),
+      ...(opts.runtimeClass !== undefined ? { runtime_class: opts.runtimeClass } : {}),
+    }, 45_000)
+    return { sessionId: resp.session_id as string, podIp: resp.pod_ip as string }
+  }
+
+  async destroySession(sessionId: string): Promise<void> {
+    await this.call(this.client.destroySession, { session_id: sessionId }, 10_000)
+  }
+
+  /**
+   * Lightweight availability probe (mirrors `k8e-sandbox-cli status`): a noop
+   * DestroySession RPC that completes the handshake; NotFound means the
+   * gateway is up (unknown id), any other error means unavailable.
+   */
+  async status(): Promise<StatusResult> {
+    try {
+      await this.call(this.client.destroySession, { session_id: 'healthcheck-probe-noop' }, 5_000)
+      return { available: true, sessionId: '', tenantId: '', error: '' }
+    } catch (err) {
+      const code = (err as { code?: number }).code
+      if (code === grpc.status.NOT_FOUND) {
+        return { available: true, sessionId: '', tenantId: '', error: '' }
+      }
+      return { available: false, sessionId: '', tenantId: '', error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  // ── Exec ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Run one command in the sandbox and collect stdout/stderr/exit code.
+   * Mirrors `k8e-sandbox-cli run`; the RPC deadline covers dial + sandbox
+   * execution (sandbox timeout + 15s slack).
+   */
+  async run(code: string, opts: { lang?: string; timeout?: number; sessionId?: string; tenant?: string } = {}): Promise<ExecResult> {
+    if (opts.sessionId === undefined) throw new Error('k8e sandbox grpc: run requires a sessionId')
+    const lang = opts.lang ?? 'bash'
+    let command = buildSandboxCommand(lang, code)
+    if (isMultiLine(code) && isInterpretedLang(lang)) {
+      await this.write(opts.sessionId, runFileFor(lang), code)
+      command = buildSandboxCommand(lang, code)
+    }
+    const timeout = opts.timeout ?? 30
+    const resp = await this.call<any>(this.client.exec, {
+      session_id: opts.sessionId,
+      command,
+      timeout,
+      workdir: '/workspace',
+      background: false,
+      language: lang,
+    }, timeout * 1000 + 15_000)
+    return {
+      stdout: resp.stdout as string,
+      stderr: resp.stderr as string,
+      exitCode: resp.exit_code as number,
+      sessionId: resp.session_id as string,
+      status: resp.status as string,
+      durationMs: resp.duration_ms as number,
+      truncated: resp.truncated as boolean,
+      language: resp.language as string,
+    }
+  }
+
+  /** Submit asynchronously; returns a run id to poll. */
+  async runBackground(code: string, opts: { lang?: string; sessionId?: string; tenant?: string } = {}): Promise<BackgroundResult> {
+    if (opts.sessionId === undefined) throw new Error('k8e sandbox grpc: runBackground requires a sessionId')
+    const lang = opts.lang ?? 'bash'
+    let command = buildSandboxCommand(lang, code)
+    if (isMultiLine(code) && isInterpretedLang(lang)) {
+      await this.write(opts.sessionId, runFileFor(lang), code)
+      command = buildSandboxCommand(lang, code)
+    }
+    const resp = await this.call<any>(this.client.exec, {
+      session_id: opts.sessionId,
+      command,
+      timeout: 0,
+      workdir: '/workspace',
+      background: true,
+      language: lang,
+    }, 15_000)
+    return { runId: resp.run_id as string, status: resp.status as string, sessionId: opts.sessionId }
+  }
+
+  async poll(runId: string): Promise<PollResult> {
+    const resp = await this.call<any>(this.client.pollRun, { run_id: runId }, 15_000)
+    return {
+      runId: resp.run_id as string,
+      status: resp.status as string,
+      stdout: resp.stdout as string,
+      stderr: resp.stderr as string,
+      exitCode: resp.exit_code as number,
+      durationMs: resp.duration_ms as number,
+      truncated: resp.truncated as boolean,
+    }
+  }
+
+  // ── Files ─────────────────────────────────────────────────────────────────
+
+  async read(sessionId: string, path: string): Promise<string> {
+    const resp = await this.call<any>(this.client.readFile, { session_id: sessionId, path }, 15_000)
+    return resp.content as string
+  }
+
+  async write(sessionId: string, path: string, content: string): Promise<void> {
+    await this.call(this.client.writeFile, { session_id: sessionId, path, content }, 15_000)
+  }
+
+  /** List workspace files; the gateway may include type/size per entry. */
+  async list(sessionId: string, since?: number): Promise<FileEntry[]> {
+    const resp = await this.call<any>(this.client.listFiles, {
+      session_id: sessionId,
+      ...(since !== undefined ? { since } : {}),
+    }, 15_000)
+    const out: FileEntry[] = []
+    for (const f of (resp.files as any[]) ?? []) {
+      const entry: FileEntry = { path: f.path as string, modified: Number(f.modified ?? 0) }
+      const rawType = f.type as FileEntry['type'] | undefined
+      if (rawType !== undefined) entry.type = rawType
+      if (f.size !== undefined) entry.size = Number(f.size)
+      out.push(entry)
+    }
+    return out
+  }
+
+  // ── Terminal ──────────────────────────────────────────────────────────────
 
   async createTerminal(request: { sessionId: string; argv: string[]; workdir?: string; env?: Record<string, string>; rows: number; cols: number }): Promise<CreateTerminalResponse> {
     const resp = await this.call<any>(this.client.createTerminal, {
@@ -173,20 +433,20 @@ export class GrpcK8eClient {
       env: request.env ?? {},
       rows: request.rows,
       cols: request.cols,
-    })
+    }, 15_000)
     return { terminalId: resp.terminal_id as string, pid: resp.pid as number }
   }
 
   async terminalWrite(terminalId: string, data: Uint8Array): Promise<void> {
-    await this.call(this.client.terminalWrite, { terminal_id: terminalId, data })
+    await this.call(this.client.terminalWrite, { terminal_id: terminalId, data }, 10_000)
   }
 
   async terminalResize(terminalId: string, rows: number, cols: number): Promise<void> {
-    await this.call(this.client.terminalResize, { terminal_id: terminalId, rows, cols })
+    await this.call(this.client.terminalResize, { terminal_id: terminalId, rows, cols }, 10_000)
   }
 
   async terminalForeground(terminalId: string): Promise<TerminalForegroundResponse> {
-    const resp = await this.call<any>(this.client.terminalForeground, { terminal_id: terminalId })
+    const resp = await this.call<any>(this.client.terminalForeground, { terminal_id: terminalId }, 10_000)
     return { processGroupId: resp.process_group_id as number, inputWaiting: resp.input_waiting as boolean }
   }
 
@@ -194,12 +454,12 @@ export class GrpcK8eClient {
     const resp = await this.call<any>(this.client.terminalSignal, {
       terminal_id: terminalId,
       signal: terminalSignalEnum(signal),
-    })
+    }, 10_000)
     return resp.process_group_id as number
   }
 
   async terminalDestroy(terminalId: string, graceMs: number): Promise<void> {
-    await this.call(this.client.terminalDestroy, { terminal_id: terminalId, grace_ms: graceMs })
+    await this.call(this.client.terminalDestroy, { terminal_id: terminalId, grace_ms: graceMs }, 10_000)
   }
 
   /** Open the terminal output stream; the stream yields data frames then a final exit frame. */

@@ -604,6 +604,16 @@ func dialErr(endpoint string, err error) error {
 	case strings.Contains(msg, "certificate required"),
 		strings.Contains(msg, "bad certificate"):
 		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: client cert rejected — re-run login/connect with --apikey", endpoint, err)
+	case strings.Contains(msg, "EOF"), strings.Contains(msg, "connection reset"), strings.Contains(msg, "connection closed"):
+		// EOF during the TLS handshake almost always means the gateway closed
+		// the connection: it is not running on the endpoint, the port is
+		// firewalled, or the cached CA/client cert belongs to a previous CA
+		// generation (server CA rotated). All three resolve by re-bootstrapping.
+		cacheHint, _ := sandboxCacheDir()
+		if cacheHint == "" {
+			cacheHint = "~/.k8e/sandbox"
+		}
+		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: gateway closed the TLS handshake (EOF) — verify the gateway is running and reachable, then re-run connect/login with --apikey (remove %s/ca.crt if the server CA rotated)", endpoint, err, cacheHint)
 	default:
 		return fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
 	}

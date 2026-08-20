@@ -131,7 +131,7 @@ pub fn handleList(allocator: std.mem.Allocator, client_fd: i32, query: []const u
         first = false;
         const escaped = try exec.jsonEscape(allocator, e.path);
         defer allocator.free(escaped);
-        const item = try std.fmt.allocPrint(allocator, "{{\"path\":\"{s}\",\"modified\":{d}}}", .{ escaped, e.modified });
+        const item = try std.fmt.allocPrint(allocator, "{{\"path\":\"{s}\",\"modified\":{d},\"type\":\"{s}\",\"size\":{d}}}", .{ escaped, e.modified, e.type, e.size });
         defer allocator.free(item);
         try json_buf.appendSlice(item);
     }
@@ -184,15 +184,20 @@ fn listDirRecursive(allocator: std.mem.Allocator, entries: *std.array_list.Manag
             }
 
             // Modification time via statx (real mtime, not 0 — KIP-16 M2
-            // enables diff/since-based incremental snapshots).
-            const mtime = fileMtime(entry_path) orelse 0;
+            // enables diff/since-based incremental snapshots). Type/size ride
+            // the same single list RPC so clients skip per-entry stats
+            // (KIP-20 perf).
+            const facts = fileFacts(entry_path, dent.type) orelse {
+                allocator.free(entry_path);
+                continue;
+            };
 
-            if (since > 0 and mtime < since) {
+            if (since > 0 and facts.mtime < since) {
                 allocator.free(entry_path);
                 continue;
             }
 
-            try entries.append(.{ .path = entry_path, .modified = mtime });
+            try entries.append(.{ .path = entry_path, .modified = facts.mtime, .type = facts.type, .size = facts.size });
         }
     }
 }
@@ -200,7 +205,42 @@ fn listDirRecursive(allocator: std.mem.Allocator, entries: *std.array_list.Manag
 const FileEntry = struct {
     path: []u8,
     modified: i64,
+    type: []const u8,
+    size: i64,
 };
+
+/// fileFacts returns the entry's mtime (unix seconds), size, and type via the
+/// statx syscall (or dent type fallback). size is 0 for directories; type is
+/// one of "file" / "dir" / "symlink" / "other". Returns null on any error.
+pub fn fileFacts(path: []const u8, dent_type: u8) ?struct { mtime: i64, size: i64, type: []const u8 } {
+    var path_z_buf: [4096]u8 = undefined;
+    if (path.len >= path_z_buf.len) return null;
+    @memcpy(path_z_buf[0..path.len], path);
+    path_z_buf[path.len] = 0;
+    const path_z: [*:0]const u8 = @ptrCast(&path_z_buf);
+
+    var stx: std.os.linux.Statx = undefined;
+    const rc = std.os.linux.statx(
+        std.os.linux.AT.FDCWD,
+        path_z,
+        0, // follow symlinks like read does
+        std.os.linux.STATX.BASIC_STATS,
+        &stx,
+    );
+    if (rc != 0) return null;
+    // Check the mask actually reports mtime (varies by kernel/filesystem).
+    // STATX_MTIME = 0x40 = bit 6.
+    const stx_mask: u32 = @bitCast(stx.mask);
+    const mtime_bit: u32 = 1 << 6;
+    if (stx_mask & mtime_bit == 0) return null;
+    const ftype: []const u8 = switch (dent_type) {
+        std.os.linux.DT.DIR => "dir",
+        std.os.linux.DT.REG => "file",
+        std.os.linux.DT.LNK => "symlink",
+        else => "other",
+    };
+    return .{ .mtime = stx.mtime.sec, .size = @intCast(stx.size), .type = ftype };
+}
 
 /// fileMtime returns the file's last-modification time (unix seconds) via the
 /// statx syscall, or null on any error. statx works on Linux targets; the

@@ -1,7 +1,11 @@
 // Fake-ctx runtime test for the filesystem provider: mount K8eFileSystem on a
-// fake ctx with a fake owner + fake CliK8eClient (an in-memory file map), then
-// assert resolve/read/write/edit/list map correctly.
+// fake ctx with a fake owner + fake transport (an in-memory file map), then
+// assert resolve/read/write/edit/list map correctly, listDir uses entry facts
+// (no per-child stat), and host-absolute paths stay on the local disk.
 import assert from 'node:assert/strict'
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { K8eFileSystem } from '@k8e-sandbox/dsh-k8e-sandbox-fs'
 
 function makeCliClient(files) {
@@ -19,7 +23,13 @@ function makeCliClient(files) {
     },
     async list(sid) {
       calls.push(['list', sid])
-      return [...files.keys()].map((path) => ({ path, modified: 0 }))
+      // Gateway entry facts: type/size arrive with the single ListFiles RPC.
+      return [...files.keys()].map((path) => ({
+        path,
+        modified: 0,
+        type: 'file',
+        size: files.get(path).length,
+      }))
     },
     async run(code, opts) {
       calls.push(['run', code, opts])
@@ -99,15 +109,55 @@ function makeCtx(owner) {
   assert.equal(editOutcome.after, 'hello there')
   assert.equal(files.get('/workspace/hello.txt'), 'hello there')
 
-  // listDir returns only direct-child files (k8e ListFiles lists files, not dirs)
+  // listDir returns only direct-child files; entry facts (type/size) arrive in
+  // the single ListFiles RPC — no per-child `run` stat (KIP-20 perf).
   files.set('/workspace/sub/a.txt', 'a')
   files.set('/workspace/root.txt', 'r')
+  const runCallsBeforeList = client.calls.filter(([op]) => op === 'run').length
   const entries = await fs.listDir(await fs.resolve('.'))
+  const runCallsAfterList = client.calls.filter(([op]) => op === 'run').length
+  assert.equal(runCallsAfterList, runCallsBeforeList, 'listDir must not spawn per-child stat probes')
   const names = entries.map((e) => e.name).sort()
   assert.deepEqual(names, ['hello.txt', 'new.txt', 'root.txt'])
   const txt = entries.find((e) => e.name === 'root.txt')
   assert.equal(txt.type, 'file')
-  assert.equal(txt.size, 1, 'size carried from the stat probe')
+  assert.equal(txt.size, 1, 'size carried from ListFiles entry facts')
 }
 
-console.log('✔ fs fake-ctx test passed (path primitives, read/write/edit/list)')
+// ---- host-absolute paths stay on the local disk (preflight local) ----
+{
+  const hostDir = mkdtempSync(join(tmpdir(), 'k8e-fs-host-'))
+  try {
+    writeFileSync(join(hostDir, 'AGENTS.md'), '# local instructions\n', 'utf8')
+    writeFileSync(join(hostDir, 'nested.txt'), 'n', 'utf8')
+    const files = new Map()
+    const client = makeCliClient(files)
+    const owner = { getClient: () => client, getSession: async () => 's1', cwd: '/workspace' }
+    const fs = new K8eFileSystem(makeCtx(owner))
+
+    // stat reads host metadata without touching the sandbox transport
+    const info = await fs.stat(await fs.resolve(join(hostDir, 'AGENTS.md')))
+    assert.equal(info.type, 'file')
+    assert.equal(info.size, 21)
+
+    // readText reads the local file
+    assert.equal(await fs.readText(await fs.resolve(join(hostDir, 'AGENTS.md'))), '# local instructions\n')
+
+    // listDir reads the local directory
+    const entries = await fs.listDir(await fs.resolve(hostDir))
+    assert.deepEqual(entries.map((e) => e.name).sort(), ['AGENTS.md', 'nested.txt'])
+    assert.equal(entries.find((e) => e.name === 'AGENTS.md').type, 'file')
+
+    // none of the host ops may touch the sandbox transport at all
+    assert.equal(client.calls.length, 0, 'host-absolute paths must not hit the sandbox transport')
+
+    // writeText on a host path writes locally
+    const outcome = await fs.writeText(await fs.resolve(join(hostDir, 'new.md')), 'hello')
+    assert.equal(outcome.operation, 'create')
+    assert.equal(readFileSync(join(hostDir, 'new.md'), 'utf8'), 'hello')
+  } finally {
+    rmSync(hostDir, { recursive: true, force: true })
+  }
+}
+
+console.log('✔ fs fake-ctx test passed (path primitives, read/write/edit/list, host-local preflight)')
