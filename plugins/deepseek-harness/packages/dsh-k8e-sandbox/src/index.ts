@@ -139,11 +139,15 @@ export class K8eSandboxRuntime extends Service {
 
     ctx.effect(() => async () => {
       this.disposed = true
-      if (this.sessionId === undefined) return
-      try {
-        await this.transport.destroySession(this.sessionId)
-      } catch (_destroyFailure) {
-        // Best-effort: the session pod is also reclaimed by the warm-pool GC.
+      // Always release the persistent gRPC connection, even when no session
+      // was ever assigned (disposal before first use must not leak the
+      // channel; the session pod is also reclaimed by the warm-pool GC).
+      if (this.sessionId !== undefined) {
+        try {
+          await this.transport.destroySession(this.sessionId)
+        } catch (_destroyFailure) {
+          // Best-effort: the session pod is also reclaimed by the warm-pool GC.
+        }
       }
       this.transport.close?.()
     }, 'k8e sandbox teardown')

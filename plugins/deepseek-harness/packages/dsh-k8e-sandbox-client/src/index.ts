@@ -141,7 +141,7 @@ function parseProfilesYaml(text: string): SandboxProfileFile {
     if (m === null) continue
     // Indent 0: top-level scalars (`current_profile`, `version`, `profiles:`).
     if (indent === 0) {
-      if (m[1] === 'current_profile') result.currentProfile = m[2]!.trim()
+      if (m[1] === 'current_profile') result.currentProfile = m[2]!.replace(/^"(.*)"$/, '$1').trim()
       continue
     }
     // Indent 2 with empty value: a profile name opens a new profile map.
@@ -190,7 +190,12 @@ export function resolveSandboxTransport(
     }
   }
   if (file === undefined) return undefined
-  const selected = profileName ?? file.currentProfile ?? (file.profiles?.default !== undefined ? 'default' : undefined)
+  // Mirror pkg/sandboxcli SelectProfileName: explicit → env → current_profile
+  // (trimmed, empty treated as unset) → "default" when present. An empty
+  // current_profile must NOT short-circuit the documented default fallback.
+  const explicitProfile = profileName !== undefined && profileName.trim() !== '' ? profileName.trim() : undefined
+  const currentProfile = file.currentProfile !== undefined && file.currentProfile.trim() !== '' ? file.currentProfile.trim() : undefined
+  const selected = explicitProfile ?? currentProfile ?? (file.profiles?.default !== undefined ? 'default' : undefined)
   if (selected === undefined) return undefined
   const profile = file.profiles?.[selected]
   if (profile === undefined || profile.endpoint === undefined || profile.endpoint === '') return undefined
