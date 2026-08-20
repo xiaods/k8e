@@ -1,6 +1,6 @@
 {
   "name": "@k8e-sandbox/dsh-k8e-sandbox-host-ui",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "k8e-sandbox host UI bridge: /k8e-sandbox HTTP API + terminal WebSocket (KIP-20 client half M1).",
   "type": "module",
   "main": "lib/index.js",
