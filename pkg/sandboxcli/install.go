@@ -26,6 +26,7 @@ const (
 	dirCodex  = ".codex"
 	dirAgents = ".agents"
 	dirPi     = ".pi"
+	dirDsh    = ".dsh"
 )
 
 // skillDest is one filesystem location where the skill should be written.
@@ -36,13 +37,13 @@ type skillDest struct {
 
 // InstallResult records one install destination for user-facing summary.
 type InstallResult struct {
-	Agent string // claude | codex | pi
+	Agent string // claude | codex | pi | dsh
 	Path  string
 	Label string
 }
 
 // InstallSkill installs skill files into the given agent (refresh if content differs).
-// target: "claude", "codex", "pi", or "all"
+// target: "claude", "codex", "pi", "dsh", or "all"
 func InstallSkill(target string) error {
 	_, err := InstallSkillMulti(target, false)
 	return err
@@ -128,8 +129,10 @@ func skillDestsForAgent(agent, home string) ([]skillDest, error) {
 		return codexSkillDests(home), nil
 	case "pi":
 		return piSkillDests(home), nil
+	case "dsh":
+		return dshSkillDests(home), nil
 	default:
-		return nil, fmt.Errorf("unknown target %q (want claude|codex|pi)", agent)
+		return nil, fmt.Errorf("unknown target %q (want claude|codex|pi|dsh)", agent)
 	}
 }
 
@@ -177,6 +180,32 @@ func piSkillDests(home string) []skillDest {
 	return dests
 }
 
+// dshHome returns the DeepSeek Harness config root: $DSH_HOME or ~/.dsh
+// (mirrors @deepseek-ai/dsh-home-paths resolveDshHome).
+func dshHome() string {
+	if h := strings.TrimSpace(os.Getenv("DSH_HOME")); h != "" {
+		return h
+	}
+	return filepath.Join(homeDir(), dirDsh)
+}
+
+// dshSkillDests: $DSH_HOME/skills (default ~/.dsh/skills — the user-dsh root
+// dsh scans at a higher rank than ~/.agents/skills) plus ~/.agents/skills for
+// cross-harness discovery. The model loads the skill via the `skill` tool.
+func dshSkillDests(home string) []skillDest {
+	dests := []skillDest{
+		{"dsh (global)", filepath.Join(dshHome(), "skills")},
+		{"dsh (.agents global)", filepath.Join(home, dirAgents, "skills")},
+	}
+	if pathExists(dirDsh) {
+		dests = append(dests, skillDest{"dsh (workspace)", filepath.Join(dirDsh, "skills")})
+	}
+	if pathExists(dirAgents) {
+		dests = append(dests, skillDest{"dsh (.agents workspace)", filepath.Join(dirAgents, "skills")})
+	}
+	return dests
+}
+
 // resolveSkillTargets expands "auto" / named targets into concrete agent names.
 func resolveSkillTargets(agentFlag string) ([]string, error) {
 	agentFlag = strings.TrimSpace(strings.ToLower(agentFlag))
@@ -184,14 +213,14 @@ func resolveSkillTargets(agentFlag string) ([]string, error) {
 		agentFlag = "auto"
 	}
 	switch agentFlag {
-	case "claude", "codex", "pi":
+	case "claude", "codex", "pi", "dsh":
 		return []string{agentFlag}, nil
 	case "all":
-		return []string{"claude", "codex", "pi"}, nil
+		return []string{"claude", "codex", "pi", "dsh"}, nil
 	case "auto":
 		return detectAvailableAgents(), nil
 	default:
-		return nil, fmt.Errorf("unknown --agent %q (want auto|claude|codex|pi|all)", agentFlag)
+		return nil, fmt.Errorf("unknown --agent %q (want auto|claude|codex|pi|dsh|all)", agentFlag)
 	}
 }
 
@@ -209,6 +238,11 @@ func detectAvailableAgents() []string {
 	if pathExists(dirPi) || pathExists(filepath.Join(home, dirPi)) ||
 		pathExists(filepath.Join(home, dirAgents)) {
 		found = append(found, "pi")
+	}
+	// dsh: ~/.dsh (DeepSeek Harness config root)
+	if pathExists(dirDsh) || pathExists(filepath.Join(home, dirDsh)) ||
+		pathExists(filepath.Join(home, dirAgents)) {
+		found = append(found, "dsh")
 	}
 	if len(found) == 0 {
 		return []string{"claude", "codex", "pi"}
@@ -324,6 +358,8 @@ func InvocationHints(agents []string) []string {
 			lines = append(lines, "Codex:        $k8e-sandbox <goal>   (or /skills → k8e-sandbox)")
 		case "pi":
 			lines = append(lines, "Pi:           /skill:k8e-sandbox <goal>   (or /k8e-sandbox if skill commands enabled)")
+		case "dsh":
+			lines = append(lines, "dsh:          skill tool — the model loads k8e-sandbox by name, or the user names it directly in chat")
 		}
 	}
 	return lines

@@ -13,6 +13,7 @@ Treat this as the **k8e-sandbox** skill command.
 - Claude Code: `/k8e-sandbox <goal>`
 - Codex: `$k8e-sandbox <goal>` (or pick from `/skills`)
 - Pi: `/skill:k8e-sandbox <goal>` (or `/k8e-sandbox` when skill commands are enabled)
+- dsh (DeepSeek Harness): the model loads this skill via the `skill` tool (catalog name `k8e-sandbox`), or the user names it directly in chat — see [dsh execution path](#dsh-deepseek-harness-execution-path) below
 
 **Goal from invocation arguments:**
 
@@ -21,6 +22,21 @@ $ARGUMENTS
 ```
 
 If `$ARGUMENTS` is empty and no goal is otherwise provided, ask the user for a sandbox goal and **stop** (do not invent work).
+
+## dsh (DeepSeek Harness) execution path
+
+When running inside dsh with the `dsh-k8e-sandbox` plugin mounted, the harness's fs / subprocess seams are already **replaced by the sandbox** — the model's `read`/`write`/`bash` land in the sandbox `/workspace` automatically. **Do not run `k8e-sandbox-cli` in this harness**: it is not present inside the sandbox, and invoking it would recursively dial the gateway from inside the pod.
+
+Instead use the plugin's model-surface tools (no CLI, no per-op spawn):
+
+- `k8e_sandbox_exec` — foreground command, returns stdout/stderr/exit code (equivalent of `run`)
+- `k8e_sandbox_run_background` + `k8e_sandbox_poll` — long-running / streaming tasks
+- `k8e_sandbox_session_status` / `k8e_sandbox_session_destroy` — session lifecycle
+- fs seam: `read`/`write`/`edit` on paths relative to the sandbox cwd (default `/workspace`); directory listings carry type/size in one RPC
+
+Session, connection, and mTLS are owned by the plugin: it resolves the gateway from config → env → `~/.k8e/sandbox/profiles.yaml` (KIP-17) and reuses one persistent gRPC connection. If the gateway is unreachable, tell the user to run `k8e-sandbox-cli connect` (local) or `k8e-sandbox-cli connect --endpoint <host>:50051 --apikey <key>` (remote) outside dsh, then restart the dsh session.
+
+The CLI-first flow below (`k8e-sandbox-cli run ...`) is for harnesses where the sandbox is *not* mounted (Claude Code / Codex / Pi).
 
 ## Binary naming (read this first)
 
@@ -155,7 +171,7 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 # Multi-cluster: k8e-sandbox-cli --profile prod connect --apikey k8e-...
 ```
 
-`connect` authenticates (mTLS), verifies the gateway, puts `k8e-sandbox-cli` on PATH when needed (symlink to `~/.local/bin/k8e-sandbox-cli`), and installs this skill into Claude / Codex / Pi discovery paths.
+`connect` authenticates (mTLS), verifies the gateway, puts `k8e-sandbox-cli` on PATH when needed (symlink to `~/.local/bin/k8e-sandbox-cli`), and installs this skill into Claude / Codex / Pi / dsh discovery paths (`--agent dsh` or `--agent all`; dsh reads it from `~/.dsh/skills` or `~/.agents/skills`).
 
 ## Command reference
 
