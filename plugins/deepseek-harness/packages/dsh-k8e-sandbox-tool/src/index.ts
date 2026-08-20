@@ -42,11 +42,18 @@ function renderValue(_args: unknown, value: unknown): ContentBlock[] {
 export class K8eSandboxTools extends Service {
   static readonly inject = ['k8eSandbox', 'tools']
 
-  constructor(ctx: Context, private readonly owner: K8eSandboxRuntime) {
+  constructor(ctx: Context) {
     super(ctx, 'k8eSandboxTools')
-    const runtime = this.owner
-    if (runtime === undefined) {
-      throw new Error('k8e-sandbox: k8eSandboxTools constructed without the k8eSandbox owner — the dsh-k8e-sandbox bundle is not loaded; reinstall and restart dsh (k8e-sandbox-cli doctor --fix diagnoses this)')
+    // Cordis constructs class plugins as `new Cls(ctx, config)` — the second
+    // parameter is the plugin config, NOT an injected dependency. Resolve the
+    // owner from ctx like the fs/subprocess seams; guard for an actionable
+    // error when the bundle is not actually loaded.
+    const runtime = (): K8eSandboxRuntime => {
+      const owner = this.ctx.k8eSandbox
+      if (owner === undefined) {
+        throw new Error('k8e-sandbox: ctx.k8eSandbox is not mounted — the dsh-k8e-sandbox bundle is not loaded; reinstall the bundle and restart dsh (k8e-sandbox-cli doctor --fix diagnoses this)')
+      }
+      return owner
     }
 
     ctx.tools.register(defineTool({
@@ -63,7 +70,7 @@ export class K8eSandboxTools extends Service {
         render: renderValue,
       },
       async execute() {
-        const client = runtime.getClient()
+        const client = runtime().getClient()
         return client.status()
       },
     }))
@@ -74,7 +81,7 @@ export class K8eSandboxTools extends Service {
       parameters: {},
       output: { schema: resultSchema({ destroyed: { type: 'boolean' } }), render: renderValue },
       async execute() {
-        const client = runtime.getClient()
+        const client = runtime().getClient()
         const st = await client.status()
         if (st.sessionId && st.sessionId !== '') {
           await client.destroySession(st.sessionId)
@@ -98,11 +105,11 @@ export class K8eSandboxTools extends Service {
         render: renderValue,
       },
       async execute(args) {
-        const client = runtime.getClient()
+        const client = runtime().getClient()
         return client.run(args.code, {
           ...(args.lang !== undefined ? { lang: args.lang } : {}),
           ...(args.timeout !== undefined ? { timeout: args.timeout } : {}),
-          sessionId: await runtime.getSession(),
+          sessionId: await runtime().getSession(),
         })
       },
     }))
@@ -123,8 +130,8 @@ export class K8eSandboxTools extends Service {
         render: renderValue,
       },
       async execute(args) {
-        const client = runtime.getClient()
-        const sessionId = await runtime.getSession()
+        const client = runtime().getClient()
+        const sessionId = await runtime().getSession()
         const res = await client.runBackground(args.code, {
           ...(args.lang !== undefined ? { lang: args.lang } : {}),
           sessionId,
@@ -148,7 +155,7 @@ export class K8eSandboxTools extends Service {
         render: renderValue,
       },
       async execute(args) {
-        const client = runtime.getClient()
+        const client = runtime().getClient()
         return client.poll(args.runId)
       },
     }))
