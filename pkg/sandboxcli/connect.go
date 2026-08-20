@@ -23,7 +23,8 @@ const (
 // ConnectCommand returns the "connect" subcommand: authenticate (local or remote),
 // persist connection config, verify the gateway, ensure CLI is on PATH, and install
 // agent skills so harnesses can invoke `/k8e-sandbox <goal>` (Claude),
-// `$k8e-sandbox <goal>` (Codex), or `/skill:k8e-sandbox <goal>` (Pi).
+// `$k8e-sandbox <goal>` (Codex), `/skill:k8e-sandbox <goal>` (Pi), or load the
+// `k8e-sandbox` skill in dsh (DeepSeek Harness) via its `skill` tool.
 func ConnectCommand() cli.Command {
 	return cli.Command{
 		Name:  "connect",
@@ -32,7 +33,7 @@ func ConnectCommand() cli.Command {
 			cli.StringFlag{
 				Name:  flagAgent,
 				Value: "auto",
-				Usage: "Skill install target: auto|claude|codex|pi|all (default: auto-detect)",
+				Usage: "Skill install target: auto|claude|codex|pi|dsh|all (default: auto-detect)",
 			},
 			cli.BoolFlag{
 				Name:  flagSkipSkill,

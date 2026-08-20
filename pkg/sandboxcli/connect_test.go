@@ -73,9 +73,22 @@ func TestResolveSkillTargets(t *testing.T) {
 	if err != nil || len(got) != 1 || got[0] != "claude" {
 		t.Fatalf("claude: %v %v", got, err)
 	}
+	got, err = resolveSkillTargets("dsh")
+	if err != nil || len(got) != 1 || got[0] != "dsh" {
+		t.Fatalf("dsh: %v %v", got, err)
+	}
 	got, err = resolveSkillTargets("all")
-	if err != nil || len(got) != 3 {
+	if err != nil || len(got) != 4 {
 		t.Fatalf("all: %v %v", got, err)
+	}
+	found := false
+	for _, a := range got {
+		if a == "dsh" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("all must include dsh: %v", got)
 	}
 	if _, err := resolveSkillTargets("bogus"); err == nil {
 		t.Fatal("expected error for bogus agent")
@@ -150,6 +163,56 @@ func TestInstallSkillMulti_ClaudeWritesGlobalAndAgents(t *testing.T) {
 	agentsDest := filepath.Join(tmp, ".agents", "skills", "k8e-sandbox", "SKILL.md")
 	if _, err := os.Stat(agentsDest); err != nil {
 		t.Fatalf("missing .agents skill path: %v", err)
+	}
+}
+
+func TestInstallSkillMulti_DshPaths(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
+	dshHome := filepath.Join(tmp, "custom-dsh")
+	t.Setenv("DSH_HOME", dshHome)
+
+	results, err := InstallSkillMulti("dsh", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected >=2 install locations, got %v", results)
+	}
+	// $DSH_HOME/skills is the dsh user-dsh root (higher rank than .agents).
+	dest := filepath.Join(dshHome, "skills", "k8e-sandbox", "SKILL.md")
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("missing dsh global skill: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, "dsh (DeepSeek Harness) execution path") {
+		t.Fatal("skill must carry the dsh execution path section")
+	}
+	if !strings.Contains(body, "k8e_sandbox_exec") {
+		t.Fatal("skill must mention the dsh plugin model-surface tools")
+	}
+	// Shared .agents path for cross-harness discovery.
+	agentsDest := filepath.Join(tmp, ".agents", "skills", "k8e-sandbox", "SKILL.md")
+	if _, err := os.Stat(agentsDest); err != nil {
+		t.Fatalf("missing .agents skill path: %v", err)
+	}
+}
+
+func TestInvocationHints_Dsh(t *testing.T) {
+	lines := InvocationHints([]string{"dsh", "claude"})
+	var dshLine, claudeLine bool
+	for _, l := range lines {
+		if strings.HasPrefix(l, "dsh:") {
+			dshLine = true
+		}
+		if strings.HasPrefix(l, "Claude Code:") {
+			claudeLine = true
+		}
+	}
+	if !dshLine || !claudeLine {
+		t.Fatalf("expected dsh + claude hints, got %v", lines)
 	}
 }
 
