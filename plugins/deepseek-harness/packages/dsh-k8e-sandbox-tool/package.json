@@ -1,6 +1,6 @@
 {
   "name": "@k8e-sandbox/dsh-k8e-sandbox-tool",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "k8e-sandbox model-surface tools for DeepSeek Harness (ctx.tools): session create/status/destroy, foreground exec, background exec + poll — sandbox-only lifecycle verbs the fs/subprocess seams cannot express (KIP-20 Phase 2).",
   "type": "module",
   "main": "lib/index.js",
