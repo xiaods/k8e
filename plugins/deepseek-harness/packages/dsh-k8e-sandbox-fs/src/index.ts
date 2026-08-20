@@ -1,11 +1,23 @@
 /**
- * k8e-sandbox Service Provider for the filesystem capability seam. Paths and
- * contents live in the sandbox workspace; operations shell out to
- * `k8e-sandbox-cli` in Phase 1 (KIP-20).
+ * k8e-sandbox Service Provider for the filesystem capability seam.
+ *
+ * Two path worlds, one provider:
+ * - Workspace paths (relative, or under the sandbox root e.g. `/workspace`)
+ *   live in the sandbox pod and go through the shared transport (persistent
+ *   gRPC when an endpoint is resolved — no per-op CLI spawn).
+ * - Host-absolute paths outside the sandbox root (e.g. `/Users/...` used by
+ *   agent-instructions / skill discovery preflight) stay on the local disk:
+ *   AGENTS.md / skills discovery must not pay a pod round trip before the
+ *   first model request (KIP-20 perf follow-up).
+ *
+ * listDir uses the gateway's ListFiles entry facts (type/size) when present —
+ * no per-child stat — and falls back to a single exec probe per child only
+ * when the gateway predates entry facts.
  * @module @k8e-sandbox/dsh-k8e-sandbox-fs
  */
 
 import { Buffer } from 'node:buffer'
+import { readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { posix } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import { FileSystem, FsError, FsTargetKey, FsVersion } from '@deepseek-ai/dsh-fs'
@@ -28,6 +40,10 @@ interface StatFacts {
   version: ReturnType<typeof FsVersion>
 }
 
+function hostType(info: { isFile(): boolean; isDirectory(): boolean; isSymbolicLink(): boolean }): FsInfo['type'] {
+  return info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other'
+}
+
 /** Remote filesystem backend sharing the session owned by `ctx.k8eSandbox`. */
 export class K8eFileSystem extends FileSystem {
   static inject = ['k8eSandbox']
@@ -42,6 +58,17 @@ export class K8eFileSystem extends FileSystem {
 
   private display(path: string, cwd?: string): string {
     return posix.resolve(cwd ?? this.ctx.k8eSandbox.cwd, path)
+  }
+
+  /**
+   * True when the path lives in the sandbox workspace. Relative paths resolve
+   * under the sandbox root; absolute paths must be under it. Host-absolute
+   * paths (preflight: AGENTS.md / skills discovery) stay on the local disk.
+   */
+  private isSandboxPath(path: string): boolean {
+    if (!posix.isAbsolute(path)) return true
+    const root = this.ctx.k8eSandbox.cwd
+    return path === root || path.startsWith(`${root}/`)
   }
 
   private shellQuote(value: string): string {
@@ -69,6 +96,59 @@ export class K8eFileSystem extends FileSystem {
     return relative === '' || (relative !== '..' && !relative.startsWith('../') && !posix.isAbsolute(relative))
   }
 
+  // ── Local (host) implementation for preflight paths ────────────────────────
+
+  private async localStat(path: string): Promise<StatFacts | undefined> {
+    try {
+      const info = await stat(path)
+      return {
+        type: hostType(info),
+        size: info.size,
+        version: FsVersion(`host:${Math.trunc(info.mtimeMs)}:${info.size}`),
+      }
+    } catch {
+      return undefined
+    }
+  }
+
+  private async localListDir(path: string): Promise<FsDirEntry[]> {
+    const entries: FsDirEntry[] = []
+    const dirents = await readdir(path, { withFileTypes: true })
+    for (const dirent of dirents) {
+      const childPath = posix.join(path, dirent.name)
+      const type: FsInfo['type'] = dirent.isDirectory() ? 'directory' : dirent.isFile() ? 'file' : 'other'
+      let size: number | undefined
+      let version: ReturnType<typeof FsVersion> | undefined
+      if (type === 'file') {
+        try {
+          const info = await stat(childPath)
+          size = info.size
+          version = FsVersion(`host:${Math.trunc(info.mtimeMs)}:${info.size}`)
+        } catch {
+          // vanished between readdir and stat → skip entry facts
+        }
+      }
+      entries.push({
+        name: dirent.name,
+        type,
+        target: { targetKey: FsTargetKey(childPath), displayPath: childPath },
+        ...(size !== undefined ? { size } : {}),
+        ...(version !== undefined ? { version } : {}),
+      })
+    }
+    return entries.sort((left, right) => left.name.localeCompare(right.name))
+  }
+
+  private async localReadText(path: string): Promise<string> {
+    return readFile(path, 'utf8')
+  }
+
+  private async localWriteText(path: string, content: string): Promise<void> {
+    await writeFile(path, content, 'utf8')
+  }
+
+  // ── Sandbox (remote) implementation ───────────────────────────────────────
+
   private async probe(path: string): Promise<StatFacts | undefined> {
     const client = (await this.runtime()).getClient()
     const sid = await this.session()
@@ -87,7 +167,13 @@ export class K8eFileSystem extends FileSystem {
   }
 
   override async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
-    const facts = await this.probe(this.processPath(target))
+    const path = this.processPath(target)
+    if (!this.isSandboxPath(path)) {
+      const facts = await this.localStat(path)
+      if (facts === undefined) return undefined
+      return { version: facts.version, type: facts.type, ...(facts.type === 'file' ? { size: facts.size } : {}) }
+    }
+    const facts = await this.probe(path)
     if (facts === undefined) return undefined
     return { version: facts.version, type: facts.type, ...(facts.type === 'file' ? { size: facts.size } : {}) }
   }
@@ -100,10 +186,12 @@ export class K8eFileSystem extends FileSystem {
   }
 
   override async readText(target: FsTarget, signal?: AbortSignal): Promise<string> {
-    const client = (await this.runtime()).getClient()
-    const sid = await this.session()
+    const path = this.processPath(target)
     try {
-      return await client.read(sid, this.processPath(target))
+      if (!this.isSandboxPath(path)) return await this.localReadText(path)
+      const client = (await this.runtime()).getClient()
+      const sid = await this.session()
+      return await client.read(sid, path)
     } catch (cause) {
       throw new FsError(`cannot read "${target.displayPath}": ${String(cause)}`, 'FS_IO_ERROR', { cause })
     }
@@ -128,18 +216,25 @@ export class K8eFileSystem extends FileSystem {
   }
 
   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
+    const path = this.processPath(target)
+    if (!this.isSandboxPath(path)) return this.localListDir(path)
+
     const client = (await this.runtime()).getClient()
     const sid = await this.session()
-    const parent = this.processPath(target)
+    const prefix = path === '/' ? '/' : `${path}/`
     const files = await client.list(sid)
-    const prefix = parent === '/' ? '/' : `${parent}/`
     const entries: FsDirEntry[] = []
     for (const file of files) {
       if (!file.path.startsWith(prefix)) continue
       const rest = file.path.slice(prefix.length)
       if (rest.length === 0 || rest.includes('/')) continue // only direct children
       const childPath = file.path
-      const facts = await this.probe(childPath)
+      // Entry facts (type/size) come from the single ListFiles RPC when the
+      // gateway reports them; only legacy gateways pay a per-child probe.
+      // dsh's FsInfo has no 'symlink' kind, so symlinks surface as 'other'.
+      const facts: StatFacts | undefined = file.type !== undefined
+        ? { type: file.type === 'symlink' ? 'other' : file.type, size: file.size ?? 0, version: FsVersion(`k8e:${file.modified}:${file.size ?? 0}`) }
+        : await this.probe(childPath)
       entries.push({
         name: rest,
         type: facts?.type ?? 'other',
@@ -157,18 +252,30 @@ export class K8eFileSystem extends FileSystem {
     expected?: FsWriteIntent,
     signal?: AbortSignal,
   ): Promise<FsWriteOutcome> {
+    const path = this.processPath(target)
+    const local = !this.isSandboxPath(path)
     if (expected?.kind === 'createIfAbsent') {
       const existing = await this.stat(target, signal)
       if (existing !== undefined) {
         throw new FsError(`cannot overwrite existing "${target.displayPath}" without reading it first`, 'FS_NOT_OBSERVED')
       }
     }
-    const client = (await this.runtime()).getClient()
-    const sid = await this.session()
     const existing = await this.stat(target, signal)
     const before = existing === undefined ? null : await this.readText(target, signal)
-    await client.write(sid, this.processPath(target), content)
-    const facts = await this.probe(this.processPath(target))
+    if (local) {
+      await this.localWriteText(path, content)
+      const facts = await this.localStat(path)
+      return {
+        operation: existing === undefined ? 'create' : 'update',
+        version: facts?.version ?? FsVersion('host:unknown'),
+        before,
+        after: content,
+      }
+    }
+    const client = (await this.runtime()).getClient()
+    const sid = await this.session()
+    await client.write(sid, path, content)
+    const facts = await this.probe(path)
     return {
       operation: existing === undefined ? 'create' : 'update',
       version: facts?.version ?? FsVersion('k8e:unknown'),
@@ -202,7 +309,10 @@ export class K8eFileSystem extends FileSystem {
     }
     const after = edit.replaceAll ? before.split(oldString).join(edit.newString) : before.replace(oldString, edit.newString)
     await this.writeText(target, after, undefined, signal)
-    const version = (await this.probe(this.processPath(target)))?.version ?? FsVersion('k8e:unknown')
+    const path = this.processPath(target)
+    const version = this.isSandboxPath(path)
+      ? (await this.probe(path))?.version ?? FsVersion('k8e:unknown')
+      : (await this.localStat(path))?.version ?? FsVersion('host:unknown')
     return { version, before, after }
   }
 }

@@ -271,6 +271,11 @@ export function apply(ctx: Context): void {
           grpcAvailable,
           cwd: ctx.k8eSandbox.cwd,
           endpoint: ctx.k8eSandbox.endpoint,
+          // Where the connect address came from: auto-discovered from
+          // ~/.k8e/sandbox/profiles.yaml (KIP-17) when not configured
+          // explicitly in the dsh profile row / environment.
+          endpointSource: ctx.k8eSandbox.endpointSource,
+          endpointProfile: ctx.k8eSandbox.endpointProfile,
           certDir: ctx.k8eSandbox.certDir,
           runtimeClass: ctx.k8eSandbox.runtimeClass,
         })

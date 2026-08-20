@@ -145,7 +145,15 @@ message ListFilesRequest  {
   int64  since      = 2;
 }
 message ListFilesResponse { repeated FileEntry files = 1; }
-message FileEntry         { string path = 1; int64 modified = 2; }
+message FileEntry {
+  string path     = 1;
+  int64  modified = 2;
+  // Entry type (file/dir/symlink/other) and size carried by the single
+  // ListFiles RPC so clients can build a directory listing without a
+  // per-entry stat round trip (KIP-20 perf).
+  string type = 3;
+  int64  size = 4;
+}
 
 message PipInstallRequest  { string session_id = 1; repeated string packages = 2; }
 message PipInstallResponse { string output = 1; int32 exit_code = 2; }

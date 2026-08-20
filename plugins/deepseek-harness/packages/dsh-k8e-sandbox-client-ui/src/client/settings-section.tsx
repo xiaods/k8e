@@ -18,6 +18,8 @@ interface Status {
   grpcAvailable: boolean
   cwd?: string
   endpoint?: string
+  endpointSource?: 'config' | 'env' | 'profile'
+  endpointProfile?: string
   runtimeClass?: string
 }
 
@@ -111,6 +113,16 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
 
   const connected = status?.grpcAvailable === true
 
+  // Where the connect address came from (KIP-17 auto-discovery).
+  let endpointLabel = ''
+  if (status?.endpointSource === 'profile') {
+    endpointLabel = t('status.endpointFromProfile') + (status.endpointProfile !== undefined ? `（profile: ${status.endpointProfile}）` : '')
+  } else if (status?.endpointSource === 'env') {
+    endpointLabel = t('status.endpointFromEnv')
+  } else if (status?.endpointSource === 'config') {
+    endpointLabel = t('status.endpointFromConfig')
+  }
+
   return createElement('div', { style: { maxWidth: '560px' } },
     createElement('h3', { style: { margin: '0 0 14px', fontSize: '16px', color: 'var(--dsw-alias-label-primary, #eee)' } },
       t('section.title')),
@@ -133,6 +145,14 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
       status?.runtimeClass !== undefined
         ? createElement('div', { style: { fontSize: '13px', color: 'var(--dsw-alias-label-secondary, #999)' } },
           'runtimeClass: ' + status.runtimeClass)
+        : null,
+      status?.endpoint !== undefined && status.endpoint !== ''
+        ? createElement('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #999)', marginTop: '8px' } },
+          endpointLabel)
+        : null,
+      status?.endpoint === undefined || status.endpoint === ''
+        ? createElement('div', { style: { fontSize: '12px', color: '#e5a50a', marginTop: '8px' } },
+          t('status.noEndpointHint'))
         : null,
       createElement('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #999)', marginTop: '10px' } },
         t('hint.hostConfig')),

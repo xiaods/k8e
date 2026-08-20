@@ -653,12 +653,27 @@ func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.L
 		Files []struct {
 			Path     string `json:"path"`
 			Modified int64  `json:"modified"`
+			Type     string `json:"type"`
+			Size     int64  `json:"size"`
 		} `json:"files"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	entries := make([]*pb.FileEntry, len(result.Files))
 	for i, f := range result.Files {
-		entries[i] = &pb.FileEntry{Path: f.Path, Modified: f.Modified}
+		// sandboxd reports dirs as "dir"; the client vocabulary is "directory"
+		// (dsh FsInfo). Old sandboxd omits type/size entirely — leave them unset
+		// and let clients fall back to per-entry stat.
+		e := &pb.FileEntry{Path: f.Path, Modified: f.Modified}
+		switch f.Type {
+		case "file", "symlink", "other":
+			e.Type = f.Type
+		case "dir":
+			e.Type = "directory"
+		}
+		if f.Type != "" {
+			e.Size = f.Size
+		}
+		entries[i] = e
 	}
 	return &pb.ListFilesResponse{Files: entries}, nil
 }

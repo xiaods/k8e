@@ -74,6 +74,51 @@ test "fileMtime: existing file returns non-zero mtime" {
     _ = a;
 }
 
+// fileFacts returns mtime + size + a type label derived from the dent type
+// (Linux-only; uses the statx syscall which is unavailable on macOS hosts).
+test "fileFacts: regular file reports file type and size" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const path = "/tmp/k8e-files-facts-test.txt";
+    const fd = std.os.linux.open(path, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+    if (fd < 0) return error.TestUnexpectedResult;
+    _ = std.os.linux.write(@intCast(fd), "hello", 5);
+    _ = std.os.linux.close(@intCast(fd));
+    defer _ = std.os.linux.unlink(path);
+
+    const facts = (files.fileFacts(path, std.os.linux.DT.REG) orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqualStrings("file", facts.type);
+    try std.testing.expectEqual(@as(i64, 5), facts.size);
+    try std.testing.expect(facts.mtime > 1_500_000_000);
+}
+
+test "fileFacts: symlink dent reports symlink type" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    const path = "/tmp/k8e-files-facts-link";
+    const target = "/tmp/k8e-files-facts-target";
+    const tfd = std.os.linux.open(target, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+    if (tfd < 0) return error.TestUnexpectedResult;
+    _ = std.os.linux.close(@intCast(tfd));
+    defer _ = std.os.linux.unlink(target);
+
+    var path_buf: [512]u8 = undefined;
+    @memcpy(path_buf[0..path.len], path);
+    path_buf[path.len] = 0;
+    const path_z: [*:0]const u8 = @ptrCast(&path_buf);
+    var target_buf: [512]u8 = undefined;
+    @memcpy(target_buf[0..target.len], target);
+    target_buf[target.len] = 0;
+    const target_z: [*:0]const u8 = @ptrCast(&target_buf);
+    _ = std.os.linux.unlink(path_z);
+    const rc = std.os.linux.symlink(target_z, path_z);
+    if (rc != 0) return error.TestUnexpectedResult;
+    defer _ = std.os.linux.unlink(path_z);
+
+    const facts = (files.fileFacts(path, std.os.linux.DT.LNK) orelse return error.TestUnexpectedResult);
+    try std.testing.expectEqualStrings("symlink", facts.type);
+}
+
 test "removeRecursive: removes nested dir tree" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
 
