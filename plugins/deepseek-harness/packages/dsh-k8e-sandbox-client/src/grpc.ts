@@ -12,6 +12,27 @@
  * @module @k8e-sandbox/dsh-k8e-sandbox-client/grpc
  */
 
+// Op shapes shared with the CLI-backed transport live in the main entry
+// (./index.ts); re-export them here so the gRPC surface stays type-identical
+// with the CLI surface without duplicating the declarations.
+import type {
+  BackgroundResult,
+  CreateSessionOptions,
+  ExecResult,
+  FileEntry,
+  PollResult,
+  RunOptions,
+  StatusResult,
+} from './index.ts'
+export type {
+  BackgroundResult,
+  CreateSessionOptions,
+  ExecResult,
+  FileEntry,
+  PollResult,
+  RunOptions,
+  StatusResult,
+} from './index.ts'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -48,56 +69,6 @@ export interface ExecStreamResult {
 export interface ExecSSEEvent {
   data?: string
   exit?: number
-}
-
-// ── Shared op shapes (mirror @k8e-sandbox/dsh-k8e-sandbox-client) ────────────
-
-export interface ExecResult {
-  stdout: string
-  stderr: string
-  exitCode: number
-  sessionId: string
-  status: string
-  durationMs: number
-  truncated: boolean
-  language: string
-}
-
-export interface BackgroundResult {
-  runId: string
-  status: string
-  sessionId: string
-}
-
-export interface PollResult {
-  runId: string
-  status: string
-  stdout: string
-  stderr: string
-  exitCode: number
-  durationMs: number
-  truncated: boolean
-}
-
-export interface FileEntry {
-  path: string
-  modified: number
-  /** Present when the gateway's ListFiles reports entry facts (KIP-20 perf). */
-  type?: 'file' | 'directory' | 'symlink' | 'other'
-  size?: number
-}
-
-export interface CreateSessionOptions {
-  runtimeClass?: string
-  tenant?: string
-  allowedHosts?: string[]
-}
-
-export interface StatusResult {
-  available: boolean
-  sessionId: string
-  tenantId: string
-  error: string
 }
 
 /** Default deadline for a unary RPC with no explicit budget (ms). */
@@ -329,18 +300,25 @@ export class GrpcK8eClient {
   // ── Exec ──────────────────────────────────────────────────────────────────
 
   /**
-   * Run one command in the sandbox and collect stdout/stderr/exit code.
-   * Mirrors `k8e-sandbox-cli run`; the RPC deadline covers dial + sandbox
-   * execution (sandbox timeout + 15s slack).
+   * Write multi-line interpreted code to its workspace temp file and return the
+   * shell command to run it (mirrors pkg/sandboxcli writeCodeFile + buildCommand).
    */
-  async run(code: string, opts: { lang?: string; timeout?: number; sessionId?: string; tenant?: string } = {}): Promise<ExecResult> {
+  private async prepareCommand(sessionId: string, code: string, lang: string): Promise<string> {
+    if (isMultiLine(code) && isInterpretedLang(lang)) {
+      await this.write(sessionId, runFileFor(lang), code)
+    }
+    return buildSandboxCommand(lang, code)
+  }
+
+  /**
+   * Execute a command in the sandbox over the shared connection and return the
+   * collected output. Mirrors `k8e-sandbox-cli run`; the deadline covers the
+   * dial plus sandbox execution (sandbox timeout + 15s slack).
+   */
+  async run(code: string, opts: RunOptions = {}): Promise<ExecResult> {
     if (opts.sessionId === undefined) throw new Error('k8e sandbox grpc: run requires a sessionId')
     const lang = opts.lang ?? 'bash'
-    let command = buildSandboxCommand(lang, code)
-    if (isMultiLine(code) && isInterpretedLang(lang)) {
-      await this.write(opts.sessionId, runFileFor(lang), code)
-      command = buildSandboxCommand(lang, code)
-    }
+    const command = await this.prepareCommand(opts.sessionId, code, lang)
     const timeout = opts.timeout ?? 30
     const resp = await this.call<any>(this.client.exec, {
       session_id: opts.sessionId,
@@ -363,14 +341,10 @@ export class GrpcK8eClient {
   }
 
   /** Submit asynchronously; returns a run id to poll. */
-  async runBackground(code: string, opts: { lang?: string; sessionId?: string; tenant?: string } = {}): Promise<BackgroundResult> {
+  async runBackground(code: string, opts: RunOptions = {}): Promise<BackgroundResult> {
     if (opts.sessionId === undefined) throw new Error('k8e sandbox grpc: runBackground requires a sessionId')
     const lang = opts.lang ?? 'bash'
-    let command = buildSandboxCommand(lang, code)
-    if (isMultiLine(code) && isInterpretedLang(lang)) {
-      await this.write(opts.sessionId, runFileFor(lang), code)
-      command = buildSandboxCommand(lang, code)
-    }
+    const command = await this.prepareCommand(opts.sessionId, code, lang)
     const resp = await this.call<any>(this.client.exec, {
       session_id: opts.sessionId,
       command,

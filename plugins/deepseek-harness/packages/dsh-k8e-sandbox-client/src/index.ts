@@ -74,14 +74,22 @@ export interface CliK8eClientOptions {
   timeoutMs?: number
 }
 
+/** Options for a sandbox `run`/`runBackground` call (shared transport contract). */
+export interface RunOptions {
+  lang?: string
+  timeout?: number
+  sessionId?: string
+  tenant?: string
+}
+
 /**
  * Shared op surface implemented by both transports (CLI-backed and direct
  * gRPC). `K8eSandboxRuntime.getClient()` returns whichever is active; the fs
  * / tool / subprocess providers call only these methods.
  */
 export interface SandboxTransport {
-  run(code: string, opts?: { lang?: string; timeout?: number; sessionId?: string; tenant?: string }): Promise<ExecResult>
-  runBackground(code: string, opts?: { lang?: string; sessionId?: string; tenant?: string }): Promise<BackgroundResult>
+  run(code: string, opts?: RunOptions): Promise<ExecResult>
+  runBackground(code: string, opts?: RunOptions): Promise<BackgroundResult>
   poll(runId: string): Promise<PollResult>
   read(sessionId: string, path: string): Promise<string>
   write(sessionId: string, path: string, content: string): Promise<void>
@@ -258,7 +266,7 @@ export class CliK8eClient implements SandboxTransport {
   constructor(private readonly opts: CliK8eClientOptions = {}) {}
 
   /** Run one command in the sandbox and collect stdout/stderr/exit code. */
-  async run(code: string, opts: { lang?: string; timeout?: number; sessionId?: string; tenant?: string } = {}): Promise<ExecResult> {
+  async run(code: string, opts: RunOptions = {}): Promise<ExecResult> {
     const args = ['run', code]
     if (opts.lang) args.push('--lang', opts.lang)
     if (opts.timeout !== undefined) args.push('--timeout', String(opts.timeout))
@@ -271,7 +279,7 @@ export class CliK8eClient implements SandboxTransport {
   }
 
   /** Submit asynchronously; returns a run id to poll. */
-  async runBackground(code: string, opts: { lang?: string; sessionId?: string; tenant?: string } = {}): Promise<BackgroundResult> {
+  async runBackground(code: string, opts: RunOptions = {}): Promise<BackgroundResult> {
     const args = ['run', code, '--background']
     if (opts.lang) args.push('--lang', opts.lang)
     if (opts.sessionId) args.push('--session-id', opts.sessionId)

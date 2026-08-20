@@ -29,11 +29,34 @@ import { resolveSandboxTransport } from '@k8e-sandbox/dsh-k8e-sandbox-client'
   assert.equal(buildSandboxCommand('python', `print('a"b')`), 'python3 -c "print(\'a\\\"b\')"')
 }
 
+const SANDBOX_ENV_KEYS = ['K8E_SANDBOX_CONFIG', 'K8E_SANDBOX_CERT_DIR', 'K8E_SANDBOX_ENDPOINT', 'K8E_SANDBOX_PROFILE']
+
+/**
+ * Run fn with a scoped set of K8E_SANDBOX_* env vars, restoring the previous
+ * values (or deleting them) afterwards — shared by every profile-resolution test.
+ */
+async function withSandboxEnv(env, fn) {
+  const saved = {}
+  for (const key of SANDBOX_ENV_KEYS) {
+    saved[key] = process.env[key]
+    if (env[key] === undefined) delete process.env[key]
+    else process.env[key] = env[key]
+  }
+  try {
+    await fn()
+  } finally {
+    for (const key of SANDBOX_ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key]
+      else process.env[key] = saved[key]
+    }
+  }
+}
+
 // ---- resolveSandboxTransport (profiles.yaml KIP-17) --------------------
 {
   const dir = mkdtempSync(join(tmpdir(), 'k8e-profiles-'))
-  const profilesPath = join(dir, 'profiles.yaml')
   try {
+    const profilesPath = join(dir, 'profiles.yaml')
     writeFileSync(profilesPath, [
       'version: 1',
       'current_profile: default',
@@ -48,16 +71,7 @@ import { resolveSandboxTransport } from '@k8e-sandbox/dsh-k8e-sandbox-client'
       '',
     ].join('\n'), 'utf8')
 
-    const prevConfig = process.env.K8E_SANDBOX_CONFIG
-    const prevCertDir = process.env.K8E_SANDBOX_CERT_DIR
-    const prevEndpoint = process.env.K8E_SANDBOX_ENDPOINT
-    const prevProfile = process.env.K8E_SANDBOX_PROFILE
-    try {
-      delete process.env.K8E_SANDBOX_ENDPOINT
-      delete process.env.K8E_SANDBOX_PROFILE
-      process.env.K8E_SANDBOX_CERT_DIR = dir
-      process.env.K8E_SANDBOX_CONFIG = profilesPath
-
+    await withSandboxEnv({ K8E_SANDBOX_CERT_DIR: dir, K8E_SANDBOX_CONFIG: profilesPath }, async () => {
       // current_profile default wins (auto-discovery source recorded)
       const viaDefault = resolveSandboxTransport()
       assert.deepEqual(viaDefault, {
@@ -82,16 +96,7 @@ import { resolveSandboxTransport } from '@k8e-sandbox/dsh-k8e-sandbox-client'
         certDir: dir,
         source: 'config',
       })
-    } finally {
-      if (prevConfig !== undefined) process.env.K8E_SANDBOX_CONFIG = prevConfig
-      else delete process.env.K8E_SANDBOX_CONFIG
-      if (prevCertDir !== undefined) process.env.K8E_SANDBOX_CERT_DIR = prevCertDir
-      else delete process.env.K8E_SANDBOX_CERT_DIR
-      if (prevEndpoint !== undefined) process.env.K8E_SANDBOX_ENDPOINT = prevEndpoint
-      else delete process.env.K8E_SANDBOX_ENDPOINT
-      if (prevProfile !== undefined) process.env.K8E_SANDBOX_PROFILE = prevProfile
-      else delete process.env.K8E_SANDBOX_PROFILE
-    }
+    })
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -101,8 +106,8 @@ import { resolveSandboxTransport } from '@k8e-sandbox/dsh-k8e-sandbox-client'
 // SelectProfileName parity): a blank value is "unset", not a valid selection.
 {
   const dir = mkdtempSync(join(tmpdir(), 'k8e-profiles-empty-'))
-  const profilesPath = join(dir, 'profiles.yaml')
   try {
+    const profilesPath = join(dir, 'profiles.yaml')
     writeFileSync(profilesPath, [
       'version: 1',
       'current_profile: ""',
@@ -112,32 +117,14 @@ import { resolveSandboxTransport } from '@k8e-sandbox/dsh-k8e-sandbox-client'
       '',
     ].join('\n'), 'utf8')
 
-    const prevConfig = process.env.K8E_SANDBOX_CONFIG
-    const prevCertDir = process.env.K8E_SANDBOX_CERT_DIR
-    const prevEndpoint = process.env.K8E_SANDBOX_ENDPOINT
-    const prevProfile = process.env.K8E_SANDBOX_PROFILE
-    try {
-      delete process.env.K8E_SANDBOX_ENDPOINT
-      delete process.env.K8E_SANDBOX_PROFILE
-      process.env.K8E_SANDBOX_CERT_DIR = dir
-      process.env.K8E_SANDBOX_CONFIG = profilesPath
-
+    await withSandboxEnv({ K8E_SANDBOX_CERT_DIR: dir, K8E_SANDBOX_CONFIG: profilesPath }, async () => {
       const viaEmptyCurrent = resolveSandboxTransport()
       assert.deepEqual(viaEmptyCurrent, {
         endpoint: '127.0.0.1:50051',
         source: 'profile',
         profile: 'default',
       })
-    } finally {
-      if (prevConfig !== undefined) process.env.K8E_SANDBOX_CONFIG = prevConfig
-      else delete process.env.K8E_SANDBOX_CONFIG
-      if (prevCertDir !== undefined) process.env.K8E_SANDBOX_CERT_DIR = prevCertDir
-      else delete process.env.K8E_SANDBOX_CERT_DIR
-      if (prevEndpoint !== undefined) process.env.K8E_SANDBOX_ENDPOINT = prevEndpoint
-      else delete process.env.K8E_SANDBOX_ENDPOINT
-      if (prevProfile !== undefined) process.env.K8E_SANDBOX_PROFILE = prevProfile
-      else delete process.env.K8E_SANDBOX_PROFILE
-    }
+    })
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

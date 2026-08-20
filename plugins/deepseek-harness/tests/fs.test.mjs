@@ -52,6 +52,12 @@ function makeCtx(owner) {
   return ctx
 }
 
+/** Fresh sandbox owner whose transport is an in-memory file map. */
+function makeSandboxOwner(files) {
+  const client = makeCliClient(files)
+  return { getClient: () => client, getSession: async () => 's1', cwd: '/workspace' }
+}
+
 // ---- pure path primitives ------------------------------------------
 {
   const files = new Map()
@@ -73,8 +79,8 @@ function makeCtx(owner) {
 // ---- readText / writeText (create + update) / editText / listDir ----
 {
   const files = new Map([['/workspace/hello.txt', 'hello world']])
-  const client = makeCliClient(files)
-  const owner = { getClient: () => client, getSession: async () => 's1', cwd: '/workspace' }
+  const owner = makeSandboxOwner(files)
+  const client = owner.getClient()
   const fs = new K8eFileSystem(makeCtx(owner))
 
   // readText
@@ -131,8 +137,8 @@ function makeCtx(owner) {
     writeFileSync(join(hostDir, 'AGENTS.md'), '# local instructions\n', 'utf8')
     writeFileSync(join(hostDir, 'nested.txt'), 'n', 'utf8')
     const files = new Map()
-    const client = makeCliClient(files)
-    const owner = { getClient: () => client, getSession: async () => 's1', cwd: '/workspace' }
+    const owner = makeSandboxOwner(files)
+    const client = owner.getClient()
     const fs = new K8eFileSystem(makeCtx(owner))
 
     // stat reads host metadata without touching the sandbox transport
