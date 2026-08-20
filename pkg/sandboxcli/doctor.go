@@ -30,6 +30,7 @@ type doctorCheck struct {
 type doctorReport struct {
 	OK       bool          `json:"ok"`
 	Problems int           `json:"problems"`
+	Fixed    int           `json:"fixed"`
 	Checks   []doctorCheck `json:"checks"`
 }
 
@@ -71,6 +72,58 @@ func dshProfileBundles(profilePkg string) []string {
 		return nil
 	}
 	return parsed.Dsh.Profile.Bundles
+}
+
+// fixDshBundles appends the k8e-sandbox bundle to a dsh profile's
+// dsh.profile.bundles when it is missing (the `dsh plugin add` pnpm gap). The
+// file is rewritten via MarshalIndent — key order may change but npm/dsh read
+// package.json positionally-insensitively, and only the bundles array is
+// touched. Returns the new bundle list.
+func fixDshBundles(profilePkg string) ([]string, error) {
+	data, err := os.ReadFile(profilePkg)
+	if err != nil {
+		return nil, err
+	}
+	var root map[string]any
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", profilePkg, err)
+	}
+	dsh, _ := root["dsh"].(map[string]any)
+	if dsh == nil {
+		dsh = map[string]any{}
+		root["dsh"] = dsh
+	}
+	profile, _ := dsh["profile"].(map[string]any)
+	if profile == nil {
+		profile = map[string]any{}
+		dsh["profile"] = profile
+	}
+	bundles, _ := profile["bundles"].([]any)
+	rebuilt := make([]any, 0, len(bundles)+1)
+	for _, b := range bundles {
+		rebuilt = append(rebuilt, b)
+		if s, ok := b.(string); ok && s == k8eBundleName {
+			var names []string
+			for _, x := range rebuilt {
+				names = append(names, x.(string))
+			}
+			return names, nil // already registered
+		}
+	}
+	rebuilt = append(rebuilt, k8eBundleName)
+	profile["bundles"] = rebuilt
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(profilePkg, append(out, '\n'), 0644); err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, b := range rebuilt {
+		names = append(names, b.(string))
+	}
+	return names, nil
 }
 
 // dshBundleInstalledVersion returns the installed bundle version from the
@@ -129,19 +182,35 @@ func clientCertDetail(certDir string) (bool, string) {
 // DoctorCommand checks the sandbox + dsh plugin configuration and prints
 // PASS/FAIL per item with the exact fix for each failure (the dsh.profile.bundles
 // registration gap after `dsh plugin add` is a common cause of a missing panel).
+// With --fix, locally-repairable failures (bundle registration, skill install)
+// are fixed automatically and re-checked.
 func DoctorCommand() cli.Command {
 	return cli.Command{
 		Name:  "doctor",
-		Usage: "Check sandbox + dsh plugin configuration and print fixes",
+		Usage: "Check sandbox + dsh plugin configuration and print fixes (--fix applies the safe local fixes)",
 		Flags: []cli.Flag{
 			cli.BoolFlag{Name: "json", Usage: "Emit machine-readable JSON report"},
+			cli.BoolFlag{Name: "fix", Usage: "Automatically apply safe local fixes (bundle registration, skill install) and re-check"},
 		},
 		Action: doctorAction,
 	}
 }
 
+// bundleRegistered reports whether the k8e bundle is in a bundle list.
+func bundleRegistered(bundles []string) bool {
+	for _, b := range bundles {
+		if b == k8eBundleName || strings.HasPrefix(b, k8eBundleName+"@") {
+			return true
+		}
+	}
+	return false
+}
+
 func doctorAction(ctx *cli.Context) error {
 	var checks []doctorCheck
+	// Fixes registered during the check pass; --fix runs them and the affected
+	// checks are re-evaluated in place.
+	var applyFixes []func()
 	// 1. CLI binary on PATH
 	if p, err := exec.LookPath("k8e-sandbox-cli"); err == nil {
 		checks = append(checks, doctorCheck{Name: "k8e-sandbox-cli binary", OK: true, Detail: p})
@@ -225,21 +294,20 @@ func doctorAction(ctx *cli.Context) error {
 	for _, p := range profiles {
 		profileName := filepath.Base(filepath.Dir(p))
 		label := "dsh profile " + profileName
-		bundles := dshProfileBundles(p)
-		found := false
-		for _, b := range bundles {
-			if b == k8eBundleName || strings.HasPrefix(b, k8eBundleName+"@") {
-				found = true
-				break
-			}
-		}
-		if found {
+		if bundleRegistered(dshProfileBundles(p)) {
 			checks = append(checks, doctorCheck{Name: label + " bundle registered", OK: true,
 				Detail: k8eBundleName + " in dsh.profile.bundles"})
 		} else {
+			idx := len(checks)
 			checks = append(checks, doctorCheck{Name: label + " bundle registered", OK: false,
 				Detail: k8eBundleName + " NOT in " + p + " dsh.profile.bundles — installed but never loaded",
 				Fix:    "append \"" + k8eBundleName + "\" to the bundles array in " + p + " (the `dsh plugin add` pnpm non-zero exit can skip this), then restart `npx @deepseek-ai/dsh web`"})
+			applyFixes = append(applyFixes, func() {
+				if _, err := fixDshBundles(p); err == nil && bundleRegistered(dshProfileBundles(p)) {
+					checks[idx] = doctorCheck{Name: label + " bundle registered", OK: true,
+						Detail: k8eBundleName + " added to dsh.profile.bundles (auto-fixed)"}
+				}
+			})
 		}
 		if v := dshBundleInstalledVersion(p); v != "" {
 			checks = append(checks, doctorCheck{Name: label + " bundle installed", OK: true,
@@ -258,10 +326,37 @@ func doctorAction(ctx *cli.Context) error {
 		if _, err := os.Stat(dest); err == nil {
 			checks = append(checks, doctorCheck{Name: "skill (" + d.label + ")", OK: true, Detail: dest})
 		} else {
+			idx := len(checks)
 			checks = append(checks, doctorCheck{Name: "skill (" + d.label + ")", OK: false,
 				Detail: "missing " + dest,
 				Fix:    "run `k8e-sandbox-cli connect --agent dsh --skill-only`"})
+			applyFixes = append(applyFixes, func() {
+				_, _ = InstallSkillMulti("dsh", false)
+				if _, err := os.Stat(dest); err == nil {
+					checks[idx] = doctorCheck{Name: "skill (" + d.label + ")", OK: true,
+						Detail: dest + " (auto-fixed)"}
+				}
+			})
 		}
+	}
+
+	// Apply --fix (safe local repairs) before reporting, then re-count.
+	countFailures := func() int {
+		n := 0
+		for _, c := range checks {
+			if !c.OK {
+				n++
+			}
+		}
+		return n
+	}
+	fixed := 0
+	if ctx.Bool("fix") {
+		before := countFailures()
+		for _, f := range applyFixes {
+			f()
+		}
+		fixed = before - countFailures()
 	}
 
 	// Report
@@ -271,7 +366,7 @@ func doctorAction(ctx *cli.Context) error {
 			problems++
 		}
 	}
-	report := doctorReport{OK: problems == 0, Problems: problems, Checks: checks}
+	report := doctorReport{OK: problems == 0, Problems: problems, Fixed: fixed, Checks: checks}
 
 	if ctx.Bool("json") {
 		enc := json.NewEncoder(os.Stdout)
@@ -289,9 +384,16 @@ func doctorAction(ctx *cli.Context) error {
 			}
 		}
 		if problems > 0 {
-			fmt.Fprintf(os.Stderr, "\n%d problem(s) found — apply the fixes above, then re-run `k8e-sandbox-cli doctor`.\n", problems)
+			msg := fmt.Sprintf("\n%d problem(s) found", problems)
+			if fixed > 0 {
+				msg += fmt.Sprintf(", %d auto-fixed by --fix", fixed)
+			}
+			msg += " — apply the remaining fixes above, then re-run `k8e-sandbox-cli doctor`."
+			fmt.Fprintln(os.Stderr, msg)
+		} else if fixed > 0 {
+			fmt.Fprintf(os.Stderr, "\nAll checks passed (%d auto-fixed).\n", fixed)
 		} else {
-			fmt.Fprintf(os.Stderr, "\nAll checks passed.\n")
+			fmt.Fprintln(os.Stderr, "\nAll checks passed.")
 		}
 	}
 	if problems > 0 {
