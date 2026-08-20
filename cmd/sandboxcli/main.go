@@ -29,6 +29,7 @@ func main() {
 	commands := []cli.Command{
 		sandboxcli.ConnectCommand(),
 		sandboxcli.LoginCommand(),
+		sandboxcli.DoctorCommand(),
 		sandboxcli.RunCommand(),
 		sandboxcli.StatusCommand(),
 		sandboxcli.CreateCommand(),
