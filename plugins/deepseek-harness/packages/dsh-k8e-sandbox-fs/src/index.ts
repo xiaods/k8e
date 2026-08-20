@@ -48,8 +48,22 @@ function hostType(info: { isFile(): boolean; isDirectory(): boolean; isSymbolicL
 export class K8eFileSystem extends FileSystem {
   static inject = ['k8eSandbox']
 
+  /**
+   * The owning sandbox service. A missing `ctx.k8eSandbox` means the owner
+   * did not mount before this seam was used (stale dsh process after a bundle
+   * upgrade, or the bundle is not in dsh.profile.bundles) — surface an
+   * actionable error instead of a bare TypeError.
+   */
+  private owner(): K8eSandboxRuntime {
+    const owner = this.ctx.k8eSandbox
+    if (owner === undefined) {
+      throw new Error('k8e-sandbox: ctx.k8eSandbox is not mounted — the dsh-k8e-sandbox bundle is not loaded; reinstall the bundle and restart dsh (k8e-sandbox-cli doctor --fix diagnoses this)')
+    }
+    return owner
+  }
+
   private async runtime(): Promise<K8eSandboxRuntime> {
-    return this.ctx.k8eSandbox
+    return this.owner()
   }
 
   private async session(): Promise<string> {
@@ -57,7 +71,7 @@ export class K8eFileSystem extends FileSystem {
   }
 
   private display(path: string, cwd?: string): string {
-    return posix.resolve(cwd ?? this.ctx.k8eSandbox.cwd, path)
+    return posix.resolve(cwd ?? this.owner().cwd, path)
   }
 
   /**
@@ -67,7 +81,7 @@ export class K8eFileSystem extends FileSystem {
    */
   private isSandboxPath(path: string): boolean {
     if (!posix.isAbsolute(path)) return true
-    const root = this.ctx.k8eSandbox.cwd
+    const root = this.owner().cwd
     return path === root || path.startsWith(`${root}/`)
   }
 
