@@ -80,10 +80,18 @@ func ensureSession(client *client.Client, ctx *cli.Context) (string, bool, error
 	if raw := ctx.String("allowed-hosts"); raw != "" {
 		hosts = strings.Split(raw, ",")
 	}
-	resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+	// Bound the create RPC: without a deadline a dead gateway hangs the command
+	// and leaves a "creating" placeholder that wedges later runs (session.go
+	// reclaims it only after the stale window).
+	cctx, cancel := context.WithTimeout(context.Background(), sessionCreateTimeout)
+	defer cancel()
+	resp, err := client.SandboxServiceClient.CreateSession(cctx, &pb.CreateSessionRequest{
 		TenantId: ctx.String("tenant"), RuntimeClass: "gvisor", AllowedHosts: hosts,
 	})
 	if err != nil {
+		// Never leave a "creating" placeholder behind on failure: the next run
+		// must be able to retry immediately instead of waiting for stale recovery.
+		_ = clearState(ctx.String("tenant"))
 		return "", false, fmt.Errorf("create session: %w", err)
 	}
 	sid = resp.SessionId
@@ -91,11 +99,13 @@ func ensureSession(client *client.Client, ctx *cli.Context) (string, bool, error
 	manifest, mErr := resolveManifest(ctx)
 	if mErr != nil {
 		client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+		_ = clearState(ctx.String("tenant"))
 		return "", false, fmt.Errorf("manifest: %w", mErr)
 	}
 	if manifest != nil {
 		if err := materializeManifest(client, sid, manifest); err != nil {
 			client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+			_ = clearState(ctx.String("tenant"))
 			return "", false, fmt.Errorf("manifest materialization: %w", err)
 		}
 	}
@@ -178,7 +188,9 @@ func runBackground(cli *client.Client, ctx *cli.Context, code, lang string) erro
 		return printErrorExit(err.Error(), 2)
 	}
 	cmd := buildCommand(lang, code)
-	resp, err := cli.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+	rctx, cancel := rpcCtx(int32(ctx.Int("timeout")))
+	defer cancel()
+	resp, err := cli.SandboxServiceClient.Exec(rctx, &pb.ExecRequest{
 		SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace", Background: true,
 	})
 	if err != nil {
@@ -261,7 +273,9 @@ func runAction(ctx *cli.Context) error {
 }
 
 func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) (exitCode int, err error) {
-	stream, err := client.SandboxServiceClient.ExecStream(context.Background(), req)
+	rctx, cancel := rpcCtx(req.Timeout)
+	defer cancel()
+	stream, err := client.SandboxServiceClient.ExecStream(rctx, req)
 	if err != nil {
 		if isSessionExpired(err) {
 			return 1, fmt.Errorf("%w: session %s", ErrSessionGone, req.SessionId)
@@ -294,6 +308,17 @@ func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFina
 	return 0, nil
 }
 
+// rpcCtx returns a context with a deadline for one sandbox RPC: the sandbox
+// command timeout plus dial/connect slack. The CLI previously used
+// context.Background() everywhere, so a dead gateway hung every command and
+// left a stale "creating" session placeholder behind on Ctrl-C.
+func rpcCtx(timeoutSecs int32) (context.Context, context.CancelFunc) {
+	if timeoutSecs <= 0 {
+		timeoutSecs = 30
+	}
+	return context.WithTimeout(context.Background(), time.Duration(timeoutSecs+15)*time.Second)
+}
+
 func isSessionExpired(err error) bool {
 	if err == nil {
 		return false
@@ -317,7 +342,9 @@ func isSessionExpired(err error) bool {
 }
 
 func runJSON(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) error {
-	resp, err := client.SandboxServiceClient.Exec(context.Background(), req)
+	rctx, cancel := rpcCtx(req.Timeout)
+	defer cancel()
+	resp, err := client.SandboxServiceClient.Exec(rctx, req)
 	if err != nil {
 		if isSessionExpired(err) {
 			return fmt.Errorf("%w: session %s", ErrSessionGone, sid)
@@ -353,9 +380,12 @@ func StatusCommand() cli.Command {
 			}
 			defer client.Close()
 
-			// lightweight probe
-			_, err := client.SandboxServiceClient.DestroySession(context.Background(),
+			// lightweight probe (5s deadline — a dead gateway must fail fast, not
+			// hang the status command)
+			pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err := client.SandboxServiceClient.DestroySession(pctx,
 				&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
+			pcancel()
 			available := err == nil || strings.Contains(err.Error(), errSessionNotFound)
 			errMsg := ""
 			if !available && err != nil {

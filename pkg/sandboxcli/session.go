@@ -3,9 +3,11 @@ package sandboxcli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -79,6 +81,59 @@ func clearState(tenant string) error {
 	return os.Remove(statePath(tenant))
 }
 
+// create deadline / stale-creating recovery bounds. The CLI historically used
+// context.Background() (no deadline) for session RPCs, so a hung gateway left
+// a "creating" placeholder behind when the process died; waiters then wedged
+// forever. These constants bound both sides: a placeholder older than
+// creatingStaleAfter (or whose creator process is gone) is reclaimed.
+const (
+	creatingStaleAfter   = 2 * time.Minute
+	creatingPollInterval = 200 * time.Millisecond
+	sessionCreateTimeout = 45 * time.Second
+)
+
+// lockedAt parses the placeholder's RFC3339 stamp; zero time for a missing one.
+func lockedAt(raw string) time.Time {
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// pidAlive reports whether the process is running (signal-0 probe). EPERM means
+// the process exists but belongs to another user — treat it as alive.
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if err := p.Signal(syscall.Signal(0)); err != nil {
+		return errors.Is(err, syscall.EPERM)
+	}
+	return true
+}
+
+// creatingPlaceholderStale reports whether a "creating" placeholder may be
+// reclaimed: its creator process is gone (crash / Ctrl-C / OOM), or it outlived
+// creatingStaleAfter (creator hung without an RPC deadline). A live, fresh
+// creator is left alone so concurrent runners still share one session.
+func creatingPlaceholderStale(state *SessionState) bool {
+	if state.PID > 0 {
+		if pidAlive(state.PID) {
+			// Creator still running, but it may be hung on an RPC with no
+			// deadline — reclaim once the stamp is old enough.
+			return time.Since(lockedAt(state.LockedAt)) > creatingStaleAfter
+		}
+		return true // creator process is gone — the placeholder can never finalize
+	}
+	// No PID recorded (older placeholder): give it the same age grace.
+	return time.Since(lockedAt(state.LockedAt)) > creatingStaleAfter
+}
+
 // resolveSession returns an active session ID using the three-tier strategy plus flock locking.
 func resolveSession(ctx context.Context, tenant string, sessionIDOverride string) (string, error) {
 	if sessionIDOverride != "" {
@@ -106,16 +161,19 @@ func resolveSession(ctx context.Context, tenant string, sessionIDOverride string
 		}
 
 		state, _ := loadState(tenant)
-		if state != nil && state.Phase == "creating" {
+		if state != nil && state.Phase == "creating" && !creatingPlaceholderStale(state) {
+			// A live creator is finalizing; wait, but bounded — a creator hung
+			// on an RPC without a deadline must not wedge every later caller.
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()
-			case <-time.After(200 * time.Millisecond):
+			case <-time.After(creatingPollInterval):
 			}
 			continue
 		}
 
-		// no valid session — claim creator role and return empty (caller creates)
+		// No valid session, or the "creating" placeholder is stale (its creator
+		// crashed or hung): claim the creator role and return empty (caller creates).
 		sid, claimed := claimCreatorRole(lf, tenant)
 		if claimed {
 			return sid, nil
