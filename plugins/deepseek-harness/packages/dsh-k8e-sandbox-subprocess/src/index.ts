@@ -18,6 +18,7 @@ import type {
   SubprocessTerminalSpawnSpec,
 } from '@deepseek-ai/dsh-subprocess'
 import type { GrpcK8eClient } from '@k8e-sandbox/dsh-k8e-sandbox-client/grpc'
+import type { K8eSandboxRuntime } from '@k8e-sandbox/dsh-k8e-sandbox'
 // Side-effect import pulls in the cordis Context augmentation (ctx.k8eSandbox).
 import '@k8e-sandbox/dsh-k8e-sandbox'
 
@@ -53,6 +54,19 @@ declare module '@deepseek-ai/cordis' {
 export class K8eSubprocessRuntime extends SubprocessRuntime {
   static inject = ['k8eSandbox']
 
+  /**
+   * The owning sandbox service with an actionable error when it is missing
+   * (stale dsh process after a bundle upgrade, or the bundle not registered in
+   * dsh.profile.bundles).
+   */
+  private owner(): K8eSandboxRuntime {
+    const owner = this.ctx.k8eSandbox
+    if (owner === undefined) {
+      throw new Error('k8e-sandbox: ctx.k8eSandbox is not mounted — the dsh-k8e-sandbox bundle is not loaded; reinstall the bundle and restart dsh (k8e-sandbox-cli doctor --fix diagnoses this)')
+    }
+    return owner
+  }
+
   override async resolveExecutable(
     command: string,
     env?: Readonly<Record<string, string>>,
@@ -60,8 +74,8 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
   ): Promise<string> {
     if (command.length === 0) throw new Error('k8e-sandbox subprocess: executable name must be non-empty')
     signal?.throwIfAborted()
-    const client = this.ctx.k8eSandbox.getClient()
-    const sid = await this.ctx.k8eSandbox.getSession()
+    const client = this.owner().getClient()
+    const sid = await this.owner().getSession()
     if (posix.isAbsolute(command)) {
       const result = await client.run(`test -f ${shellQuote(command)} -a -x ${shellQuote(command)}`, { sessionId: sid, timeout: 10 })
       if (result.exitCode !== 0) throw new Error(`k8e-sandbox subprocess: ${command} is not an executable file`)
@@ -81,7 +95,7 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
   override spawn(spec: SubprocessSpawnSpec): SubprocessHandle {
     const command = spec.argv.map(shellQuote).join(' ')
     const id = nextExecId()
-    const cwd = this.ctx.k8eSandbox.cwd
+    const cwd = this.owner().cwd
     const emit = (event: K8eExecEvent): void => { this.ctx.emit('k8e-sandbox/exec', event) }
     emit({ phase: 'start', id, command, cwd, at: Date.now() })
 
@@ -89,7 +103,7 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
     const stderr = new PassThrough()
     let grpcClient: GrpcK8eClient | undefined
     try {
-      grpcClient = this.ctx.k8eSandbox.getGrpcClient()
+      grpcClient = this.owner().getGrpcClient()
     } catch {
       grpcClient = undefined
     }
@@ -99,7 +113,7 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
       if (grpcClient !== undefined) {
         // Phase 2: streaming exec via gRPC (sandboxd merges stderr into stdout).
         try {
-          const sid = await this.ctx.k8eSandbox.getSession()
+          const sid = await this.owner().getSession()
           const result = grpcClient.execStream(sid, command)
           result.stdout.on('data', (chunk: Buffer) => {
             emit({ phase: 'output', id, stream: 'stdout', data: chunk.toString('utf8'), at: Date.now() })
@@ -126,9 +140,9 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
         }
       }
       // Phase 1 fallback: single-shot CLI run.
-      const client = this.ctx.k8eSandbox.getClient()
+      const client = this.owner().getClient()
       try {
-        const sid = await this.ctx.k8eSandbox.getSession()
+        const sid = await this.owner().getSession()
         const result = await client.run(command, { sessionId: sid, timeout: Math.ceil(spec.graceMs / 1000) })
         stdout.end(result.stdout)
         stderr.end(result.stderr)
@@ -171,7 +185,7 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
   }
 
   override async spawnTerminal(spec: SubprocessTerminalSpawnSpec): Promise<SubprocessTerminalHandle> {
-    const runtime = this.ctx.k8eSandbox
+    const runtime = this.owner()
     const grpcClient = runtime.getGrpcClient()
     const sessionId = await runtime.getSession()
 

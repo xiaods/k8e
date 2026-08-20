@@ -45,6 +45,9 @@ export class K8eSandboxTools extends Service {
   constructor(ctx: Context, private readonly owner: K8eSandboxRuntime) {
     super(ctx, 'k8eSandboxTools')
     const runtime = this.owner
+    if (runtime === undefined) {
+      throw new Error('k8e-sandbox: k8eSandboxTools constructed without the k8eSandbox owner — the dsh-k8e-sandbox bundle is not loaded; reinstall and restart dsh (k8e-sandbox-cli doctor --fix diagnoses this)')
+    }
 
     ctx.tools.register(defineTool({
       name: 'k8e_sandbox_session_status',
