@@ -78,6 +78,10 @@ export class K8eSandboxRuntime extends Service {
   readonly cwd: string
   /** gRPC gateway endpoint (undefined = CLI local auto-discovery). */
   readonly endpoint: string | undefined
+  /** Where the endpoint came from: config | env | profile | undefined. */
+  readonly endpointSource: 'config' | 'env' | 'profile' | undefined
+  /** Selected profile name when the endpoint came from profiles.yaml (KIP-17). */
+  readonly endpointProfile: string | undefined
   /** mTLS material dir for the direct gRPC terminal client. */
   readonly certDir: string | undefined
   /** RuntimeClass for the session pod. */
@@ -113,6 +117,8 @@ export class K8eSandboxRuntime extends Service {
       ...(config.profile !== undefined ? { profile: config.profile } : {}),
     })
     this.endpoint = transportCfg?.endpoint
+    this.endpointSource = transportCfg?.source
+    this.endpointProfile = transportCfg?.profile
     this.certDir = transportCfg?.certDir
 
     if (transportCfg !== undefined) {

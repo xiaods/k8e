@@ -58,19 +58,30 @@ import { resolveSandboxTransport } from '@k8e-sandbox/dsh-k8e-sandbox-client'
       process.env.K8E_SANDBOX_CERT_DIR = dir
       process.env.K8E_SANDBOX_CONFIG = profilesPath
 
-      // current_profile default wins
+      // current_profile default wins (auto-discovery source recorded)
       const viaDefault = resolveSandboxTransport()
       assert.deepEqual(viaDefault, {
         endpoint: 'ec2-3-37-16-143.ap-northeast-2.compute.amazonaws.com:50051',
+        source: 'profile',
+        profile: 'default',
       })
 
       // explicit profile wins
       const viaProfile = resolveSandboxTransport({ profile: 'local' })
-      assert.deepEqual(viaProfile, { endpoint: '127.0.0.1:50051', certDir: '/tmp/certs' })
+      assert.deepEqual(viaProfile, {
+        endpoint: '127.0.0.1:50051',
+        certDir: '/tmp/certs',
+        source: 'profile',
+        profile: 'local',
+      })
 
       // explicit endpoint beats profile entirely (env cert dir still honored)
       const viaExplicit = resolveSandboxTransport({ endpoint: 'gw.example.com:50051', profile: 'local' })
-      assert.deepEqual(viaExplicit, { endpoint: 'gw.example.com:50051', certDir: dir })
+      assert.deepEqual(viaExplicit, {
+        endpoint: 'gw.example.com:50051',
+        certDir: dir,
+        source: 'config',
+      })
     } finally {
       if (prevConfig !== undefined) process.env.K8E_SANDBOX_CONFIG = prevConfig
       else delete process.env.K8E_SANDBOX_CONFIG

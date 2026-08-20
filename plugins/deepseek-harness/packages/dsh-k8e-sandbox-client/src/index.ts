@@ -168,10 +168,13 @@ function parseProfilesYaml(text: string): SandboxProfileFile {
  */
 export function resolveSandboxTransport(
   explicit?: { endpoint?: string; certDir?: string; profile?: string },
-): { endpoint: string; certDir?: string } | undefined {
+): { endpoint: string; certDir?: string; source: 'config' | 'env' | 'profile'; profile?: string } | undefined {
   const endpoint = explicit?.endpoint ?? process.env.K8E_SANDBOX_ENDPOINT
   if (endpoint !== undefined && endpoint !== '') {
-    const out: { endpoint: string; certDir?: string } = { endpoint }
+    const out: { endpoint: string; certDir?: string; source: 'config' | 'env' | 'profile'; profile?: string } = {
+      endpoint,
+      source: explicit?.endpoint !== undefined && explicit.endpoint !== '' ? 'config' : 'env',
+    }
     const certDir = explicit?.certDir ?? process.env.K8E_SANDBOX_CERT_DIR
     if (certDir !== undefined && certDir !== '') out.certDir = certDir
     return out
@@ -191,7 +194,11 @@ export function resolveSandboxTransport(
   if (selected === undefined) return undefined
   const profile = file.profiles?.[selected]
   if (profile === undefined || profile.endpoint === undefined || profile.endpoint === '') return undefined
-  const out: { endpoint: string; certDir?: string } = { endpoint: profile.endpoint }
+  const out: { endpoint: string; certDir?: string; source: 'config' | 'env' | 'profile'; profile?: string } = {
+    endpoint: profile.endpoint,
+    source: 'profile',
+    ...(selected !== undefined ? { profile: selected } : {}),
+  }
   if (profile.certDir !== undefined && profile.certDir !== '') out.certDir = profile.certDir
   return out
 }
