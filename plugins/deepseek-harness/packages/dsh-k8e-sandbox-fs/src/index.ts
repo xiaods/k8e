@@ -175,7 +175,11 @@ export class K8eFileSystem extends FileSystem {
     if (parts.length !== 3) return undefined
     const typeHex = Number.parseInt(parts[0] ?? '', 16)
     const size = Number.parseInt(parts[1] ?? '0', 10)
-    const type: FsInfo['type'] = typeHex === 0x4000 ? 'directory' : typeHex === 0x8000 ? 'file' : 'other'
+    // stat -c '%f' is the full st_mode (type bits + permission bits, e.g. 41ed
+    // for a 0755 dir); mask the type bits instead of strict equality or every
+    // real file/dir parses as 'other' and reads are rejected.
+    const mode = typeHex & 0xF000
+    const type: FsInfo['type'] = mode === 0x4000 ? 'directory' : mode === 0x8000 ? 'file' : 'other'
     const version = FsVersion(`k8e:${parts[2] ?? '0'}:${parts[1] ?? '0'}`)
     return { type, size: Number.isFinite(size) ? size : 0, version }
   }

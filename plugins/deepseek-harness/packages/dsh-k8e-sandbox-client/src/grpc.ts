@@ -337,7 +337,7 @@ export class GrpcK8eClient {
       exitCode: resp.exitCode as number,
       sessionId: resp.sessionId as string,
       status: resp.status as string,
-      durationMs: resp.durationMs as number,
+      durationMs: Number(resp.durationMs as string) || 0,
       truncated: resp.truncated as boolean,
       language: resp.language as string,
     }
@@ -367,7 +367,7 @@ export class GrpcK8eClient {
       stdout: resp.stdout as string,
       stderr: resp.stderr as string,
       exitCode: resp.exitCode as number,
-      durationMs: resp.durationMs as number,
+      durationMs: Number(resp.durationMs as string) || 0,
       truncated: resp.truncated as boolean,
     }
   }
