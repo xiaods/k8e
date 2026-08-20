@@ -28,6 +28,7 @@ for (const file of files) {
       '@k8e-sandbox/dsh-k8e-sandbox-client': join(ROOT, 'packages/dsh-k8e-sandbox-client/src/index.ts'),
       '@k8e-sandbox/dsh-k8e-sandbox-client/grpc': join(ROOT, 'packages/dsh-k8e-sandbox-client/src/grpc.ts'),
       '@k8e-sandbox/dsh-k8e-sandbox-fs': join(ROOT, 'packages/dsh-k8e-sandbox-fs/src/index.ts'),
+      '@k8e-sandbox/dsh-k8e-sandbox-tool': join(ROOT, 'packages/dsh-k8e-sandbox-tool/src/index.ts'),
       '@k8e-sandbox/dsh-k8e-sandbox-subprocess': join(ROOT, 'packages/dsh-k8e-sandbox-subprocess/src/index.ts'),
     },
   })

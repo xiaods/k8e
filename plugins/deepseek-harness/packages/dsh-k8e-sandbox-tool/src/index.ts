@@ -106,11 +106,21 @@ export class K8eSandboxTools extends Service {
       },
       async execute(args) {
         const client = runtime().getClient()
-        return client.run(args.code, {
+        const result = await client.run(args.code, {
           ...(args.lang !== undefined ? { lang: args.lang } : {}),
           ...(args.timeout !== undefined ? { timeout: args.timeout } : {}),
           sessionId: await runtime().getSession(),
         })
+        // The transport result carries extra fields (sessionId/status/language);
+        // the tool schema is strict (additionalProperties: false), so return
+        // exactly the declared shape.
+        return {
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          durationMs: Number(result.durationMs) || 0,
+          truncated: result.truncated,
+        }
       },
     }))
 
@@ -156,7 +166,16 @@ export class K8eSandboxTools extends Service {
       },
       async execute(args) {
         const client = runtime().getClient()
-        return client.poll(args.runId)
+        const result = await client.poll(args.runId)
+        return {
+          runId: result.runId,
+          status: result.status,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          durationMs: Number(result.durationMs) || 0,
+          truncated: result.truncated,
+        }
       },
     }))
   }
