@@ -1,6 +1,6 @@
 {
   "name": "@k8e-sandbox/dsh-k8e-sandbox-fs",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "k8e-sandbox filesystem seam provider for DeepSeek Harness (ctx.fs).",
   "type": "module",
   "main": "lib/index.js",
