@@ -452,6 +452,9 @@ export class GrpcK8eClient {
    */
   execStream(sessionId: string, command: string): ExecStreamResult {
     const stdout = new PassThrough()
+    // Consume 'error' so an unlistened destroy can never crash the host;
+    // the failure always surfaces through `done`.
+    stdout.on('error', () => { /* failure surfaces via done */ })
     const stream = this.client.execStream({ sessionId: sessionId, command }, this.metadata)
 
     const decoder = new ExecSSEDecoder()

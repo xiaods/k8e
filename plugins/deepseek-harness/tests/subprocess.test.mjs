@@ -191,4 +191,39 @@ function makeCtx(owner) {
   assert.equal(exitEvent.exitCode, 7)
 }
 
+// When the remote gateway is unavailable, getSession() rejects (UNAVAILABLE).
+// spawn must fail the exec through `done` (exitCode 1) WITHOUT emitting an
+// unhandled 'error' on the returned streams — an unlistened destroy used to
+// crash the whole dsh process.
+{
+  const unhandled = []
+  const onUncaught = (e) => { unhandled.push(e) }
+  const onRejection = (e) => { unhandled.push(e) }
+  process.on('uncaughtException', onUncaught)
+  process.on('unhandledRejection', onRejection)
+  try {
+    const grpcClient = makeGrpcClient()
+    const owner = {
+      getClient: () => ({ run: async () => { throw new Error('unreachable') } }),
+      getGrpcClient: () => grpcClient,
+      // Gateway down: session creation fails fast.
+      getSession: async () => { throw new Error('14 UNAVAILABLE: No connection established') },
+      cwd: '/workspace',
+    }
+    const ctx = makeCtx(owner)
+    const runtime = new K8eSubprocessRuntime(ctx)
+    const handle = runtime.spawn({ argv: ['echo', 'hi'], graceMs: 5000 })
+    let streamError = null
+    handle.stdout.on('error', (e) => { streamError = e })
+    const outcome = await handle.done
+    assert.deepEqual(outcome, { exitCode: 1, signal: null }, 'failure surfaces via done')
+    await new Promise((r) => setTimeout(r, 30))
+    assert.equal(unhandled.length, 0, 'no uncaughtException / unhandledRejection')
+    assert.equal(streamError, null, 'returned stdout must not emit error')
+  } finally {
+    process.off('uncaughtException', onUncaught)
+    process.off('unhandledRejection', onRejection)
+  }
+}
+
 console.log('✔ subprocess fake-ctx test passed (spawnTerminal mapping, stream frames, spawn gRPC + CLI fallback)')
