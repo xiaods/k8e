@@ -1,6 +1,6 @@
 {
   "name": "@k8e-sandbox/dsh-k8e-sandbox",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "k8e-sandbox owner service for DeepSeek Harness (ctx.k8eSandbox).",
   "type": "module",
   "main": "lib/index.js",
