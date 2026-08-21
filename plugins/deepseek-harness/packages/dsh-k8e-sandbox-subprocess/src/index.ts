@@ -109,6 +109,18 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
     }
     let settled = false
 
+    // Failures surface through `done` (exitCode 1), never by destroying the
+    // returned streams with the error: callers such as dsh-bash may not listen
+    // for 'error', and the unhandled event crashes the whole dsh process when
+    // the remote gateway is unavailable.
+    const failExec = (cause: unknown): SubprocessOutcome => {
+      const _error = cause instanceof Error ? cause : new Error(String(cause))
+      stdout.end()
+      stderr.end()
+      emit({ phase: 'exit', id, exitCode: 1, signal: null, at: Date.now() })
+      return { exitCode: 1, signal: null }
+    }
+
     const done: Promise<SubprocessOutcome> = (async () => {
       if (grpcClient !== undefined) {
         // Phase 2: streaming exec via gRPC (sandboxd merges stderr into stdout).
@@ -119,22 +131,17 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
             emit({ phase: 'output', id, stream: 'stdout', data: chunk.toString('utf8'), at: Date.now() })
           })
           // The stream's PassThrough is destroyed with the gRPC error when the
-          // gateway rejects the exec (e.g. session gone); without a listener the
-          // 'error' event is unhandled and crashes the whole dsh process. Surface
-          // it as a normal failed exec instead (done rejects below).
-          result.stdout.on('error', (error: Error) => {
-            stdout.destroy(error)
-            emit({ phase: 'exit', id, exitCode: 1, signal: null, at: Date.now() })
+          // gateway rejects the exec (e.g. session gone); consume the 'error'
+          // here and surface the failure as a normal failed exec instead.
+          result.stdout.on('error', () => {
+            failExec(new Error('k8e-sandbox exec stream error'))
           })
           result.stdout.pipe(stdout)
           const outcome = await result.done
           emit({ phase: 'exit', id, exitCode: outcome.exitCode, signal: outcome.signal, at: Date.now() })
           return outcome
         } catch (cause) {
-          const error = cause instanceof Error ? cause : new Error(String(cause))
-          stdout.destroy(error)
-          emit({ phase: 'exit', id, exitCode: 1, signal: null, at: Date.now() })
-          return { exitCode: 1, signal: null }
+          return failExec(cause)
         } finally {
           settled = true
         }
@@ -151,15 +158,16 @@ export class K8eSubprocessRuntime extends SubprocessRuntime {
         emit({ phase: 'exit', id, exitCode: result.exitCode, signal: null, at: Date.now() })
         return { exitCode: result.exitCode, signal: null }
       } catch (cause) {
-        const error = cause instanceof Error ? cause : new Error(String(cause))
-        stdout.destroy(error)
-        stderr.destroy(error)
-        emit({ phase: 'exit', id, exitCode: 1, signal: null, at: Date.now() })
-        return { exitCode: 1, signal: null }
+        return failExec(cause)
       } finally {
         settled = true
       }
     })()
+
+    // Belt-and-suspenders: consume any 'error' on the returned streams so an
+    // unhandled event can never crash the host process.
+    stdout.on('error', () => { /* failure surfaces via done */ })
+    stderr.on('error', () => { /* failure surfaces via done */ })
 
     return {
       pid: -1,
