@@ -16,8 +16,8 @@ import { loadPrefs } from './prefs.ts'
 import type { ExecLogEntry, K8eExecEvent } from './exec-types.ts'
 
 export interface TerminalViewProps {
-  rows?: number
-  cols?: number
+  rows: number | undefined
+  cols: number | undefined
 }
 
 export function TerminalView(props: TerminalViewProps): ReturnType<typeof createElement> {
@@ -207,7 +207,7 @@ const closeButtonStyle: CSSProperties = {
 }
 
 /** The terminal content without floating chrome: command log + interactive PTY. */
-export function SandboxTerminalTab(props: { rows?: number; cols?: number }): ReactNode {
+export function SandboxTerminalTab(props: { rows: number | undefined; cols: number | undefined }): ReactNode {
   return createElement('div', { style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%' } },
     createElement(CommandLog, {}),
     createElement('div', { style: { flex: 1, minHeight: '120px', background: '#1e1e1e' } },
@@ -217,7 +217,7 @@ export function SandboxTerminalTab(props: { rows?: number; cols?: number }): Rea
 }
 
 /** One live sandbox terminal panel: header + command log + interactive PTY. */
-function SandboxTerminalPanel(props: { rows?: number; cols?: number; onClose: () => void }): ReactNode {
+function SandboxTerminalPanel(props: { rows: number | undefined; cols: number | undefined; onClose: () => void }): ReactNode {
   return createElement('div', { style: { display: 'flex', flexDirection: 'column', width: '100%', height: '100%' } },
     createElement('div', { style: headerStyle },
       createElement('span', null, 'K8E Sandbox Terminal'),

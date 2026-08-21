@@ -165,3 +165,106 @@ Phase 1 用 esbuild 等价实现：核心 bundle + `terminal` chunk 各打一个
 - **dsh.client 打包格式**（`__ModuleLoader__.load` 的 closure factory + 纯度门 + 平台模块 external 清单）是最容易踩坑的地方，需要对着 dsh 官方 `packages/client/tsdown.client.ts` preset 逐项核对。
 - **xterm.js 体积**：已由懒 chunk 解决（见 §6）——核心 bundle 不内联 xterm，终端首次打开才拉 `client-terminal.js`。
 - **终端 WS 的 mTLS**：WS 走 dsh webServer 的 trust fence（better-sidebar 同款），不直接暴露 gRPC mTLS；host 侧持 gRPC client 证书。
+
+## 9. 现状审计（2026-08-21）：K8E 沙盒配置能否在网页编辑？
+
+### 9.1 审计结论
+
+**当前不能。** 网页 UI（`client-ui` 设置页）只能编辑三项**纯浏览器终端偏好**（rows / cols /
+autoOpenTerminal，存 localStorage），K8E 沙盒配置本身全部只读：
+
+| 配置项 | 来源 | 网页可编辑？ | 现状 |
+|---|---|---|---|
+| `endpoint` | Config / env / profiles.yaml (KIP-17) | ❌ | 设置页仅展示 + 标注来源；改 endpoint 需写 profile 行或 `k8e-sandbox-cli connect` 后重启 dsh |
+| `runtimeClass` | Config（profile 行，默认 `gvisor`） | ❌ | 设置页仅展示；owner 构造时一次性解析（`dsh-k8e-sandbox/src/index.ts` `ResolvedConfig`） |
+| `certDir` | Config | ❌ | status API 有返回，UI 不展示 |
+| `tenant` / `cwd` / `allowedHosts` / `pauseOnDispose` | Config | ❌ | 均不可见、不可编辑 |
+| `rows` / `cols` / `autoOpenTerminal` | localStorage | ✅ | 设置页可改，但只影响浏览器渲染，不经过 host，换浏览器即丢 |
+
+**根因**：owner（`dsh-k8e-sandbox`）在插件 apply 时把 Config 一次解析进
+`ResolvedConfig`，`getGrpcClient()` / 会话创建都读这份快照；host-ui 只有
+`POST /k8e-sandbox/api/status` 一个只读方法，没有任何 prefs 读写接口。
+
+### 9.2 设计：分层编辑模型
+
+把「沙盒配置」按**改动成本 / 生效范围**分成三层，网页只开放安全的那层：
+
+```
+┌─ L0 Deployment Config（网页只读）─────────────────────────────┐
+│   endpoint / certDir / tenant / allowedHosts / pauseOnDispose │
+│   基础设施绑定 + 安全面；改它要重建 gRPC client，需重启 dsh。   │
+│   设计决策：不提供网页编辑，设置页保持「展示 + 指引」。          │
+├─ L1 User Prefs（网页可编辑 ✅ 本次新增）───────────────────────┤
+│   runtimeClass（gvisor/kata/firecracker…）                    │
+│   terminal.rows / terminal.cols / terminal.autoOpen           │
+│   纯会话参数，按会话生效，无安全面；持久化到 host（跨浏览器）。  │
+├─ L2 Session 覆盖（可选 Phase 2，终端面板内）───────────────────┤
+│   终端页加 runtime 下拉，仅覆盖「本次打开的终端会话」。          │
+└────────────────────────────────────────────────────────────────┘
+```
+
+**为什么 `runtimeClass` 放 L1（而不是 L0）**：runtime 是**按会话**指定的
+（warm pool 也按 runtimeClass 分池，见 `sandbox.k8e.io/runtime-class` label），
+不涉及连接重建，改了只影响**新会话**，安全且高频（用户换 gVisor→Kata 试隔离）。
+
+### 9.3 Host API 扩展（host-ui）
+
+在现有 `/k8e-sandbox/api` prefix 下新增两个方法（保持 POST-only，与 status 一致）：
+
+```jsonc
+// POST /k8e-sandbox/api/prefs        → 读：返回「生效中」的合并视图
+{
+  "ok": true,
+  "prefs": {
+    "runtimeClass": "gvisor",        // L1，用户可改
+    "rows": 24, "cols": 80, "autoOpenTerminal": true
+  },
+  "effective": {
+    "runtimeClass": "gvisor",        // L1 覆盖后最终值
+    "endpoint": "10.0.0.5:50051",    // L0 只读，供 UI 展示
+    "endpointSource": "profile"
+  }
+}
+
+// POST /k8e-sandbox/api/prefs/set    → 写：整包替换 L1（校验后持久化）
+// body: { "prefs": { "runtimeClass": "kata", "rows": 40, "cols": 120, "autoOpenTerminal": false } }
+// → 200 { "ok": true, "prefs": { ...已保存 } }
+// → 400 { "ok": false, "error": { "code": "validation", "message": "..." } }
+```
+
+- **持久化**：host 侧写 `~/.k8e/sandbox/ui-prefs.json`（与 profiles.yaml 同目录，
+  避免塞进用户目录根），atomic rename 写入；读时缺失回退默认值。
+- **校验**：`runtimeClass` 只允许 allowlist（gvisor / kata / firecracker，可从
+  `ctx.k8eSandbox` 的可用 runtime 列表校验，无列表时用内置 allowlist）；
+  rows∈[1,200]、cols∈[1,400]、autoOpen 为 bool —— 复用现有 `clamp()`。
+- **生效语义**：保存**不重建** gRPC client；`runtimeClass` 对**新建会话**生效，
+  已存在会话不迁移（与 warm-pool 分池语义一致）；rows/cols/autoOpen 对终端即时生效。
+
+### 9.4 Client 改动（client-ui）
+
+- `settings-section.tsx`：`终端偏好` 卡片改为**从 `/k8e-sandbox/api/prefs` 读取、
+  保存到 `/k8e-sandbox/api/prefs/set`**（不再是 localStorage）；新增 `沙盒运行时` 字段
+  （下拉，可选 gvisor/kata/firecracker），保存后提示「对新建会话生效」。
+- `prefs.ts`：`TerminalPrefs` 扩展 `runtimeClass`；`loadPrefs/savePrefs` 改为
+  host API 调用（保留 localStorage 作为**离线兜底缓存**，host 不可达时降级）。
+- `status` 卡片增加 `runtimeClass` 的「生效中」标注（区分 L1 覆盖 vs L0 默认）。
+
+### 9.5 落地顺序
+
+1. **M5a**：host-ui 加 `prefs` 读 + `prefs/set` 写（持久化 + 校验 + 单测）。
+2. **M5b**：owner（`dsh-k8e-sandbox`）暴露 `setRuntimeClass()` 运行时覆盖
+   （`ResolvedConfig.runtimeClass` 变为 getter，优先读 L1 prefs）。
+3. **M5c**：client-ui 设置页接 host prefs API + runtime 下拉（替换 localStorage 为主路径）。
+4. **M6**（可选 Phase 2）：终端面板内 runtime 下拉（L2 会话级覆盖）。
+
+### 9.6 实现状态（2026-08-21）
+
+| 里程碑 | 状态 | 落点 |
+|---|---|---|
+| M5a host-ui prefs 读写 API | ✅ | `dsh-k8e-sandbox-host-ui/src/prefs-store.ts`（校验/持久化/生效优先级，纯模块）+ `index.ts` 的 `prefs` / `prefs/set` 路由（body 校验 → atomic 写 `~/.k8e/sandbox/ui-prefs.json` → `ctx.k8eSandbox.setRuntimeClass()`） |
+| M5b owner 运行时覆盖 | ✅ | `dsh-k8e-sandbox/src/index.ts`：`setRuntimeClass()` / `effectiveRuntimeClass` / `runtimeClassSource`；会话创建改用 effective；status API 上报 `runtimeClassSource` |
+| M5c client 设置页接 host prefs | ✅ | `settings-section.tsx`：运行时下拉（gvisor/kata/firecracker + 默认）+ rows/cols/autoOpen 改为 host 读写；`prefs.ts` host 主路径 + localStorage 离线兜底；`index.tsx` 新增 zh/en 文案（saveError/runtimeHint/source 标注） |
+| 顺带修复 | ✅ | client-ui 首次纳入 dsh 全量 typecheck（旧 tsconfig.check.json 未含 client-ui），修复 `exactOptionalPropertyTypes` 下 prefs.ts/exec-types.ts/terminal.tsx 的潜在类型错误 |
+| 验证 | ✅ | `npm test` 7/7（新增 `tests/prefs.test.mjs`：校验/文件往返/生效优先级）；host-ui + owner `tsc` 构建通过；client 双 bundle 构建通过；dsh-checkout 全量 typecheck 通过 |
+
+> L2 会话级 runtime 覆盖（终端面板内下拉）按 §9.2 设计留作可选 Phase 2，未实现。

@@ -25,13 +25,19 @@ const zh = {
   'status.endpointFromConfig': 'connect 地址来自 dsh profile 的 dsh-k8e-sandbox 配置',
   'status.noEndpointHint': '未发现 connect 地址 — 运行 k8e sandbox connect --endpoint <addr> --apikey <key> 生成 ~/.k8e/sandbox/profiles.yaml 后重启 dsh',
   'prefs.heading': '终端偏好',
+  'prefs.runtimeClass': '沙盒运行时',
+  'prefs.runtimeDefault': '默认（跟随 dsh 配置）',
+  'prefs.runtimeHint': '运行时改动对新建沙盒会话生效，已存在的会话不会迁移。',
   'prefs.rows': '行数',
   'prefs.cols': '列数',
   'prefs.autoOpen': '调用沙盒时自动打开终端',
   'actions.openTerminal': '打开终端',
   'actions.save': '保存',
   'actions.saved': '已保存',
-  'hint.hostConfig': 'endpoint 未显式配置时，插件会自动从 ~/.k8e/sandbox/profiles.yaml 发现（KIP-17）；runtimeClass 等其余配置在 dsh-k8e-sandbox 行里设置。',
+  'actions.saveError': '保存失败 — host 不可达，改动仅保存在本地浏览器。',
+  'status.runtimeFromPrefs': '（网页偏好覆盖）',
+  'status.runtimeFromConfig': '（来自 dsh 配置）',
+  'hint.hostConfig': 'endpoint 未显式配置时，插件会自动从 ~/.k8e/sandbox/profiles.yaml 发现（KIP-17）；endpoint/certDir 为部署级配置，在 dsh-k8e-sandbox 行里设置，网页只读。',
 } as const
 
 const en: Record<keyof typeof zh, string> = {
@@ -45,14 +51,20 @@ const en: Record<keyof typeof zh, string> = {
   'status.endpointFromEnv': 'Connect address from env K8E_SANDBOX_ENDPOINT',
   'status.endpointFromConfig': 'Connect address from the dsh-k8e-sandbox profile row',
   'status.noEndpointHint': 'No connect address found — run k8e sandbox connect --endpoint <addr> --apikey <key> to generate ~/.k8e/sandbox/profiles.yaml, then restart dsh',
-  'prefs.heading': 'Terminal preferences',
+  'prefs.heading': 'Sandbox preferences',
+  'prefs.runtimeClass': 'Sandbox runtime',
+  'prefs.runtimeDefault': 'Default (follow dsh config)',
+  'prefs.runtimeHint': 'Runtime changes apply to NEW sandbox sessions; existing sessions are not migrated.',
   'prefs.rows': 'Rows',
   'prefs.cols': 'Columns',
   'prefs.autoOpen': 'Auto-open terminal on sandbox activity',
   'actions.openTerminal': 'Open terminal',
   'actions.save': 'Save',
   'actions.saved': 'Saved',
-  'hint.hostConfig': 'When endpoint is not configured explicitly, the plugin auto-discovers it from ~/.k8e/sandbox/profiles.yaml (KIP-17); other deploy config (runtimeClass) lives in the dsh-k8e-sandbox profile row.',
+  'actions.saveError': 'Save failed — host unreachable; changes kept locally only.',
+  'status.runtimeFromPrefs': '(overridden in web prefs)',
+  'status.runtimeFromConfig': '(from dsh config)',
+  'hint.hostConfig': 'When endpoint is not configured explicitly, the plugin auto-discovers it from ~/.k8e/sandbox/profiles.yaml (KIP-17); endpoint/certDir are deployment-level config, set in the dsh-k8e-sandbox profile row and read-only on the web.',
 }
 
 /** Client services required before activation. */

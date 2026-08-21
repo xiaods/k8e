@@ -14,7 +14,7 @@ export type K8eExecEvent =
 export interface ExecLogEntry {
   id: string
   command: string
-  cwd?: string
+  cwd: string | undefined
   startedAt: number
   stdout: string
   stderr: string

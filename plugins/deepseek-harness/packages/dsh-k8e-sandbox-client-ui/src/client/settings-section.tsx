@@ -1,13 +1,15 @@
 /**
  * The K8E Sandbox settings page (registered into `settings.section`). Shows
- * the sandbox status (host /k8e-sandbox/api/status) and the user-level terminal
- * preferences; the "打开终端" action lazy-loads the terminal chunk.
+ * the sandbox status (host /k8e-sandbox/api/status) and the user-level L1
+ * prefs — sandbox runtime (new sessions) + terminal geometry — persisted
+ * host-side via /k8e-sandbox/api/prefs (localStorage is only an offline
+ * fallback). The "打开终端" action lazy-loads the terminal chunk.
  */
 
 import { createElement, useEffect, useState } from 'react'
 import type { ChangeEvent, CSSProperties, ReactNode } from 'react'
 import { loadChunk } from './chunk-loader.ts'
-import { loadPrefs, savePrefs, type TerminalPrefs } from './prefs.ts'
+import { loadHostPrefs, loadPrefs, saveHostPrefs, type TerminalPrefs } from './prefs.ts'
 
 export interface K8eSettingsSectionProps {
   t: (key: string, params?: Record<string, string>) => string
@@ -21,6 +23,7 @@ interface Status {
   endpointSource?: 'config' | 'env' | 'profile'
   endpointProfile?: string
   runtimeClass?: string
+  runtimeClassSource?: 'prefs' | 'config'
 }
 
 const box: CSSProperties = {
@@ -77,6 +80,7 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
   const [status, setStatus] = useState<Status | undefined>(undefined)
   const [prefs, setPrefs] = useState<TerminalPrefs>(() => loadPrefs())
   const [saved, setSaved] = useState(false)
+  const [saveError, setSaveError] = useState(false)
   const [opening, setOpening] = useState(false)
 
   useEffect(() => {
@@ -93,6 +97,16 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
     return () => { cancelled = true }
   }, [])
 
+  // Prefs are host-authoritative (cross-browser); refresh on mount and fall
+  // back to the local cache when the host is unreachable.
+  useEffect(() => {
+    let cancelled = false
+    void loadHostPrefs().then((hostPrefs) => {
+      if (!cancelled) setPrefs(hostPrefs)
+    })
+    return () => { cancelled = true }
+  }, [])
+
   const openTerminal = async (): Promise<void> => {
     if (opening) return
     setOpening(true)
@@ -105,10 +119,18 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
     }
   }
 
-  const onSave = (): void => {
-    savePrefs(prefs)
-    setSaved(true)
-    window.setTimeout(() => setSaved(false), 1500)
+  const onSave = async (): Promise<void> => {
+    try {
+      await saveHostPrefs(prefs)
+      setSaved(true)
+      setSaveError(false)
+    } catch {
+      // Host unreachable: the local cache was still updated (terminal
+      // geometry works); surface that the change is local-only.
+      setSaved(false)
+      setSaveError(true)
+    }
+    window.setTimeout(() => { setSaved(false); setSaveError(false) }, 4000)
   }
 
   const connected = status?.grpcAvailable === true
@@ -122,6 +144,12 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
   } else if (status?.endpointSource === 'config') {
     endpointLabel = t('status.endpointFromConfig')
   }
+
+  const runtimeSourceLabel = status?.runtimeClassSource === 'prefs'
+    ? t('status.runtimeFromPrefs')
+    : t('status.runtimeFromConfig')
+
+  const runtimeOptions = ['gvisor', 'kata', 'firecracker']
 
   return createElement('div', { style: { maxWidth: '560px' } },
     createElement('h3', { style: { margin: '0 0 14px', fontSize: '16px', color: 'var(--dsw-alias-label-primary, #eee)' } },
@@ -144,7 +172,7 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
         : null,
       status?.runtimeClass !== undefined
         ? createElement('div', { style: { fontSize: '13px', color: 'var(--dsw-alias-label-secondary, #999)' } },
-          'runtimeClass: ' + status.runtimeClass)
+          'runtimeClass: ' + status.runtimeClass + ' ' + runtimeSourceLabel)
         : null,
       status?.endpoint !== undefined && status.endpoint !== ''
         ? createElement('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #999)', marginTop: '8px' } },
@@ -161,6 +189,18 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
     createElement('div', { style: { ...box, marginTop: '16px' } },
       createElement('div', { style: { fontSize: '13px', color: 'var(--dsw-alias-label-secondary, #999)', marginBottom: '14px' } },
         t('prefs.heading')),
+
+      Field({ label: t('prefs.runtimeClass'), children: createElement('select', {
+        style: fieldStyle,
+        value: prefs.runtimeClass ?? '',
+        onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+          const value = e.target.value
+          setPrefs({ ...prefs, runtimeClass: value === '' ? undefined : value })
+        },
+      },
+      createElement('option', { value: '' }, t('prefs.runtimeDefault')),
+      ...runtimeOptions.map((r) => createElement('option', { value: r, key: r }, r)),
+      ) }),
 
       Field({ label: t('prefs.rows'), children: createElement('input', {
         type: 'number', min: 1, max: 200, value: prefs.rows, style: fieldStyle,
@@ -185,6 +225,14 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
           setPrefs({ ...prefs, autoOpenTerminal: e.target.checked })
         },
       }) }),
+
+      createElement('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #999)', marginTop: '-4px', marginBottom: '14px' } },
+        t('prefs.runtimeHint')),
+
+      saveError
+        ? createElement('div', { style: { fontSize: '12px', color: '#e5a50a', marginBottom: '10px' } },
+          t('actions.saveError'))
+        : null,
 
       createElement('div', { style: { display: 'flex', gap: '10px', alignItems: 'center', marginTop: '18px' } },
         createElement('button', { type: 'button', style: primaryButtonStyle, onClick: openTerminal, disabled: opening },

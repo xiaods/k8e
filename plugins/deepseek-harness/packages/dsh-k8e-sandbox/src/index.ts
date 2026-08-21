@@ -84,10 +84,11 @@ export class K8eSandboxRuntime extends Service {
   readonly endpointProfile: string | undefined
   /** mTLS material dir for the direct gRPC terminal client. */
   readonly certDir: string | undefined
-  /** RuntimeClass for the session pod. */
+  /** RuntimeClass for the session pod (deployment default from config). */
   readonly runtimeClass: string
 
   private readonly config: ResolvedConfig
+  private runtimeOverride: string | undefined
   private readonly transport: SandboxTransport
   private readonly grpcClient: GrpcK8eClient | undefined
   private sessionId: string | undefined
@@ -109,6 +110,7 @@ export class K8eSandboxRuntime extends Service {
     }
     this.cwd = this.config.cwd
     this.runtimeClass = this.config.runtimeClass
+    this.runtimeOverride = undefined
 
     // Resolve the gateway: explicit config → env → CLI profiles.yaml (KIP-17).
     const transportCfg = resolveSandboxTransport({
@@ -178,7 +180,7 @@ export class K8eSandboxRuntime extends Service {
   private async createSessionOnce(): Promise<string> {
     try {
       const created = await this.transport.createSession({
-        runtimeClass: this.config.runtimeClass,
+        runtimeClass: this.effectiveRuntimeClass,
         ...(this.config.tenant !== undefined ? { tenant: this.config.tenant } : {}),
         ...(this.config.allowedHosts !== undefined ? { allowedHosts: this.config.allowedHosts } : {}),
       })
@@ -192,6 +194,26 @@ export class K8eSandboxRuntime extends Service {
       this.sessionUnavailableUntil = Date.now() + this.config.sessionFailureTtlMs
       throw err
     }
+  }
+
+  /**
+   * Override the RuntimeClass for NEW sessions (L1 web prefs). `undefined`
+   * clears the override and falls back to the deployment config default.
+   * Existing sessions are never migrated — matches warm-pool per-runtime
+   * splitting semantics (sandbox.k8e.io/runtime-class label).
+   */
+  setRuntimeClass(runtimeClass: string | undefined): void {
+    this.runtimeOverride = runtimeClass
+  }
+
+  /** RuntimeClass the next session creation will use (override ?? config default). */
+  get effectiveRuntimeClass(): string {
+    return this.runtimeOverride ?? this.config.runtimeClass
+  }
+
+  /** Where `effectiveRuntimeClass` comes from: L1 web prefs or deployment config. */
+  get runtimeClassSource(): 'prefs' | 'config' {
+    return this.runtimeOverride !== undefined ? 'prefs' : 'config'
   }
 
   /** Return the shared transport client (persistent gRPC when an endpoint is resolved). */

@@ -10,14 +10,20 @@
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage } from 'node:http'
 import { createRequire } from 'node:module'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { Context, K8eExecEvent, SandboxHttpRequest, SandboxHttpResponse } from './context-types.ts'
+import { effectiveRuntime, loadPrefsFile, savePrefsFile, validatePrefs, type SavedPrefs } from './prefs-store.js'
 
 export const name = 'dsh-k8e-sandbox-host-ui'
 
 /** Services required before mounting. */
 export const inject = ['webServer', 'k8eSandbox']
+
+/** L1 user prefs persistence location (same dir as profiles.yaml, KIP-17). */
+export const PREFS_PATH = join(homedir(), '.k8e', 'sandbox', 'ui-prefs.json')
 
 function clamp(value: number, min: number, max: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback
@@ -27,6 +33,23 @@ function clamp(value: number, min: number, max: number, fallback: number): numbe
 function writeJson(res: SandboxHttpResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json' })
   res.end(JSON.stringify(body))
+}
+
+/** Read and JSON-parse the request body; returns `undefined` on invalid JSON. */
+async function readJsonBody(req: SandboxHttpRequest): Promise<unknown | undefined> {
+  const chunks: string[] = []
+  try {
+    for await (const chunk of req) {
+      chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'))
+    }
+  } catch {
+    return undefined
+  }
+  try {
+    return JSON.parse(chunks.join('')) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -277,8 +300,46 @@ export function apply(ctx: Context): void {
           endpointSource: ctx.k8eSandbox.endpointSource,
           endpointProfile: ctx.k8eSandbox.endpointProfile,
           certDir: ctx.k8eSandbox.certDir,
-          runtimeClass: ctx.k8eSandbox.runtimeClass,
+          runtimeClass: ctx.k8eSandbox.effectiveRuntimeClass,
+          runtimeClassSource: ctx.k8eSandbox.runtimeClassSource,
         })
+        return
+      }
+      if (method === 'prefs') {
+        // Read L1 prefs + the merged effective view (docs/ui-design.md §9.3).
+        const prefs = await loadPrefsFile(PREFS_PATH)
+        const effective = effectiveRuntime(prefs.runtimeClass, ctx.k8eSandbox.runtimeClass)
+        writeJson(res, 200, {
+          ok: true,
+          prefs,
+          effective: {
+            runtimeClass: effective.runtimeClass,
+            runtimeClassSource: effective.source,
+            endpoint: ctx.k8eSandbox.endpoint,
+            endpointSource: ctx.k8eSandbox.endpointSource,
+          },
+        })
+        return
+      }
+      if (method === 'prefs/set') {
+        // Write L1 prefs: validate, persist host-side, apply to the owner for
+        // NEW sessions (existing sessions are never migrated).
+        const body = await readJsonBody(req)
+        const result = validatePrefs(body !== undefined && typeof body === 'object' ? (body as { prefs?: unknown }).prefs : undefined)
+        if (!result.ok) {
+          writeJson(res, 400, { ok: false, error: result.error })
+          return
+        }
+        let saved: SavedPrefs = result.prefs
+        try {
+          await savePrefsFile(PREFS_PATH, saved)
+        } catch (error) {
+          writeJson(res, 500, { ok: false, error: { code: 'io', message: error instanceof Error ? error.message : String(error) } })
+          return
+        }
+        ctx.k8eSandbox.setRuntimeClass(saved.runtimeClass)
+        const effective = effectiveRuntime(saved.runtimeClass, ctx.k8eSandbox.runtimeClass)
+        writeJson(res, 200, { ok: true, prefs: saved, effective: { runtimeClass: effective.runtimeClass, runtimeClassSource: effective.source } })
         return
       }
       writeJson(res, 404, { ok: false, error: { code: 'not-found', message: `unknown method "${method ?? ''}"` } })
