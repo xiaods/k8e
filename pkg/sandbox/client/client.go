@@ -589,6 +589,29 @@ func checkEndpointStamp(cacheDir, endpoint string) error {
 	return fmt.Errorf("sandbox client: cached certs are for %q, not %q; re-run login/connect with --apikey or use a separate K8E_SANDBOX_CERT_DIR", cached, endpoint)
 }
 
+// ConnErrorHint returns an actionable recovery hint for a gateway
+// connection/TLS failure (empty string when there is none). Exported so the
+// connect flow — whose lazy handshake surfaces these errors after the dial —
+// can attach the same guidance dialErr puts on direct dials.
+func ConnErrorHint(err error) string {
+	msg := err.Error()
+	cacheHint, _ := sandboxCacheDir()
+	if cacheHint == "" {
+		cacheHint = "~/.k8e/sandbox"
+	}
+	switch {
+	case strings.Contains(msg, "certificate signed by unknown authority"),
+		strings.Contains(msg, "ECDSA verification failure"),
+		strings.Contains(msg, "x509: certificate"),
+		strings.Contains(msg, "certificate is not standards compliant"):
+		return fmt.Sprintf("the cached CA (%s/ca.crt) does not match this gateway — the server was reinstalled or its CA rotated. Re-run connect with --reset-certs, or manually: rm -rf %s", cacheHint, cacheHint)
+	case strings.Contains(msg, "certificate required"), strings.Contains(msg, "bad certificate"):
+		return "client certificate rejected — re-run login/connect with --apikey"
+	default:
+		return ""
+	}
+}
+
 func dialErr(endpoint string, err error) error {
 	msg := err.Error()
 	// Friendly recovery hints for the most common remote-TLS failures (issue #538).

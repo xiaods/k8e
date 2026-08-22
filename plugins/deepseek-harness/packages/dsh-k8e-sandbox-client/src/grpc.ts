@@ -257,6 +257,17 @@ export class GrpcK8eClient {
       'grpc.initial_reconnect_backoff_ms': 200,
       'grpc.max_reconnect_backoff_ms': 2_000,
     }) as SandboxServiceClient
+    // Fail loud when the bundled sandbox.proto is older than this code
+    // expects (stale npm payload): a missing method would otherwise surface
+    // as "cannot read 'call' of undefined" at call time.
+    for (const method of ['exposeService', 'unexposeService', 'listExposed', 'updateAllowedHosts'] as const) {
+      if (typeof (this.client as unknown as Record<string, unknown>)[method] !== 'function') {
+        throw new Error(
+          `k8e sandbox grpc: bundled sandbox.proto lacks ${method}() — the installed ` +
+          '@k8e-sandbox/dsh-k8e-sandbox-client package is stale; upgrade to >=0.3.10',
+        )
+      }
+    }
   }
 
   private call<T>(method: UnaryMethod, request: unknown, deadlineMs?: number): Promise<T> {

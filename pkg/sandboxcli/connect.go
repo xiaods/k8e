@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/urfave/cli"
@@ -17,6 +18,7 @@ const (
 	flagSkipSkill  = "skip-skill"
 	flagSkillOnly  = "skill-only"
 	flagSkipVerify = "skip-verify"
+	flagResetCerts = "reset-certs"
 	flagSkipPath   = "skip-path"
 )
 
@@ -51,6 +53,10 @@ func ConnectCommand() cli.Command {
 				Name:  flagSkipPath,
 				Usage: "Skip ensuring k8e-sandbox-cli is on PATH",
 			},
+			cli.BoolFlag{
+				Name:  flagResetCerts,
+				Usage: "Delete cached CA/client certs for this connection first — use after a server reinstall or CA rotation (trust is re-established from the --apikey bootstrap)",
+			},
 		},
 		Action: connectAction,
 	}
@@ -74,6 +80,14 @@ func connectAction(ctx *cli.Context) error {
 	endpoint := resolved.Endpoint
 	apikey := resolved.APIKey
 
+	if ctx.Bool(flagResetCerts) {
+		if dir := resolved.CertDir; dir != "" {
+			for _, f := range []string{"ca.crt", "client.crt", "client.key", "endpoint"} {
+				_ = os.Remove(filepath.Join(dir, f))
+			}
+		}
+	}
+
 	mode, cfgEndpoint, err := resolveConnectMode(endpoint, apikey)
 	if err != nil {
 		return printErrorExit(err.Error(), 1)
@@ -87,7 +101,11 @@ func connectAction(ctx *cli.Context) error {
 
 	if !ctx.Bool(flagSkipVerify) {
 		if err := verifyGateway(c); err != nil {
-			return printErrorExit("gateway verify failed: "+err.Error(), 2)
+			msg := "gateway verify failed: " + err.Error()
+			if hint := client.ConnErrorHint(err); hint != "" {
+				msg += "\n  hint: " + hint + "\n  (or re-run connect with --reset-certs)"
+			}
+			return printErrorExit(msg, 2)
 		}
 	}
 

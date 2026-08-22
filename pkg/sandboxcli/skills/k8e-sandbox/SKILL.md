@@ -274,7 +274,7 @@ Default allowed hosts (cluster `SandboxMatrix.spec.defaultAllowedHosts`): `pypi.
 
 | Exit | Meaning | Action |
 |------|---------|--------|
-| 2 | TLS / cert / unreachable | `connect` again; clear cert dir `ca.crt` on trust mismatch; check profile `cert_dir` |
+| 2 | TLS / cert / unreachable | Server reinstalled or CA rotated? Re-run `connect --reset-certs --apikey <key>` (clears the cached CA and re-bootstraps trust); otherwise check profile `cert_dir` |
 | 1 | Command/session error | Read JSON error; recreate session if gone; re-create API key if TTL expired |
 | 8 | ResourceExhausted | Wait or free warm pool capacity |
 
