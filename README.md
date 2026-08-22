@@ -4,13 +4,12 @@
 <br/>
 
 <a href="https://git.io/typing-svg">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=22&pause=1000&color=00D4FF&center=true&vCenter=true&width=700&lines=Open+Source+Agentic+AI+Sandbox+Matrix+%F0%9F%A4%96;Secure+Isolated+Agent+Execution+at+Scale+%F0%9F%94%92;Up+and+Running+in+60+Seconds+%E2%9A%A1;Single+Binary+%3C+100MB+%F0%9F%93%A6;CNCF+Conformant+%26+Production+Ready+%E2%9C%85" alt="Typing SVG" />
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=22&pause=1000&color=00D4FF&center=true&vCenter=true&width=700&lines=Open+Source+Agentic+AI+Sandbox+Matrix+%F0%9F%A4%96;Secure+Isolated+Agent+Execution+at+Scale+%F0%9F%94%92;Up+and+Running+in+60+Seconds+%E2%9A%A1;Single+Binary+%3C+100MB+%F0%9F%93%A6;E2B+SDK+Compatible+%F0%9F%A4%9D" alt="Typing SVG" />
 </a>
 
 <br/><br/>
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-v1.35-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://kubernetes.io)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge&logo=apache&logoColor=white)](https://github.com/xiaods/k8e/blob/main/LICENSE)
 [![Stars](https://img.shields.io/github/stars/xiaods/k8e?style=for-the-badge&logo=github&color=FFD700)](https://github.com/xiaods/k8e/stargazers)
 [![Release](https://img.shields.io/github/v/release/xiaods/k8e?style=for-the-badge&logo=github&color=green)](https://github.com/xiaods/k8e/releases)
@@ -18,7 +17,7 @@
 
 <br/>
 
-> **k8e.sh** — Open Source Agentic AI Sandbox Matrix. A CNCF-conformant Kubernetes distribution in a **single binary under 100MB**, purpose-built for secure, isolated AI agent execution at scale. Up and running in **60 seconds**. Inspired by [K3s](https://github.com/k3s-io/k3s).
+> **k8e.sh** — Open Source Agentic AI Sandbox Matrix. A **single binary under 100MB** that turns any Linux host into a secure, isolated execution platform for AI agents — gVisor, Kata, or Firecracker isolation, warm-pool fast starts, and an E2B-compatible API. Up and running in **60 seconds**.
 
 <br/>
 
@@ -42,7 +41,7 @@ curl -sfL https://k8e.sh/install.sh | sh -
 | 5 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup) |
 | 6 | [🤖 Sandbox CLI](#-sandbox-cli) |
 | 7 | [🖥️ Advanced Installation](#️-advanced-installation) |
-| 8 | [🆚 K8E vs Others](#-k8e-vs-the-alternatives) |
+| 8 | [🆚 K8E vs Other Sandbox Platforms](#️-k8e-vs-other-sandbox-platforms) |
 | 9 | [🤝 Contributing](#-contributing) |
 | 10 | [🙏 Acknowledgments](#-acknowledgments) |
 
@@ -50,7 +49,7 @@ curl -sfL https://k8e.sh/install.sh | sh -
 
 ## 🤖 What is K8E?
 
-**K8E** is the **Open Source Agentic AI Sandbox Matrix** — a Kubernetes-native platform for running secure, isolated AI agent workloads at scale, packaged as a single binary under 100MB.
+**K8E** is the **Open Source Agentic AI Sandbox Matrix** — a self-hosted sandbox platform for running secure, isolated AI agent workloads at scale, packaged as a single binary under 100MB.
 
 As autonomous AI agents increasingly generate and execute untrusted code, robust sandboxing infrastructure is no longer optional. K8E ships everything needed to spin up a production-grade cluster in under 60 seconds, with first-class primitives for agent isolation, resource governance, and ephemeral execution environments — purpose-built for the AI era.
 
@@ -80,47 +79,30 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 <div align="center">
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                          K8E CLUSTER                            │
-│                                                                 │
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │                CONTROL PLANE (Server Node)              │   │
-│   │  ┌──────────────┐  ┌─────────────┐  ┌──────────┐       │   │
-│   │  │  API Server  │  │  Scheduler  │  │   etcd   │       │   │
-│   │  └──────────────┘  └─────────────┘  └──────────┘       │   │
-│   │  ┌──────────────────┐  ┌──────────────────────────────┐ │   │
-│   │  │  Controller Mgr  │  │  SandboxMatrix Controller    │ │   │
-│   │  └──────────────────┘  └──────────────────────────────┘ │   │
-│   └─────────────────────────────────────────────────────────┘   │
-│                              │                                   │
-│                 ┌────────────┴────────────┐                     │
-│   ┌─────────────▼───────────┐  ┌──────────▼──────────────┐     │
-│   │      WORKER NODE        │  │      WORKER NODE        │     │
-│   │  ┌─────────────────┐    │  │  ┌─────────────────┐    │     │
-│   │  │  sandbox-matrix │    │  │  │  sandbox-matrix │    │     │
-│   │  │  grpc-gateway   │    │  │  │  grpc-gateway   │    │     │
-│   │  │  :50051 (TLS)   │    │  │  │  :50051 (TLS)   │    │     │
-│   │  └────────┬────────┘    │  │  └────────┬────────┘    │     │
-│   │           │             │  │           │             │     │
-│   │  ┌────────▼────────┐    │  │  ┌────────▼────────┐    │     │
-│   │  │  Isolated Pods  │    │  │  │  Isolated Pods  │    │     │
-│   │  │ gVisor/Kata/FC  │    │  │  │ gVisor/Kata/FC  │    │     │
-│   │  └─────────────────┘    │  │  └─────────────────┘    │     │
-│   │  Cilium CNI (eBPF)      │  │  Cilium CNI (eBPF)      │     │
-│   └─────────────────────────┘  └─────────────────────────┘     │
-└─────────────────────────────────────────────────────────────────┘
-         ▲
-         │  gRPC (TLS)
-┌────────┴────────┐
-│  k8e-sandbox-cli    │  ← CLI commands
-└────────┬────────┘
-         │  gRPC (TLS)
-         ▼
-│  AI Agent       │  (claude code / codex / pi)
-└─────────────────┘
+ AI Agents (Claude Code / Codex / Pi / dsh)
+        │  k8e-sandbox-cli / plugin tools    (gRPC over mTLS)
+        ▼
+┌──────────────────────────────────────────────┐
+│              SANDBOX GATEWAY                 │
+│  sessions · exec · files · PTY terminals     │
+│  expose · allow-hosts · snapshots            │
+│  warm pool · metrics · event stream          │
+└──────────────┬───────────────────────────────┘
+               │ claims ready pods from the warm pool
+   ┌───────────▼───────────┐   ┌────────────────┐
+   │   SANDBOX POD         │   │   SANDBOX POD  │
+   │   gVisor / Kata / FC  │ … │   (isolated)   │
+   │   agent's code + fs   │   │                │
+   └───────────────────────┘   └────────────────┘
+        eBPF per-session network policy between all of them
 ```
 
 </div>
+
+One gateway fronts every operation — session lifecycle, streaming exec,
+filesystem, PTY terminals, service exposure (`expose`), live egress policy
+(`allow-hosts`) and content-addressed snapshots — so agents get one audited
+door instead of raw infrastructure access.
 
 ---
 
@@ -128,18 +110,14 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 
 <div align="center">
 
-| Component | Version | Purpose |
-|---|---|---|
-| ☸️ **Kubernetes** | v1.35.x | Core orchestration engine |
-| 🔷 **Cilium** | Latest | eBPF networking & per-session egress policy |
-| 📦 **Containerd** | v1.7.x | Container runtime |
-| 🔑 **etcd** | v3.5.x | Distributed key-value store |
-| 🌐 **CoreDNS** | v1.11.x | Cluster DNS |
-| ⚓ **Helm Controller** | v0.16.x | GitOps & chart management |
-| 📈 **Metrics Server** | v0.7.x | Resource metrics |
-| 💾 **Local Path Provisioner** | v0.0.30 | Persistent storage |
-| 🛡️ **gVisor / Kata / Firecracker** | — | Pluggable sandbox isolation runtimes |
-| 🤖 **Sandbox CLI** | standalone | `k8e-sandbox-cli` — agent tool commands |
+| Component | Purpose |
+|---|---|
+| 🚪 **Sandbox Gateway** | Single gRPC (mTLS) + E2B-compatible HTTP door: sessions, exec, files, PTY terminals, exposure, snapshots |
+| 🛡️ **gVisor / Kata / Firecracker** | Pluggable sandbox isolation runtimes (user-space kernel / lightweight VMs / microVMs) |
+| 🔷 **Cilium (eBPF)** | Per-session network policy & egress control — no proxy process |
+| 🧠 **Warm Pool Controller** | Pre-booted sandbox pods, adaptive sizing, sub-500ms claims |
+| 🤖 **k8e-sandbox-cli** | Standalone agent CLI — connect, run, expose, snapshots (`catalog` for SDK generation) |
+| 🔌 **dsh plugin family** | `@k8e-sandbox/*` npm packages — DeepSeek Harness integration with model-surface tools |
 
 </div>
 
@@ -175,14 +153,14 @@ ls -l /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1   # verify bo
 curl -sfL https://k8e.sh/install.sh | sh -
 ```
 
-### Step 3 — Verify Cluster
+### Step 3 — Verify the Sandbox
 
 ```bash
-export KUBECONFIG=/etc/k8e/k8e.yaml
-kubectl get nodes
-kubectl get runtimeclass              # should show: gvisor
-kubectl -n sandbox-matrix get pods   # Sandbox Matrix starts automatically
+k8e-sandbox-cli status        # -> {"available": true, ...}
+k8e-sandbox-cli run 'echo hello from the sandbox'
 ```
+
+(Optionally, with `KUBECONFIG=/etc/k8e/k8e.yaml`: `kubectl -n sandbox-matrix get pods` shows the warm-pool pods.)
 
 ### Step 4 — Download Sandbox CLI & Connect Your AI Agent
 
@@ -469,22 +447,32 @@ K8E_KUBECONFIG_OUTPUT=<path>    # kubeconfig output path
 
 ---
 
-## 🆚 K8E vs The Alternatives
+## 🆚 K8E vs Other Sandbox Platforms
+
+How K8E compares to mainstream sandboxes for AI agents:
 
 <div align="center">
 
-| Feature | K8E 🚀 | K3s | K8s (vanilla) | MicroK8s |
-|---|---|---|---|---|
-| Install time | **~60s** | ~90s | ~20min | ~5min |
-| Binary size | **<100MB** | ~70MB | ~1GB+ | ~200MB |
-| Agentic Sandbox | ✅ Native | ❌ No | ⚠️ Manual | ❌ No |
-| eBPF networking | ✅ Cilium | ⚠️ Optional | ⚠️ Optional | ❌ No |
-| Sandbox CLI standalone | ✅ Yes | ❌ No | ❌ No | ❌ No |
-| HA embedded etcd | ✅ Yes | ✅ Yes | ✅ Yes | ⚠️ Limited |
-| CNCF conformant | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
-| Multi-arch | ✅ Yes | ✅ Yes | ✅ Yes | ✅ Yes |
+| | K8E 🚀 | [E2B](https://e2b.dev) | [Daytona](https://daytona.io) | [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) (k8s-sig) | DIY gVisor/Firecracker |
+|---|---|---|---|---|---|
+| Self-hosted, single binary | ✅ <100MB | ⚠️ Heavy (per-env VM images) | ✅ | ❌ needs a K8s cluster | ❌ you build it |
+| Isolation runtimes | ✅ **gVisor / Kata / Firecracker** — pluggable | Firecracker microVMs | ✅ microVM/containers | K8s RuntimeClass (gVisor/Kata/…) | one runtime |
+| E2B SDK compatibility | ✅ native (official SDKs unmodified) | ✅ native | ❌ own API | ❌ | ❌ build your own API |
+| Agent CLI + skill surface | ✅ `k8e-sandbox-cli` (+ dsh plugin tools) | SDK only | CLI + SDK | CRDs only | ❌ |
+| Warm pool (sub-500ms claims) | ✅ built-in, adaptive sizing | ✅ managed | ⚠️ | ⚠️ manual scaling | ❌ roll your own |
+| Expose agent services via gateway URL | ✅ `expose` + live `allow-hosts` egress policy | ✅ hosted URLs | ⚠️ | ❌ roll your own Ingress | ❌ |
+| Content-addressed snapshots | ✅ incremental restore + registry | ✅ hosted | ⚠️ | ❌ | ❌ |
+| Per-session network policy (eBPF) | ✅ Cilium, live-configurable | managed (fixed) | ⚠️ | ⚠️ NetworkPolicy | hand-written |
+| PTY terminals for agents | ✅ first-class (`spawnTerminal`) | ✅ | ✅ | ❌ | ❌ |
+| License | Apache 2.0 | Apache 2.0 (hosted core paid) | Apache 2.0 | Apache 2.0 | — |
 
 </div>
+
+### When to choose K8E
+
+- You want **E2B-style sandboxes but self-hosted** — same official SDKs, your infrastructure, no per-seat pricing.
+- Your agents need a **rich tool surface beyond "run code"**: PTY terminals, snapshots, service exposure, and live egress policy — all through one audited gateway.
+- You want **pluggable isolation** (swap gVisor ↔ Kata ↔ Firecracker per session) instead of being locked to one microVM stack.
 
 ---
 
