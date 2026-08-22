@@ -49,7 +49,25 @@ function makeOwner() {
       return hosts
     },
   }
-  return { getClient: () => client, getSession: async () => 'sess-1', calls }
+  // The KIP-24 tools dial the gateway directly (getGrpcClient), not the
+  // transport — expose is a gateway operation and k8e-sandbox-cli does not
+  // exist inside the sandbox (web-terminal path).
+  const grpc = {
+    calls,
+    async exposeService(sessionId, port, host) {
+      calls.push(['grpc.exposeService', sessionId, port, host])
+      return { url: `http://gw/k8e/expose/${sessionId}/${port}/` }
+    },
+    async unexposeService(sessionId, port) {
+      calls.push(['grpc.unexposeService', sessionId, port])
+      return { ok: true }
+    },
+    async updateAllowedHosts(sessionId, hosts) {
+      calls.push(['grpc.updateAllowedHosts', sessionId, hosts])
+      return hosts
+    },
+  }
+  return { getClient: () => client, getGrpcClient: () => grpc, getSession: async () => 'sess-1', calls }
 }
 
 function mount() {
@@ -107,7 +125,7 @@ function mount() {
   const out = await tool.execute({ port: 8080, host: '127.0.0.1' })
   assert.deepEqual(Object.keys(out).sort(), ['port', 'url'])
   assert.equal(out.url, 'http://gw/k8e/expose/sess-1/8080/')
-  assert.deepEqual(owner.calls.at(-1), ['exposeService', 'sess-1', 8080, '127.0.0.1'])
+  assert.deepEqual(owner.calls.at(-1), ['grpc.exposeService', 'sess-1', 8080, '127.0.0.1'])
 }
 
 // KIP-24: k8e_sandbox_unexpose passes session + port and returns ok.
@@ -117,7 +135,7 @@ function mount() {
   assert.ok(tool, 'k8e_sandbox_unexpose registered')
   const out = await tool.execute({ port: 8080 })
   assert.deepEqual(out, { ok: true, port: 8080 })
-  assert.deepEqual(owner.calls.at(-1), ['unexposeService', 'sess-1', 8080])
+  assert.deepEqual(owner.calls.at(-1), ['grpc.unexposeService', 'sess-1', 8080])
 }
 
 // KIP-24: k8e_sandbox_allow_hosts passes the allowlist through and echoes it.
@@ -127,7 +145,7 @@ function mount() {
   assert.ok(tool, 'k8e_sandbox_allow_hosts registered')
   const out = await tool.execute({ hosts: ['pypi.org', 'internal.example.com'] })
   assert.deepEqual(out, { hosts: ['pypi.org', 'internal.example.com'] })
-  assert.deepEqual(owner.calls.at(-1), ['updateAllowedHosts', 'sess-1', ['pypi.org', 'internal.example.com']])
+  assert.deepEqual(owner.calls.at(-1), ['grpc.updateAllowedHosts', 'sess-1', ['pypi.org', 'internal.example.com']])
 }
 
 console.log('✔ tool output-shape test passed (strict schema, numeric durationMs, KIP-24 expose/allow_hosts)')
