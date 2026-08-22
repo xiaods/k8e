@@ -352,7 +352,7 @@ export class CliK8eClient implements SandboxTransport {
   }
 
   async listExposed(sessionId: string): Promise<ExposedServiceInfo[]> {
-    const out = await parseJSON<{ services: ExposedServiceInfo[] }>(await runCli(['exposed', '--session-id', sessionId], this.opts), 'exposed')
+    const out = parseJSON<{ services: ExposedServiceInfo[] }>(await runCli(['exposed', '--session-id', sessionId], this.opts), 'exposed')
     return out.services ?? []
   }
 
@@ -360,7 +360,7 @@ export class CliK8eClient implements SandboxTransport {
     const args = hosts.length > 0
       ? ['allow-hosts', hosts.join(','), '--session-id', sessionId]
       : ['allow-hosts', '--clear', '--session-id', sessionId]
-    const out = await parseJSON<{ allowed_hosts: string[] }>(await runCli(args, this.opts), 'allow-hosts')
+    const out = parseJSON<{ allowed_hosts: string[] }>(await runCli(args, this.opts), 'allow-hosts')
     return out.allowed_hosts ?? []
   }
 }

@@ -115,7 +115,7 @@ export async function savePrefsFile(path: string, prefs: SavedPrefs): Promise<vo
 /**
  * Effective runtime for NEW sessions: L1 prefs override, else the deployment
  * config default. Encodes the precedence rule the owner (`K8eSandboxRuntime`)
- * applies via `setRuntimeClass`; kept here so it is unit-testable.
+ * applies via `applyRuntimeClass`; kept here so it is unit-testable.
  */
 export function effectiveRuntime(prefsRuntime: string | undefined, configDefault: string): {
   runtimeClass: string

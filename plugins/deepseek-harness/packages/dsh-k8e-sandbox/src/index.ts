@@ -202,7 +202,7 @@ export class K8eSandboxRuntime extends Service {
    * Existing sessions are never migrated — matches warm-pool per-runtime
    * splitting semantics (sandbox.k8e.io/runtime-class label).
    */
-  setRuntimeClass(runtimeClass: string | undefined): void {
+  applyRuntimeClass(runtimeClass: string | undefined): void {
     this.runtimeOverride = runtimeClass
   }
 

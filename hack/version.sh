@@ -66,9 +66,9 @@ VERSION_CILIUM_CHART="1.20.0"
 
 DEPENDENCIES_URL="https://raw.githubusercontent.com/kubernetes/kubernetes/${VERSION_K8S}/build/dependencies.yaml"
 if command -v yq >/dev/null 2>&1 && yq --version >/dev/null 2>&1; then
-    VERSION_GOLANG="go"$(curl -sL --connect-timeout 5 --max-time 10 "${DEPENDENCIES_URL}" 2>/dev/null | yq e '.dependencies[] | select(.name == "golang: upstream version").version' - 2>/dev/null)
+    VERSION_GOLANG="go"$(curl  --proto '=https' -sL --connect-timeout 5 --max-time 10 "${DEPENDENCIES_URL}" 2>/dev/null | yq e '.dependencies[] | select(.name == "golang: upstream version").version' - 2>/dev/null)
 else
-    VERSION_GOLANG="go"$(curl -sL --connect-timeout 5 --max-time 10 "${DEPENDENCIES_URL}" 2>/dev/null | grep -A 2 "golang: upstream version" | grep "version:" | cut -d: -f2 | xargs 2>/dev/null)
+    VERSION_GOLANG="go"$(curl  --proto '=https' -sL --connect-timeout 5 --max-time 10 "${DEPENDENCIES_URL}" 2>/dev/null | grep -A 2 "golang: upstream version" | grep "version:" | cut -d: -f2 | xargs 2>/dev/null)
 fi
 # Fallback: if upstream Go version could not be fetched (e.g. network unavailable),
 # use the locally installed Go version.
