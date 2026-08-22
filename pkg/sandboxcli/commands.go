@@ -1336,6 +1336,23 @@ const (
 	sessionErrPrefix = "session: "
 )
 
+// resolvePortArg reads the service port from --port or the positional arg,
+// validating the [1, 65535] range (shared by expose/unexpose).
+func resolvePortArg(ctx *cli.Context) (int32, *ExitError) {
+	port := ctx.Int("port")
+	if port == 0 && ctx.NArg() > 0 {
+		parsed, err := strconv.Atoi(ctx.Args().First())
+		if err != nil {
+			return 0, printErrorExit("port must be an integer", 2)
+		}
+		port = parsed
+	}
+	if port <= 0 || port > 65535 {
+		return 0, printErrorExit("port required (positional or --port), in [1, 65535]", 2)
+	}
+	return int32(port), nil
+}
+
 // dialSession opens the gateway client and resolves the active session id
 // (shared boilerplate of the KIP-24 commands). The caller owns client.Close.
 func dialSession(ctx *cli.Context) (*client.Client, string, *ExitError) {
@@ -1365,16 +1382,9 @@ func ExposeCommand() cli.Command {
 			cli.StringFlag{Name: "session-id", Usage: sessionIDFlagUsage},
 		},
 		Action: func(ctx *cli.Context) error {
-			port := ctx.Int("port")
-			if port == 0 && ctx.NArg() > 0 {
-				parsed, err := strconv.Atoi(ctx.Args().First())
-				if err != nil {
-					return printErrorExit("port must be an integer", 2)
-				}
-				port = parsed
-			}
-			if port <= 0 || port > 65535 {
-				return printErrorExit("port required (positional or --port), in [1, 65535]", 2)
+			port, exitErr := resolvePortArg(ctx)
+			if exitErr != nil {
+				return exitErr
 			}
 			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
@@ -1404,16 +1414,9 @@ func UnexposeCommand() cli.Command {
 			cli.StringFlag{Name: "session-id", Usage: sessionIDFlagUsage},
 		},
 		Action: func(ctx *cli.Context) error {
-			port := ctx.Int("port")
-			if port == 0 && ctx.NArg() > 0 {
-				parsed, err := strconv.Atoi(ctx.Args().First())
-				if err != nil {
-					return printErrorExit("port must be an integer", 2)
-				}
-				port = parsed
-			}
-			if port <= 0 || port > 65535 {
-				return printErrorExit("port required (positional or --port), in [1, 65535]", 2)
+			port, exitErr := resolvePortArg(ctx)
+			if exitErr != nil {
+				return exitErr
 			}
 			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
