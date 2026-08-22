@@ -136,8 +136,10 @@ spec:
     allowedRoutes:
       namespaces:
         from: Same
-  # TLS listener for https apiUrl: provide a tls secret named sandbox-e2b
-  # (kubectl create secret tls sandbox-e2b --cert=... --key=...).
+  # TLS listener for https apiUrl: OPTIONAL. Provide a tls secret named
+  # sandbox-e2b (kubectl -n sandbox-matrix create secret tls sandbox-e2b
+  # --cert=... --key=...); without the secret this listener reports Invalid,
+  # which does not affect the :80 http listener or attached routes.
   - name: https
     port: 443
     protocol: HTTPS
@@ -186,8 +188,13 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:
+  # sectionName: http — attach ONLY to the :80 listener. The :443 listener
+  # stays Invalid until the optional sandbox-e2b TLS secret is created, and
+  # an unqualified parentRef would be rejected by that listener
+  # (NotAllowedByListeners), taking the whole route down with it.
   parentRefs:
   - name: e2b
+    sectionName: http
   rules:
   # Control plane (root-mounted): /sandboxes, /v2/sandboxes, /health, /files.
   - matches:
