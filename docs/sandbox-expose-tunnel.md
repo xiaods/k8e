@@ -125,7 +125,12 @@ rpc UpdateAllowedHosts(UpdateAllowedHostsRequest) returns (UpdateAllowedHostsRes
 2. **M2** ✅ `k8e sandbox expose/unexpose/exposed/allow-hosts` CLI（结构化输出，get 输出 allowedHosts）+ 单测
 3. **M2.5** ✅ e2b HTTP server 反代路由 `/k8e/expose/{session}/{port}/*`（ListExposed 鉴权 →
    pod IP → ReverseProxy，路径去前缀保留 Host）+ 单测（转发/404/400）
-4. **M3** dsh 插件 client/tool/owner（expose + allow_hosts）+ 单测 + 文档
+4. **M3** ✅ dsh 插件：`SandboxTransport` 接口 + `CliK8eClient`/`GrpcK8eClient` 实现
+   `exposeService/unexposeService/listExposed/updateAllowedHosts`；模型工具
+   `k8e_sandbox_expose` / `k8e_sandbox_unexpose` / `k8e_sandbox_allow_hosts`
+   （经 `ctx.k8eSandbox` 共享会话）；CLI 4 命令补 `--session-id`/`--clear`；
+   tool fake-ctx 测试扩展（注册 + 参数透传 + 输出形状）—— `npm test` 7/7、
+   dsh typecheck 全绿
 5. **M4** e2e（真实 pod 起 nginx → expose → curl `http(s)://<gateway>/k8e/expose/<sid>/<port>/` →
    unexpose → 404；allow-hosts 动态放行验证）
 
