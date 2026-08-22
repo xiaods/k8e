@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-03 | Proposed |
+| @xiaods | 2026-06-03 | Partially implemented — env (`--env`) + secrets (`--secret`, CRD SecretRef) shipped; service-port exposure delivered by KIP-24 |
 
 ## Summary
 

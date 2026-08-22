@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-17 | Accepted — M1–M3 已实现（proto 7 RPC、sandboxd `pty.zig`、gateway `terminal.go`、dsh `spawnTerminal`）；M4（E2B 兼容层 `pty.*` 闭合）待落地 |
+| @xiaods | 2026-08-17 | Implemented — M1–M3 (proto 7 RPC, sandboxd `pty.zig`, gateway `terminal.go`, dsh `spawnTerminal`) + M4 E2B `pty.*` compat closed (PR #544/#556) |
 
 > 关联 KIP：KIP-14（mTLS 动态证书）、KIP-16（沙箱架构教训 / catalog M9）、KIP-18（E2B 兼容）、**KIP-20（dsh-k8e-sandbox 插件——其 Phase 2 的 `spawnTerminal` 依赖本 KIP 先行）**。
 > 本 KIP 是 KIP-20 已决问题 #2 的展开：为 k8e sandbox 增加 PTY 原语，使 dsh 的 terminal seam（以及 E2B SDK 的 `pty.*` 面）能被完整实现。

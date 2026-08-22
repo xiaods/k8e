@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods (agent-assisted) | 2026-08-10 | Draft → Wave 1 implemented (R3/R4) |
+| @xiaods (agent-assisted) | 2026-08-10 | Implemented — matrix M1–M12 + R1–R5 delivered across PRs #515–#533 (9 merged; rest pending review) |
 
 ## Summary
 

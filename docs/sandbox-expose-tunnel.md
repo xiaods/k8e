@@ -1,5 +1,9 @@
 # Sandbox Service Exposure — k8e API Gateway 反代（KIP-24 草案）
 
+| Author | Updated | Status |
+|--------|---------|--------|
+| @pi-agent | 2026-08-22 | Implemented (M1–M3: gRPC ExposeService/UnexposeService/ListExposed/UpdateAllowedHosts、e2b `/k8e/expose/*` 反代、CLI expose/unexpose/exposed/allow-hosts、dsh 插件工具)；M4 e2e 待部署验证 |
+
 > 目标（2026-08-22 用户需求）：在沙箱内创建的服务（如网页服务）需要暴露给网关/外界访问。
 > 采用 **k8e API Gateway 反代**：Cilium Gateway API（:80/:443）→ 内嵌 e2b HTTP server →
 > 反向代理到 `http://<podIP>:<port>`（用户明确要求「暴露的端口通过 k8e API Gateway 暴露」，

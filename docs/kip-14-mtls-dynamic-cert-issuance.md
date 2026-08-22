@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-04 | Proposed |
+| @xiaods | 2026-06-04 | Implemented — Login RPC issues 90-day client certs with lazy renewal (<30d); API keys TTL-managed (`k8e sandbox-apikey`, #538) |
 
 ## Summary
 

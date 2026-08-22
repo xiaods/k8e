@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods (agent-assisted) | 2026-08-06 | Proposed |
+| @xiaods (agent-assisted) | 2026-08-06 | Partially implemented — wave PRs #520–#533 merged; remainder under review |
 
 ## Summary
 

@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-17 | Accepted — 已实现并发布 npm `@k8e-sandbox/*@0.1.1`（PR #553/#554）；Phase 2 `spawnTerminal` 已落地（依赖 KIP-19）；模型面 `dsh-k8e-sandbox-tool` 已实现（session/exec/background/poll 工具，随 bundle 挂载） |
+| @xiaods | 2026-08-17 | Implemented & published — `@k8e-sandbox/*@0.3.6` (npm); Phase 2 gRPC transport, KIP-19 terminals, prefs web UI, and KIP-24 expose/allow-hosts tools |
 
 > 关联 KIP：KIP-3（sandbox matrix）、KIP-8（skill-cli 取代 MCP）、KIP-14（mTLS 动态证书）、KIP-16（沙箱架构教训 / catalog）、KIP-17（CLI 多 profile 与 API key TTL）、KIP-18（E2B 兼容）、**KIP-19（sandbox PTY 终端原语——本 KIP Phase 2 的 `spawnTerminal` 依赖它先行）**。
 > 关联仓库：`deepseek-harness`（下称 **dsh**）——插件化 agent harness，vendored Cordis，“everything is a plugin”。
