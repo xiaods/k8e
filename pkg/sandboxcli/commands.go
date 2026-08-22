@@ -1369,13 +1369,13 @@ func dialSession(ctx *cli.Context) (*client.Client, string, *ExitError) {
 }
 
 // ── ExposeCommand ──────────────────────────────────────────────────────────
-// KIP-24: tunnel a sandbox-internal service to a public trycloudflare URL via
-// cloudflared quick tunnel (pod dials OUT to the CF edge, no inbound exposure).
+// KIP-24: register a sandbox-internal service port with the k8e API Gateway
+// (reverse-proxied via the embedded e2b HTTP server; no inbound pod exposure).
 
 func ExposeCommand() cli.Command {
 	return cli.Command{
 		Name:  "expose",
-		Usage: "Expose a sandbox-internal service to a public URL (cloudflared quick tunnel, KIP-24)",
+		Usage: "Expose a sandbox-internal service through the k8e API Gateway (returns a gateway URL; KIP-24)",
 		Flags: []cli.Flag{
 			cli.IntFlag{Name: "port", Usage: "In-pod service port (or positional arg)"},
 			cli.StringFlag{Name: "host", Value: "127.0.0.1", Usage: "In-pod listen address"},

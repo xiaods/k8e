@@ -53,9 +53,10 @@ service SandboxService {
   rpc TerminalSignal(TerminalSignalRequest) returns (TerminalSignalResponse);
   rpc TerminalDestroy(TerminalDestroyRequest) returns (TerminalDestroyResponse);
   // ── Service exposure (KIP-24) ─────────────────────────────────────────────
-  // ExposeService tunnels a sandbox-internal service to a public URL via
-  // cloudflared quick tunnel (pod dials OUT to the CF edge; no inbound
-  // exposure of the pod). UnexposeService tears the tunnel down.
+  // ExposeService registers an in-sandbox service port for proxying through
+  // the k8e API Gateway (Cilium Gateway API :80/:443 -> embedded e2b HTTP
+  // server -> reverse proxy to http://<podIP>:<port>; no inbound pod
+  // exposure). UnexposeService removes the registration.
   rpc ExposeService(ExposeServiceRequest)     returns (ExposeServiceResponse);
   rpc UnexposeService(UnexposeServiceRequest) returns (UnexposeServiceResponse);
   rpc ListExposed(ListExposedRequest)         returns (ListExposedResponse);

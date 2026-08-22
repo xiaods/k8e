@@ -125,9 +125,9 @@ function mount() {
   const { owner, byName } = mount()
   const tool = byName.get('k8e_sandbox_allow_hosts')
   assert.ok(tool, 'k8e_sandbox_allow_hosts registered')
-  const out = await tool.execute({ hosts: ['pypi.org', 'trycloudflare.com'] })
-  assert.deepEqual(out, { hosts: ['pypi.org', 'trycloudflare.com'] })
-  assert.deepEqual(owner.calls.at(-1), ['updateAllowedHosts', 'sess-1', ['pypi.org', 'trycloudflare.com']])
+  const out = await tool.execute({ hosts: ['pypi.org', 'internal.example.com'] })
+  assert.deepEqual(out, { hosts: ['pypi.org', 'internal.example.com'] })
+  assert.deepEqual(owner.calls.at(-1), ['updateAllowedHosts', 'sess-1', ['pypi.org', 'internal.example.com']])
 }
 
 console.log('✔ tool output-shape test passed (strict schema, numeric durationMs, KIP-24 expose/allow_hosts)')

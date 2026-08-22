@@ -77,8 +77,8 @@ rpc ListExposed(ListExposedRequest)       returns (ListExposedResponse);
 
 ```
 k8e sandbox expose <port> [--host <addr>] [--json]
-    # 在会话内启动 cloudflared，返回公网 URL（等 URL 就绪）
-    # {"url":"https://xxx.trycloudflare.com","port":8080}
+    # 注册端口到网关反代，返回网关 URL（即时生效）
+    # {"url":"http://<gateway>/k8e/expose/<sid>/<port>/","port":8080}
 k8e sandbox unexpose <port>            # 终止暴露
 k8e sandbox exposed [--json]           # 列出当前会话已暴露服务
 k8e sandbox allow-hosts --add a.com,b.com [--remove c.com] [--json]
@@ -119,7 +119,7 @@ rpc UpdateAllowedHosts(UpdateAllowedHostsRequest) returns (UpdateAllowedHostsRes
 | 测试 | fake-ctx 单测（工具映射 + URL 透传）、grpc client 单测 |
 
 典型 agent 流程：`k8e_sandbox_exec "python3 -m http.server 8080 --bind 127.0.0.1"`（后台）
-→ `k8e_sandbox_expose {port:8080}` → 拿到 `https://xxx.trycloudflare.com` 交付用户；
+→ `k8e_sandbox_expose {port:8080}` → 拿到 `http://<gateway>/k8e/expose/<sid>/8080/` 交付用户；
 需要访问其它域名时 `k8e_sandbox_allow_hosts {hosts:["internal.example.com"]}` 自由放行。
 
 ## 6. 落地步骤

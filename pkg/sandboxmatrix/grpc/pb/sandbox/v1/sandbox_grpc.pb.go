@@ -109,9 +109,10 @@ type SandboxServiceClient interface {
 	TerminalSignal(ctx context.Context, in *TerminalSignalRequest, opts ...grpc.CallOption) (*TerminalSignalResponse, error)
 	TerminalDestroy(ctx context.Context, in *TerminalDestroyRequest, opts ...grpc.CallOption) (*TerminalDestroyResponse, error)
 	// ── Service exposure (KIP-24) ─────────────────────────────────────────────
-	// ExposeService tunnels a sandbox-internal service to a public URL via
-	// cloudflared quick tunnel (pod dials OUT to the CF edge; no inbound
-	// exposure of the pod). UnexposeService tears the tunnel down.
+	// ExposeService registers an in-sandbox service port for proxying through
+	// the k8e API Gateway (Cilium Gateway API :80/:443 -> embedded e2b HTTP
+	// server -> reverse proxy to http://<podIP>:<port>; no inbound pod
+	// exposure). UnexposeService removes the registration.
 	ExposeService(ctx context.Context, in *ExposeServiceRequest, opts ...grpc.CallOption) (*ExposeServiceResponse, error)
 	UnexposeService(ctx context.Context, in *UnexposeServiceRequest, opts ...grpc.CallOption) (*UnexposeServiceResponse, error)
 	ListExposed(ctx context.Context, in *ListExposedRequest, opts ...grpc.CallOption) (*ListExposedResponse, error)
@@ -540,9 +541,10 @@ type SandboxServiceServer interface {
 	TerminalSignal(context.Context, *TerminalSignalRequest) (*TerminalSignalResponse, error)
 	TerminalDestroy(context.Context, *TerminalDestroyRequest) (*TerminalDestroyResponse, error)
 	// ── Service exposure (KIP-24) ─────────────────────────────────────────────
-	// ExposeService tunnels a sandbox-internal service to a public URL via
-	// cloudflared quick tunnel (pod dials OUT to the CF edge; no inbound
-	// exposure of the pod). UnexposeService tears the tunnel down.
+	// ExposeService registers an in-sandbox service port for proxying through
+	// the k8e API Gateway (Cilium Gateway API :80/:443 -> embedded e2b HTTP
+	// server -> reverse proxy to http://<podIP>:<port>; no inbound pod
+	// exposure). UnexposeService removes the registration.
 	ExposeService(context.Context, *ExposeServiceRequest) (*ExposeServiceResponse, error)
 	UnexposeService(context.Context, *UnexposeServiceRequest) (*UnexposeServiceResponse, error)
 	ListExposed(context.Context, *ListExposedRequest) (*ListExposedResponse, error)
