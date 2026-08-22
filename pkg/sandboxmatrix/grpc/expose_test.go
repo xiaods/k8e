@@ -245,3 +245,53 @@ func TestBuildSessionCNPExposed_Ingress(t *testing.T) {
 		t.Fatalf("expected 3 ingress rules without exposure, got %d", len(ingress2))
 	}
 }
+
+// TestExposeService_UpdatesExistingCNP covers the update path of the live
+// API server: when the per-session CNP already exists, applySessionCNP must
+// carry its resourceVersion into the Update (E2E regression: "metadata.
+// resourceVersion: Invalid value: 0: must be specified for an update").
+func TestExposeService_UpdatesExistingCNP(t *testing.T) {
+	o := newTestOrchestrator()
+	seedSession(t, o, "sess-1")
+
+	// First expose creates the CNP.
+	if _, err := o.ExposeService(context.Background(), "sess-1", 8080, "", "http://gw"); err != nil {
+		t.Fatalf(msgUnexpected, err)
+	}
+	first, err := o.dynamic.Resource(cnpGVR).Namespace(sandboxNS).Get(context.Background(), "sandbox-session-sess-1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get created CNP: %v", err)
+	}
+	// The fake dynamic client does not stamp resourceVersion on Create like
+	// the live API server does; simulate it so the update path is exercised.
+	first.SetResourceVersion("42")
+	if _, err := o.dynamic.Resource(cnpGVR).Namespace(sandboxNS).Update(context.Background(), first, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("seed CNP resourceVersion: %v", err)
+	}
+
+	// Second expose (another port) must UPDATE without clobbering RV,
+	// and both exposed ports must appear in the ingress rules.
+	if _, err := o.ExposeService(context.Background(), "sess-1", 9090, "", "http://gw"); err != nil {
+		t.Fatalf(msgUnexpected, err)
+	}
+	second, err := o.dynamic.Resource(cnpGVR).Namespace(sandboxNS).Get(context.Background(), "sandbox-session-sess-1", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get updated CNP: %v", err)
+	}
+	if second.GetResourceVersion() == "" {
+		t.Fatal("updated CNP lost its resourceVersion")
+	}
+	spec := second.Object["spec"].(map[string]interface{})
+	ingress := spec["ingress"].([]interface{})
+	portCount := map[string]int{}
+	for _, r := range ingress {
+		rule := r.(map[string]interface{})
+		for _, p := range rule["toPorts"].([]interface{}) {
+			ports := p.(map[string]interface{})["ports"].([]interface{})
+			portCount[ports[0].(map[string]interface{})["port"].(string)]++
+		}
+	}
+	if portCount["8080"] != 2 || portCount["9090"] != 2 {
+		t.Fatalf("expected both ports present after update, got %v", portCount)
+	}
+}

@@ -188,7 +188,7 @@ func (o *Orchestrator) applySessionCNP(ctx context.Context, session *sandboxv1.S
 
 	obj := buildSessionCNPExposed(session, o.fqdnEnabled(), ports)
 	name := fmt.Sprintf("sandbox-session-%s", session.Name)
-	_, err := o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Get(ctx, name, metav1.GetOptions{})
+	existing, err := o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		_, err = o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Create(ctx, obj, metav1.CreateOptions{})
 		return err
@@ -196,6 +196,10 @@ func (o *Orchestrator) applySessionCNP(ctx context.Context, session *sandboxv1.S
 	if err != nil {
 		return err
 	}
+	// The live API server enforces optimistic concurrency: an Update must
+	// carry the resourceVersion of the object it replaces (E2E regression:
+	// "metadata.resourceVersion: Invalid value: 0").
+	obj.SetResourceVersion(existing.GetResourceVersion())
 	_, err = o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Update(ctx, obj, metav1.UpdateOptions{})
 	return err
 }
