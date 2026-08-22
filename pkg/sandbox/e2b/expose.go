@@ -42,7 +42,10 @@ func (s *Server) handleExposeProxy(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	listed, err := s.gw.ListExposed(ctx, &pb.ListExposedRequest{SessionId: sessionID})
 	if err != nil {
-		http.Error(w, "gateway unreachable", http.StatusBadGateway)
+		// Surface the real cause: this page is exactly where a stale gateway
+		// (missing KIP-24 RPCs) or an auth failure shows up first.
+		logrus.Warnf("k8e expose proxy %s/%d: ListExposed failed: %v", sessionID, port, err)
+		http.Error(w, fmt.Sprintf("gateway unreachable: %v", err), http.StatusBadGateway)
 		return
 	}
 	exposed := false
@@ -59,8 +62,13 @@ func (s *Server) handleExposeProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve the sandbox pod IP via the gateway.
 	sess, err := s.gw.GetSession(ctx, &pb.GetSessionRequest{SessionId: sessionID})
-	if err != nil || sess.PodIp == "" {
-		http.Error(w, "session unreachable", http.StatusServiceUnavailable)
+	if err != nil {
+		logrus.Warnf("k8e expose proxy %s/%d: GetSession failed: %v", sessionID, port, err)
+		http.Error(w, fmt.Sprintf("session unreachable: %v", err), http.StatusServiceUnavailable)
+		return
+	}
+	if sess.PodIp == "" {
+		http.Error(w, "session has no pod IP yet", http.StatusServiceUnavailable)
 		return
 	}
 
