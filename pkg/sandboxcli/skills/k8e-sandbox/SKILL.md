@@ -32,7 +32,14 @@ Instead use the plugin's model-surface tools (no CLI, no per-op spawn):
 - `k8e_sandbox_exec` — foreground command, returns stdout/stderr/exit code (equivalent of `run`)
 - `k8e_sandbox_run_background` + `k8e_sandbox_poll` — long-running / streaming tasks
 - `k8e_sandbox_session_status` / `k8e_sandbox_session_destroy` — session lifecycle
+- `k8e_sandbox_expose` — expose an in-sandbox service port through the k8e API Gateway; returns the public URL (KIP-24)
+- `k8e_sandbox_unexpose` — remove a public tunnel for a port (idempotent)
+- `k8e_sandbox_allow_hosts` — freely configure the session egress allowlist, live (KIP-24)
 - fs seam: `read`/`write`/`edit` on paths relative to the sandbox cwd (default `/workspace`); directory listings carry type/size in one RPC
+
+**Service exposure in dsh**: after starting a long-running service (web app,
+API server), call `k8e_sandbox_expose {port: 8080}` and hand the returned URL
+to the user — same gateway-proxied URL the CLI's `expose` prints.
 
 Session, connection, and mTLS are owned by the plugin: it resolves the gateway from config → env → `~/.k8e/sandbox/profiles.yaml` (KIP-17) and reuses one persistent gRPC connection. If the gateway is unreachable, tell the user to run `k8e-sandbox-cli connect` (local) or `k8e-sandbox-cli connect --endpoint <host>:50051 --apikey <key>` (remote) outside dsh, then restart the dsh session.
 
@@ -148,6 +155,10 @@ k8e-sandbox-cli run 'echo hi' --tenant my-project
 
 # Sub-agent: child session sharing parent pod + workspace (no new pod)
 k8e-sandbox-cli subagent <parent-sid>
+
+# Expose a long-running service through the k8e API Gateway (KIP-24)
+k8e-sandbox-cli run "python3 -m http.server 8080 --bind 127.0.0.1" --background
+k8e-sandbox-cli expose 8080     # -> {"url":"http://<gateway>/k8e/expose/<sid>/8080/",...}
 ```
 
 Useful commands: `run`, `write`, `read`, `list`, `create`, `get`, `sessions`, `destroy`, `status`, `log`, `events`, `ps`, `poll`, `subagent`, `confirm`, `approve`, `snapshot`, `benchmark`, `catalog`, `expose`, `unexpose`, `exposed`, `allow-hosts`.
@@ -247,7 +258,10 @@ k8e-sandbox-cli allow-hosts --clear          # fall back to cluster defaults
 
 ## Egress
 
-Default allowed hosts (kernel eBPF): `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`. Override with `create --allowed-hosts`.
+Default allowed hosts (cluster `SandboxMatrix.spec.defaultAllowedHosts`): `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `github.com`, `raw.githubusercontent.com`.
+
+- At session creation: `create --allowed-hosts a.com,b.com` (or `run --allowed-hosts` for auto-created sessions).
+- **Live, any time (KIP-24)**: `allow-hosts --add a.com,b.com` / `--remove a.com` / `--clear` (fall back to cluster defaults). Applies immediately via CNP re-apply; in dsh use `k8e_sandbox_allow_hosts {hosts: [...]}`.
 
 ## Security red lines
 
@@ -266,6 +280,6 @@ Default allowed hosts (kernel eBPF): `pypi.org`, `files.pythonhosted.org`, `regi
 
 ## Your role when this skill is active
 
-**Do:** execute `$ARGUMENTS` entirely via `k8e-sandbox-cli`; prefer `run`; use `--lang python` for Python; use `--raw` for long streams; show real CLI output.
+**Do:** execute `$ARGUMENTS` entirely via `k8e-sandbox-cli`; prefer `run`; use `--lang python` for Python; use `--raw` for long streams; show real CLI output. When the goal builds a long-running service (web app, API), start it with `run --background` and hand the user a reachable URL via `expose <port>` (or `k8e_sandbox_expose` in dsh).
 
 **Don't:** run the goal on the host; skip pre-flight; invent successful output without running the CLI.
