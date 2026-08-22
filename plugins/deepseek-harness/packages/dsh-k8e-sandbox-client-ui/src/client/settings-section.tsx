@@ -82,6 +82,38 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
   const [saved, setSaved] = useState(false)
   const [saveError, setSaveError] = useState(false)
   const [opening, setOpening] = useState(false)
+  const [exposed, setExposed] = useState<Array<{ port: number; url: string }>>([])
+  const [exposedErr, setExposedErr] = useState(false)
+
+  const refreshExposed = async (): Promise<void> => {
+    try {
+      const res = await fetch('/k8e-sandbox/api/exposed', { method: 'POST' })
+      const body = (await res.json()) as { ok?: boolean; services?: Array<{ port: number; url: string }> }
+      if (body.ok === true && Array.isArray(body.services)) {
+        setExposed(body.services.map((x) => ({ port: Number(x.port), url: String(x.url) })))
+        setExposedErr(false)
+      } else {
+        setExposed([])
+        setExposedErr(true)
+      }
+    } catch {
+      setExposed([])
+      setExposedErr(true)
+    }
+  }
+
+  const unexpose = async (port: number): Promise<void> => {
+    try {
+      await fetch('/k8e-sandbox/api/exposed/unexpose', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ port }),
+      })
+    } catch {
+      // best-effort; the list refresh below reflects the actual state
+    }
+    void refreshExposed()
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -97,7 +129,9 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
     return () => { cancelled = true }
   }, [])
 
-  // Prefs are host-authoritative (cross-browser); refresh on mount and fall
+  void refreshExposed()
+
+// Prefs are host-authoritative (cross-browser); refresh on mount and fall
   // back to the local cache when the host is unreachable.
   useEffect(() => {
     let cancelled = false
@@ -184,6 +218,29 @@ export function K8eSettingsSection(props: K8eSettingsSectionProps): ReactNode {
         : null,
       createElement('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #999)', marginTop: '10px' } },
         t('hint.hostConfig')),
+    ),
+
+    // ── Exposed services (KIP-24) ──────────────────────────────────────────
+    createElement('div', { style: { ...box, marginTop: '16px' } },
+      createElement('div', { style: { fontSize: '13px', color: 'var(--dsw-alias-label-secondary, #999)', marginBottom: '8px' } },
+        t('exposed.heading')),
+      exposedErr
+        ? createElement('div', { style: { fontSize: '12px', color: '#e5a50a' } }, t('exposed.error'))
+        : exposed.length === 0
+          ? createElement('div', { style: { fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #999)' } }, t('exposed.empty'))
+          : createElement('div', null,
+            exposed.map((x) => createElement('div', { key: x.port, style: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' } },
+              createElement('span', { style: { fontSize: '12px', color: '#4caf50' } }, ':' + x.port),
+              createElement('a', { href: x.url, target: '_blank', rel: 'noreferrer', style: { fontSize: '12px', flex: '1', overflowWrap: 'anywhere', color: 'var(--dsw-alias-accent, #2f6fed)' } }, x.url),
+              createElement('button', {
+                type: 'button', style: { ...buttonStyle, padding: '2px 8px', fontSize: '11px' },
+                onClick: () => { void unexpose(x.port) },
+              }, t('exposed.stop')),
+            )),
+          ),
+      createElement('div', { style: { marginTop: '8px' } },
+        createElement('button', { type: 'button', style: buttonStyle, onClick: () => { void refreshExposed() } }, t('exposed.refresh')),
+      ),
     ),
 
     createElement('div', { style: { ...box, marginTop: '16px' } },

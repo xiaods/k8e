@@ -36,6 +36,11 @@ const zh = {
   'actions.saved': '已保存',
   'actions.saveError': '保存失败 — host 不可达，改动仅保存在本地浏览器。',
   'status.runtimeFromPrefs': '（网页偏好覆盖）',
+  'exposed.heading': '已暴露服务',
+  'exposed.empty': '当前没有暴露的服务。让 agent 启动服务后调用 k8e_sandbox_expose。',
+  'exposed.error': '无法读取暴露列表（网关不可达或未配置）。',
+  'exposed.refresh': '刷新',
+  'exposed.stop': '停止',
   'status.runtimeFromConfig': '（来自 dsh 配置）',
   'hint.hostConfig': 'endpoint 未显式配置时，插件会自动从 ~/.k8e/sandbox/profiles.yaml 发现（KIP-17）；endpoint/certDir 为部署级配置，在 dsh-k8e-sandbox 行里设置，网页只读。',
 } as const
@@ -63,6 +68,11 @@ const en: Record<keyof typeof zh, string> = {
   'actions.saved': 'Saved',
   'actions.saveError': 'Save failed — host unreachable; changes kept locally only.',
   'status.runtimeFromPrefs': '(overridden in web prefs)',
+  'exposed.heading': 'Exposed services',
+  'exposed.empty': 'No services exposed yet. Ask the agent to start one and call k8e_sandbox_expose.',
+  'exposed.error': 'Could not load exposures (gateway unreachable or not configured).',
+  'exposed.refresh': 'Refresh',
+  'exposed.stop': 'Stop',
   'status.runtimeFromConfig': '(from dsh config)',
   'hint.hostConfig': 'When endpoint is not configured explicitly, the plugin auto-discovers it from ~/.k8e/sandbox/profiles.yaml (KIP-17); endpoint/certDir are deployment-level config, set in the dsh-k8e-sandbox profile row and read-only on the web.',
 }

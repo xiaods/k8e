@@ -196,9 +196,12 @@ export class K8eSandboxTools extends Service {
         render: renderValue,
       },
       async execute(args) {
-        const client = runtime().getClient()
+        // Exposure is a GATEWAY operation: dial it directly over gRPC.
+        // The CLI-backed transport would spawn k8e-sandbox-cli INSIDE the
+        // sandbox (web-terminal deployments), where the binary does not exist.
+        const grpc = runtime().getGrpcClient()
         const sessionId = await runtime().getSession()
-        const res = await client.exposeService(sessionId, args.port, args.host)
+        const res = await grpc.exposeService(sessionId, args.port, args.host)
         return { url: res.url, port: args.port }
       },
     }))
@@ -217,9 +220,9 @@ export class K8eSandboxTools extends Service {
         render: renderValue,
       },
       async execute(args) {
-        const client = runtime().getClient()
+        const grpc = runtime().getGrpcClient()
         const sessionId = await runtime().getSession()
-        const res = await client.unexposeService(sessionId, args.port)
+        const res = await grpc.unexposeService(sessionId, args.port)
         return { ok: res.ok, port: args.port }
       },
     }))
@@ -237,9 +240,9 @@ export class K8eSandboxTools extends Service {
         render: renderValue,
       },
       async execute(args) {
-        const client = runtime().getClient()
+        const grpc = runtime().getGrpcClient()
         const sessionId = await runtime().getSession()
-        const hosts = await client.updateAllowedHosts(sessionId, args.hosts ?? [])
+        const hosts = await grpc.updateAllowedHosts(sessionId, args.hosts ?? [])
         return { hosts }
       },
     }))

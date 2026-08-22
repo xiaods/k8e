@@ -342,6 +342,39 @@ export function apply(ctx: Context): void {
         writeJson(res, 200, { ok: true, prefs: saved, effective: { runtimeClass: effective.runtimeClass, runtimeClassSource: effective.source } })
         return
       }
+      if (method === 'exposed') {
+        // KIP-24: list live exposures so the web terminal can manage them
+        // without shelling out to k8e-sandbox-cli (which does not exist in
+        // the browser path).
+        try {
+          const grpc = ctx.k8eSandbox.getGrpcClient()
+          const sessionId = await ctx.k8eSandbox.getSession()
+          const list = await grpc.listExposed(sessionId)
+          writeJson(res, 200, { ok: true, sessionId, services: list })
+          return
+        } catch (error) {
+          writeJson(res, 503, { ok: false, error: { code: 'grpc', message: error instanceof Error ? error.message : String(error) } })
+          return
+        }
+      }
+      if (method === 'exposed/unexpose') {
+        try {
+          const body = await readJsonBody(req)
+          const port = Number((body as { port?: unknown })?.port)
+          if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+            writeJson(res, 400, { ok: false, error: { code: 'validation', message: 'port must be an integer in [1, 65535]' } })
+            return
+          }
+          const grpc = ctx.k8eSandbox.getGrpcClient()
+          const sessionId = await ctx.k8eSandbox.getSession()
+          const out = await grpc.unexposeService(sessionId, port)
+          writeJson(res, 200, { ok: true, unexposed: out.ok, port })
+          return
+        } catch (error) {
+          writeJson(res, 503, { ok: false, error: { code: 'grpc', message: error instanceof Error ? error.message : String(error) } })
+          return
+        }
+      }
       writeJson(res, 404, { ok: false, error: { code: 'not-found', message: `unknown method "${method ?? ''}"` } })
     },
   }), 'k8e-sandbox-host-ui: /k8e-sandbox/api routes')
