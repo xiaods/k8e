@@ -1329,6 +1329,45 @@ func PsCommand() cli.Command {
 	}
 }
 
+const (
+	// sessionIDFlagUsage is shared by every KIP-24 command (S1192).
+	sessionIDFlagUsage = "Explicit session ID (default: active session)"
+	// sessionErrPrefix is the shared error prefix for session resolution.
+	sessionErrPrefix = "session: "
+)
+
+// resolvePortArg reads the service port from --port or the positional arg,
+// validating the [1, 65535] range (shared by expose/unexpose).
+func resolvePortArg(ctx *cli.Context) (int32, *ExitError) {
+	port := ctx.Int("port")
+	if port == 0 && ctx.NArg() > 0 {
+		parsed, err := strconv.Atoi(ctx.Args().First())
+		if err != nil {
+			return 0, printErrorExit("port must be an integer", 2)
+		}
+		port = parsed
+	}
+	if port <= 0 || port > 65535 {
+		return 0, printErrorExit("port required (positional or --port), in [1, 65535]", 2)
+	}
+	return int32(port), nil
+}
+
+// dialSession opens the gateway client and resolves the active session id
+// (shared boilerplate of the KIP-24 commands). The caller owns client.Close.
+func dialSession(ctx *cli.Context) (*client.Client, string, *ExitError) {
+	cl, exitErr := newClientFromCtx(ctx)
+	if exitErr != nil {
+		return nil, "", exitErr
+	}
+	sid, _, err := ensureSession(cl, ctx)
+	if err != nil {
+		cl.Close()
+		return nil, "", printErrorExit(sessionErrPrefix+err.Error(), 2)
+	}
+	return cl, sid, nil
+}
+
 // ── ExposeCommand ──────────────────────────────────────────────────────────
 // KIP-24: tunnel a sandbox-internal service to a public trycloudflare URL via
 // cloudflared quick tunnel (pod dials OUT to the CF edge, no inbound exposure).
@@ -1340,29 +1379,18 @@ func ExposeCommand() cli.Command {
 		Flags: []cli.Flag{
 			cli.IntFlag{Name: "port", Usage: "In-pod service port (or positional arg)"},
 			cli.StringFlag{Name: "host", Value: "127.0.0.1", Usage: "In-pod listen address"},
-			cli.StringFlag{Name: "session-id", Usage: "Explicit session ID (default: active session)"},
+			cli.StringFlag{Name: "session-id", Usage: sessionIDFlagUsage},
 		},
 		Action: func(ctx *cli.Context) error {
-			port := ctx.Int("port")
-			if port == 0 && ctx.NArg() > 0 {
-				parsed, err := strconv.Atoi(ctx.Args().First())
-				if err != nil {
-					return printErrorExit("port must be an integer", 2)
-				}
-				port = parsed
+			port, exitErr := resolvePortArg(ctx)
+			if exitErr != nil {
+				return exitErr
 			}
-			if port <= 0 || port > 65535 {
-				return printErrorExit("port required (positional or --port), in [1, 65535]", 2)
-			}
-			client, exitErr := newClientFromCtx(ctx)
+			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
 				return exitErr
 			}
 			defer client.Close()
-			sid, _, err := ensureSession(client, ctx)
-			if err != nil {
-				return printErrorExit("session: "+err.Error(), 2)
-			}
 			resp, err := client.SandboxServiceClient.ExposeService(context.Background(), &pb.ExposeServiceRequest{
 				SessionId: sid, Port: int32(port), Host: ctx.String("host"),
 			})
@@ -1383,29 +1411,18 @@ func UnexposeCommand() cli.Command {
 		Usage: "Tear down a public tunnel for a sandbox-internal service port",
 		Flags: []cli.Flag{
 			cli.IntFlag{Name: "port", Usage: "In-pod service port (or positional arg)"},
-			cli.StringFlag{Name: "session-id", Usage: "Explicit session ID (default: active session)"},
+			cli.StringFlag{Name: "session-id", Usage: sessionIDFlagUsage},
 		},
 		Action: func(ctx *cli.Context) error {
-			port := ctx.Int("port")
-			if port == 0 && ctx.NArg() > 0 {
-				parsed, err := strconv.Atoi(ctx.Args().First())
-				if err != nil {
-					return printErrorExit("port must be an integer", 2)
-				}
-				port = parsed
+			port, exitErr := resolvePortArg(ctx)
+			if exitErr != nil {
+				return exitErr
 			}
-			if port <= 0 || port > 65535 {
-				return printErrorExit("port required (positional or --port), in [1, 65535]", 2)
-			}
-			client, exitErr := newClientFromCtx(ctx)
+			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
 				return exitErr
 			}
 			defer client.Close()
-			sid, _, err := ensureSession(client, ctx)
-			if err != nil {
-				return printErrorExit("session: "+err.Error(), 2)
-			}
 			resp, err := client.SandboxServiceClient.UnexposeService(context.Background(), &pb.UnexposeServiceRequest{
 				SessionId: sid, Port: int32(port),
 			})
@@ -1425,18 +1442,14 @@ func ExposedCommand() cli.Command {
 		Name:  "exposed",
 		Usage: "List live public tunnels for the current session",
 		Flags: []cli.Flag{
-			cli.StringFlag{Name: "session-id", Usage: "Explicit session ID (default: active session)"},
+			cli.StringFlag{Name: "session-id", Usage: sessionIDFlagUsage},
 		},
 		Action: func(ctx *cli.Context) error {
-			client, exitErr := newClientFromCtx(ctx)
+			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
 				return exitErr
 			}
 			defer client.Close()
-			sid, _, err := ensureSession(client, ctx)
-			if err != nil {
-				return printErrorExit("session: "+err.Error(), 2)
-			}
 			resp, err := client.SandboxServiceClient.ListExposed(context.Background(), &pb.ListExposedRequest{
 				SessionId: sid,
 			})
@@ -1471,64 +1484,19 @@ func AllowHostsCommand() cli.Command {
 			cli.StringFlag{Name: "hosts", Usage: "Comma-separated full replacement list"},
 			cli.StringFlag{Name: "add", Usage: "Comma-separated hosts to add"},
 			cli.StringFlag{Name: "remove", Usage: "Comma-separated hosts to remove"},
-			cli.StringFlag{Name: "session-id", Usage: "Explicit session ID (default: active session)"},
+			cli.StringFlag{Name: "session-id", Usage: sessionIDFlagUsage},
 			cli.BoolFlag{Name: "clear", Usage: "Clear the allowlist (fall back to matrix defaults)"},
 		},
 		Action: func(ctx *cli.Context) error {
-			client, exitErr := newClientFromCtx(ctx)
+			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
 				return exitErr
 			}
 			defer client.Close()
-			sid, _, err := ensureSession(client, ctx)
+			hosts, err := resolveAllowedHosts(ctx, client, sid)
 			if err != nil {
-				return printErrorExit("session: "+err.Error(), 2)
+				return printErrorExit(err.Error(), 2)
 			}
-
-			var hosts []string
-			split := func(raw string) []string {
-				var out []string
-				for _, h := range strings.Split(raw, ",") {
-					h = strings.TrimSpace(h)
-					if h != "" {
-						out = append(out, h)
-					}
-				}
-				return out
-			}
-
-			if ctx.Bool("clear") {
-				hosts = nil
-			} else {
-				switch {
-				case ctx.String("hosts") != "":
-					hosts = split(ctx.String("hosts"))
-				case ctx.NArg() > 0:
-					hosts = split(ctx.Args().First())
-				case ctx.String("add") != "" || ctx.String("remove") != "":
-					// Read the current list first for add/remove semantics.
-					cur, err := client.SandboxServiceClient.GetSession(context.Background(), &pb.GetSessionRequest{SessionId: sid})
-					if err != nil {
-						return printErrorExit("allow-hosts: read current: "+err.Error(), 2)
-					}
-					hosts = append([]string(nil), cur.AllowedHosts...)
-					removed := map[string]bool{}
-					for _, h := range split(ctx.String("remove")) {
-						removed[h] = true
-					}
-					kept := hosts[:0]
-					for _, h := range hosts {
-						if !removed[h] {
-							kept = append(kept, h)
-						}
-					}
-					hosts = kept
-					hosts = append(hosts, split(ctx.String("add"))...)
-				default:
-					return printErrorExit("provide hosts (positional or --hosts) or --add/--remove", 2)
-				}
-			}
-
 			resp, err := client.SandboxServiceClient.UpdateAllowedHosts(context.Background(), &pb.UpdateAllowedHostsRequest{
 				SessionId: sid, Hosts: hosts,
 			})
@@ -1539,4 +1507,56 @@ func AllowHostsCommand() cli.Command {
 			return nil
 		},
 	}
+}
+
+// splitHosts splits a comma-separated host list, trimming whitespace and
+// dropping empty entries.
+func splitHosts(raw string) []string {
+	var out []string
+	for _, h := range strings.Split(raw, ",") {
+		h = strings.TrimSpace(h)
+		if h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// resolveAllowedHosts computes the new egress allowlist from CLI args
+// (KIP-24): --clear empties it; --hosts/positional replace it; --add/--remove
+// adjust the current list read from the gateway.
+func resolveAllowedHosts(ctx *cli.Context, client *client.Client, sid string) ([]string, error) {
+	switch {
+	case ctx.Bool("clear"):
+		return nil, nil
+	case ctx.String("hosts") != "":
+		return splitHosts(ctx.String("hosts")), nil
+	case ctx.NArg() > 0:
+		return splitHosts(ctx.Args().First()), nil
+	case ctx.String("add") != "" || ctx.String("remove") != "":
+		return adjustAllowedHosts(ctx, client, sid)
+	default:
+		return nil, fmt.Errorf("provide hosts (positional or --hosts) or --add/--remove")
+	}
+}
+
+// adjustAllowedHosts reads the current allowlist and applies --remove then
+// --add (full replacement semantics on the live list).
+func adjustAllowedHosts(ctx *cli.Context, client *client.Client, sid string) ([]string, error) {
+	cur, err := client.SandboxServiceClient.GetSession(context.Background(), &pb.GetSessionRequest{SessionId: sid})
+	if err != nil {
+		return nil, fmt.Errorf("allow-hosts: read current: %w", err)
+	}
+	hosts := append([]string(nil), cur.AllowedHosts...)
+	removed := map[string]bool{}
+	for _, h := range splitHosts(ctx.String("remove")) {
+		removed[h] = true
+	}
+	kept := hosts[:0]
+	for _, h := range hosts {
+		if !removed[h] {
+			kept = append(kept, h)
+		}
+	}
+	return append(kept, splitHosts(ctx.String("add"))...), nil
 }

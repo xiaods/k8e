@@ -3,5 +3,4 @@ lib/
 *.tsbuildinfo
 tsconfig.check.json
 tests/.bundle-*
-package-lock.json
 .npm-cache/

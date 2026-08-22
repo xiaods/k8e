@@ -337,7 +337,7 @@ export function apply(ctx: Context): void {
           writeJson(res, 500, { ok: false, error: { code: 'io', message: error instanceof Error ? error.message : String(error) } })
           return
         }
-        ctx.k8eSandbox.setRuntimeClass(saved.runtimeClass)
+        ctx.k8eSandbox.applyRuntimeClass(saved.runtimeClass)
         const effective = effectiveRuntime(saved.runtimeClass, ctx.k8eSandbox.runtimeClass)
         writeJson(res, 200, { ok: true, prefs: saved, effective: { runtimeClass: effective.runtimeClass, runtimeClassSource: effective.source } })
         return

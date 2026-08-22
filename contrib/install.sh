@@ -1,5 +1,11 @@
 #!/bin/sh
 set -e
+
+# Force HTTPS on every download (S6506): one wrapper keeps the policy in a
+# single place.
+https_fetch() {
+    curl --proto '=https' "$@"
+}
 set -o noglob
 
 # K8E Install Script — https://k8e.sh
@@ -66,7 +72,7 @@ install_gvisor() {
     trap 'rm -rf "${TMP_DIR}"' EXIT
 
     for f in runsc runsc.sha512 containerd-shim-runsc-v1 containerd-shim-runsc-v1.sha512; do
-        if ! curl -fsSL -o "${TMP_DIR}/${f}" "${URL}/${f}"; then
+        if ! https_fetch -fsSL -o "${TMP_DIR}/${f}" "${URL}/${f}"; then
             warn "Failed to download ${f} from ${URL}, skipping gVisor install"
             return
         fi
@@ -208,7 +214,7 @@ get_latest_version() {
     local tag=""
     # Use GitHub API with fallback to redirect method
     if command -v curl >/dev/null 2>&1; then
-        tag=$(curl -sfL --retry 3 --retry-delay 2 \
+        tag=$(https_fetch -sfL --retry 3 --retry-delay 2 \
             -H "Accept: application/vnd.github+json" \
             "${GITHUB_API}/releases/latest" 2>/dev/null \
             | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
@@ -239,7 +245,7 @@ download_and_verify() {
 
     info "Downloading ${download_url}"
     if [ "${DOWNLOADER}" = curl ]; then
-        curl -sfL --retry 3 --retry-delay 2 -o "${target}" "${download_url}"
+        https_fetch -sfL --retry 3 --retry-delay 2 -o "${target}" "${download_url}"
     else
         wget -q -O "${target}" "${download_url}"
     fi
@@ -248,9 +254,9 @@ download_and_verify() {
 
     # Verify checksum if available
     local checksum_url="${GITHUB_DL}/${version}/sha256sum-${ARCH}.txt"
-    if curl -sfL --head "${checksum_url}" >/dev/null 2>&1; then
+    if https_fetch -sfL --head "${checksum_url}" >/dev/null 2>&1; then
         info "Verifying checksum..."
-        local expected=$(curl -sfL "${checksum_url}" | grep "${bin_name}" | awk '{print $1}')
+        local expected=$(https_fetch -sfL "${checksum_url}" | grep "${bin_name}" | awk '{print $1}')
         local actual=$(sha256sum "${target}" | awk '{print $1}')
         if [ "${expected}" != "${actual}" ] && [ -n "${expected}" ]; then
             rm -f "${target}"
