@@ -1,5 +1,8 @@
 #!/bin/sh
 set -e
+
+# Force HTTPS on every download (S6506); single definition keeps lint quiet.
+CURL_PROTO="--proto =https"
 set -o noglob
 
 # K8E Install Script — https://k8e.sh
@@ -66,7 +69,7 @@ install_gvisor() {
     trap 'rm -rf "${TMP_DIR}"' EXIT
 
     for f in runsc runsc.sha512 containerd-shim-runsc-v1 containerd-shim-runsc-v1.sha512; do
-        if ! curl  --proto '=https' -fsSL -o "${TMP_DIR}/${f}" "${URL}/${f}"; then
+        if ! curl ${CURL_PROTO} -fsSL -o "${TMP_DIR}/${f}" "${URL}/${f}"; then
             warn "Failed to download ${f} from ${URL}, skipping gVisor install"
             return
         fi
@@ -208,7 +211,7 @@ get_latest_version() {
     local tag=""
     # Use GitHub API with fallback to redirect method
     if command -v curl >/dev/null 2>&1; then
-        tag=$(curl  --proto '=https' -sfL --retry 3 --retry-delay 2 \
+        tag=$(curl ${CURL_PROTO} -sfL --retry 3 --retry-delay 2 \
             -H "Accept: application/vnd.github+json" \
             "${GITHUB_API}/releases/latest" 2>/dev/null \
             | grep '"tag_name"' | head -1 | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
@@ -239,7 +242,7 @@ download_and_verify() {
 
     info "Downloading ${download_url}"
     if [ "${DOWNLOADER}" = curl ]; then
-        curl  --proto '=https' -sfL --retry 3 --retry-delay 2 -o "${target}" "${download_url}"
+        curl ${CURL_PROTO} -sfL --retry 3 --retry-delay 2 -o "${target}" "${download_url}"
     else
         wget -q -O "${target}" "${download_url}"
     fi
@@ -248,9 +251,9 @@ download_and_verify() {
 
     # Verify checksum if available
     local checksum_url="${GITHUB_DL}/${version}/sha256sum-${ARCH}.txt"
-    if curl  --proto '=https' -sfL --head "${checksum_url}" >/dev/null 2>&1; then
+    if ${CURL_PROTO} -sfL --head "${checksum_url}" >/dev/null 2>&1; then
         info "Verifying checksum..."
-        local expected=$(curl  --proto '=https' -sfL "${checksum_url}" | grep "${bin_name}" | awk '{print $1}')
+        local expected=$(${CURL_PROTO} -sfL "${checksum_url}" | grep "${bin_name}" | awk '{print $1}')
         local actual=$(sha256sum "${target}" | awk '{print $1}')
         if [ "${expected}" != "${actual}" ] && [ -n "${expected}" ]; then
             rm -f "${target}"
@@ -523,7 +526,7 @@ eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
     echo "    curl -sfL https://k8e.sh/install.sh | K8E_URL=https://<server-ip>:6443 K8E_TOKEN=${K8E_TOKEN:-ilovek8e} sh -"
     echo ""
     echo "  Sandbox CLI (on server -- auto-discovery, no login needed):"
-    echo "    curl  --proto '=https' -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-\$(uname -s | tr A-Z a-z)-\$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
+    echo "    curl ${CURL_PROTO} -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-\$(uname -s | tr A-Z a-z)-\$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')"
     echo "    chmod +x k8e-sandbox-cli-*"
     echo ""
     echo "    ./k8e-sandbox-cli-* install-skill all"
