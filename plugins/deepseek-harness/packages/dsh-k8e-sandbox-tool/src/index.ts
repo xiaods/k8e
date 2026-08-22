@@ -178,6 +178,71 @@ export class K8eSandboxTools extends Service {
         }
       },
     }))
+
+    // ── KIP-24 service exposure + egress allowlist ──────────────────────────
+
+    ctx.tools.register(defineTool({
+      name: 'k8e_sandbox_expose',
+      description: 'Expose an in-sandbox service port through the k8e API Gateway and return its public URL (http(s)://<gateway>/k8e/expose/<session>/<port>/). Use after starting a long-running service (e.g. a web server) in the sandbox. Teardown with k8e_sandbox_unexpose.',
+      parameters: {
+        port: { type: 'number', required: true, description: 'In-sandbox service port to expose (1-65535)' },
+        host: { type: 'string', description: 'In-sandbox listen address (default 127.0.0.1)' },
+      },
+      output: {
+        schema: resultSchema({
+          url: { type: 'string' },
+          port: { type: 'number' },
+        }),
+        render: renderValue,
+      },
+      async execute(args) {
+        const client = runtime().getClient()
+        const sessionId = await runtime().getSession()
+        const res = await client.exposeService(sessionId, args.port, args.host)
+        return { url: res.url, port: args.port }
+      },
+    }))
+
+    ctx.tools.register(defineTool({
+      name: 'k8e_sandbox_unexpose',
+      description: 'Remove a public tunnel for an in-sandbox service port (stops k8e_sandbox_expose). Idempotent: unexposing a port that is not exposed returns ok=false.',
+      parameters: {
+        port: { type: 'number', required: true, description: 'In-sandbox service port to unexpose' },
+      },
+      output: {
+        schema: resultSchema({
+          ok: { type: 'boolean' },
+          port: { type: 'number' },
+        }),
+        render: renderValue,
+      },
+      async execute(args) {
+        const client = runtime().getClient()
+        const sessionId = await runtime().getSession()
+        const res = await client.unexposeService(sessionId, args.port)
+        return { ok: res.ok, port: args.port }
+      },
+    }))
+
+    ctx.tools.register(defineTool({
+      name: 'k8e_sandbox_allow_hosts',
+      description: 'Freely configure the sandbox session egress allowlist (allowedHosts) — applies live to NEW connections (CNP re-apply). Use to grant/revoke outbound access to domains, e.g. package registries or tunnel endpoints.',
+      parameters: {
+        hosts: { type: 'array', items: { type: 'string' }, required: true, description: 'Full replacement allowlist; empty array clears it (falls back to cluster defaults)' },
+      },
+      output: {
+        schema: resultSchema({
+          hosts: { type: 'array', items: { type: 'string' } },
+        }),
+        render: renderValue,
+      },
+      async execute(args) {
+        const client = runtime().getClient()
+        const sessionId = await runtime().getSession()
+        const hosts = await client.updateAllowedHosts(sessionId, args.hosts ?? [])
+        return { hosts }
+      },
+    }))
   }
 }
 

@@ -32,6 +32,22 @@ function makeOwner() {
       calls.push(['poll', runId])
       return { runId, status: 'completed', stdout: 'out\n', stderr: 'err\n', exitCode: 0, durationMs: '456', truncated: false }
     },
+    async exposeService(sessionId, port, host) {
+      calls.push(['exposeService', sessionId, port, host])
+      return { url: `http://gw/k8e/expose/${sessionId}/${port}/` }
+    },
+    async unexposeService(sessionId, port) {
+      calls.push(['unexposeService', sessionId, port])
+      return { ok: true }
+    },
+    async listExposed(sessionId) {
+      calls.push(['listExposed', sessionId])
+      return [{ port: 8080, url: `http://gw/k8e/expose/${sessionId}/8080/`, host: '127.0.0.1', startedAt: 0 }]
+    },
+    async updateAllowedHosts(sessionId, hosts) {
+      calls.push(['updateAllowedHosts', sessionId, hosts])
+      return hosts
+    },
   }
   return { getClient: () => client, getSession: async () => 'sess-1', calls }
 }
@@ -83,4 +99,35 @@ function mount() {
   assert.equal(out.runId, 'bg-1')
 }
 
-console.log('✔ tool output-shape test passed (strict schema, numeric durationMs)')
+// KIP-24: k8e_sandbox_expose passes session + port and returns the URL.
+{
+  const { owner, byName } = mount()
+  const tool = byName.get('k8e_sandbox_expose')
+  assert.ok(tool, 'k8e_sandbox_expose registered')
+  const out = await tool.execute({ port: 8080, host: '127.0.0.1' })
+  assert.deepEqual(Object.keys(out).sort(), ['port', 'url'])
+  assert.equal(out.url, 'http://gw/k8e/expose/sess-1/8080/')
+  assert.deepEqual(owner.calls.at(-1), ['exposeService', 'sess-1', 8080, '127.0.0.1'])
+}
+
+// KIP-24: k8e_sandbox_unexpose passes session + port and returns ok.
+{
+  const { owner, byName } = mount()
+  const tool = byName.get('k8e_sandbox_unexpose')
+  assert.ok(tool, 'k8e_sandbox_unexpose registered')
+  const out = await tool.execute({ port: 8080 })
+  assert.deepEqual(out, { ok: true, port: 8080 })
+  assert.deepEqual(owner.calls.at(-1), ['unexposeService', 'sess-1', 8080])
+}
+
+// KIP-24: k8e_sandbox_allow_hosts passes the allowlist through and echoes it.
+{
+  const { owner, byName } = mount()
+  const tool = byName.get('k8e_sandbox_allow_hosts')
+  assert.ok(tool, 'k8e_sandbox_allow_hosts registered')
+  const out = await tool.execute({ hosts: ['pypi.org', 'trycloudflare.com'] })
+  assert.deepEqual(out, { hosts: ['pypi.org', 'trycloudflare.com'] })
+  assert.deepEqual(owner.calls.at(-1), ['updateAllowedHosts', 'sess-1', ['pypi.org', 'trycloudflare.com']])
+}
+
+console.log('✔ tool output-shape test passed (strict schema, numeric durationMs, KIP-24 expose/allow_hosts)')

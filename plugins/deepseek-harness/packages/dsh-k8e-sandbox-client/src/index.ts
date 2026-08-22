@@ -82,6 +82,14 @@ export interface RunOptions {
   tenant?: string
 }
 
+/** One live gateway-proxied exposure (KIP-24). */
+export interface ExposedServiceInfo {
+  port: number
+  url: string
+  host: string
+  startedAt: number
+}
+
 /**
  * Shared op surface implemented by both transports (CLI-backed and direct
  * gRPC). `K8eSandboxRuntime.getClient()` returns whichever is active; the fs
@@ -97,6 +105,11 @@ export interface SandboxTransport {
   createSession(opts?: CreateSessionOptions): Promise<{ sessionId: string; podIp: string }>
   destroySession(sessionId: string): Promise<void>
   status(): Promise<StatusResult>
+  // KIP-24: expose in-sandbox services through the k8e API Gateway.
+  exposeService(sessionId: string, port: number, host?: string): Promise<{ url: string }>
+  unexposeService(sessionId: string, port: number): Promise<{ ok: boolean }>
+  listExposed(sessionId: string): Promise<ExposedServiceInfo[]>
+  updateAllowedHosts(sessionId: string, hosts: string[]): Promise<string[]>
   close?(): void
 }
 
@@ -324,5 +337,30 @@ export class CliK8eClient implements SandboxTransport {
 
   async status(): Promise<StatusResult> {
     return parseJSON<StatusResult>(await runCli(['status'], this.opts), 'status')
+  }
+
+  // ── KIP-24 service exposure (CLI-backed) ─────────────────────────────────
+
+  async exposeService(sessionId: string, port: number, host?: string): Promise<{ url: string }> {
+    const args = ['expose', String(port), '--session-id', sessionId]
+    if (host !== undefined && host !== '') args.push('--host', host)
+    return parseJSON<{ url: string }>(await runCli(args, this.opts), 'expose')
+  }
+
+  async unexposeService(sessionId: string, port: number): Promise<{ ok: boolean }> {
+    return parseJSON<{ ok: boolean }>(await runCli(['unexpose', String(port), '--session-id', sessionId], this.opts), 'unexpose')
+  }
+
+  async listExposed(sessionId: string): Promise<ExposedServiceInfo[]> {
+    const out = await parseJSON<{ services: ExposedServiceInfo[] }>(await runCli(['exposed', '--session-id', sessionId], this.opts), 'exposed')
+    return out.services ?? []
+  }
+
+  async updateAllowedHosts(sessionId: string, hosts: string[]): Promise<string[]> {
+    const args = hosts.length > 0
+      ? ['allow-hosts', hosts.join(','), '--session-id', sessionId]
+      : ['allow-hosts', '--clear', '--session-id', sessionId]
+    const out = await parseJSON<{ allowed_hosts: string[] }>(await runCli(args, this.opts), 'allow-hosts')
+    return out.allowed_hosts ?? []
   }
 }

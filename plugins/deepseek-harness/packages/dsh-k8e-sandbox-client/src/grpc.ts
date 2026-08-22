@@ -19,6 +19,7 @@ import type {
   BackgroundResult,
   CreateSessionOptions,
   ExecResult,
+  ExposedServiceInfo,
   FileEntry,
   PollResult,
   RunOptions,
@@ -28,6 +29,7 @@ export type {
   BackgroundResult,
   CreateSessionOptions,
   ExecResult,
+  ExposedServiceInfo,
   FileEntry,
   PollResult,
   RunOptions,
@@ -178,6 +180,10 @@ interface SandboxServiceClient {
   terminalForeground(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
   terminalSignal(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
   terminalDestroy(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  exposeService(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  unexposeService(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  listExposed(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
+  updateAllowedHosts(request: unknown, metadata: grpc.Metadata, options: grpc.CallOptions, cb: (err: grpc.ServiceError | null, resp: any) => void): grpc.ClientUnaryCall
   terminalStream(request: unknown, metadata: grpc.Metadata): grpc.ClientReadableStream<any>
   execStream(request: unknown, metadata: grpc.Metadata): grpc.ClientReadableStream<any>
 }
@@ -437,6 +443,44 @@ export class GrpcK8eClient {
 
   async terminalDestroy(terminalId: string, graceMs: number): Promise<void> {
     await this.call(this.client.terminalDestroy, { terminalId: terminalId, graceMs: graceMs }, 10_000)
+  }
+
+  // ── KIP-24 service exposure (gateway proxy) ──────────────────────────────
+
+  /**
+   * Register an in-sandbox service port for k8e API Gateway proxying and
+   * return the public URL: http(s)://<gateway>/k8e/expose/<session>/<port>/.
+   */
+  async exposeService(sessionId: string, port: number, host?: string): Promise<{ url: string }> {
+    const resp = await this.call<any>(this.client.exposeService, {
+      sessionId,
+      port,
+      ...(host !== undefined && host !== '' ? { host } : {}),
+    }, 45_000)
+    return { url: resp.url as string }
+  }
+
+  /** Remove the gateway proxy registration for a port. Idempotent. */
+  async unexposeService(sessionId: string, port: number): Promise<{ ok: boolean }> {
+    const resp = await this.call<any>(this.client.unexposeService, { sessionId, port }, 15_000)
+    return { ok: resp.ok as boolean }
+  }
+
+  /** List live exposures for a session. */
+  async listExposed(sessionId: string): Promise<ExposedServiceInfo[]> {
+    const resp = await this.call<any>(this.client.listExposed, { sessionId }, 15_000)
+    return ((resp.services as any[]) ?? []).map((svc: any) => ({
+      port: Number(svc.port ?? 0),
+      url: svc.url as string,
+      host: svc.host as string,
+      startedAt: Number(svc.startedAt ?? 0),
+    }))
+  }
+
+  /** Replace the session egress allowlist (live CNP re-apply). */
+  async updateAllowedHosts(sessionId: string, hosts: string[]): Promise<string[]> {
+    const resp = await this.call<any>(this.client.updateAllowedHosts, { sessionId, hosts }, 15_000)
+    return (resp.hosts as string[]) ?? []
   }
 
   /** Open the terminal output stream; the stream yields data frames then a final exit frame. */
