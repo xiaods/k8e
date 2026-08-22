@@ -85,6 +85,8 @@ type Orchestrator struct {
 	// KIP-24 service exposure registry: session_id → live tunnel entries.
 	exposeMu sync.Mutex
 	exposed  map[string][]*ExposedEntry
+	// exposeURLBase is the public gateway base URL for restored exposures.
+	exposeURLBase string
 
 	// warmPodHealthCheck decides whether a warm pod's sandboxd is actually ready to
 	// serve on :2024 before the pod is claimed for a session. Overridable in tests.
