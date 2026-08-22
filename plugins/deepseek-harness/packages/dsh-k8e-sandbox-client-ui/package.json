@@ -1,6 +1,6 @@
 {
   "name": "@k8e-sandbox/dsh-k8e-sandbox-client-ui",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "k8e-sandbox client half: settings section + terminal panel (KIP-20 M2).",
   "type": "module",
   "files": [
