@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1323,6 +1324,207 @@ func PsCommand() cli.Command {
 				procs[i] = map[string]any{"pid": p.Pid, "comm": p.Comm, "state": p.State}
 			}
 			printJSON(map[string]any{"processes": procs})
+			return nil
+		},
+	}
+}
+
+// ── ExposeCommand ──────────────────────────────────────────────────────────
+// KIP-24: tunnel a sandbox-internal service to a public trycloudflare URL via
+// cloudflared quick tunnel (pod dials OUT to the CF edge, no inbound exposure).
+
+func ExposeCommand() cli.Command {
+	return cli.Command{
+		Name:  "expose",
+		Usage: "Expose a sandbox-internal service to a public URL (cloudflared quick tunnel, KIP-24)",
+		Flags: []cli.Flag{
+			cli.IntFlag{Name: "port", Usage: "In-pod service port (or positional arg)"},
+			cli.StringFlag{Name: "host", Value: "127.0.0.1", Usage: "In-pod listen address"},
+		},
+		Action: func(ctx *cli.Context) error {
+			port := ctx.Int("port")
+			if port == 0 && ctx.NArg() > 0 {
+				parsed, err := strconv.Atoi(ctx.Args().First())
+				if err != nil {
+					return printErrorExit("port must be an integer", 2)
+				}
+				port = parsed
+			}
+			if port <= 0 || port > 65535 {
+				return printErrorExit("port required (positional or --port), in [1, 65535]", 2)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+			sid, _, err := ensureSession(client, ctx)
+			if err != nil {
+				return printErrorExit("session: "+err.Error(), 2)
+			}
+			resp, err := client.SandboxServiceClient.ExposeService(context.Background(), &pb.ExposeServiceRequest{
+				SessionId: sid, Port: int32(port), Host: ctx.String("host"),
+			})
+			if err != nil {
+				return printErrorExit("expose: "+err.Error(), 2)
+			}
+			printJSON(map[string]any{"url": resp.Url, "port": port, "session_id": sid})
+			return nil
+		},
+	}
+}
+
+// ── UnexposeCommand ─────────────────────────────────────────────────────────
+
+func UnexposeCommand() cli.Command {
+	return cli.Command{
+		Name:  "unexpose",
+		Usage: "Tear down a public tunnel for a sandbox-internal service port",
+		Flags: []cli.Flag{
+			cli.IntFlag{Name: "port", Usage: "In-pod service port (or positional arg)"},
+		},
+		Action: func(ctx *cli.Context) error {
+			port := ctx.Int("port")
+			if port == 0 && ctx.NArg() > 0 {
+				parsed, err := strconv.Atoi(ctx.Args().First())
+				if err != nil {
+					return printErrorExit("port must be an integer", 2)
+				}
+				port = parsed
+			}
+			if port <= 0 || port > 65535 {
+				return printErrorExit("port required (positional or --port), in [1, 65535]", 2)
+			}
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+			sid, _, err := ensureSession(client, ctx)
+			if err != nil {
+				return printErrorExit("session: "+err.Error(), 2)
+			}
+			resp, err := client.SandboxServiceClient.UnexposeService(context.Background(), &pb.UnexposeServiceRequest{
+				SessionId: sid, Port: int32(port),
+			})
+			if err != nil {
+				return printErrorExit("unexpose: "+err.Error(), 2)
+			}
+			printJSON(map[string]any{"ok": resp.Ok, "port": port, "session_id": sid})
+			return nil
+		},
+	}
+}
+
+// ── ExposedCommand ──────────────────────────────────────────────────────────
+
+func ExposedCommand() cli.Command {
+	return cli.Command{
+		Name:  "exposed",
+		Usage: "List live public tunnels for the current session",
+		Action: func(ctx *cli.Context) error {
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+			sid, _, err := ensureSession(client, ctx)
+			if err != nil {
+				return printErrorExit("session: "+err.Error(), 2)
+			}
+			resp, err := client.SandboxServiceClient.ListExposed(context.Background(), &pb.ListExposedRequest{
+				SessionId: sid,
+			})
+			if err != nil {
+				return printErrorExit("exposed: "+err.Error(), 2)
+			}
+			services := make([]any, 0, len(resp.Services))
+			for _, s := range resp.Services {
+				services = append(services, map[string]any{
+					"port":       s.Port,
+					"url":        s.Url,
+					"host":       s.Host,
+					"started_at": s.StartedAt,
+				})
+			}
+			printJSON(map[string]any{"session_id": sid, "services": services})
+			return nil
+		},
+	}
+}
+
+// ── AllowHostsCommand ───────────────────────────────────────────────────────
+// KIP-24: freely configure the session's egress allowlist (live CNP re-apply).
+// Full replacement via positional args / --hosts; --add / --remove helpers
+// read the current list from GetSession first.
+
+func AllowHostsCommand() cli.Command {
+	return cli.Command{
+		Name:  "allow-hosts",
+		Usage: "Set the session egress allowlist (live). Positional/comma-separated --hosts replaces the list; --add / --remove adjust it",
+		Flags: []cli.Flag{
+			cli.StringFlag{Name: "hosts", Usage: "Comma-separated full replacement list"},
+			cli.StringFlag{Name: "add", Usage: "Comma-separated hosts to add"},
+			cli.StringFlag{Name: "remove", Usage: "Comma-separated hosts to remove"},
+		},
+		Action: func(ctx *cli.Context) error {
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+			sid, _, err := ensureSession(client, ctx)
+			if err != nil {
+				return printErrorExit("session: "+err.Error(), 2)
+			}
+
+			var hosts []string
+			split := func(raw string) []string {
+				var out []string
+				for _, h := range strings.Split(raw, ",") {
+					h = strings.TrimSpace(h)
+					if h != "" {
+						out = append(out, h)
+					}
+				}
+				return out
+			}
+
+			switch {
+			case ctx.String("hosts") != "":
+				hosts = split(ctx.String("hosts"))
+			case ctx.NArg() > 0:
+				hosts = split(ctx.Args().First())
+			case ctx.String("add") != "" || ctx.String("remove") != "":
+				// Read the current list first for add/remove semantics.
+				cur, err := client.SandboxServiceClient.GetSession(context.Background(), &pb.GetSessionRequest{SessionId: sid})
+				if err != nil {
+					return printErrorExit("allow-hosts: read current: "+err.Error(), 2)
+				}
+				hosts = append([]string(nil), cur.AllowedHosts...)
+				removed := map[string]bool{}
+				for _, h := range split(ctx.String("remove")) {
+					removed[h] = true
+				}
+				kept := hosts[:0]
+				for _, h := range hosts {
+					if !removed[h] {
+						kept = append(kept, h)
+					}
+				}
+				hosts = kept
+				hosts = append(hosts, split(ctx.String("add"))...)
+			default:
+				return printErrorExit("provide hosts (positional or --hosts) or --add/--remove", 2)
+			}
+
+			resp, err := client.SandboxServiceClient.UpdateAllowedHosts(context.Background(), &pb.UpdateAllowedHostsRequest{
+				SessionId: sid, Hosts: hosts,
+			})
+			if err != nil {
+				return printErrorExit("allow-hosts: "+err.Error(), 2)
+			}
+			printJSON(map[string]any{"session_id": sid, "allowed_hosts": resp.Hosts})
 			return nil
 		},
 	}

@@ -82,6 +82,10 @@ type Orchestrator struct {
 	approvals   map[string]*pendingApproval
 	runRegistry map[string]string // run_id → session_id
 
+	// KIP-24 service exposure registry: session_id → live tunnel entries.
+	exposeMu sync.Mutex
+	exposed  map[string][]*ExposedEntry
+
 	// warmPodHealthCheck decides whether a warm pod's sandboxd is actually ready to
 	// serve on :2024 before the pod is claimed for a session. Overridable in tests.
 	warmPodHealthCheck func(ctx context.Context, pod *corev1.Pod) bool
@@ -113,6 +117,7 @@ func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestra
 		dynamic:            dyn,
 		approvals:          make(map[string]*pendingApproval),
 		runRegistry:        make(map[string]string),
+		exposed:            make(map[string][]*ExposedEntry),
 		warmPodHealthCheck: defaultWarmPodHealthCheck,
 		maxBackgroundRuns:  defaultMaxBackgroundRuns,
 	}
@@ -394,7 +399,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	}
 	o.updateSessionStatus(ctx, session)
 
-	return session, o.applyCNP(ctx, session)
+	return session, o.applySessionCNP(ctx, session)
 }
 
 func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) error {
@@ -1097,7 +1102,7 @@ func (o *Orchestrator) ResumeSession(ctx context.Context, sessionID string) (*co
 	session.Status.PodName = pod.Name
 	session.Status.PodIP = pod.Status.PodIP
 	o.updateSessionStatus(ctx, session)
-	if err := o.applyCNP(ctx, session); err != nil {
+	if err := o.applySessionCNP(ctx, session); err != nil {
 		return nil, status.Errorf(codes.Internal, "resume: apply network policy: %v", err)
 	}
 	return pod, nil
@@ -1144,28 +1149,21 @@ func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string)
 	return pvcName, nil
 }
 
-func (o *Orchestrator) applyCNP(ctx context.Context, session *sandboxv1.SandboxSession) error {
-	obj := buildSessionCNP(session, o.fqdnEnabled())
-	name := fmt.Sprintf("sandbox-session-%s", session.Name)
-	_, err := o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Get(ctx, name, metav1.GetOptions{})
-	if errors.IsNotFound(err) {
-		_, err = o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Create(ctx, obj, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	_, err = o.dynamic.Resource(cnpGVR).Namespace(session.Namespace).Update(ctx, obj, metav1.UpdateOptions{})
-	return err
+// buildSessionCNP returns the per-session CiliumNetworkPolicy with no
+// additionally exposed service ports (see buildSessionCNPExposed).
+func buildSessionCNP(session *sandboxv1.SandboxSession, fqdnEnabled bool) *unstructured.Unstructured {
+	return buildSessionCNPExposed(session, fqdnEnabled, nil)
 }
 
-// buildSessionCNP returns the per-session CiliumNetworkPolicy. Egress is kept
-// as toEntities:world limited to DNS (53) + HTTPS (443) — NOT narrowed via
-// toFQDNs by default: FQDN rules require the Cilium DNS proxy (L7), which was
-// enabled in 9f5b7f41 and reverted in 2b3bfb0a because it broke DNS in gVisor
-// pods. Operators who re-enable the DNS proxy (see manifests/cilium.yaml
-// dnsProxy.enabled) can tighten egress further; see KIP-16 M10 / issue #510.
-func buildSessionCNP(session *sandboxv1.SandboxSession, fqdnEnabled bool) *unstructured.Unstructured {
+// buildSessionCNPExposed returns the per-session CiliumNetworkPolicy, with
+// gateway/e2b-server ingress additionally allowed for each exposed service
+// port (KIP-24 gateway proxy). Egress is kept as toEntities:world limited to
+// DNS (53) + HTTPS (443) — NOT narrowed via toFQDNs by default: FQDN rules
+// require the Cilium DNS proxy (L7), which was enabled in 9f5b7f41 and
+// reverted in 2b3bfb0a because it broke DNS in gVisor pods. Operators who
+// re-enable the DNS proxy (see manifests/cilium.yaml dnsProxy.enabled) can
+// tighten egress further; see KIP-16 M10 / issue #510.
+func buildSessionCNPExposed(session *sandboxv1.SandboxSession, fqdnEnabled bool, exposedPorts []int32) *unstructured.Unstructured {
 	// Egress: DNS (53) always to world. HTTPS (443) is either blanket world
 	// (default) or scoped toFQDNs when FQDN egress is enabled AND the session
 	// declares allowedHosts (KIP-16 M10 / issue #510).
@@ -1203,6 +1201,77 @@ func buildSessionCNP(session *sandboxv1.SandboxSession, fqdnEnabled bool) *unstr
 			},
 		})
 	}
+	ingress := []interface{}{
+		map[string]interface{}{
+			"fromEntities": []interface{}{"host"},
+			"toPorts": []interface{}{
+				map[string]interface{}{
+					"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
+				},
+			},
+		},
+		map[string]interface{}{
+			"fromEndpoints": []interface{}{
+				map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						"app": "sandbox-grpc-gateway",
+					},
+				},
+			},
+			"toPorts": []interface{}{
+				map[string]interface{}{
+					"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
+				},
+			},
+		},
+		// In-cluster e2b-server (Cilium Gateway API front door) dials
+		// sandboxd directly for the native fs/process-control ops
+		// (KIP-18 ability downshift), same as the gateway.
+		map[string]interface{}{
+			"fromEndpoints": []interface{}{
+				map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						"app": "e2b-server",
+					},
+				},
+			},
+			"toPorts": []interface{}{
+				map[string]interface{}{
+					"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
+				},
+			},
+		},
+	}
+	// KIP-24 exposed service ports: gateway + e2b-server (Cilium Gateway API
+	// front door) reverse-proxy into the pod for these ports.
+	for _, exposedPort := range exposedPorts {
+		ingress = append(ingress,
+			map[string]interface{}{
+				"fromEndpoints": []interface{}{
+					map[string]interface{}{
+						"matchLabels": map[string]interface{}{"app": "sandbox-grpc-gateway"},
+					},
+				},
+				"toPorts": []interface{}{
+					map[string]interface{}{
+						"ports": []interface{}{map[string]interface{}{"port": fmt.Sprintf("%d", exposedPort), "protocol": "TCP"}},
+					},
+				},
+			},
+			map[string]interface{}{
+				"fromEndpoints": []interface{}{
+					map[string]interface{}{
+						"matchLabels": map[string]interface{}{"app": "e2b-server"},
+					},
+				},
+				"toPorts": []interface{}{
+					map[string]interface{}{
+						"ports": []interface{}{map[string]interface{}{"port": fmt.Sprintf("%d", exposedPort), "protocol": "TCP"}},
+					},
+				},
+			},
+		)
+	}
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": "cilium.io/v2",
 		"kind":       "CiliumNetworkPolicy",
@@ -1214,48 +1283,8 @@ func buildSessionCNP(session *sandboxv1.SandboxSession, fqdnEnabled bool) *unstr
 			"endpointSelector": map[string]interface{}{
 				"matchLabels": map[string]interface{}{labelSessionID: session.Name},
 			},
-			"ingress": []interface{}{
-				map[string]interface{}{
-					"fromEntities": []interface{}{"host"},
-					"toPorts": []interface{}{
-						map[string]interface{}{
-							"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
-						},
-					},
-				},
-				map[string]interface{}{
-					"fromEndpoints": []interface{}{
-						map[string]interface{}{
-							"matchLabels": map[string]interface{}{
-								"app": "sandbox-grpc-gateway",
-							},
-						},
-					},
-					"toPorts": []interface{}{
-						map[string]interface{}{
-							"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
-						},
-					},
-				},
-				// In-cluster e2b-server (Cilium Gateway API front door) dials
-				// sandboxd directly for the native fs/process-control ops
-				// (KIP-18 ability downshift), same as the gateway.
-				map[string]interface{}{
-					"fromEndpoints": []interface{}{
-						map[string]interface{}{
-							"matchLabels": map[string]interface{}{
-								"app": "e2b-server",
-							},
-						},
-					},
-					"toPorts": []interface{}{
-						map[string]interface{}{
-							"ports": []interface{}{map[string]interface{}{"port": "2024", "protocol": "TCP"}},
-						},
-					},
-				},
-			},
-			"egress": egress,
+			"ingress": ingress,
+			"egress":  egress,
 		},
 	}}
 }

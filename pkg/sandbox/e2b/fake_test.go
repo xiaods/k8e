@@ -3,6 +3,7 @@ package e2b
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,9 @@ type fakeGateway struct {
 	paused  []string
 	resumed []string
 
+	// exposed records KIP-24 expose registrations per session (ports).
+	exposed map[string][]int32
+
 	// term records KIP-19 terminal RPCs for pty.* compat tests.
 	term *terminalRows
 	// hangTerminals makes unseeded TerminalStream calls hang forever (no
@@ -48,6 +52,7 @@ func newFakeGateway() *fakeGateway {
 	return &fakeGateway{
 		sessions: map[string]*pb.GetSessionResponse{},
 		files:    map[string]string{},
+		exposed:  map[string][]int32{},
 		execOut:  map[string]*pb.ExecResponse{},
 		streams:  map[string][]*pb.ExecStreamResponse{},
 		getErrs:  map[string]error{},
@@ -286,6 +291,16 @@ func (f *fakeGateway) TerminalDestroy(ctx context.Context, req *pb.TerminalDestr
 	defer f.mu.Unlock()
 	f.term.destroyed = append(f.term.destroyed, req.TerminalId)
 	return &pb.TerminalDestroyResponse{Ok: true}, nil
+}
+
+func (f *fakeGateway) ListExposed(ctx context.Context, req *pb.ListExposedRequest) (*pb.ListExposedResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	svcs := make([]*pb.ExposedService, 0, len(f.exposed[req.SessionId]))
+	for _, p := range f.exposed[req.SessionId] {
+		svcs = append(svcs, &pb.ExposedService{Port: p, Url: fmt.Sprintf("http://gw/k8e/expose/%s/%d/", req.SessionId, p)})
+	}
+	return &pb.ListExposedResponse{Services: svcs}, nil
 }
 
 // fakeTermStream yields canned terminal frames then EOF.

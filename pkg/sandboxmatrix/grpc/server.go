@@ -122,22 +122,26 @@ type ServerConfig struct {
 	// that name succeed. In AWS it is typically a public domain/EIP name, distinct
 	// from the private interface IPs (which are also SANs for pod-side dialing).
 	AdvertiseHostname string
+	// ExposeBaseURL is the public base URL (scheme://host[:port]) for KIP-24
+	// exposed-service URLs. Unset → http://<advertise-hostname> → http://localhost.
+	ExposeBaseURL string
 }
 
 // Server implements the SandboxService gRPC interface.
 type Server struct {
 	pb.UnimplementedSandboxServiceServer
-	k8s               kubernetes.Interface
-	dyn               dynamic.Interface
-	orch              *Orchestrator
-	lisAddr           string
-	caCertFile        string
-	caKeyFile         string
-	serverCertFile    string
-	serverKeyFile     string
-	advertiseHostname string
-	caCert            *x509.Certificate
-	caKey             *ecdsa.PrivateKey
+	k8s                   kubernetes.Interface
+	dyn                   dynamic.Interface
+	orch                  *Orchestrator
+	lisAddr               string
+	caCertFile            string
+	caKeyFile             string
+	serverCertFile        string
+	serverKeyFile         string
+	advertiseHostname     string
+	exposeBaseURLOverride string
+	caCert                *x509.Certificate
+	caKey                 *ecdsa.PrivateKey
 	// apiKeysMu guards apiKeys + apiKeyByToken against concurrent Login reads
 	// while reloadConfigLoop swaps the maps every 30s.
 	apiKeysMu     sync.RWMutex
@@ -160,17 +164,18 @@ func NewServer(cfg ServerConfig) *Server {
 		port = 50051
 	}
 	s := &Server{
-		k8s:               cfg.K8s,
-		dyn:               cfg.Dyn,
-		lisAddr:           fmt.Sprintf("0.0.0.0:%d", port),
-		caCertFile:        cfg.CACertFile,
-		caKeyFile:         cfg.CAKeyFile,
-		serverCertFile:    cfg.ServerCertFile,
-		serverKeyFile:     cfg.ServerKeyFile,
-		advertiseHostname: cfg.AdvertiseHostname,
-		localAuth:         cfg.LocalAuth,
-		rateLimiter:       ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
-		terminals:         make(map[string]terminalEntry),
+		k8s:                   cfg.K8s,
+		dyn:                   cfg.Dyn,
+		lisAddr:               fmt.Sprintf("0.0.0.0:%d", port),
+		caCertFile:            cfg.CACertFile,
+		caKeyFile:             cfg.CAKeyFile,
+		serverCertFile:        cfg.ServerCertFile,
+		serverKeyFile:         cfg.ServerKeyFile,
+		advertiseHostname:     cfg.AdvertiseHostname,
+		exposeBaseURLOverride: cfg.ExposeBaseURL,
+		localAuth:             cfg.LocalAuth,
+		rateLimiter:           ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
+		terminals:             make(map[string]terminalEntry),
 	}
 	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
 	if cfg.FQDNEnabled {
@@ -874,6 +879,46 @@ func (s *Server) GetProcesses(ctx context.Context, req *pb.GetProcessesRequest) 
 // PollRun checks the status of a background execution.
 func (s *Server) PollRun(ctx context.Context, req *pb.PollRunRequest) (*pb.PollRunResponse, error) {
 	return s.orch.PollRun(ctx, req.RunId)
+}
+
+// ExposeService registers an in-pod service port for gateway proxying and
+// returns the public URL through the k8e API Gateway (KIP-24): the embedded
+// e2b HTTP server (fronted by the Cilium Gateway API on :80/:443) reverse-
+// proxies /k8e/expose/<session>/<port>/ to http://<podIP>:<port>.
+func (s *Server) ExposeService(ctx context.Context, req *pb.ExposeServiceRequest) (*pb.ExposeServiceResponse, error) {
+	return s.orch.ExposeService(ctx, req.SessionId, req.Port, req.Host, s.exposeBaseURL())
+}
+
+// exposeBaseURL is the public gateway base URL exposed services are reachable
+// at. Prefers the advertised external hostname (--sandbox-advertise-hostname,
+// KIP-22); falls back to localhost for loopback/local deployments.
+func (s *Server) exposeBaseURL() string {
+	if s.exposeBaseURLOverride != "" {
+		return strings.TrimSuffix(s.exposeBaseURLOverride, "/")
+	}
+	if s.advertiseHostname != "" {
+		return "http://" + s.advertiseHostname
+	}
+	return "http://localhost"
+}
+
+// UnexposeService removes the gateway proxy registration for a port. Idempotent.
+func (s *Server) UnexposeService(ctx context.Context, req *pb.UnexposeServiceRequest) (*pb.UnexposeServiceResponse, error) {
+	return s.orch.UnexposeService(ctx, req.SessionId, req.Port)
+}
+
+// ListExposed lists live tunnel exposures for a session.
+func (s *Server) ListExposed(ctx context.Context, req *pb.ListExposedRequest) (*pb.ListExposedResponse, error) {
+	return s.orch.ListExposed(ctx, req.SessionId)
+}
+
+// UpdateAllowedHosts replaces the session egress allowlist live (spec + CNP).
+func (s *Server) UpdateAllowedHosts(ctx context.Context, req *pb.UpdateAllowedHostsRequest) (*pb.UpdateAllowedHostsResponse, error) {
+	hosts, err := s.orch.UpdateAllowedHosts(ctx, req.SessionId, req.Hosts)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.UpdateAllowedHostsResponse{Hosts: hosts}, nil
 }
 
 // Login authenticates the client (via mTLS or API key) and returns a signed client certificate.

@@ -180,6 +180,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		E2BListen:             cfg.E2BListen,
 		E2BAPIKey:             cfg.E2BAPIKey,
 		AdvertiseHostname:     cfg.SandboxAdvertiseHostname,
+		ExposeBaseURL:         cfg.SandboxExposeBaseURL,
 	}
 	serverConfig.ControlConfig.EtcdExposeMetrics = cfg.EtcdExposeMetrics
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots

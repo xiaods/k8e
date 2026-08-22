@@ -52,6 +52,16 @@ service SandboxService {
   rpc TerminalForeground(TerminalForegroundRequest) returns (TerminalForegroundResponse);
   rpc TerminalSignal(TerminalSignalRequest) returns (TerminalSignalResponse);
   rpc TerminalDestroy(TerminalDestroyRequest) returns (TerminalDestroyResponse);
+  // ── Service exposure (KIP-24) ─────────────────────────────────────────────
+  // ExposeService tunnels a sandbox-internal service to a public URL via
+  // cloudflared quick tunnel (pod dials OUT to the CF edge; no inbound
+  // exposure of the pod). UnexposeService tears the tunnel down.
+  rpc ExposeService(ExposeServiceRequest)     returns (ExposeServiceResponse);
+  rpc UnexposeService(UnexposeServiceRequest) returns (UnexposeServiceResponse);
+  rpc ListExposed(ListExposedRequest)         returns (ListExposedResponse);
+  // UpdateAllowedHosts replaces the session's egress allowlist and re-applies
+  // the per-session CNP so the change is live (FQDN mode) / declared.
+  rpc UpdateAllowedHosts(UpdateAllowedHostsRequest) returns (UpdateAllowedHostsResponse);
 }
 
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
@@ -88,6 +98,7 @@ message GetSessionResponse {
   repeated string env_keys       = 7; // keys only, never values
   repeated string secret_env_vars = 8; // env_var names from secret_refs only
   int32           background_runs = 9; // active entries known to gateway registry
+  repeated string allowed_hosts   = 10; // current egress allowlist (KIP-24)
 }
 
 message ListSessionsRequest {
@@ -341,3 +352,35 @@ message TerminalDestroyRequest {
   int32  grace_ms = 2;        // TERM -> grace -> KILL escalation bound
 }
 message TerminalDestroyResponse { bool ok = 1; }
+
+// ── Service exposure (KIP-24) ─────────────────────────────────────────────
+
+message ExposeServiceRequest {
+  string session_id = 1;
+  int32  port       = 2;   // in-pod service port (required)
+  string host       = 3;   // in-pod listen address; default 127.0.0.1
+}
+message ExposeServiceResponse {
+  string url = 1;   // http(s)://<gateway>/k8e/expose/<session>/<port>/
+}
+
+message UnexposeServiceRequest {
+  string session_id = 1;
+  int32  port       = 2;
+}
+message UnexposeServiceResponse { bool ok = 1; }
+
+message ExposedService {
+  int32  port       = 1;
+  string url        = 2;
+  string host       = 3;
+  int64  started_at = 4; // unix seconds
+}
+message ListExposedRequest { string session_id = 1; }
+message ListExposedResponse { repeated ExposedService services = 1; }
+
+message UpdateAllowedHostsRequest {
+  string          session_id = 1;
+  repeated string hosts      = 2; // full replacement list; empty clears (falls back to matrix defaults)
+}
+message UpdateAllowedHostsResponse { repeated string hosts = 1; }

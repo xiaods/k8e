@@ -228,6 +228,12 @@ type SandboxConfig struct {
 	// supplied explicitly (--sandbox-advertise-hostname / K8E_SANDBOX_ADVERTISED_HOSTNAME)
 	// for mTLS handshakes against the public name to succeed.
 	AdvertiseHostname string
+	// ExposeBaseURL is the public base URL (scheme://host[:port]) prefixed to
+	// KIP-24 exposed-service URLs (http://<base>/k8e/expose/<session>/<port>/).
+	// When unset, defaults to http://<advertise-hostname> (or http://localhost).
+	// Set it to the reachable gateway entry, e.g. http://gw.example.com or
+	// http://ec2-...:31422 when using NodePort without a LoadBalancer IP.
+	ExposeBaseURL string
 }
 
 type Control struct {

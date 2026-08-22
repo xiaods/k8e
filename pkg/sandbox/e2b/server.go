@@ -198,6 +198,13 @@ func (s *Server) Handle() http.Handler {
 	// new URL('/files', sandboxUrl) which strips the /e2b/envd prefix).
 	r.HandleFunc("/files", s.handleSignedFiles).Methods(http.MethodGet, http.MethodPost, http.MethodOptions)
 
+	// KIP-24 service exposure: reverse proxy into sandbox pods for ports
+	// registered via `k8e sandbox expose` (authorized against the gateway's
+	// expose registry). This HTTP surface is fronted by the Cilium Gateway
+	// API (:80/:443), making exposed services reachable at
+	// http(s)://<gateway>/k8e/expose/<session>/<port>/.
+	r.PathPrefix("/k8e/expose/").HandlerFunc(s.handleExposeProxy)
+
 	// Root health probe (CubeSandbox-style) for orchestrators and load
 	// balancers; the envd health probe stays under /e2b/envd/health.
 	r.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {

@@ -47,6 +47,9 @@ type Gateway interface {
 	TerminalResize(ctx context.Context, req *pb.TerminalResizeRequest) (*pb.TerminalResizeResponse, error)
 	TerminalSignal(ctx context.Context, req *pb.TerminalSignalRequest) (*pb.TerminalSignalResponse, error)
 	TerminalDestroy(ctx context.Context, req *pb.TerminalDestroyRequest) (*pb.TerminalDestroyResponse, error)
+	// KIP-24: gateway-side expose registry (used by the /k8e/expose proxy
+	// route to authorize which ports may be proxied into the pod).
+	ListExposed(ctx context.Context, req *pb.ListExposedRequest) (*pb.ListExposedResponse, error)
 }
 
 // grpcGateway adapts the real k8e gRPC client to the Gateway contract.
@@ -120,6 +123,10 @@ func (g *grpcGateway) TerminalSignal(ctx context.Context, req *pb.TerminalSignal
 
 func (g *grpcGateway) TerminalDestroy(ctx context.Context, req *pb.TerminalDestroyRequest) (*pb.TerminalDestroyResponse, error) {
 	return g.client.SandboxServiceClient.TerminalDestroy(ctx, req)
+}
+
+func (g *grpcGateway) ListExposed(ctx context.Context, req *pb.ListExposedRequest) (*pb.ListExposedResponse, error) {
+	return g.client.SandboxServiceClient.ListExposed(ctx, req)
 }
 
 // --- session views --------------------------------------------------------

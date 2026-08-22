@@ -170,6 +170,7 @@ func sessionToProtoView(s *sandboxv1.SandboxSession, bgRuns int32) *pb.GetSessio
 		PodIp:          s.Status.PodIP,
 		TenantId:       s.Spec.TenantID,
 		BackgroundRuns: bgRuns,
+		AllowedHosts:   s.Spec.AllowedHosts,
 	}
 	if s.Status.ExpiresAt != nil {
 		view.ExpiresAt = s.Status.ExpiresAt.Unix()

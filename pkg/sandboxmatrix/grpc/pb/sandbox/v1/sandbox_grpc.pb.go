@@ -49,6 +49,10 @@ const (
 	SandboxService_TerminalForeground_FullMethodName = "/sandbox.v1.SandboxService/TerminalForeground"
 	SandboxService_TerminalSignal_FullMethodName     = "/sandbox.v1.SandboxService/TerminalSignal"
 	SandboxService_TerminalDestroy_FullMethodName    = "/sandbox.v1.SandboxService/TerminalDestroy"
+	SandboxService_ExposeService_FullMethodName      = "/sandbox.v1.SandboxService/ExposeService"
+	SandboxService_UnexposeService_FullMethodName    = "/sandbox.v1.SandboxService/UnexposeService"
+	SandboxService_ListExposed_FullMethodName        = "/sandbox.v1.SandboxService/ListExposed"
+	SandboxService_UpdateAllowedHosts_FullMethodName = "/sandbox.v1.SandboxService/UpdateAllowedHosts"
 )
 
 // SandboxServiceClient is the client API for SandboxService service.
@@ -104,6 +108,16 @@ type SandboxServiceClient interface {
 	TerminalForeground(ctx context.Context, in *TerminalForegroundRequest, opts ...grpc.CallOption) (*TerminalForegroundResponse, error)
 	TerminalSignal(ctx context.Context, in *TerminalSignalRequest, opts ...grpc.CallOption) (*TerminalSignalResponse, error)
 	TerminalDestroy(ctx context.Context, in *TerminalDestroyRequest, opts ...grpc.CallOption) (*TerminalDestroyResponse, error)
+	// ── Service exposure (KIP-24) ─────────────────────────────────────────────
+	// ExposeService tunnels a sandbox-internal service to a public URL via
+	// cloudflared quick tunnel (pod dials OUT to the CF edge; no inbound
+	// exposure of the pod). UnexposeService tears the tunnel down.
+	ExposeService(ctx context.Context, in *ExposeServiceRequest, opts ...grpc.CallOption) (*ExposeServiceResponse, error)
+	UnexposeService(ctx context.Context, in *UnexposeServiceRequest, opts ...grpc.CallOption) (*UnexposeServiceResponse, error)
+	ListExposed(ctx context.Context, in *ListExposedRequest, opts ...grpc.CallOption) (*ListExposedResponse, error)
+	// UpdateAllowedHosts replaces the session's egress allowlist and re-applies
+	// the per-session CNP so the change is live (FQDN mode) / declared.
+	UpdateAllowedHosts(ctx context.Context, in *UpdateAllowedHostsRequest, opts ...grpc.CallOption) (*UpdateAllowedHostsResponse, error)
 }
 
 type sandboxServiceClient struct {
@@ -432,6 +446,46 @@ func (c *sandboxServiceClient) TerminalDestroy(ctx context.Context, in *Terminal
 	return out, nil
 }
 
+func (c *sandboxServiceClient) ExposeService(ctx context.Context, in *ExposeServiceRequest, opts ...grpc.CallOption) (*ExposeServiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExposeServiceResponse)
+	err := c.cc.Invoke(ctx, SandboxService_ExposeService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) UnexposeService(ctx context.Context, in *UnexposeServiceRequest, opts ...grpc.CallOption) (*UnexposeServiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UnexposeServiceResponse)
+	err := c.cc.Invoke(ctx, SandboxService_UnexposeService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) ListExposed(ctx context.Context, in *ListExposedRequest, opts ...grpc.CallOption) (*ListExposedResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListExposedResponse)
+	err := c.cc.Invoke(ctx, SandboxService_ListExposed_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sandboxServiceClient) UpdateAllowedHosts(ctx context.Context, in *UpdateAllowedHostsRequest, opts ...grpc.CallOption) (*UpdateAllowedHostsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateAllowedHostsResponse)
+	err := c.cc.Invoke(ctx, SandboxService_UpdateAllowedHosts_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SandboxServiceServer is the server API for SandboxService service.
 // All implementations must embed UnimplementedSandboxServiceServer
 // for forward compatibility.
@@ -485,6 +539,16 @@ type SandboxServiceServer interface {
 	TerminalForeground(context.Context, *TerminalForegroundRequest) (*TerminalForegroundResponse, error)
 	TerminalSignal(context.Context, *TerminalSignalRequest) (*TerminalSignalResponse, error)
 	TerminalDestroy(context.Context, *TerminalDestroyRequest) (*TerminalDestroyResponse, error)
+	// ── Service exposure (KIP-24) ─────────────────────────────────────────────
+	// ExposeService tunnels a sandbox-internal service to a public URL via
+	// cloudflared quick tunnel (pod dials OUT to the CF edge; no inbound
+	// exposure of the pod). UnexposeService tears the tunnel down.
+	ExposeService(context.Context, *ExposeServiceRequest) (*ExposeServiceResponse, error)
+	UnexposeService(context.Context, *UnexposeServiceRequest) (*UnexposeServiceResponse, error)
+	ListExposed(context.Context, *ListExposedRequest) (*ListExposedResponse, error)
+	// UpdateAllowedHosts replaces the session's egress allowlist and re-applies
+	// the per-session CNP so the change is live (FQDN mode) / declared.
+	UpdateAllowedHosts(context.Context, *UpdateAllowedHostsRequest) (*UpdateAllowedHostsResponse, error)
 	mustEmbedUnimplementedSandboxServiceServer()
 }
 
@@ -584,6 +648,18 @@ func (UnimplementedSandboxServiceServer) TerminalSignal(context.Context, *Termin
 }
 func (UnimplementedSandboxServiceServer) TerminalDestroy(context.Context, *TerminalDestroyRequest) (*TerminalDestroyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method TerminalDestroy not implemented")
+}
+func (UnimplementedSandboxServiceServer) ExposeService(context.Context, *ExposeServiceRequest) (*ExposeServiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExposeService not implemented")
+}
+func (UnimplementedSandboxServiceServer) UnexposeService(context.Context, *UnexposeServiceRequest) (*UnexposeServiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnexposeService not implemented")
+}
+func (UnimplementedSandboxServiceServer) ListExposed(context.Context, *ListExposedRequest) (*ListExposedResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListExposed not implemented")
+}
+func (UnimplementedSandboxServiceServer) UpdateAllowedHosts(context.Context, *UpdateAllowedHostsRequest) (*UpdateAllowedHostsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateAllowedHosts not implemented")
 }
 func (UnimplementedSandboxServiceServer) mustEmbedUnimplementedSandboxServiceServer() {}
 func (UnimplementedSandboxServiceServer) testEmbeddedByValue()                        {}
@@ -1132,6 +1208,78 @@ func _SandboxService_TerminalDestroy_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SandboxService_ExposeService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExposeServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).ExposeService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_ExposeService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).ExposeService(ctx, req.(*ExposeServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_UnexposeService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnexposeServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).UnexposeService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_UnexposeService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).UnexposeService(ctx, req.(*UnexposeServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_ListExposed_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListExposedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).ListExposed(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_ListExposed_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).ListExposed(ctx, req.(*ListExposedRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SandboxService_UpdateAllowedHosts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateAllowedHostsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SandboxServiceServer).UpdateAllowedHosts(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SandboxService_UpdateAllowedHosts_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SandboxServiceServer).UpdateAllowedHosts(ctx, req.(*UpdateAllowedHostsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SandboxService_ServiceDesc is the grpc.ServiceDesc for SandboxService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1250,6 +1398,22 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TerminalDestroy",
 			Handler:    _SandboxService_TerminalDestroy_Handler,
+		},
+		{
+			MethodName: "ExposeService",
+			Handler:    _SandboxService_ExposeService_Handler,
+		},
+		{
+			MethodName: "UnexposeService",
+			Handler:    _SandboxService_UnexposeService_Handler,
+		},
+		{
+			MethodName: "ListExposed",
+			Handler:    _SandboxService_ListExposed_Handler,
+		},
+		{
+			MethodName: "UpdateAllowedHosts",
+			Handler:    _SandboxService_UpdateAllowedHosts_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

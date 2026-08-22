@@ -47,6 +47,10 @@ func main() {
 		sandboxcli.LogCommand(),
 		sandboxcli.EventsCommand(),
 		sandboxcli.PsCommand(),
+		sandboxcli.ExposeCommand(),
+		sandboxcli.UnexposeCommand(),
+		sandboxcli.ExposedCommand(),
+		sandboxcli.AllowHostsCommand(),
 		sandboxcli.BenchmarkCommand(),
 	}
 	// M9 catalog: emits the full command surface (single source for SDK stubs).

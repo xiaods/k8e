@@ -116,6 +116,7 @@ type Server struct {
 	SandboxGRPCPort          int
 	SandboxNamespace         string
 	SandboxAdvertiseHostname string
+	SandboxExposeBaseURL     string
 }
 
 var (
@@ -608,6 +609,12 @@ var ServerFlags = []cli.Flag{
 		Usage:       "(sandbox) External DNS name or IP remote clients use to reach the sandbox gRPC gateway (added to the server cert SANs). Required in AWS/remote setups where the host's interfaces only carry private IPs — set it to the public domain or EIP, e.g. sandbox.example.com or 203.0.113.10. Must be a bare DNS name or IP: no scheme, port, path, or whitespace. K8E_SANDBOX_ADVERTISED_HOSTNAME",
 		Destination: &ServerConfig.SandboxAdvertiseHostname,
 		EnvVar:      "K8E_SANDBOX_ADVERTISED_HOSTNAME",
+	},
+	&cli.StringFlag{
+		Name:        "sandbox-expose-base-url",
+		Usage:       "(sandbox) Public base URL (scheme://host[:port]) prefixed to KIP-24 exposed-service URLs: http://<base>/k8e/expose/<session>/<port>/. Defaults to http://<sandbox-advertise-hostname> then http://localhost. For NodePort-only gateways set it to the reachable entry, e.g. http://ec2-...compute.amazonaws.com:31422. K8E_SANDBOX_EXPOSE_BASE_URL",
+		Destination: &ServerConfig.SandboxExposeBaseURL,
+		EnvVar:      "K8E_SANDBOX_EXPOSE_BASE_URL",
 	},
 
 	// Hidden/Deprecated flags below

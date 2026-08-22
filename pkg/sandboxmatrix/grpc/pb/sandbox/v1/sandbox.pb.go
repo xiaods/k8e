@@ -334,6 +334,7 @@ type GetSessionResponse struct {
 	EnvKeys        []string               `protobuf:"bytes,7,rep,name=env_keys,json=envKeys,proto3" json:"env_keys,omitempty"`                       // keys only, never values
 	SecretEnvVars  []string               `protobuf:"bytes,8,rep,name=secret_env_vars,json=secretEnvVars,proto3" json:"secret_env_vars,omitempty"`   // env_var names from secret_refs only
 	BackgroundRuns int32                  `protobuf:"varint,9,opt,name=background_runs,json=backgroundRuns,proto3" json:"background_runs,omitempty"` // active entries known to gateway registry
+	AllowedHosts   []string               `protobuf:"bytes,10,rep,name=allowed_hosts,json=allowedHosts,proto3" json:"allowed_hosts,omitempty"`       // current egress allowlist (KIP-24)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -429,6 +430,13 @@ func (x *GetSessionResponse) GetBackgroundRuns() int32 {
 		return x.BackgroundRuns
 	}
 	return 0
+}
+
+func (x *GetSessionResponse) GetAllowedHosts() []string {
+	if x != nil {
+		return x.AllowedHosts
+	}
+	return nil
 }
 
 type ListSessionsRequest struct {
@@ -3573,6 +3581,458 @@ func (x *TerminalDestroyResponse) GetOk() bool {
 	return false
 }
 
+type ExposeServiceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"` // in-pod service port (required)
+	Host          string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`  // in-pod listen address; default 127.0.0.1
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExposeServiceRequest) Reset() {
+	*x = ExposeServiceRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExposeServiceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExposeServiceRequest) ProtoMessage() {}
+
+func (x *ExposeServiceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExposeServiceRequest.ProtoReflect.Descriptor instead.
+func (*ExposeServiceRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *ExposeServiceRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ExposeServiceRequest) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *ExposeServiceRequest) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+type ExposeServiceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"` // http(s)://<gateway>/k8e/expose/<session>/<port>/
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExposeServiceResponse) Reset() {
+	*x = ExposeServiceResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExposeServiceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExposeServiceResponse) ProtoMessage() {}
+
+func (x *ExposeServiceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExposeServiceResponse.ProtoReflect.Descriptor instead.
+func (*ExposeServiceResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *ExposeServiceResponse) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+type UnexposeServiceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnexposeServiceRequest) Reset() {
+	*x = UnexposeServiceRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnexposeServiceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnexposeServiceRequest) ProtoMessage() {}
+
+func (x *UnexposeServiceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnexposeServiceRequest.ProtoReflect.Descriptor instead.
+func (*UnexposeServiceRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *UnexposeServiceRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *UnexposeServiceRequest) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+type UnexposeServiceResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnexposeServiceResponse) Reset() {
+	*x = UnexposeServiceResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnexposeServiceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnexposeServiceResponse) ProtoMessage() {}
+
+func (x *UnexposeServiceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnexposeServiceResponse.ProtoReflect.Descriptor instead.
+func (*UnexposeServiceResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *UnexposeServiceResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+type ExposedService struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Port          int32                  `protobuf:"varint,1,opt,name=port,proto3" json:"port,omitempty"`
+	Url           string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	Host          string                 `protobuf:"bytes,3,opt,name=host,proto3" json:"host,omitempty"`
+	StartedAt     int64                  `protobuf:"varint,4,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"` // unix seconds
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ExposedService) Reset() {
+	*x = ExposedService{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExposedService) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExposedService) ProtoMessage() {}
+
+func (x *ExposedService) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExposedService.ProtoReflect.Descriptor instead.
+func (*ExposedService) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *ExposedService) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *ExposedService) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *ExposedService) GetHost() string {
+	if x != nil {
+		return x.Host
+	}
+	return ""
+}
+
+func (x *ExposedService) GetStartedAt() int64 {
+	if x != nil {
+		return x.StartedAt
+	}
+	return 0
+}
+
+type ListExposedRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListExposedRequest) Reset() {
+	*x = ListExposedRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListExposedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListExposedRequest) ProtoMessage() {}
+
+func (x *ListExposedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListExposedRequest.ProtoReflect.Descriptor instead.
+func (*ListExposedRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *ListExposedRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type ListExposedResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Services      []*ExposedService      `protobuf:"bytes,1,rep,name=services,proto3" json:"services,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListExposedResponse) Reset() {
+	*x = ListExposedResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[69]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListExposedResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListExposedResponse) ProtoMessage() {}
+
+func (x *ListExposedResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[69]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListExposedResponse.ProtoReflect.Descriptor instead.
+func (*ListExposedResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{69}
+}
+
+func (x *ListExposedResponse) GetServices() []*ExposedService {
+	if x != nil {
+		return x.Services
+	}
+	return nil
+}
+
+type UpdateAllowedHostsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Hosts         []string               `protobuf:"bytes,2,rep,name=hosts,proto3" json:"hosts,omitempty"` // full replacement list; empty clears (falls back to matrix defaults)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateAllowedHostsRequest) Reset() {
+	*x = UpdateAllowedHostsRequest{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[70]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateAllowedHostsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateAllowedHostsRequest) ProtoMessage() {}
+
+func (x *UpdateAllowedHostsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[70]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateAllowedHostsRequest.ProtoReflect.Descriptor instead.
+func (*UpdateAllowedHostsRequest) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{70}
+}
+
+func (x *UpdateAllowedHostsRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *UpdateAllowedHostsRequest) GetHosts() []string {
+	if x != nil {
+		return x.Hosts
+	}
+	return nil
+}
+
+type UpdateAllowedHostsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Hosts         []string               `protobuf:"bytes,1,rep,name=hosts,proto3" json:"hosts,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateAllowedHostsResponse) Reset() {
+	*x = UpdateAllowedHostsResponse{}
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[71]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateAllowedHostsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateAllowedHostsResponse) ProtoMessage() {}
+
+func (x *UpdateAllowedHostsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sandbox_v1_sandbox_proto_msgTypes[71]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateAllowedHostsResponse.ProtoReflect.Descriptor instead.
+func (*UpdateAllowedHostsResponse) Descriptor() ([]byte, []int) {
+	return file_sandbox_v1_sandbox_proto_rawDescGZIP(), []int{71}
+}
+
+func (x *UpdateAllowedHostsResponse) GetHosts() []string {
+	if x != nil {
+		return x.Hosts
+	}
+	return nil
+}
+
 var File_sandbox_v1_sandbox_proto protoreflect.FileDescriptor
 
 const file_sandbox_v1_sandbox_proto_rawDesc = "" +
@@ -3602,7 +4062,7 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x06pod_ip\x18\x02 \x01(\tR\x05podIp\"2\n" +
 	"\x11GetSessionRequest\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"\xad\x02\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\xd2\x02\n" +
 	"\x12GetSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
@@ -3614,7 +4074,9 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"expires_at\x18\x06 \x01(\x03R\texpiresAt\x12\x19\n" +
 	"\benv_keys\x18\a \x03(\tR\aenvKeys\x12&\n" +
 	"\x0fsecret_env_vars\x18\b \x03(\tR\rsecretEnvVars\x12'\n" +
-	"\x0fbackground_runs\x18\t \x01(\x05R\x0ebackgroundRuns\"+\n" +
+	"\x0fbackground_runs\x18\t \x01(\x05R\x0ebackgroundRuns\x12#\n" +
+	"\rallowed_hosts\x18\n" +
+	" \x03(\tR\fallowedHosts\"+\n" +
 	"\x13ListSessionsRequest\x12\x14\n" +
 	"\x05phase\x18\x01 \x01(\tR\x05phase\"R\n" +
 	"\x14ListSessionsResponse\x12:\n" +
@@ -3836,14 +4298,44 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"terminalId\x12\x19\n" +
 	"\bgrace_ms\x18\x02 \x01(\x05R\agraceMs\")\n" +
 	"\x17TerminalDestroyResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok*\xb1\x01\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"]\n" +
+	"\x14ExposeServiceRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x12\n" +
+	"\x04host\x18\x03 \x01(\tR\x04host\")\n" +
+	"\x15ExposeServiceResponse\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\"K\n" +
+	"\x16UnexposeServiceRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\x05R\x04port\")\n" +
+	"\x17UnexposeServiceResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"i\n" +
+	"\x0eExposedService\x12\x12\n" +
+	"\x04port\x18\x01 \x01(\x05R\x04port\x12\x10\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\x12\x12\n" +
+	"\x04host\x18\x03 \x01(\tR\x04host\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\x04 \x01(\x03R\tstartedAt\"3\n" +
+	"\x12ListExposedRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"M\n" +
+	"\x13ListExposedResponse\x126\n" +
+	"\bservices\x18\x01 \x03(\v2\x1a.sandbox.v1.ExposedServiceR\bservices\"P\n" +
+	"\x19UpdateAllowedHostsRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
+	"\x05hosts\x18\x02 \x03(\tR\x05hosts\"2\n" +
+	"\x1aUpdateAllowedHostsResponse\x12\x14\n" +
+	"\x05hosts\x18\x01 \x03(\tR\x05hosts*\xb1\x01\n" +
 	"\x0eTerminalSignal\x12\x1f\n" +
 	"\x1bTERMINAL_SIGNAL_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13TERMINAL_SIGNAL_INT\x10\x01\x12\x18\n" +
 	"\x14TERMINAL_SIGNAL_TERM\x10\x02\x12\x18\n" +
 	"\x14TERMINAL_SIGNAL_KILL\x10\x03\x12\x18\n" +
 	"\x14TERMINAL_SIGNAL_TSTP\x10\x04\x12\x17\n" +
-	"\x13TERMINAL_SIGNAL_HUP\x10\x052\x95\x13\n" +
+	"\x13TERMINAL_SIGNAL_HUP\x10\x052\xfc\x15\n" +
 	"\x0eSandboxService\x12T\n" +
 	"\rCreateSession\x12 .sandbox.v1.CreateSessionRequest\x1a!.sandbox.v1.CreateSessionResponse\x12K\n" +
 	"\n" +
@@ -3877,7 +4369,11 @@ const file_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\x0eTerminalResize\x12!.sandbox.v1.TerminalResizeRequest\x1a\".sandbox.v1.TerminalResizeResponse\x12c\n" +
 	"\x12TerminalForeground\x12%.sandbox.v1.TerminalForegroundRequest\x1a&.sandbox.v1.TerminalForegroundResponse\x12W\n" +
 	"\x0eTerminalSignal\x12!.sandbox.v1.TerminalSignalRequest\x1a\".sandbox.v1.TerminalSignalResponse\x12Z\n" +
-	"\x0fTerminalDestroy\x12\".sandbox.v1.TerminalDestroyRequest\x1a#.sandbox.v1.TerminalDestroyResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
+	"\x0fTerminalDestroy\x12\".sandbox.v1.TerminalDestroyRequest\x1a#.sandbox.v1.TerminalDestroyResponse\x12T\n" +
+	"\rExposeService\x12 .sandbox.v1.ExposeServiceRequest\x1a!.sandbox.v1.ExposeServiceResponse\x12Z\n" +
+	"\x0fUnexposeService\x12\".sandbox.v1.UnexposeServiceRequest\x1a#.sandbox.v1.UnexposeServiceResponse\x12N\n" +
+	"\vListExposed\x12\x1e.sandbox.v1.ListExposedRequest\x1a\x1f.sandbox.v1.ListExposedResponse\x12c\n" +
+	"\x12UpdateAllowedHosts\x12%.sandbox.v1.UpdateAllowedHostsRequest\x1a&.sandbox.v1.UpdateAllowedHostsResponseB?Z=github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1;pbb\x06proto3"
 
 var (
 	file_sandbox_v1_sandbox_proto_rawDescOnce sync.Once
@@ -3892,7 +4388,7 @@ func file_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_sandbox_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 65)
+var file_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 74)
 var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(TerminalSignal)(0),                // 0: sandbox.v1.TerminalSignal
 	(*SecretRef)(nil),                  // 1: sandbox.v1.SecretRef
@@ -3958,83 +4454,101 @@ var file_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*TerminalSignalResponse)(nil),     // 61: sandbox.v1.TerminalSignalResponse
 	(*TerminalDestroyRequest)(nil),     // 62: sandbox.v1.TerminalDestroyRequest
 	(*TerminalDestroyResponse)(nil),    // 63: sandbox.v1.TerminalDestroyResponse
-	nil,                                // 64: sandbox.v1.CreateSessionRequest.EnvEntry
-	nil,                                // 65: sandbox.v1.CreateTerminalRequest.EnvEntry
+	(*ExposeServiceRequest)(nil),       // 64: sandbox.v1.ExposeServiceRequest
+	(*ExposeServiceResponse)(nil),      // 65: sandbox.v1.ExposeServiceResponse
+	(*UnexposeServiceRequest)(nil),     // 66: sandbox.v1.UnexposeServiceRequest
+	(*UnexposeServiceResponse)(nil),    // 67: sandbox.v1.UnexposeServiceResponse
+	(*ExposedService)(nil),             // 68: sandbox.v1.ExposedService
+	(*ListExposedRequest)(nil),         // 69: sandbox.v1.ListExposedRequest
+	(*ListExposedResponse)(nil),        // 70: sandbox.v1.ListExposedResponse
+	(*UpdateAllowedHostsRequest)(nil),  // 71: sandbox.v1.UpdateAllowedHostsRequest
+	(*UpdateAllowedHostsResponse)(nil), // 72: sandbox.v1.UpdateAllowedHostsResponse
+	nil,                                // 73: sandbox.v1.CreateSessionRequest.EnvEntry
+	nil,                                // 74: sandbox.v1.CreateTerminalRequest.EnvEntry
 }
 var file_sandbox_v1_sandbox_proto_depIdxs = []int32{
-	64, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
+	73, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
 	1,  // 1: sandbox.v1.CreateSessionRequest.secret_refs:type_name -> sandbox.v1.SecretRef
 	5,  // 2: sandbox.v1.ListSessionsResponse.sessions:type_name -> sandbox.v1.GetSessionResponse
 	23, // 3: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
 	47, // 4: sandbox.v1.GetProcessesResponse.processes:type_name -> sandbox.v1.ProcessInfo
-	65, // 5: sandbox.v1.CreateTerminalRequest.env:type_name -> sandbox.v1.CreateTerminalRequest.EnvEntry
+	74, // 5: sandbox.v1.CreateTerminalRequest.env:type_name -> sandbox.v1.CreateTerminalRequest.EnvEntry
 	53, // 6: sandbox.v1.TerminalStreamResponse.exit:type_name -> sandbox.v1.TerminalExit
 	0,  // 7: sandbox.v1.TerminalSignalRequest.signal:type_name -> sandbox.v1.TerminalSignal
-	2,  // 8: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
-	4,  // 9: sandbox.v1.SandboxService.GetSession:input_type -> sandbox.v1.GetSessionRequest
-	6,  // 10: sandbox.v1.SandboxService.ListSessions:input_type -> sandbox.v1.ListSessionsRequest
-	8,  // 11: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
-	10, // 12: sandbox.v1.SandboxService.PauseSession:input_type -> sandbox.v1.PauseSessionRequest
-	12, // 13: sandbox.v1.SandboxService.ResumeSession:input_type -> sandbox.v1.ResumeSessionRequest
-	14, // 14: sandbox.v1.SandboxService.Exec:input_type -> sandbox.v1.ExecRequest
-	14, // 15: sandbox.v1.SandboxService.ExecStream:input_type -> sandbox.v1.ExecRequest
-	17, // 16: sandbox.v1.SandboxService.WriteFile:input_type -> sandbox.v1.WriteFileRequest
-	19, // 17: sandbox.v1.SandboxService.ReadFile:input_type -> sandbox.v1.ReadFileRequest
-	21, // 18: sandbox.v1.SandboxService.ListFiles:input_type -> sandbox.v1.ListFilesRequest
-	24, // 19: sandbox.v1.SandboxService.PipInstall:input_type -> sandbox.v1.PipInstallRequest
-	26, // 20: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
-	28, // 21: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
-	30, // 22: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
-	32, // 23: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
-	34, // 24: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
-	36, // 25: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
-	38, // 26: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
-	40, // 27: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
-	42, // 28: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
-	44, // 29: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
-	46, // 30: sandbox.v1.SandboxService.GetProcesses:input_type -> sandbox.v1.GetProcessesRequest
-	49, // 31: sandbox.v1.SandboxService.CreateTerminal:input_type -> sandbox.v1.CreateTerminalRequest
-	51, // 32: sandbox.v1.SandboxService.TerminalStream:input_type -> sandbox.v1.TerminalStreamRequest
-	54, // 33: sandbox.v1.SandboxService.TerminalWrite:input_type -> sandbox.v1.TerminalWriteRequest
-	56, // 34: sandbox.v1.SandboxService.TerminalResize:input_type -> sandbox.v1.TerminalResizeRequest
-	58, // 35: sandbox.v1.SandboxService.TerminalForeground:input_type -> sandbox.v1.TerminalForegroundRequest
-	60, // 36: sandbox.v1.SandboxService.TerminalSignal:input_type -> sandbox.v1.TerminalSignalRequest
-	62, // 37: sandbox.v1.SandboxService.TerminalDestroy:input_type -> sandbox.v1.TerminalDestroyRequest
-	3,  // 38: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
-	5,  // 39: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
-	7,  // 40: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
-	9,  // 41: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
-	11, // 42: sandbox.v1.SandboxService.PauseSession:output_type -> sandbox.v1.PauseSessionResponse
-	13, // 43: sandbox.v1.SandboxService.ResumeSession:output_type -> sandbox.v1.ResumeSessionResponse
-	15, // 44: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
-	16, // 45: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
-	18, // 46: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
-	20, // 47: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
-	22, // 48: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
-	25, // 49: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
-	27, // 50: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
-	29, // 51: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
-	31, // 52: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	33, // 53: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
-	35, // 54: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
-	37, // 55: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
-	39, // 56: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
-	41, // 57: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
-	43, // 58: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
-	45, // 59: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
-	48, // 60: sandbox.v1.SandboxService.GetProcesses:output_type -> sandbox.v1.GetProcessesResponse
-	50, // 61: sandbox.v1.SandboxService.CreateTerminal:output_type -> sandbox.v1.CreateTerminalResponse
-	52, // 62: sandbox.v1.SandboxService.TerminalStream:output_type -> sandbox.v1.TerminalStreamResponse
-	55, // 63: sandbox.v1.SandboxService.TerminalWrite:output_type -> sandbox.v1.TerminalWriteResponse
-	57, // 64: sandbox.v1.SandboxService.TerminalResize:output_type -> sandbox.v1.TerminalResizeResponse
-	59, // 65: sandbox.v1.SandboxService.TerminalForeground:output_type -> sandbox.v1.TerminalForegroundResponse
-	61, // 66: sandbox.v1.SandboxService.TerminalSignal:output_type -> sandbox.v1.TerminalSignalResponse
-	63, // 67: sandbox.v1.SandboxService.TerminalDestroy:output_type -> sandbox.v1.TerminalDestroyResponse
-	38, // [38:68] is the sub-list for method output_type
-	8,  // [8:38] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	68, // 8: sandbox.v1.ListExposedResponse.services:type_name -> sandbox.v1.ExposedService
+	2,  // 9: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
+	4,  // 10: sandbox.v1.SandboxService.GetSession:input_type -> sandbox.v1.GetSessionRequest
+	6,  // 11: sandbox.v1.SandboxService.ListSessions:input_type -> sandbox.v1.ListSessionsRequest
+	8,  // 12: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
+	10, // 13: sandbox.v1.SandboxService.PauseSession:input_type -> sandbox.v1.PauseSessionRequest
+	12, // 14: sandbox.v1.SandboxService.ResumeSession:input_type -> sandbox.v1.ResumeSessionRequest
+	14, // 15: sandbox.v1.SandboxService.Exec:input_type -> sandbox.v1.ExecRequest
+	14, // 16: sandbox.v1.SandboxService.ExecStream:input_type -> sandbox.v1.ExecRequest
+	17, // 17: sandbox.v1.SandboxService.WriteFile:input_type -> sandbox.v1.WriteFileRequest
+	19, // 18: sandbox.v1.SandboxService.ReadFile:input_type -> sandbox.v1.ReadFileRequest
+	21, // 19: sandbox.v1.SandboxService.ListFiles:input_type -> sandbox.v1.ListFilesRequest
+	24, // 20: sandbox.v1.SandboxService.PipInstall:input_type -> sandbox.v1.PipInstallRequest
+	26, // 21: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
+	28, // 22: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
+	30, // 23: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
+	32, // 24: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
+	34, // 25: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
+	36, // 26: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
+	38, // 27: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
+	40, // 28: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
+	42, // 29: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
+	44, // 30: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
+	46, // 31: sandbox.v1.SandboxService.GetProcesses:input_type -> sandbox.v1.GetProcessesRequest
+	49, // 32: sandbox.v1.SandboxService.CreateTerminal:input_type -> sandbox.v1.CreateTerminalRequest
+	51, // 33: sandbox.v1.SandboxService.TerminalStream:input_type -> sandbox.v1.TerminalStreamRequest
+	54, // 34: sandbox.v1.SandboxService.TerminalWrite:input_type -> sandbox.v1.TerminalWriteRequest
+	56, // 35: sandbox.v1.SandboxService.TerminalResize:input_type -> sandbox.v1.TerminalResizeRequest
+	58, // 36: sandbox.v1.SandboxService.TerminalForeground:input_type -> sandbox.v1.TerminalForegroundRequest
+	60, // 37: sandbox.v1.SandboxService.TerminalSignal:input_type -> sandbox.v1.TerminalSignalRequest
+	62, // 38: sandbox.v1.SandboxService.TerminalDestroy:input_type -> sandbox.v1.TerminalDestroyRequest
+	64, // 39: sandbox.v1.SandboxService.ExposeService:input_type -> sandbox.v1.ExposeServiceRequest
+	66, // 40: sandbox.v1.SandboxService.UnexposeService:input_type -> sandbox.v1.UnexposeServiceRequest
+	69, // 41: sandbox.v1.SandboxService.ListExposed:input_type -> sandbox.v1.ListExposedRequest
+	71, // 42: sandbox.v1.SandboxService.UpdateAllowedHosts:input_type -> sandbox.v1.UpdateAllowedHostsRequest
+	3,  // 43: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
+	5,  // 44: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
+	7,  // 45: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
+	9,  // 46: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
+	11, // 47: sandbox.v1.SandboxService.PauseSession:output_type -> sandbox.v1.PauseSessionResponse
+	13, // 48: sandbox.v1.SandboxService.ResumeSession:output_type -> sandbox.v1.ResumeSessionResponse
+	15, // 49: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
+	16, // 50: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
+	18, // 51: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
+	20, // 52: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
+	22, // 53: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
+	25, // 54: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
+	27, // 55: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
+	29, // 56: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
+	31, // 57: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
+	33, // 58: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
+	35, // 59: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
+	37, // 60: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
+	39, // 61: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
+	41, // 62: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
+	43, // 63: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
+	45, // 64: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
+	48, // 65: sandbox.v1.SandboxService.GetProcesses:output_type -> sandbox.v1.GetProcessesResponse
+	50, // 66: sandbox.v1.SandboxService.CreateTerminal:output_type -> sandbox.v1.CreateTerminalResponse
+	52, // 67: sandbox.v1.SandboxService.TerminalStream:output_type -> sandbox.v1.TerminalStreamResponse
+	55, // 68: sandbox.v1.SandboxService.TerminalWrite:output_type -> sandbox.v1.TerminalWriteResponse
+	57, // 69: sandbox.v1.SandboxService.TerminalResize:output_type -> sandbox.v1.TerminalResizeResponse
+	59, // 70: sandbox.v1.SandboxService.TerminalForeground:output_type -> sandbox.v1.TerminalForegroundResponse
+	61, // 71: sandbox.v1.SandboxService.TerminalSignal:output_type -> sandbox.v1.TerminalSignalResponse
+	63, // 72: sandbox.v1.SandboxService.TerminalDestroy:output_type -> sandbox.v1.TerminalDestroyResponse
+	65, // 73: sandbox.v1.SandboxService.ExposeService:output_type -> sandbox.v1.ExposeServiceResponse
+	67, // 74: sandbox.v1.SandboxService.UnexposeService:output_type -> sandbox.v1.UnexposeServiceResponse
+	70, // 75: sandbox.v1.SandboxService.ListExposed:output_type -> sandbox.v1.ListExposedResponse
+	72, // 76: sandbox.v1.SandboxService.UpdateAllowedHosts:output_type -> sandbox.v1.UpdateAllowedHostsResponse
+	43, // [43:77] is the sub-list for method output_type
+	9,  // [9:43] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_sandbox_v1_sandbox_proto_init() }
@@ -4052,7 +4566,7 @@ func file_sandbox_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sandbox_v1_sandbox_proto_rawDesc), len(file_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   65,
+			NumMessages:   74,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
