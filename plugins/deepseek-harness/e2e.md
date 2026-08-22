@@ -139,3 +139,38 @@ stty size                         # reflects rows/cols sent by the harness
   at <30 days for CLI-managed flows).
 - Terminals are pod-scoped: pausing/resuming or recycling the session pod kills
   them (KIP-19).
+
+## Step 7 — service exposure (KIP-24)
+
+Prerequisite: the gateway is fronted by the Cilium Gateway API with a
+reachable base URL (LoadBalancer IP via Cilium LB-IPAM/MetalLB, or NodePort),
+and the k8e-server runs with `--sandbox-expose-base-url <scheme>://<host>[:port]`
+(and `--sandbox-advertise-hostname <host>` for cert SANs).
+
+```sh
+# 1. Start a long-running service in the sandbox (background)
+k8e-sandbox-cli run "python3 -m http.server 8080 --bind 127.0.0.1" --background
+
+# 2. Expose it through the gateway
+k8e-sandbox-cli expose 8080
+# -> {"url":"http://<gateway>/k8e/expose/<sid>/8080/","port":8080,"session_id":"<sid>"}
+
+# 3. Reach it through the gateway (from any VPC-reachable host)
+curl http://<gateway>/k8e/expose/<sid>/8080/
+
+# 4. Inspect / tear down
+k8e-sandbox-cli exposed
+k8e-sandbox-cli unexpose 8080
+```
+
+Egress allowlist is freely configurable (live CNP re-apply):
+
+```sh
+k8e-sandbox-cli allow-hosts --add pypi.org,registry.npmjs.org
+k8e-sandbox-cli allow-hosts --remove pypi.org
+k8e-sandbox-cli allow-hosts --clear
+```
+
+What to check: the service is reachable at the gateway URL (path preserved,
+Host preserved); a port that was never exposed returns 404; unexpose makes the
+URL 404 again.

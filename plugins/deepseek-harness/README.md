@@ -12,15 +12,30 @@ via `dsh plugin --profile <name> add`.
 | [`@k8e-sandbox/dsh-k8e-sandbox-client`](packages/dsh-k8e-sandbox-client) | Transport: `CliK8eClient` (Phase 1) + `GrpcK8eClient` (Phase 2) | library |
 | [`@k8e-sandbox/dsh-k8e-sandbox-fs`](packages/dsh-k8e-sandbox-fs) | Filesystem seam provider | `ctx.fs` |
 | [`@k8e-sandbox/dsh-k8e-sandbox-subprocess`](packages/dsh-k8e-sandbox-subprocess) | Subprocess seam provider (streaming exec + `spawnTerminal`) | `ctx.subprocess` |
-| [`@k8e-sandbox/dsh-k8e-sandbox-tool`](packages/dsh-k8e-sandbox-tool) | Model-surface tools (session status/destroy, exec, background + poll) | `ctx.tools` |
+| [`@k8e-sandbox/dsh-k8e-sandbox-tool`](packages/dsh-k8e-sandbox-tool) | Model-surface tools (session status/destroy, exec, background + poll, service expose/unexpose, egress allow-hosts) | `ctx.tools` |
 | [`@k8e-sandbox/dsh-k8e-sandbox-bundle`](packages/dsh-k8e-sandbox-bundle) | Installable bundle (`dsh.bundle.patch` → `cordis.patch.yml`) | — |
 
 ## Status
 
 Phase 1 (CLI transport) and Phase 2 (direct gRPC: `spawnTerminal` + streaming
-`spawn`) are implemented. The tree typechecks cleanly against the dsh checkout;
-runtime e2e against a live K8E gateway is still pending — the procedure is in
-[`e2e.md`](e2e.md).
+`spawn`) are implemented, plus KIP-24 service exposure: an in-sandbox service
+port is proxied through the k8e API Gateway (`expose`/`unexpose`), and the
+session egress allowlist is freely configurable live (`allow-hosts`). The tree
+typechecks cleanly against the dsh checkout; runtime e2e against a live K8E
+gateway is in [`e2e.md`](e2e.md).
+
+### Model tools (`ctx.tools`)
+
+| Tool | Purpose |
+|------|---------|
+| `k8e_sandbox_session_status` | Current session (availability, id, tenant, pod reachability) |
+| `k8e_sandbox_session_destroy` | Destroy the session (idempotent) |
+| `k8e_sandbox_exec` | Foreground command (stdout/stderr/exit code/duration) |
+| `k8e_sandbox_run_background` | Async command; poll with `k8e_sandbox_poll` |
+| `k8e_sandbox_poll` | Poll a background run to completion |
+| `k8e_sandbox_expose` (KIP-24) | Expose an in-sandbox service port through the k8e API Gateway; returns the public URL |
+| `k8e_sandbox_unexpose` (KIP-24) | Remove a public tunnel for a port (idempotent) |
+| `k8e_sandbox_allow_hosts` (KIP-24) | Freely configure the session egress allowlist (live CNP re-apply) |
 
 ## Test
 

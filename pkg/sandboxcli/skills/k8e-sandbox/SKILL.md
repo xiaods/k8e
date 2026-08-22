@@ -150,7 +150,7 @@ k8e-sandbox-cli run 'echo hi' --tenant my-project
 k8e-sandbox-cli subagent <parent-sid>
 ```
 
-Useful commands: `run`, `write`, `read`, `list`, `create`, `get`, `sessions`, `destroy`, `status`, `log`, `events`, `ps`, `poll`, `subagent`, `confirm`, `approve`, `snapshot`, `benchmark`, `catalog`.
+Useful commands: `run`, `write`, `read`, `list`, `create`, `get`, `sessions`, `destroy`, `status`, `log`, `events`, `ps`, `poll`, `subagent`, `confirm`, `approve`, `snapshot`, `benchmark`, `catalog`, `expose`, `unexpose`, `exposed`, `allow-hosts`.
 
 ### 4. Report
 
@@ -198,11 +198,44 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli snapshot list` | List saved snapshots |
 | `k8e-sandbox-cli snapshot restore <name>` | New session from a snapshot (`--base <snap>` for incremental) |
 | `k8e-sandbox-cli snapshot delete <name>` | Delete a snapshot |
+| `k8e-sandbox-cli expose <port>` | Expose an in-sandbox service through the k8e API Gateway; returns the public URL (`--host`, `--session-id`) |
+| `k8e-sandbox-cli unexpose <port>` | Tear down an exposed port (idempotent; `--session-id`) |
+| `k8e-sandbox-cli exposed` | List live exposures for the session (`--session-id`) |
+| `k8e-sandbox-cli allow-hosts <hosts...>` | Freely set the session egress allowlist, live (`--hosts` replace, `--add`, `--remove`, `--clear`; `--session-id`) |
 | `k8e-sandbox-cli benchmark` | Warm-pool latency metrics (`--pool-size`, `--iterations`) |
 | `k8e-sandbox-cli catalog` | Emit machine-readable command surface (SDK generation) |
 | `k8e-sandbox-cli destroy <sid>` | Tear down session |
 
 Default run output is JSON: `stdout`, `stderr`, `exit_code`, `session_id`. Use `--raw` to stream text.
+
+## Service exposure (KIP-24)
+
+When the agent builds a long-running service inside the sandbox (web app,
+API server), expose it through the k8e API Gateway so the gateway/other hosts
+can reach it — no port-forward, no inbound pod exposure:
+
+```
+k8e-sandbox-cli run "python3 -m http.server 8080 --bind 127.0.0.1" --background
+k8e-sandbox-cli expose 8080            # -> {"url":"http://<gateway>/k8e/expose/<sid>/8080/",...}
+curl http://<gateway>/k8e/expose/<sid>/8080/   # reachable via the gateway (VPC/LB)
+k8e-sandbox-cli exposed                # list live exposures
+k8e-sandbox-cli unexpose 8080          # tear down
+```
+
+The exposed URL routes: Cilium Gateway API (:80/:443) -> embedded e2b HTTP
+server -> reverse proxy to `http://<podIP>:<port>`. The gateway base is
+configured server-side (`--sandbox-expose-base-url`, default
+`http://<advertise-hostname>`). The CNP is re-applied automatically so only
+the gateway/e2b-server can reach the exposed port.
+
+**Egress allowlist is freely configurable** — when the sandbox needs outbound
+access to domains (package registries, tunnel endpoints), update it live:
+
+```
+k8e-sandbox-cli allow-hosts --add pypi.org,registry.npmjs.org
+k8e-sandbox-cli allow-hosts --remove pypi.org
+k8e-sandbox-cli allow-hosts --clear          # fall back to cluster defaults
+```
 
 ## Session modes
 
