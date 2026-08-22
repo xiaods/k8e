@@ -1336,6 +1336,21 @@ const (
 	sessionErrPrefix = "session: "
 )
 
+// dialSession opens the gateway client and resolves the active session id
+// (shared boilerplate of the KIP-24 commands). The caller owns client.Close.
+func dialSession(ctx *cli.Context) (*client.Client, string, *ExitError) {
+	cl, exitErr := newClientFromCtx(ctx)
+	if exitErr != nil {
+		return nil, "", exitErr
+	}
+	sid, _, err := ensureSession(cl, ctx)
+	if err != nil {
+		cl.Close()
+		return nil, "", printErrorExit(sessionErrPrefix+err.Error(), 2)
+	}
+	return cl, sid, nil
+}
+
 // ── ExposeCommand ──────────────────────────────────────────────────────────
 // KIP-24: tunnel a sandbox-internal service to a public trycloudflare URL via
 // cloudflared quick tunnel (pod dials OUT to the CF edge, no inbound exposure).
@@ -1361,15 +1376,11 @@ func ExposeCommand() cli.Command {
 			if port <= 0 || port > 65535 {
 				return printErrorExit("port required (positional or --port), in [1, 65535]", 2)
 			}
-			client, exitErr := newClientFromCtx(ctx)
+			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
 				return exitErr
 			}
 			defer client.Close()
-			sid, _, err := ensureSession(client, ctx)
-			if err != nil {
-				return printErrorExit(sessionErrPrefix+err.Error(), 2)
-			}
 			resp, err := client.SandboxServiceClient.ExposeService(context.Background(), &pb.ExposeServiceRequest{
 				SessionId: sid, Port: int32(port), Host: ctx.String("host"),
 			})
@@ -1404,15 +1415,11 @@ func UnexposeCommand() cli.Command {
 			if port <= 0 || port > 65535 {
 				return printErrorExit("port required (positional or --port), in [1, 65535]", 2)
 			}
-			client, exitErr := newClientFromCtx(ctx)
+			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
 				return exitErr
 			}
 			defer client.Close()
-			sid, _, err := ensureSession(client, ctx)
-			if err != nil {
-				return printErrorExit(sessionErrPrefix+err.Error(), 2)
-			}
 			resp, err := client.SandboxServiceClient.UnexposeService(context.Background(), &pb.UnexposeServiceRequest{
 				SessionId: sid, Port: int32(port),
 			})
@@ -1435,15 +1442,11 @@ func ExposedCommand() cli.Command {
 			cli.StringFlag{Name: "session-id", Usage: sessionIDFlagUsage},
 		},
 		Action: func(ctx *cli.Context) error {
-			client, exitErr := newClientFromCtx(ctx)
+			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
 				return exitErr
 			}
 			defer client.Close()
-			sid, _, err := ensureSession(client, ctx)
-			if err != nil {
-				return printErrorExit(sessionErrPrefix+err.Error(), 2)
-			}
 			resp, err := client.SandboxServiceClient.ListExposed(context.Background(), &pb.ListExposedRequest{
 				SessionId: sid,
 			})
@@ -1482,15 +1485,11 @@ func AllowHostsCommand() cli.Command {
 			cli.BoolFlag{Name: "clear", Usage: "Clear the allowlist (fall back to matrix defaults)"},
 		},
 		Action: func(ctx *cli.Context) error {
-			client, exitErr := newClientFromCtx(ctx)
+			client, sid, exitErr := dialSession(ctx)
 			if exitErr != nil {
 				return exitErr
 			}
 			defer client.Close()
-			sid, _, err := ensureSession(client, ctx)
-			if err != nil {
-				return printErrorExit(sessionErrPrefix+err.Error(), 2)
-			}
 			hosts, err := resolveAllowedHosts(ctx, client, sid)
 			if err != nil {
 				return printErrorExit(err.Error(), 2)
