@@ -181,6 +181,18 @@ func NewServer(cfg ServerConfig) *Server {
 	if cfg.FQDNEnabled {
 		s.orch.SetFQDNEGressEnabled(true)
 	}
+	if cfg.ExposeBaseURL != "" {
+		s.orch.exposeURLBase = strings.TrimSuffix(cfg.ExposeBaseURL, "/")
+	} else if cfg.AdvertiseHostname != "" {
+		s.orch.exposeURLBase = "http://" + cfg.AdvertiseHostname
+	}
+	// KIP-24: restore exposures persisted on session annotations so gateway
+	// restarts do not silently drop agent-published URLs.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		s.orch.RestoreExposedRegistry(ctx, sandboxNS)
+	}()
 	RegisterSandboxMetrics(s.orch)
 	if cfg.LayerStoreDir != "" {
 		if ls, err := sandboxlayer.New(cfg.LayerStoreDir); err == nil {

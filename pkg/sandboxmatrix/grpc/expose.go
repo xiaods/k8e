@@ -3,13 +3,16 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	unstructured "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
-	"github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -34,6 +37,11 @@ type ExposedEntry struct {
 // exposeURLPath is the e2b HTTP reverse-proxy route prefix (Gateway-API
 // fronted). Full URL: <gateway-base>/k8e/expose/<session>/<port>/
 const exposeURLPath = "/k8e/expose/%s/%d/"
+
+// exposedPortsAnnotation persists the exposed port list on the session CRD
+// so exposures survive a gateway restart (same recovery model as the
+// background-runs annotation, KIP-16 M6).
+const exposedPortsAnnotation = "sandbox.k8e.io/exposed-ports"
 
 // ExposeService registers an in-pod service port for gateway proxying and
 // re-applies the session CNP so the gateway/e2b-server may reach the port.
@@ -80,6 +88,7 @@ func (o *Orchestrator) ExposeService(ctx context.Context, sessionID string, port
 		o.removeExposed(sessionID, int(port))
 		return nil, status.Errorf(codes.Internal, "expose: apply CNP: %v", err)
 	}
+	o.persistExposedPorts(ctx, session)
 	return &pb.ExposeServiceResponse{Url: url}, nil
 }
 
@@ -117,6 +126,7 @@ func (o *Orchestrator) UnexposeService(ctx context.Context, sessionID string, po
 		if err := o.applySessionCNP(ctx, session); err != nil {
 			return nil, status.Errorf(codes.Internal, "unexpose: apply CNP: %v", err)
 		}
+		o.persistExposedPorts(ctx, session)
 	}
 	return &pb.UnexposeServiceResponse{Ok: true}, nil
 }
@@ -172,6 +182,63 @@ func (o *Orchestrator) UpdateAllowedHosts(ctx context.Context, sessionID string,
 		return nil, status.Errorf(codes.Internal, "update allowed hosts: apply CNP: %v", err)
 	}
 	return hosts, nil
+}
+
+// persistExposedPorts writes the current exposed-port list to the session
+// annotation so a gateway restart can restore the registry.
+func (o *Orchestrator) persistExposedPorts(ctx context.Context, session *sandboxv1.SandboxSession) {
+	o.exposeMu.Lock()
+	var ports []string
+	for _, e := range o.exposed[session.Name] {
+		ports = append(ports, fmt.Sprintf("%d", e.Port))
+	}
+	o.exposeMu.Unlock()
+
+	if session.Annotations == nil {
+		session.Annotations = map[string]string{}
+	}
+	session.Annotations[exposedPortsAnnotation] = strings.Join(ports, ",")
+	o.updateSession(ctx, session)
+}
+
+// RestoreExposedRegistry rebuilds the in-memory expose registry from the
+// exposed-ports annotations at gateway startup (call once before serving).
+func (o *Orchestrator) RestoreExposedRegistry(ctx context.Context, namespace string) {
+	sessions, err := o.dynamic.Resource(sessionGVR).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil || len(sessions.Items) == 0 {
+		return
+	}
+	for _, item := range sessions.Items {
+		raw, _, _ := unstructured.NestedString(item.Object, "metadata", "annotations", exposedPortsAnnotation)
+		if raw == "" {
+			continue
+		}
+		var ports []int32
+		for _, p := range strings.Split(raw, ",") {
+			if v, err := strconv.Atoi(strings.TrimSpace(p)); err == nil && v > 0 {
+				ports = append(ports, int32(v))
+			}
+		}
+		if len(ports) == 0 {
+			continue
+		}
+		sid := item.GetName()
+		base := o.exposeURLBase
+		if base == "" {
+			base = "http://localhost"
+		}
+		entries := make([]*ExposedEntry, 0, len(ports))
+		for _, p := range ports {
+			entries = append(entries, &ExposedEntry{
+				Port:      int(p),
+				URL:       fmt.Sprintf("%s%s", base, fmt.Sprintf(exposeURLPath, sid, p)),
+				StartedAt: time.Now(),
+			})
+		}
+		o.exposeMu.Lock()
+		o.exposed[sid] = entries
+		o.exposeMu.Unlock()
+	}
 }
 
 // applySessionCNP rebuilds and applies the session CNP including any exposed
