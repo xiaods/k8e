@@ -238,10 +238,21 @@ func (w *watcher) deploy(path string, compareChecksum bool) error {
 
 	// Ensure that we don't try to prune using GVKs that the server doesn't have.
 	// This can happen when CRDs are removed or when core types are removed - PodSecurityPolicy, for example.
+	// CRITICAL: a GVK whose CRD has not been installed YET (bootstrap ordering — e.g. a manifest referencing a
+	// Cilium CRD while the cilium HelmChart is still installing its CRDs) must NOT be silently dropped here:
+	// the apply below would then succeed on the remaining objects, lock in the Addon checksum, and the watcher
+	// would skip this manifest forever — the late-arriving CRD's resource would never be created (E2E: sandbox
+	// Gateway LoadBalancer IPPool stuck <pending>). Treat a dropped GVK as a retryable error instead.
+	unfilteredGVKs := append([]schema.GroupVersionKind(nil), addonGVKs...)
 	addonGVKs, err = w.validateGVKs(addonGVKs)
 	if err != nil {
 		w.recorder.Eventf(&addon, corev1.EventTypeWarning, "ValidateManifestFailed", "Validate GVKs for manifest at %q failed: %v", path, err)
 		return err
+	}
+	if len(addonGVKs) != len(unfilteredGVKs) {
+		w.recorder.Eventf(&addon, corev1.EventTypeWarning, "ValidateManifestFailed",
+			"Manifest at %q references GVKs not yet available on the server; retrying until their CRDs appear", path)
+		return fmt.Errorf("manifest %s: %d GVK(s) not yet available on the server (CRD not installed yet?); will retry", path, len(unfilteredGVKs)-len(addonGVKs))
 	}
 
 	// Attempt to apply the changes. Failure at this point would be due to more complicated issues - invalid changes to
