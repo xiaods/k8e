@@ -13,9 +13,17 @@ const watch = @import("watch.zig");
 const pty = @import("pty.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    // Production runs on a page allocator: the DebugAllocator here cost ~2x
+    // memory and slow alloc/free on every request for the pod's whole
+    // lifetime, and its abort-on-double-free (though valuable in tests)
+    // crashes the daemon on any mistake. Debug builds keep the guarded
+    // allocator so CI unit tests still catch ownership bugs.
+    var gpa_state: std.heap.DebugAllocator(.{}) = undefined;
+    const allocator: std.mem.Allocator = if (std.debug.runtime_safety) blk: {
+        gpa_state = .{};
+        break :blk gpa_state.allocator();
+    } else std.heap.page_allocator;
+    defer { if (std.debug.runtime_safety) _ = gpa_state.deinit(); }
 
     // PID 1: reap zombies via SIGCHLD ignore
     const pid = std.os.linux.getpid();
