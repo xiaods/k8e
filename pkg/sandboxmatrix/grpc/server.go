@@ -428,6 +428,26 @@ func (s *Server) GetSession(ctx context.Context, req *pb.GetSessionRequest) (*pb
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "session %s not found", req.SessionId)
 	}
+	// KIP-24 expose chain: the e2b reverse proxy reads the pod IP from
+	// GetSession (no fallback like the gateway's own getPodIP). CreateSession
+	// stamps Status.PodIP from the pod object at creation time, which is
+	// usually BEFORE the pod is assigned an IP — so the field can stay empty
+	// forever and every exposed URL 503s with "session has no pod IP yet".
+	// Backfill it from the live pod list (and persist it) when empty.
+	if sess.Status.PodIP == "" {
+		if pods, perr := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSessionID + "=" + req.SessionId,
+		}); perr == nil {
+			for i := range pods.Items {
+				if pods.Items[i].Status.PodIP != "" {
+					sess.Status.PodIP = pods.Items[i].Status.PodIP
+					s.cachePodIP(req.SessionId, sess.Status.PodIP)
+					s.orch.updateSessionStatus(ctx, sess)
+					break
+				}
+			}
+		}
+	}
 	return sessionToProtoView(sess, s.orch.countBackgroundRuns(req.SessionId)), nil
 }
 
