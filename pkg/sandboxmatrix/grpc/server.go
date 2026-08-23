@@ -481,21 +481,29 @@ func (s *Server) ResumeSession(ctx context.Context, req *pb.ResumeSessionRequest
 }
 
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
-	// Background mode: submit async, return run_id immediately
 	if req.Background {
-		env, envErr := s.resolveSessionEnv(ctx, req.SessionId)
-		if envErr != nil {
-			return nil, envErr
-		}
-		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir, env)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "background submit: %v", err)
-		}
-		return &pb.ExecResponse{
-			RunId: runID, Status: execStatusStarted, SessionId: req.SessionId, Language: req.Language,
-		}, nil
+		return s.execBackground(ctx, req)
 	}
+	return s.execForeground(ctx, req)
+}
 
+// execBackground submits an async run and returns immediately with the run_id.
+func (s *Server) execBackground(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
+	env, envErr := s.resolveSessionEnv(ctx, req.SessionId)
+	if envErr != nil {
+		return nil, envErr
+	}
+	runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir, env)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "background submit: %v", err)
+	}
+	return &pb.ExecResponse{
+		RunId: runID, Status: execStatusStarted, SessionId: req.SessionId, Language: req.Language,
+	}, nil
+}
+
+// execForeground runs a command synchronously via the session's sandboxd.
+func (s *Server) execForeground(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
 	// Fetch the session ONCE and derive both the pod IP and the env from it —
 	// the old path did a CRD Get in getPodIP and ANOTHER in resolveSessionEnv
 	// (plus a Pod List), i.e. 3 API round-trips before any sandboxd work.
