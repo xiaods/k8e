@@ -1,10 +1,13 @@
 package sandboxcli
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/urfave/cli"
 )
 
 func TestResolveConnectMode_LocalDefault(t *testing.T) {
@@ -391,4 +394,64 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// --- connFlag: connect --endpoint … must work alongside the root-level
+// k8e-sandbox-cli --endpoint … spelling (urfave/cli v1 keeps local and
+// global flag sets separate, so an unset local flag must fall back). ---
+
+func connFlagTestCtx(t *testing.T, local, global map[string]string) *cli.Context {
+	t.Helper()
+	app := cli.NewApp()
+	localSet := flag.NewFlagSet("connect", flag.ContinueOnError)
+	globalSet := flag.NewFlagSet("k8e-sandbox-cli", flag.ContinueOnError)
+	for _, name := range []string{flagEndpoint, flagApikey, flagProfile} {
+		localSet.String(name, "", "")
+		globalSet.String(name, "", "")
+	}
+	args := []string{}
+	for name, v := range local {
+		args = append(args, "--"+name, v)
+	}
+	if err := localSet.Parse(args); err != nil {
+		t.Fatal(err)
+	}
+	gargs := []string{}
+	for name, v := range global {
+		gargs = append(gargs, "--"+name, v)
+	}
+	if err := globalSet.Parse(gargs); err != nil {
+		t.Fatal(err)
+	}
+	gctx := cli.NewContext(app, globalSet, nil)
+	return cli.NewContext(app, localSet, gctx)
+}
+
+func TestConnFlag_LocalOverridesGlobal(t *testing.T) {
+	ctx := connFlagTestCtx(t,
+		map[string]string{flagEndpoint: "local:50051"},
+		map[string]string{flagEndpoint: "global:50051"})
+	if got := connFlag(ctx, flagEndpoint); got != "local:50051" {
+		t.Fatalf("connFlag = %q, want local:50051", got)
+	}
+}
+
+func TestConnFlag_FallsBackToGlobal(t *testing.T) {
+	ctx := connFlagTestCtx(t, nil, map[string]string{
+		flagEndpoint: "global:50051",
+		flagApikey:   "gkey",
+	})
+	if got := connFlag(ctx, flagEndpoint); got != "global:50051" {
+		t.Fatalf("connFlag(endpoint) = %q, want global:50051", got)
+	}
+	if got := connFlag(ctx, flagApikey); got != "gkey" {
+		t.Fatalf("connFlag(apikey) = %q, want gkey", got)
+	}
+}
+
+func TestConnFlag_EmptyWhenNowhereSet(t *testing.T) {
+	ctx := connFlagTestCtx(t, nil, nil)
+	if got := connFlag(ctx, flagProfile); got != "" {
+		t.Fatalf("connFlag(profile) = %q, want empty", got)
+	}
 }

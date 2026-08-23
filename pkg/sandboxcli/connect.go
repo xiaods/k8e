@@ -22,6 +22,27 @@ const (
 	flagSkipPath   = "skip-path"
 )
 
+// Connection flag names. They are registered BOTH on the root command
+// (k8e-sandbox-cli --endpoint … connect) and on connect itself
+// (k8e-sandbox-cli connect --endpoint …) — the latter is the natural
+// spelling users reach for first.
+const (
+	flagEndpoint = "endpoint"
+	flagApikey   = "apikey"
+	flagProfile  = "profile"
+)
+
+// connFlag returns a connection flag from the subcommand-local flag set when
+// explicitly provided, else falls back to the root-command global flag (and
+// its env var binding). Needed because urfave/cli v1 keeps local and global
+// flag sets separate: an unset local flag does not see the global value.
+func connFlag(ctx *cli.Context, name string) string {
+	if v := ctx.String(name); v != "" {
+		return v
+	}
+	return ctx.GlobalString(name)
+}
+
 // ConnectCommand returns the "connect" subcommand: authenticate (local or remote),
 // persist connection config, verify the gateway, ensure CLI is on PATH, and install
 // agent skills so harnesses can invoke `/k8e-sandbox <goal>` (Claude),
@@ -32,6 +53,21 @@ func ConnectCommand() cli.Command {
 		Name:  "connect",
 		Usage: "Connect to local or remote K8E sandbox and install /k8e-sandbox agent skills",
 		Flags: []cli.Flag{
+			cli.StringFlag{
+				Name:   flagEndpoint,
+				EnvVar: "K8E_SANDBOX_ENDPOINT",
+				Usage:  "gRPC endpoint (default: 127.0.0.1:50051)",
+			},
+			cli.StringFlag{
+				Name:   flagApikey,
+				EnvVar: "K8E_SANDBOX_APIKEY",
+				Usage:  "API key for remote cluster authentication",
+			},
+			cli.StringFlag{
+				Name:   flagProfile,
+				EnvVar: "K8E_SANDBOX_PROFILE",
+				Usage:  "Named profile from ~/.k8e/sandbox/profiles.yaml (KIP-17)",
+			},
 			cli.StringFlag{
 				Name:  flagAgent,
 				Value: "auto",
@@ -72,7 +108,7 @@ func connectAction(ctx *cli.Context) error {
 		return connectSkillOnly(ctx)
 	}
 
-	resolved, err := ResolveConn(ctx.GlobalString("endpoint"), ctx.GlobalString("apikey"), ctx.GlobalString("profile"), "")
+	resolved, err := ResolveConn(connFlag(ctx, flagEndpoint), connFlag(ctx, flagApikey), connFlag(ctx, flagProfile), "")
 	if err != nil {
 		return printErrorExit(err.Error(), 1)
 	}
