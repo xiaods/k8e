@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.2
 // - protoc             v7.35.0
-// source: sandbox/v1/sandbox.proto
+// source: proto/sandbox/v1/sandbox.proto
 
 package pb
 
@@ -1430,5 +1430,5 @@ var SandboxService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "sandbox/v1/sandbox.proto",
+	Metadata: "proto/sandbox/v1/sandbox.proto",
 }

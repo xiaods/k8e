@@ -145,6 +145,10 @@ k8e-sandbox-cli run 'pip install pandas' --lang bash
 # write via stdin:
 # cat analysis.py | k8e-sandbox-cli write <session_id> /workspace/analysis.py
 # k8e-sandbox-cli run 'python3 /workspace/analysis.py' --session-id <session_id>
+# push/pull local files (chunked streaming — constant memory, binary-safe,
+# works for files of any size; prefer over write/read for real files):
+# k8e-sandbox-cli push <session_id> ./analysis.py /workspace/analysis.py
+# k8e-sandbox-cli pull <session_id> /workspace/results.csv ./results.csv
 
 # Background exec (returns run_id immediately)
 k8e-sandbox-cli run 'sleep 30; echo done' --background
@@ -198,6 +202,8 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli get <sid>` | Session introspection (phase, runtime, env keys) |
 | `k8e-sandbox-cli sessions` | List sessions |
 | `k8e-sandbox-cli write/read/list` | Workspace files; `list --since <ts>` for changed-file diff |
+| `k8e-sandbox-cli push <sid> <local> [remote]` | Stream a local file INTO the sandbox (chunked 4MiB windows — constant memory, binary-safe, any size; `--chunk-mb` to tune) |
+| `k8e-sandbox-cli pull <sid> <remote> [local]` | Stream a sandbox file OUT to a local path (same chunked transfer) |
 | `k8e-sandbox-cli log <sid>` | Replay exec transcript (`--offset`, `--limit`, `--follow`) |
 | `k8e-sandbox-cli events <sid>` | Read daemon NDJSON event stream (`--limit`) |
 | `k8e-sandbox-cli ps <sid>` | List processes in the sandbox pod (pid, comm, state) |

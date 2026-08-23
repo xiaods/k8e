@@ -52,4 +52,8 @@ pub fn build(b: *std.Build) void {
     const pty_mod = b.createModule(.{ .root_source_file = b.path("src/pty_test.zig"), .target = native });
     const pty_tests = b.addTest(.{ .root_module = pty_mod });
     test_step.dependOn(&b.addRunArtifact(pty_tests).step);
+
+    const httpio_mod = b.createModule(.{ .root_source_file = b.path("src/httpio_test.zig"), .target = native });
+    const httpio_tests = b.addTest(.{ .root_module = httpio_mod });
+    test_step.dependOn(&b.addRunArtifact(httpio_tests).step);
 }

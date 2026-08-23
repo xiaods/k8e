@@ -2,6 +2,7 @@ package sandboxcli
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -132,15 +133,100 @@ func readSnapshotMeta(name string) (SnapshotMeta, error) {
 	return meta, nil
 }
 
+// downloadSnapshotPayload streams the in-sandbox tar.gz to the snapshot file
+// in bounded 4MiB base64 chunks and returns its bytes. Old servers answer a
+// single whole-file response (no "base64" encoding marker) — handled by
+// falling back to writing it verbatim.
+func downloadSnapshotPayload(client *sandboxclient.Client, sid, name string) ([]byte, string) {
+	tarPath := snapshotTarPath(name)
+	if err := os.MkdirAll(filepath.Dir(tarPath), 0755); err != nil {
+		return nil, "create snapshot dir: " + err.Error()
+	}
+	out, err := os.Create(tarPath)
+	if err != nil {
+		return nil, "create snapshot file: " + err.Error()
+	}
+	remove := func() { out.Close(); _ = os.Remove(tarPath) }
+
+	const chunk = 4 << 20
+	for offset := 0; ; offset += chunk {
+		readResp, rerr := client.SandboxServiceClient.ReadFile(withRPCDeadline(), &pb.ReadFileRequest{
+			SessionId: sid, Path: "/tmp/_snapshot.tar.gz",
+			Offset: int64(offset), Length: int64(chunk), Encoding: "base64",
+		})
+		if rerr != nil {
+			remove()
+			return nil, "read snapshot: " + rerr.Error()
+		}
+		if readResp.Encoding != "base64" {
+			// Legacy server: single whole-file response, no chunking.
+			if _, werr := out.WriteString(readResp.Content); werr != nil {
+				remove()
+				return nil, "write snapshot: " + werr.Error()
+			}
+			break
+		}
+		data, derr := base64.StdEncoding.DecodeString(readResp.Content)
+		if derr != nil {
+			remove()
+			return nil, "decode snapshot chunk: " + derr.Error()
+		}
+		if _, werr := out.Write(data); werr != nil {
+			remove()
+			return nil, "write snapshot: " + werr.Error()
+		}
+		if len(data) < chunk {
+			break // short window = EOF
+		}
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tarPath)
+		return nil, "close snapshot file: " + err.Error()
+	}
+	payload, err := os.ReadFile(tarPath)
+	if err != nil {
+		_ = os.Remove(tarPath)
+		return nil, "read snapshot: " + err.Error()
+	}
+	return payload, ""
+}
+
 // uploadAndExtractSnapshot uploads the payload to the session sandbox and
 // extracts it into /workspace, removing the temp file afterwards.
+// Uploads in bounded base64 chunks (offset positional writes) so snapshots
+// beyond the 64MiB gRPC cap restore correctly.
 func uploadAndExtractSnapshot(client *sandboxclient.Client, sid string, payload []byte) error {
-	if _, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
-		SessionId: sid, Path: "/tmp/_snapshot.tar.gz", Content: string(payload), Mode: "w",
-	}); err != nil {
-		return fmt.Errorf("upload snapshot: %w", err)
+	const chunk = 4 << 20
+	if len(payload) == 0 {
+		// Empty snapshot: still create the temp file so the tar step is a no-op.
+		if _, err := client.SandboxServiceClient.WriteFile(withRPCDeadline(), &pb.WriteFileRequest{
+			SessionId: sid, Path: "/tmp/_snapshot.tar.gz", Mode: "w",
+		}); err != nil {
+			return fmt.Errorf("upload snapshot: %w", err)
+		}
 	}
-	if _, err := client.SandboxServiceClient.Exec(context.Background(), &pb.ExecRequest{
+	for offset := 0; offset < len(payload); {
+		end := offset + chunk
+		if end > len(payload) {
+			end = len(payload)
+		}
+		mode := ""
+		if offset == 0 {
+			mode = "w"
+		}
+		if _, err := client.SandboxServiceClient.WriteFile(withRPCDeadline(), &pb.WriteFileRequest{
+			SessionId: sid,
+			Path:      "/tmp/_snapshot.tar.gz",
+			Content:   base64.StdEncoding.EncodeToString(payload[offset:end]),
+			Mode:      mode,
+			Offset:    int64(offset),
+			Encoding:  "base64",
+		}); err != nil {
+			return fmt.Errorf("upload snapshot: %w", err)
+		}
+		offset = end
+	}
+	if _, err := client.SandboxServiceClient.Exec(withRPCDeadline(), &pb.ExecRequest{
 		SessionId: sid,
 		Command:   "tar xzf /tmp/_snapshot.tar.gz -C /workspace && rm -f /tmp/_snapshot.tar.gz",
 		Timeout:   120,
@@ -205,27 +291,17 @@ func snapshotSaveCommand() cli.Command {
 				fmt.Sscanf(countResp.Stdout, "%d", &fileCount)
 			}
 
-			// 3. Download tar.gz
+			// 3. Download tar.gz in bounded chunks (legacy servers answer one
+			// whole-file response without the base64 encoding marker).
 			fmt.Fprintf(os.Stderr, "[k8e-sandbox] downloading snapshot...\n")
-			readResp, err := client.SandboxServiceClient.ReadFile(context.Background(), &pb.ReadFileRequest{
-				SessionId: sid, Path: "/tmp/_snapshot.tar.gz",
-			})
-			if err != nil {
-				return printErrorExit("read snapshot: "+err.Error(), 1)
+			payload, errMsg := downloadSnapshotPayload(client, sid, name)
+			if errMsg != "" {
+				return printErrorExit(errMsg, 1)
 			}
 
-			// 4. Save to disk
-			dir := snapshotDir(name)
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				return printErrorExit("create snapshot dir: "+err.Error(), 2)
-			}
-			if err := os.WriteFile(snapshotTarPath(name), []byte(readResp.Content), 0644); err != nil {
-				return printErrorExit("write snapshot: "+err.Error(), 2)
-			}
-
-			// 4b. Content-address the payload into the layer store and lease it
+			// 4. Content-address the payload into the layer store and lease it
 			// via a manifest (KIP-16 M2: dedup + GC lease).
-			if err := storeSnapshotLayer(name, []byte(readResp.Content)); err != nil {
+			if err := storeSnapshotLayer(name, payload); err != nil {
 				return printErrorExit(err.Error(), 2)
 			}
 
@@ -234,7 +310,7 @@ func snapshotSaveCommand() cli.Command {
 				Name:      name,
 				CreatedAt: time.Now().UTC().Format(time.RFC3339),
 				SessionID: sid,
-				SizeBytes: int64(len(readResp.Content)),
+				SizeBytes: int64(len(payload)),
 				FileCount: fileCount,
 			}
 			metaData, _ := json.MarshalIndent(meta, "", "  ")

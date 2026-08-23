@@ -163,7 +163,23 @@ type Server struct {
 	terminalsMu sync.RWMutex
 	terminals   map[string]terminalEntry
 	terminalSeq uint64
+	// podIPCache short-circuits the CRD Get + Pod List that every file/exec
+	// RPC used to pay per call (3+ API round-trips before any sandboxd work).
+	// Short TTL keeps staleness bounded; Destroy/Pause/Resume invalidate
+	// eagerly.
+	podIPMu    sync.Mutex
+	podIPCache map[string]podIPCacheEntry
 }
+
+type podIPCacheEntry struct {
+	ip        string
+	expiresAt time.Time
+}
+
+// podIPTTL bounds how stale a cached pod IP may be. Short enough that a
+// recycled pod IP is never used for long; long enough that the hot file/exec
+// path skips the API server almost always.
+const podIPTTL = 2 * time.Second
 
 func NewServer(cfg ServerConfig) *Server {
 	port := cfg.GRPCPort
@@ -184,6 +200,7 @@ func NewServer(cfg ServerConfig) *Server {
 		localAuth:             cfg.LocalAuth,
 		rateLimiter:           ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
 		terminals:             make(map[string]terminalEntry),
+		podIPCache:            make(map[string]podIPCacheEntry),
 	}
 	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
 	if cfg.FQDNEnabled {
@@ -434,6 +451,7 @@ func (s *Server) DestroySession(ctx context.Context, req *pb.DestroySessionReque
 	if err := s.orch.DestroySession(ctx, req.SessionId); err != nil {
 		return nil, status.Errorf(codes.Internal, "destroy session: %v", err)
 	}
+	s.invalidatePodIP(req.SessionId)
 	return &pb.DestroySessionResponse{Ok: true}, nil
 }
 
@@ -446,6 +464,7 @@ func (s *Server) PauseSession(ctx context.Context, req *pb.PauseSessionRequest) 
 	if err := s.orch.PauseSession(ctx, req.SessionId); err != nil {
 		return nil, err
 	}
+	s.invalidatePodIP(req.SessionId)
 	return &pb.PauseSessionResponse{Ok: true}, nil
 }
 
@@ -457,29 +476,51 @@ func (s *Server) ResumeSession(ctx context.Context, req *pb.ResumeSessionRequest
 	if _, err := s.orch.ResumeSession(ctx, req.SessionId); err != nil {
 		return nil, err
 	}
+	s.invalidatePodIP(req.SessionId)
 	return &pb.ResumeSessionResponse{Ok: true}, nil
 }
 
 func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
-	// Background mode: submit async, return run_id immediately
 	if req.Background {
-		env, envErr := s.resolveSessionEnv(ctx, req.SessionId)
-		if envErr != nil {
-			return nil, envErr
-		}
-		runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir, env)
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "background submit: %v", err)
-		}
-		return &pb.ExecResponse{
-			RunId: runID, Status: execStatusStarted, SessionId: req.SessionId, Language: req.Language,
-		}, nil
+		return s.execBackground(ctx, req)
 	}
+	return s.execForeground(ctx, req)
+}
 
-	podIP, err := s.getPodIP(ctx, req.SessionId)
-	if err != nil {
-		return nil, err
+// execBackground submits an async run and returns immediately with the run_id.
+func (s *Server) execBackground(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
+	env, envErr := s.resolveSessionEnv(ctx, req.SessionId)
+	if envErr != nil {
+		return nil, envErr
 	}
+	runID, err := s.orch.ExecBackground(ctx, req.SessionId, req.Command, req.Timeout, req.Workdir, env)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "background submit: %v", err)
+	}
+	return &pb.ExecResponse{
+		RunId: runID, Status: execStatusStarted, SessionId: req.SessionId, Language: req.Language,
+	}, nil
+}
+
+// execForeground runs a command synchronously via the session's sandboxd.
+func (s *Server) execForeground(ctx context.Context, req *pb.ExecRequest) (*pb.ExecResponse, error) {
+	// Fetch the session ONCE and derive both the pod IP and the env from it —
+	// the old path did a CRD Get in getPodIP and ANOTHER in resolveSessionEnv
+	// (plus a Pod List), i.e. 3 API round-trips before any sandboxd work.
+	sess, sessErr := s.orch.getSession(ctx, req.SessionId)
+	if sessErr != nil {
+		return nil, status.Errorf(codes.NotFound, "session %s not found", req.SessionId)
+	}
+	var err error
+	podIP := sess.Status.PodIP
+	if podIP == "" {
+		// Session exists but the pod is not scheduled yet — poll as before.
+		podIP, err = s.pollForPodIP(ctx, req.SessionId)
+		if err != nil {
+			return nil, err
+		}
+	}
+	s.cachePodIP(req.SessionId, podIP)
 	timeout := req.Timeout
 	if timeout == 0 {
 		timeout = 30
@@ -489,7 +530,7 @@ func (s *Server) Exec(ctx context.Context, req *pb.ExecRequest) (*pb.ExecRespons
 		workdir = "/workspace"
 	}
 
-	env, envErr := s.resolveSessionEnv(ctx, req.SessionId)
+	env, envErr := s.resolveSessionEnvFromSession(ctx, sess)
 	if envErr != nil {
 		return nil, envErr
 	}
@@ -586,6 +627,16 @@ func (s *Server) resolveSessionEnv(ctx context.Context, sessionID string) (map[s
 			Warn("sandbox gRPC: failed to load session for env; continuing with sandboxd defaults")
 		return nil, nil
 	}
+	return s.resolveSessionEnvFromSession(ctx, sess)
+}
+
+// resolveSessionEnvFromSession resolves the env map (spec env + referenced
+// secrets) from an already-fetched session, avoiding a second CRD Get on the
+// hot Exec/WriteFile/ReadFile paths.
+func (s *Server) resolveSessionEnvFromSession(ctx context.Context, sess *sandboxv1.SandboxSession) (map[string]string, error) {
+	if sess == nil {
+		return nil, nil
+	}
 	var out map[string]string
 	if len(sess.Spec.Env) > 0 {
 		out = make(map[string]string, len(sess.Spec.Env)+len(sess.Spec.SecretRefs))
@@ -640,7 +691,10 @@ func (s *Server) WriteFile(ctx context.Context, req *pb.WriteFileRequest) (*pb.W
 	if mode == "" {
 		mode = "w"
 	}
-	body := map[string]any{"path": req.Path, "content": req.Content, "mode": mode}
+	// Chunked-transfer fields (KIP-24 push): offset positions the write;
+	// encoding "base64" carries binary-safe payloads. Legacy calls send the
+	// zero values and sandboxd behaves exactly as before.
+	body := map[string]any{"path": req.Path, "content": req.Content, "mode": mode, "offset": req.Offset, "encoding": req.Encoding}
 	resp, err := sandboxdPost(ctx, podIP, "/files/write", body)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd write: %v", err)
@@ -654,16 +708,23 @@ func (s *Server) ReadFile(ctx context.Context, req *pb.ReadFileRequest) (*pb.Rea
 	if err != nil {
 		return nil, err
 	}
-	resp, err := sandboxdGet(ctx, podIP, fmt.Sprintf("/files/read?path=%s", req.Path))
+	url := fmt.Sprintf("/files/read?path=%s", req.Path)
+	if req.Offset > 0 || req.Length > 0 || req.Encoding != "" {
+		// Chunked-transfer window (KIP-24 pull); legacy requests keep the
+		// bare URL so old sandboxd binaries stay compatible.
+		url = fmt.Sprintf("/files/read?path=%s&offset=%d&length=%d&enc=%s", req.Path, req.Offset, req.Length, req.Encoding)
+	}
+	resp, err := sandboxdGet(ctx, podIP, url)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd read: %v", err)
 	}
 	defer resp.Body.Close()
 	var result struct {
-		Content string `json:"content"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return &pb.ReadFileResponse{Content: result.Content}, nil
+	return &pb.ReadFileResponse{Content: result.Content, Encoding: result.Encoding}, nil
 }
 
 func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.ListFilesResponse, error) {
@@ -999,22 +1060,44 @@ func (s *Server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResp
 }
 
 func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error) {
+	// Fast path: fresh cache entry.
+	s.podIPMu.Lock()
+	if e, ok := s.podIPCache[sessionID]; ok && time.Now().Before(e.expiresAt) {
+		ip := e.ip
+		s.podIPMu.Unlock()
+		return ip, nil
+	}
+	s.podIPMu.Unlock()
+
 	u, err := s.dyn.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessionID, metav1.GetOptions{})
 	if err != nil {
 		return "", status.Errorf(codes.NotFound, "session %s not found", sessionID)
 	}
 	podIP, _, _ := unstructured.NestedString(u.Object, "status", "podIP")
-	if podIP != "" {
-		// Verify the pod still exists — it may have been deleted externally.
-		pods, err := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
-			LabelSelector: labelSessionID + "=" + sessionID,
-		})
-		if err == nil && len(pods.Items) == 0 {
-			return "", status.Errorf(codes.NotFound, "session %s pod no longer exists", sessionID)
-		}
-		return podIP, nil
+	if podIP == "" {
+		// Session exists but pod not scheduled yet — poll (as before).
+		return s.pollForPodIP(ctx, sessionID)
 	}
-	return s.pollForPodIP(ctx, sessionID)
+	s.cachePodIP(sessionID, podIP)
+	return podIP, nil
+}
+
+// cachePodIP records a pod IP under a short TTL.
+func (s *Server) cachePodIP(sessionID, podIP string) {
+	s.podIPMu.Lock()
+	if s.podIPCache == nil {
+		s.podIPCache = make(map[string]podIPCacheEntry)
+	}
+	s.podIPCache[sessionID] = podIPCacheEntry{ip: podIP, expiresAt: time.Now().Add(podIPTTL)}
+	s.podIPMu.Unlock()
+}
+
+// invalidatePodIP drops a session's cached IP when its pod may have changed
+// (destroy/pause/resume/auto-resume), so a stale IP never routes to a dead pod.
+func (s *Server) invalidatePodIP(sessionID string) {
+	s.podIPMu.Lock()
+	delete(s.podIPCache, sessionID)
+	s.podIPMu.Unlock()
 }
 
 func (s *Server) pollForPodIP(ctx context.Context, sessionID string) (string, error) {

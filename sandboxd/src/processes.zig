@@ -43,7 +43,7 @@ pub fn handleProcesses(allocator: std.mem.Allocator, client_fd: i32, query: []co
             const pid = std.fmt.parseInt(i32, name, 10) catch continue;
             if (pid <= 0) continue;
 
-            const comm = readComm(name) orelse continue;
+            const comm = readComm(allocator, name) orelse continue;
             defer allocator.free(comm);
             const escaped = try exec.jsonEscape(allocator, comm);
             defer allocator.free(escaped);
@@ -63,8 +63,10 @@ pub fn handleProcesses(allocator: std.mem.Allocator, client_fd: i32, query: []co
 }
 
 /// readComm returns the process command name from /proc/<pid>/comm.
-fn readComm(pid: []const u8) ?[]u8 {
-    const allocator = std.heap.page_allocator;
+/// Allocates with the caller's allocator so the caller can free it — the
+/// previous page_allocator-here / request-allocator-there mismatch was UB
+/// (DebugAllocator aborts on cross-allocator frees; /processes crashed).
+fn readComm(allocator: std.mem.Allocator, pid: []const u8) ?[]u8 {
     var path_buf: [64]u8 = undefined;
     const path = std.fmt.bufPrintZ(&path_buf, "/proc/{s}/comm", .{pid}) catch return null;
 

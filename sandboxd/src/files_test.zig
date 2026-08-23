@@ -208,3 +208,88 @@ test "stat: symlink target is resolved" {
     try std.testing.expect(signed >= 0);
     try std.testing.expectEqualStrings(target, buf[0..@as(usize, @intCast(signed))]);
 }
+
+// --- chunked transfer primitives (KIP-24 push/pull) ---
+// writeChunk/readRange back the CLI push/pull streaming commands: offset-
+// positional writes never truncate, ranged reads bound memory to one chunk.
+
+const testing = std.testing;
+
+fn tmpPath(buf: []u8, comptime name: []const u8) ![]const u8 {
+    // Static per-test names; every test unlinks its file on exit.
+    return std.fmt.bufPrint(buf, "/tmp/k8e-files-test-{s}.bin", .{name});
+}
+
+test "writeChunk w-mode creates and truncates" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var path_buf: [128]u8 = undefined;
+    const path = try tmpPath(&path_buf, "w");
+    defer _ = std.os.linux.unlink(@ptrCast(path));
+
+    try files.writeChunk(path, "hello", "w", 0);
+    try files.writeChunk(path, "hi", "w", 0); // second w truncates
+
+    const got = try files.readRange(path, 0, 0);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("hi", got);
+}
+
+test "writeChunk positional offset reassembles chunks without truncation" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var path_buf: [128]u8 = undefined;
+    const path = try tmpPath(&path_buf, "offset");
+    defer _ = std.os.linux.unlink(@ptrCast(path));
+
+    // Simulate push: first chunk (mode w), then two positional chunks.
+    try files.writeChunk(path, "AAAA", "w", 0);
+    try files.writeChunk(path, "BBBB", "", 4);
+    try files.writeChunk(path, "CC", "", 8);
+
+    const got = try files.readRange(path, 0, 0);
+    defer testing.allocator.free(got);
+    try testing.expectEqualStrings("AAAABBBBCC", got);
+}
+
+test "readRange window bounds the read and short window signals EOF" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var path_buf: [128]u8 = undefined;
+    const path = try tmpPath(&path_buf, "window");
+    defer _ = std.os.linux.unlink(@ptrCast(path));
+
+    const payload = "0123456789abcdef"; // 16 bytes
+    try files.writeChunk(path, payload, "w", 0);
+
+    // Full first window.
+    const win1 = try files.readRange(path, 0, 10);
+    defer testing.allocator.free(win1);
+    try testing.expectEqualStrings("0123456789", win1);
+
+    // Second window: short read (< requested) = EOF, exactly the tail.
+    const win2 = try files.readRange(path, 10, 10);
+    defer testing.allocator.free(win2);
+    try testing.expectEqualStrings("abcdef", win2);
+
+    // Window past EOF: empty.
+    const win3 = try files.readRange(path, 999, 10);
+    defer testing.allocator.free(win3);
+    try testing.expectEqual(@as(usize, 0), win3.len);
+}
+
+test "writeChunk offset past end extends file (sparse)" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var path_buf: [128]u8 = undefined;
+    const path = try tmpPath(&path_buf, "sparse");
+    defer _ = std.os.linux.unlink(@ptrCast(path));
+
+    try files.writeChunk(path, "XY", "", 4);
+
+    const got = try files.readRange(path, 0, 64);
+    defer testing.allocator.free(got);
+    try testing.expectEqual(@as(usize, 6), got.len);
+    try testing.expectEqualStrings("\x00\x00\x00\x00XY", got[0..6]);
+}
+
+test "readRange missing file returns NotFound" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    try testing.expectError(error.NotFound, files.readRange("/tmp/k8e-files-test-does-not-exist.bin", 0, 10));
+}
