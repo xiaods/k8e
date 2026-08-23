@@ -254,6 +254,11 @@ func coreControllers(ctx context.Context, sc *Context, config *Config) error {
 	}
 
 	if !config.ControlConfig.DisableSandboxMatrix {
+		// KIP-24 one-click expose: resolve the routable host IP once and share
+		// it with the sandbox stack — it pins the Cilium Gateway's LoadBalancer
+		// address (e2b-gateway.yaml %{ADVERTISE_IP}%) and doubles as the
+		// default host for exposed-service URLs.
+		config.ControlConfig.SandboxConfig.AdvertiseIP = advertiseIP(&config.ControlConfig)
 		if err := sandboxmatrix.Register(ctx, sc.K8s, config.ControlConfig.Runtime.KubeConfigSupervisor, config.ControlConfig.SandboxConfig); err != nil {
 			logrus.Warnf("sandbox matrix: %v", err)
 		}

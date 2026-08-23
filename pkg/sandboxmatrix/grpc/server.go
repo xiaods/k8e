@@ -123,8 +123,14 @@ type ServerConfig struct {
 	// from the private interface IPs (which are also SANs for pod-side dialing).
 	AdvertiseHostname string
 	// ExposeBaseURL is the public base URL (scheme://host[:port]) for KIP-24
-	// exposed-service URLs. Unset → http://<advertise-hostname> → http://localhost.
+	// exposed-service URLs. Unset → http://<advertise-hostname> →
+	// http://<advertise-ip> → http://localhost.
 	ExposeBaseURL string
+	// AdvertiseIP is the routable host private IP resolved at server start
+	// (same value the Cilium Gateway pins as its LoadBalancer address). Used
+	// as the default host for exposed-service URLs so `k8e sandbox expose`
+	// returns a working URL one-click, with no flags.
+	AdvertiseIP string
 }
 
 // Server implements the SandboxService gRPC interface.
@@ -139,6 +145,7 @@ type Server struct {
 	serverCertFile        string
 	serverKeyFile         string
 	advertiseHostname     string
+	advertiseIP           string
 	exposeBaseURLOverride string
 	caCert                *x509.Certificate
 	caKey                 *ecdsa.PrivateKey
@@ -172,6 +179,7 @@ func NewServer(cfg ServerConfig) *Server {
 		serverCertFile:        cfg.ServerCertFile,
 		serverKeyFile:         cfg.ServerKeyFile,
 		advertiseHostname:     cfg.AdvertiseHostname,
+		advertiseIP:           cfg.AdvertiseIP,
 		exposeBaseURLOverride: cfg.ExposeBaseURL,
 		localAuth:             cfg.LocalAuth,
 		rateLimiter:           ratelimit.NewLimiter(ratelimit.DefaultRateConfig()),
@@ -185,6 +193,8 @@ func NewServer(cfg ServerConfig) *Server {
 		s.orch.exposeURLBase = strings.TrimSuffix(cfg.ExposeBaseURL, "/")
 	} else if cfg.AdvertiseHostname != "" {
 		s.orch.exposeURLBase = "http://" + cfg.AdvertiseHostname
+	} else if cfg.AdvertiseIP != "" {
+		s.orch.exposeURLBase = "http://" + cfg.AdvertiseIP
 	}
 	// KIP-24: restore exposures persisted on session annotations so gateway
 	// restarts do not silently drop agent-published URLs.
@@ -903,13 +913,18 @@ func (s *Server) ExposeService(ctx context.Context, req *pb.ExposeServiceRequest
 
 // exposeBaseURL is the public gateway base URL exposed services are reachable
 // at. Prefers the advertised external hostname (--sandbox-advertise-hostname,
-// KIP-22); falls back to localhost for loopback/local deployments.
+// KIP-22), then the resolved host private IP (the same address pinned as the
+// Cilium Gateway's LoadBalancer IP — one-click working URLs on bare metal);
+// falls back to localhost for loopback/local deployments.
 func (s *Server) exposeBaseURL() string {
 	if s.exposeBaseURLOverride != "" {
 		return strings.TrimSuffix(s.exposeBaseURLOverride, "/")
 	}
 	if s.advertiseHostname != "" {
 		return "http://" + s.advertiseHostname
+	}
+	if s.advertiseIP != "" {
+		return "http://" + s.advertiseIP
 	}
 	return "http://localhost"
 }

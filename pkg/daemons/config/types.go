@@ -230,10 +230,17 @@ type SandboxConfig struct {
 	AdvertiseHostname string
 	// ExposeBaseURL is the public base URL (scheme://host[:port]) prefixed to
 	// KIP-24 exposed-service URLs (http://<base>/k8e/expose/<session>/<port>/).
-	// When unset, defaults to http://<advertise-hostname> (or http://localhost).
+	// When unset, defaults to http://<advertise-hostname>, then to
+	// http://<advertise-ip> (the host private IP pinned as the Cilium Gateway's
+	// LoadBalancer address), then http://localhost.
 	// Set it to the reachable gateway entry, e.g. http://gw.example.com or
 	// http://ec2-...:31422 when using NodePort without a LoadBalancer IP.
 	ExposeBaseURL string
+	// AdvertiseIP is the routable host private IP resolved at server start
+	// (--advertise-address → apiserver bind → default-route interface; never
+	// loopback). It is both the Cilium Gateway LoadBalancer address (one-click
+	// expose on bare metal) and the default host for exposed-service URLs.
+	AdvertiseIP string
 }
 
 type Control struct {

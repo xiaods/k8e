@@ -88,6 +88,7 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		FQDNEnabled:       cfg.CiliumDNSProxyEnabled,
 		AdvertiseHostname: cfg.AdvertiseHostname,
 		ExposeBaseURL:     cfg.ExposeBaseURL,
+		AdvertiseIP:       cfg.AdvertiseIP,
 	})
 	go func() {
 		if err := srv.Start(ctx); err != nil {
