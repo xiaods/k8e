@@ -32,6 +32,11 @@
 ```
 
 - 暴露 URL：`http(s)://<gateway>/k8e/expose/<session>/<port>/`（Gateway API 的 :80/:443 入口）。
+- **一键配置（LB = 主机私有 IP）**：Gateway `spec.addresses` 固定为 `%{ADVERTISE_IP}%`（stage 时解析为
+  `--advertise-address` → apiserver bind → 默认路由网卡，永不为 loopback），Cilium 会把该 IP 直接
+  赋给生成的 LoadBalancer Service —— 裸机/单机部署无需 MetalLB，无 `<pending>` 等待。expose URL base
+  兜底链：`--sandbox-expose-base-url` → `--sandbox-advertise-hostname` → `http://<主机私有IP>` →
+  `http://localhost`，默认零 flag 即返回可用 URL。
 - **e2b HTTP server**（Gateway-API 前置的唯一 HTTP 面，`pkg/sandbox/e2b`）新增反代路由
   `/k8e/expose/{session}/{port}/*`：以 gateway 的 expose 注册表（`ListExposed` RPC）鉴权 →
   解析 pod IP（`GetSession`）→ `httputil.ReverseProxy` 到 `http://<podIP>:<port>`，

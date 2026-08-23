@@ -44,11 +44,17 @@ func TestE2BGatewayAPIManifestsStaged(t *testing.T) {
 	assertCount(t, gw, "kind: EndpointSlice", 2, "e2b-gateway.yaml")
 	assertCount(t, gw, "addressType: IPv4", 2, "e2b-gateway.yaml")
 
-	// KIP-21: the EndpointSlice address must come from the %{ADVERTISE_IP}%
+	// KIP-21: the EndpointSlice addresses must come from the %{ADVERTISE_IP}%
 	// template (resolved at stage time to a routable host address), and the
 	// manifest must never contain a literal loopback — Kubernetes does not
 	// allow loopback endpoint addresses (unreachable from pods).
-	assertCount(t, gw, "%{ADVERTISE_IP}%", 2, "e2b-gateway.yaml")
+	//
+	// KIP-24 one-click expose: a third %{ADVERTISE_IP}% occurrence pins the
+	// Gateway's LoadBalancer address (spec.addresses, type IPAddress) to the
+	// same host private IP, so Cilium's generated LB Service is reachable
+	// immediately on bare metal — no MetalLB, no <pending> external-IP.
+	assertCount(t, gw, "%{ADVERTISE_IP}%", 3, "e2b-gateway.yaml")
+	assertContains(t, gw, "type: IPAddress", "e2b-gateway.yaml")
 	assertNoneContain(t, gw, "e2b-gateway.yaml", []string{"127.0.0.1", "::1"})
 
 	// The CRD bundle must include TCPRoute (L4 passthrough listener).

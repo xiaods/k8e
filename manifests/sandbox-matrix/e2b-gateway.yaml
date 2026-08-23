@@ -129,6 +129,15 @@ metadata:
     app.kubernetes.io/managed-by: k8e
 spec:
   gatewayClassName: e2b
+  # Pin the LoadBalancer IP to the host's private IP (same value as the
+  # EndpointSlice addresses below): Cilium's gateway controller assigns
+  # spec.addresses to the generated LoadBalancer Service, so the Gateway is
+  # reachable one-click on bare metal / single-host installs — no MetalLB,
+  # no <pending> external-IP. Resolved at stage time from --advertise-address
+  # (default node-ip), never loopback (KIP-21).
+  addresses:
+  - type: IPAddress
+    value: "%{ADVERTISE_IP}%"
   listeners:
   - name: http
     port: 80
