@@ -409,14 +409,14 @@ func connFlagTestCtx(t *testing.T, local, global map[string]string) *cli.Context
 		localSet.String(name, "", "")
 		globalSet.String(name, "", "")
 	}
-	args := []string{}
+	var args []string
 	for name, v := range local {
 		args = append(args, "--"+name, v)
 	}
 	if err := localSet.Parse(args); err != nil {
 		t.Fatal(err)
 	}
-	gargs := []string{}
+	var gargs []string
 	for name, v := range global {
 		gargs = append(gargs, "--"+name, v)
 	}
