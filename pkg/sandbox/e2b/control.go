@@ -194,6 +194,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.registry.markPaused(id, false)
+		s.sandboxd.invalidatePodIP(id)
 		status = http.StatusCreated
 	}
 	// connect extends the TTL — but only for E2B-created sandboxes (they
@@ -294,6 +295,7 @@ func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.registry.markPaused(id, true)
+	s.sandboxd.invalidatePodIP(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -312,6 +314,7 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.registry.markPaused(id, false)
+	s.sandboxd.invalidatePodIP(id)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(s.sessionView(sess))

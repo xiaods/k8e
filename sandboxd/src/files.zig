@@ -67,11 +67,6 @@ pub fn writeChunk(path: []const u8, content: []const u8, mode: []const u8, offse
     const full_path = try path_util.resolveWorkspacePath(allocator, path);
     defer allocator.free(full_path);
 
-    // Ensure parent directory exists using mkdir recursion
-    if (std.fs.path.dirname(full_path)) |dir| {
-        mkdirRecursive(dir) catch {};
-    }
-
     const append_mode = offset <= 0 and std.mem.eql(u8, mode, "a");
     const open_flags: std.os.linux.O = if (append_mode)
         .{ .CREAT = true, .ACCMODE = .WRONLY, .APPEND = true }
@@ -81,8 +76,18 @@ pub fn writeChunk(path: []const u8, content: []const u8, mode: []const u8, offse
         .{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true };
     const open_mode: u32 = 0o644;
 
-    const fd = std.os.linux.open(full_path.ptr, open_flags, open_mode);
-    if (fd < 0) return error.OpenFailed;
+    var fd = std.os.linux.open(full_path.ptr, open_flags, open_mode);
+    if (fd < 0) {
+        // ENOENT: the parent directory does not exist yet — mkdir it once and
+        // retry, instead of issuing mkdir-per-path-component on EVERY write
+        // (the old unconditional mkdirRecursive burned ~3 syscalls + EEXIST
+        // errors per WriteFile call even when the directory existed).
+        const dir = std.fs.path.dirname(full_path);
+        if (dir == null or dir.?.len == 0) return error.OpenFailed;
+        mkdirRecursive(dir.?) catch return error.OpenFailed;
+        fd = std.os.linux.open(full_path.ptr, open_flags, open_mode);
+        if (fd < 0) return error.OpenFailed;
+    }
     defer _ = std.os.linux.close(@intCast(fd));
 
     const write_rc = if (offset > 0)
@@ -93,8 +98,11 @@ pub fn writeChunk(path: []const u8, content: []const u8, mode: []const u8, offse
 }
 
 fn mkdirRecursive(dir: []const u8) !void {
-    // Use raw mkdir syscall on each path component
-    var path_buf: [4096]u8 = undefined;
+    // Use raw mkdir syscall on each path component. Guard the fixed stack
+    // buffer: a path longer than 4095 bytes (reachable via a large WriteFile
+    // request body) used to overflow the stack via an unbounded memcpy.
+    if (dir.len >= mkdir_path_buf_len) return error.PathTooLong;
+    var path_buf: [mkdir_path_buf_len]u8 = undefined;
     @memcpy(path_buf[0..dir.len], dir);
     path_buf[dir.len] = 0;
 
@@ -182,7 +190,24 @@ pub fn readRange(path: []const u8, offset: i64, max_len: usize) ![]u8 {
     if (fd < 0) return error.NotFound;
     defer _ = std.os.linux.close(@intCast(fd));
 
-    const window: usize = if (max_len > 0) max_len else 64 * 1024 * 1024;
+    // Size the buffer to the actual file for whole-file reads (legacy
+    // behavior allocated a full 64MB upfront then shrank — every small-file
+    // read paid a 64MB alloc). Chunked reads (max_len > 0) stay exact.
+    // statx matches the pattern used by fileMtime/fileFacts (no fstat in
+    // std.os.linux).
+    var stx: std.os.linux.Statx = undefined;
+    const stx_rc = std.os.linux.statx(
+        std.os.linux.AT.FDCWD,
+        full_path.ptr,
+        0,
+        std.os.linux.STATX.BASIC_STATS,
+        &stx,
+    );
+    const file_size: u64 = if (stx_rc == 0) stx.size else 64 * 1024 * 1024;
+    const window: usize = if (max_len > 0)
+        max_len
+    else
+        @intCast(@min(file_size, 64 * 1024 * 1024));
     const buf = try allocator.alloc(u8, window);
     errdefer allocator.free(buf);
 
@@ -556,3 +581,5 @@ pub fn removeRecursive(path_z: [:0]u8) bool {
     }
     return true;
 }
+
+const mkdir_path_buf_len: usize = 4096;

@@ -168,12 +168,43 @@ pub fn runCommandWithEnv(allocator: std.mem.Allocator, command: []const u8, work
     _ = std.os.linux.close(stdout_pipe[1]); // close write end
     _ = std.os.linux.close(stderr_pipe[1]); // close write end
 
-    var stdout_trunc = false;
+    // Drain stdout and stderr CONCURRENTLY: a child that fills its stderr
+    // pipe (>64KiB) while the parent blocks reading stdout to EOF would
+    // deadlock forever (no timeout killer on this path). Read stderr on a
+    // helper thread so both pipes drain together.
+    const StdErrResult = struct { data: []u8, truncated: bool };
+    var stderr_res: StdErrResult = undefined;
     var stderr_trunc = false;
+    var stderr_thread: ?std.Thread = null;
+    if (std.Thread.spawn(.{}, struct {
+        fn read(a: std.mem.Allocator, fd: i32, max: usize, out: *StdErrResult) void {
+            var truncated = false;
+            out.data = readAllFromFdTrunc(a, fd, max, &truncated) catch
+                a.dupe(u8, "") catch @panic("oom");
+            out.truncated = truncated;
+        }
+    }.read, .{ allocator, stderr_pipe[0], max_stderr_bytes, &stderr_res })) |t| {
+        stderr_thread = t;
+    } else |err| {
+        // Thread spawn failure is vanishingly rare; fall back to sequential
+        // reads (small outputs unaffected).
+        std.log.warn("exec: stderr drain thread spawn failed: {s}", .{@errorName(err)});
+    }
+
+    var stdout_trunc = false;
     const stdout = readAllFromFdTrunc(allocator, stdout_pipe[0], max_stdout_bytes, &stdout_trunc) catch
         allocator.dupe(u8, "") catch @panic("oom");
-    const stderr = readAllFromFdTrunc(allocator, stderr_pipe[0], max_stderr_bytes, &stderr_trunc) catch
-        allocator.dupe(u8, "") catch @panic("oom");
+
+    const stderr: []u8 = blk: {
+        if (stderr_thread) |t| {
+            t.join();
+            stderr_trunc = stderr_res.truncated;
+            break :blk stderr_res.data;
+        }
+        // Fallback: no thread available, drain sequentially (small outputs).
+        break :blk readAllFromFdTrunc(allocator, stderr_pipe[0], max_stderr_bytes, &stderr_trunc) catch
+            allocator.dupe(u8, "") catch @panic("oom");
+    };
 
     _ = std.os.linux.close(stdout_pipe[0]);
     _ = std.os.linux.close(stderr_pipe[0]);

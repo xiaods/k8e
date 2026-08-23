@@ -115,8 +115,11 @@ pub fn init() void {
         for (&watchers) |*w| w.* = .{};
         watchers_init = true;
     }
-    // inotify_init1 takes raw flags (IN_NONBLOCK | IN_CLOEXEC).
-    const raw = std.os.linux.inotify_init1(std.os.linux.IN.NONBLOCK | std.os.linux.IN.CLOEXEC);
+    // inotify_init1 with CLOEXEC only — the fd must be BLOCKING: the drain
+    // thread's read() then parks until events arrive and the thread lives for
+    // the daemon's lifetime. With IN_NONBLOCK the first EAGAIN (queue drained)
+    // made drainInotify break and exit, silently losing every later event.
+    const raw = std.os.linux.inotify_init1(std.os.linux.IN.CLOEXEC);
     const fd: isize = @bitCast(raw);
     if (fd < 0) return;
     inotify_fd = @intCast(fd);
