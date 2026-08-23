@@ -25,25 +25,80 @@ If `$ARGUMENTS` is empty and no goal is otherwise provided, ask the user for a s
 
 ## dsh (DeepSeek Harness) execution path
 
-When running inside dsh with the `dsh-k8e-sandbox` plugin mounted, the harness's fs / subprocess seams are already **replaced by the sandbox** — the model's `read`/`write`/`bash` land in the sandbox `/workspace` automatically. **Do not run `k8e-sandbox-cli` in this harness**: it is not present inside the sandbox, and invoking it would recursively dial the gateway from inside the pod.
+In dsh, decide your execution mode by **checking the current session's tool
+list first** — everything else in this skill branches on it.
 
-Instead use the plugin's model-surface tools (no CLI, no per-op spawn):
+### A. Plugin mounted — `k8e_sandbox_session_status` IS in your tool list
 
-- `k8e_sandbox_exec` — foreground command, returns stdout/stderr/exit code (equivalent of `run`)
-- `k8e_sandbox_run_background` + `k8e_sandbox_poll` — long-running / streaming tasks
-- `k8e_sandbox_session_status` / `k8e_sandbox_session_destroy` — session lifecycle
-- `k8e_sandbox_expose` — expose an in-sandbox service port through the k8e API Gateway; returns the public URL (KIP-24)
-- `k8e_sandbox_unexpose` — remove a public tunnel for a port (idempotent)
-- `k8e_sandbox_allow_hosts` — freely configure the session egress allowlist, live (KIP-24)
-- fs seam: `read`/`write`/`edit` on paths relative to the sandbox cwd (default `/workspace`); directory listings carry type/size in one RPC
+The `dsh-k8e-sandbox` plugin replaced the harness's execution seams:
 
-**Service exposure in dsh**: after starting a long-running service (web app,
-API server), call `k8e_sandbox_expose {port: 8080}` and hand the returned URL
-to the user — same gateway-proxied URL the CLI's `expose` prints.
+- `bash` (subprocess seam) → runs **inside the sandbox pod**
+- `read` / `write` / `edit` / dir listings (fs seam) → sandbox `/workspace`
+- `k8e_sandbox_*` tools → session lifecycle, expose, egress allowlist
 
-Session, connection, and mTLS are owned by the plugin: it resolves the gateway from config → env → `~/.k8e/sandbox/profiles.yaml` (KIP-17) and reuses one persistent gRPC connection. If the gateway is unreachable, tell the user to run `k8e-sandbox-cli connect` (local) or `k8e-sandbox-cli connect --endpoint <host>:50051 --apikey <key>` (remote) outside dsh, then restart the dsh session.
+Rules:
 
-The CLI-first flow below (`k8e-sandbox-cli run ...`) is for harnesses where the sandbox is *not* mounted (Claude Code / Codex / Pi).
+1. **Do NOT run `k8e-sandbox-cli`** here: it is not present inside the
+   sandbox, and invoking it from the sandboxed `bash` would recursively dial
+   the gateway from inside the pod. Use the tools + sandboxed seams instead.
+2. **Prefer plain `bash` for commands** — it lands in the sandbox. Use
+   `k8e_sandbox_exec` when you want structured stdout/stderr/exitCode, and
+   `k8e_sandbox_run_background` + `k8e_sandbox_poll` for long/streaming tasks.
+3. First action in a session: `k8e_sandbox_session_status` — it lazily
+   creates the session shared by fs/subprocess/exec, and reports
+   `available`, `sessionId`, `tenantId`.
+
+Tool reference (exact argument shapes — do not guess):
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `k8e_sandbox_session_status` | `{}` | `available`, `sessionId`, `tenantId`, `error` |
+| `k8e_sandbox_session_destroy` | `{}` — releases the pod (idempotent) | `destroyed` |
+| `k8e_sandbox_exec` | `{code: string (required), lang?: "bash"\|"python"\|"node"\|"ts", timeout?: number}` | `stdout`, `stderr`, `exitCode`, `durationMs`, `truncated` |
+| `k8e_sandbox_run_background` | `{code: string (required), lang?: …}` | `runId`, `sessionId`, `status` |
+| `k8e_sandbox_poll` | `{runId: string (required)}` | `runId`, `status`, `stdout`, `stderr`, `exitCode`, `durationMs` |
+| `k8e_sandbox_expose` | `{port: number (required), host?: string}` | `url`, `port` |
+| `k8e_sandbox_unexpose` | `{port: number (required)}` | `ok`, `port` |
+| `k8e_sandbox_allow_hosts` | `{hosts: string[] (required)}` — full replacement list; `[]` clears (falls back to cluster defaults) | `hosts[]` |
+
+**Service exposure in dsh**: after starting a long-running service with
+`k8e_sandbox_run_background`, call `k8e_sandbox_expose {port: 8080}` and hand
+the returned URL to the user — same gateway-proxied URL the CLI's `expose`
+prints. Teardown with `k8e_sandbox_unexpose {port: 8080}`.
+
+Session, connection, and mTLS are owned by the plugin: it resolves the
+gateway from config → env → `~/.k8e/sandbox/profiles.yaml` (KIP-17) and
+reuses one persistent gRPC connection. If a tool errors with gateway
+unreachable / mTLS / deadline, tell the user to run `k8e-sandbox-cli connect`
+(local) or `k8e-sandbox-cli connect --endpoint <host>:50051 --apikey <key>`
+(remote) **outside dsh**, then restart the dsh session.
+
+### B. Plugin NOT mounted — `k8e_sandbox_*` tools are NOT in your tool list
+
+The plugin bundle is not installed for this dsh profile. dsh's `bash` still
+runs on the HOST here (no seam replacement), so the **CLI-first flow below
+works normally**: execute everything via `k8e-sandbox-cli run ...` exactly as
+the CLI examples describe. Do not pretend the k8e_sandbox_* tools exist —
+calling a nonexistent tool errors.
+
+To enable the full plugin experience, ask the user to install the bundle once
+(from a k8e checkout), then restart dsh:
+
+```
+dsh plugin --profile <name> add <k8e>/plugins/deepseek-harness/packages/dsh-k8e-sandbox-bundle
+dsh --profile <name>          # restart the session
+```
+
+### dsh error quick reference
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Tool call fails "not found" / unknown tool `k8e_sandbox_*` | plugin bundle not mounted | use section B (CLI-first); ask user to install the bundle |
+| Tool errors "gateway unreachable" / mTLS / deadline | gateway down or missing credentials | `k8e-sandbox-cli connect` (or with `--endpoint`/`--apikey`) outside dsh, restart dsh |
+| `bash`/`read` error with connection refused | session pod not ready | `k8e_sandbox_session_status`; wait and retry |
+| `k8e_sandbox_expose` returns 503 "no pod IP" | old server: session status.podIP empty | upgrade k8e server (rc7+), or `k8e-sandbox-cli connect` then retry |
+
+The CLI-first flow below (`k8e-sandbox-cli run ...`) is for harnesses where the sandbox is *not* mounted (Claude Code / Codex / Pi / dsh without the plugin).
 
 ## Binary naming (read this first)
 
@@ -286,6 +341,18 @@ Default allowed hosts (cluster `SandboxMatrix.spec.defaultAllowedHosts`): `pypi.
 
 ## Your role when this skill is active
 
-**Do:** execute `$ARGUMENTS` entirely via `k8e-sandbox-cli`; prefer `run`; use `--lang python` for Python; use `--raw` for long streams; show real CLI output. When the goal builds a long-running service (web app, API), start it with `run --background` and hand the user a reachable URL via `expose <port>` (or `k8e_sandbox_expose` in dsh).
+**Do:**
 
-**Don't:** run the goal on the host; skip pre-flight; invent successful output without running the CLI.
+- **dsh + plugin mounted (section A)**: run everything through the sandboxed
+  `bash`/`read`/`write` seams and the `k8e_sandbox_*` tools; start long-running
+  services with `k8e_sandbox_run_background`, hand the user a reachable URL
+  via `k8e_sandbox_expose`.
+- **Everywhere else (CLI-first flow)**: execute `$ARGUMENTS` entirely via
+  `k8e-sandbox-cli`; prefer `run`; use `--lang python` for Python; use `--raw`
+  for long streams; show real CLI output. When the goal builds a long-running
+  service (web app, API), start it with `run --background` and hand the user a
+  reachable URL via `expose <port>`.
+
+**Don't:** run the goal on the host; skip pre-flight; invent successful output
+without actually running a tool/CLI; call `k8e_sandbox_*` tools that are not
+in your current tool list (plugin not mounted — use section B instead).
