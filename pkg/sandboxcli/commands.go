@@ -745,9 +745,9 @@ func ReadCommand() cli.Command {
 // offsets, so peak memory is one chunk regardless of file size, files larger
 // than the 64MiB gRPC cap work, and binary payloads survive the JSON hop.
 
-// defaultChunkBytes bounds per-RPC memory for push/pull. 4MiB keeps gRPC
+// defaultChunkMB bounds per-RPC memory for push/pull. 4MiB keeps gRPC
 // messages far under the 64MiB cap with base64's 4/3 overhead.
-const defaultChunkBytes = 4 << 20
+const defaultChunkMB = 4
 
 func PushCommand() cli.Command {
 	return cli.Command{
@@ -755,7 +755,7 @@ func PushCommand() cli.Command {
 		Usage:     "Stream a local file into the sandbox (chunked, constant memory)",
 		ArgsUsage: "<session-id> <local-file> [remote-path]",
 		Flags: []cli.Flag{
-			cli.IntFlag{Name: "chunk-mb", Value: 4, Usage: "Chunk size in MiB (memory bound per RPC)"},
+			cli.IntFlag{Name: "chunk-mb", Value: defaultChunkMB, Usage: "Chunk size in MiB (memory bound per RPC)"},
 		},
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().Get(0)
@@ -833,7 +833,7 @@ func PullCommand() cli.Command {
 		Usage:     "Stream a file out of the sandbox to a local path (chunked, constant memory)",
 		ArgsUsage: "<session-id> <remote-path> [local-file]",
 		Flags: []cli.Flag{
-			cli.IntFlag{Name: "chunk-mb", Value: 4, Usage: "Chunk size in MiB (memory bound per RPC)"},
+			cli.IntFlag{Name: "chunk-mb", Value: defaultChunkMB, Usage: "Chunk size in MiB (memory bound per RPC)"},
 		},
 		Action: func(ctx *cli.Context) error {
 			sid := ctx.Args().Get(0)
