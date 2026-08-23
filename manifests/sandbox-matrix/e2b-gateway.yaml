@@ -109,6 +109,26 @@ ports:
   port: 3676
   protocol: TCP
 
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: sandbox-gateway
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  # Exactly the host private IP: Cilium LB-IPAM only assigns Gateway
+  # spec.addresses that fall inside a pool CIDR — without this /32 block the
+  # generated cilium-gateway-e2b Service stays <pending> and the Gateway
+  # never reaches Programmed=True (bare-metal one-click expose, KIP-24).
+  blocks:
+  - cidr:
+      cidr: "%{ADVERTISE_IP}%/32"
+  # Scope strictly to the e2b Gateway's own LoadBalancer Service.
+  serviceSelector:
+    selector:
+      matchLabels:
+        io.cilium.gateway/owning-gateway: e2b
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
 metadata:
