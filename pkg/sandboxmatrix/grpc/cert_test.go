@@ -1,12 +1,16 @@
 package grpc
 
 import (
+	"context"
 	"crypto/x509"
 	"net"
 	"os"
 	"testing"
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 // TestCollectServerSANsAdvertiseHostname verifies the AWS/remote-host case: the
@@ -166,5 +170,39 @@ func TestAtomicWriteFile(t *testing.T) {
 	// No temp file may be left behind.
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
 		t.Fatalf("temp file left behind: %v", err)
+	}
+}
+
+// TestCheckMTLSAuthLoopbackLocalAuth pins the KIP-24 expose chain: the
+// embedded e2b server dials the gateway over loopback with CA trust but NO
+// client certificate (newLocalClient), relying on the gateway's LocalAuth
+// exemption. Without LocalAuth the dial is rejected with Unauthenticated and
+// every /k8e/expose/ request 503s ("client certificate required for mTLS").
+// Remote (non-loopback) peers must still be rejected without a client cert.
+func TestCheckMTLSAuthLoopbackLocalAuth(t *testing.T) {
+	loopback := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 45678}
+	remote := &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 45678}
+	ctxFrom := func(addr net.Addr) context.Context {
+		return peer.NewContext(context.Background(), &peer.Peer{Addr: addr})
+	}
+
+	s := &Server{}
+	if err := s.checkMTLSAuth(ctxFrom(loopback)); err == nil {
+		t.Fatal("loopback without LocalAuth must be rejected")
+	} else if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("loopback without LocalAuth: got %v, want Unauthenticated", err)
+	}
+	if err := s.checkMTLSAuth(ctxFrom(remote)); err == nil {
+		t.Fatal("remote without cert must always be rejected")
+	}
+
+	s.localAuth = true
+	if err := s.checkMTLSAuth(ctxFrom(loopback)); err != nil {
+		t.Fatalf("loopback with LocalAuth must pass, got %v", err)
+	}
+	if err := s.checkMTLSAuth(ctxFrom(remote)); err == nil {
+		t.Fatal("remote with LocalAuth set must still require mTLS")
+	} else if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("remote with LocalAuth set: got %v, want Unauthenticated", err)
 	}
 }
