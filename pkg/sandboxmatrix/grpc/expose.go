@@ -215,7 +215,9 @@ func (o *Orchestrator) RestoreExposedRegistry(ctx context.Context, namespace str
 		}
 		var ports []int32
 		for _, p := range strings.Split(raw, ",") {
-			if v, err := strconv.Atoi(strings.TrimSpace(p)); err == nil && v > 0 {
+			// ParseUint(…, 16) bounds the value to [0, 65535], so the int32
+			// conversion is lossless (no signedness truncation).
+			if v, err := strconv.ParseUint(strings.TrimSpace(p), 10, 16); err == nil && v > 0 {
 				ports = append(ports, int32(v))
 			}
 		}
