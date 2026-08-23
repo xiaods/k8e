@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
@@ -30,17 +31,48 @@ type sandboxdClient struct {
 	// Tests inject an httptest server here; production leaves it empty so
 	// every call resolves the live pod IP from the gateway.
 	baseURL string
+
+	// podIPMu/podIPCache short-circuit the GetSession RTT that used to happen
+	// on EVERY sandboxd HTTP call (exec stdin, file stat, …). A short TTL
+	// bounds staleness; explicit invalidation is wired into pause/resume.
+	podIPMu    sync.Mutex
+	podIPCache map[string]podIPCacheValue
 }
+
+type podIPCacheValue struct {
+	ip        string
+	expiresAt time.Time
+}
+
+// e2bPodIPTTL bounds how stale a cached pod IP may be.
+const e2bPodIPTTL = 3 * time.Second
 
 func newSandboxdClient(gw Gateway) *sandboxdClient {
 	return &sandboxdClient{
-		gw:     gw,
-		client: &http.Client{Timeout: 30 * time.Second},
+		gw:         gw,
+		client:     &http.Client{Timeout: 30 * time.Second},
+		podIPCache: make(map[string]podIPCacheValue),
 	}
 }
 
-// podIP resolves the sandbox pod IP via the gateway.
+// invalidatePodIP drops a session's cached IP — call when the sandbox is
+// paused/resumed so a recycled pod IP is never reused.
+func (s *sandboxdClient) invalidatePodIP(sessionID string) {
+	s.podIPMu.Lock()
+	delete(s.podIPCache, sessionID)
+	s.podIPMu.Unlock()
+}
+
+// podIP resolves the sandbox pod IP via the gateway (cached under a short TTL).
 func (s *sandboxdClient) podIP(ctx context.Context, sessionID string) (string, error) {
+	s.podIPMu.Lock()
+	if e, ok := s.podIPCache[sessionID]; ok && time.Now().Before(e.expiresAt) {
+		ip := e.ip
+		s.podIPMu.Unlock()
+		return ip, nil
+	}
+	s.podIPMu.Unlock()
+
 	sess, err := s.gw.GetSession(ctx, &pb.GetSessionRequest{SessionId: sessionID})
 	if err != nil {
 		return "", err
@@ -48,6 +80,12 @@ func (s *sandboxdClient) podIP(ctx context.Context, sessionID string) (string, e
 	if sess.PodIp == "" {
 		return "", fmt.Errorf("session %s has no pod IP", sessionID)
 	}
+	s.podIPMu.Lock()
+	if s.podIPCache == nil {
+		s.podIPCache = make(map[string]podIPCacheValue)
+	}
+	s.podIPCache[sessionID] = podIPCacheValue{ip: sess.PodIp, expiresAt: time.Now().Add(e2bPodIPTTL)}
+	s.podIPMu.Unlock()
 	return sess.PodIp, nil
 }
 

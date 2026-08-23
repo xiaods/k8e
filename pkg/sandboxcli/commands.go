@@ -101,13 +101,13 @@ func ensureSession(client *client.Client, ctx *cli.Context) (string, bool, error
 
 	manifest, mErr := resolveManifest(ctx)
 	if mErr != nil {
-		client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+		client.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: sid})
 		_ = clearState(ctx.String("tenant"))
 		return "", false, fmt.Errorf("manifest: %w", mErr)
 	}
 	if manifest != nil {
 		if err := materializeManifest(client, sid, manifest); err != nil {
-			client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+			client.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: sid})
 			_ = clearState(ctx.String("tenant"))
 			return "", false, fmt.Errorf("manifest materialization: %w", err)
 		}
@@ -155,7 +155,7 @@ func writeCodeFile(client *client.Client, sid, lang, code string) error {
 	case "ts", "typescript":
 		path = "/workspace/_k8e_run.ts"
 	}
-	_, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
+	_, err := client.SandboxServiceClient.WriteFile(withRPCDeadline(), &pb.WriteFileRequest{
 		SessionId: sid, Path: path, Content: code, Mode: "w",
 	})
 	return err
@@ -322,6 +322,17 @@ func rpcCtx(timeoutSecs int32) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), time.Duration(timeoutSecs+15)*time.Second)
 }
 
+// withRPCDeadline bounds a one-shot gateway RPC like rpcCtx but returns just
+// the context — the cancel is dropped and the timer is garbage-collected
+// when the RPC returns. Used for command actions that previously passed a
+// bare context.Background(), where a dead gateway would wedge the command
+// indefinitely. Not used for streaming/long-poll RPCs (Exec/PollRun/etc.)
+// that have their own timeout semantics.
+func withRPCDeadline() context.Context {
+	ctx, _ := rpcCtx(30)
+	return ctx
+}
+
 func isSessionExpired(err error) bool {
 	if err == nil {
 		return false
@@ -452,7 +463,7 @@ func CreateCommand() cli.Command {
 				return printErrorExit(secErr.Error(), 1)
 			}
 
-			resp, err := client.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+			resp, err := client.SandboxServiceClient.CreateSession(withRPCDeadline(), &pb.CreateSessionRequest{
 				SessionId:    ctx.String("session-id"),
 				TenantId:     ctx.String("tenant"),
 				RuntimeClass: ctx.String("runtime"),
@@ -469,12 +480,12 @@ func CreateCommand() cli.Command {
 			// materialize manifest if provided
 			manifest, mErr := resolveManifest(ctx)
 			if mErr != nil {
-				client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+				client.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: sid})
 				return printErrorExit("manifest: "+mErr.Error(), 1)
 			}
 			if manifest != nil {
 				if err := materializeManifest(client, sid, manifest); err != nil {
-					client.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+					client.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: sid})
 					return printErrorExit("manifest materialization failed: "+err.Error(), 1)
 				}
 			}
@@ -547,7 +558,7 @@ func GetCommand() cli.Command {
 				return exitErr
 			}
 			defer client.Close()
-			resp, err := client.SandboxServiceClient.GetSession(context.Background(), &pb.GetSessionRequest{SessionId: sid})
+			resp, err := client.SandboxServiceClient.GetSession(withRPCDeadline(), &pb.GetSessionRequest{SessionId: sid})
 			if err != nil {
 				return printErrorExit("get session: "+err.Error(), 2)
 			}
@@ -571,7 +582,7 @@ func SessionsCommand() cli.Command {
 				return exitErr
 			}
 			defer client.Close()
-			resp, err := client.SandboxServiceClient.ListSessions(context.Background(), &pb.ListSessionsRequest{
+			resp, err := client.SandboxServiceClient.ListSessions(withRPCDeadline(), &pb.ListSessionsRequest{
 				Phase: ctx.String("phase"),
 			})
 			if err != nil {
@@ -636,7 +647,7 @@ func DestroyCommand() cli.Command {
 			}
 			defer client.Close()
 
-			resp, err := client.SandboxServiceClient.DestroySession(context.Background(),
+			resp, err := client.SandboxServiceClient.DestroySession(withRPCDeadline(),
 				&pb.DestroySessionRequest{SessionId: sid})
 			if err != nil {
 				return printErrorExit("destroy: "+err.Error(), 1)
@@ -685,7 +696,7 @@ func WriteCommand() cli.Command {
 			}
 			defer client.Close()
 
-			resp, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
+			resp, err := client.SandboxServiceClient.WriteFile(withRPCDeadline(), &pb.WriteFileRequest{
 				SessionId: sid, Path: path, Content: string(data), Mode: ctx.String("mode"),
 			})
 			if err != nil {
@@ -720,7 +731,7 @@ func ReadCommand() cli.Command {
 			}
 			defer client.Close()
 
-			resp, err := client.SandboxServiceClient.ReadFile(context.Background(), &pb.ReadFileRequest{
+			resp, err := client.SandboxServiceClient.ReadFile(withRPCDeadline(), &pb.ReadFileRequest{
 				SessionId: sid, Path: path,
 			})
 			if err != nil {
@@ -794,7 +805,7 @@ func PushCommand() cli.Command {
 				if offset == 0 {
 					mode = "w"
 				}
-				resp, werr := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
+				resp, werr := client.SandboxServiceClient.WriteFile(withRPCDeadline(), &pb.WriteFileRequest{
 					SessionId: sid,
 					Path:      remote,
 					Content:   base64.StdEncoding.EncodeToString(buf[:n]),
@@ -815,7 +826,7 @@ func PushCommand() cli.Command {
 			}
 			if total == 0 {
 				// Zero-byte local file: still create/truncate the remote.
-				if _, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
+				if _, err := client.SandboxServiceClient.WriteFile(withRPCDeadline(), &pb.WriteFileRequest{
 					SessionId: sid, Path: remote, Mode: "w",
 				}); err != nil {
 					return printErrorExit("push: "+err.Error(), 1)
@@ -861,7 +872,7 @@ func PullCommand() cli.Command {
 			chunk := ctx.Int("chunk-mb") << 20
 			var total int64
 			for offset := int64(0); ; offset += int64(chunk) {
-				resp, rerr := client.SandboxServiceClient.ReadFile(context.Background(), &pb.ReadFileRequest{
+				resp, rerr := client.SandboxServiceClient.ReadFile(withRPCDeadline(), &pb.ReadFileRequest{
 					SessionId: sid,
 					Path:      remote,
 					Offset:    offset,
@@ -914,7 +925,7 @@ func ListCommand() cli.Command {
 			}
 			defer client.Close()
 
-			resp, err := client.SandboxServiceClient.ListFiles(context.Background(), &pb.ListFilesRequest{
+			resp, err := client.SandboxServiceClient.ListFiles(withRPCDeadline(), &pb.ListFilesRequest{
 				SessionId: sid,
 				Since:     ctx.Int64("since"),
 			})
@@ -950,7 +961,7 @@ func SubagentCommand() cli.Command {
 			}
 			defer client.Close()
 
-			resp, err := client.SandboxServiceClient.RunSubAgent(context.Background(), &pb.RunSubAgentRequest{
+			resp, err := client.SandboxServiceClient.RunSubAgent(withRPCDeadline(), &pb.RunSubAgentRequest{
 				ParentSessionId: parentSid,
 			})
 			if err != nil {
@@ -987,7 +998,7 @@ func ConfirmCommand() cli.Command {
 			defer client.Close()
 
 			// Phase 1: register
-			resp, err := client.SandboxServiceClient.ConfirmAction(context.Background(), &pb.ConfirmActionRequest{
+			resp, err := client.SandboxServiceClient.ConfirmAction(withRPCDeadline(), &pb.ConfirmActionRequest{
 				SessionId: sid, Action: action,
 			})
 			if err != nil {
@@ -1044,7 +1055,7 @@ func ApproveCommand() cli.Command {
 			}
 			defer client.Close()
 
-			resp, err := client.SandboxServiceClient.ApproveAction(context.Background(), &pb.ApproveActionRequest{
+			resp, err := client.SandboxServiceClient.ApproveAction(withRPCDeadline(), &pb.ApproveActionRequest{
 				ApprovalId: aid, Approved: approved, Reason: ctx.String("reason"),
 			})
 			if err != nil {
@@ -1160,12 +1171,12 @@ func flagName(f cli.Flag) string {
 func benchPreCreateWarmPool(c *client.Client, tenant string, poolSize int) (func(), error) {
 	sids := make([]string, 0, poolSize)
 	for i := 0; i < poolSize; i++ {
-		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+		resp, err := c.SandboxServiceClient.CreateSession(withRPCDeadline(), &pb.CreateSessionRequest{
 			TenantId: tenant, RuntimeClass: "gvisor",
 		})
 		if err != nil {
 			for _, sid := range sids {
-				c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+				c.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: sid})
 			}
 			return nil, printErrorExit("warm pool create: "+err.Error(), 2)
 		}
@@ -1173,7 +1184,7 @@ func benchPreCreateWarmPool(c *client.Client, tenant string, poolSize int) (func
 	}
 	return func() {
 		for _, sid := range sids {
-			c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: sid})
+			c.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: sid})
 		}
 	}, nil
 }
@@ -1189,7 +1200,7 @@ func benchColdStart(c *client.Client, tenant string, n int) map[string][]time.Du
 	result := map[string][]time.Duration{"cold_total": {}, "cold_create": {}, "cold_exec": {}}
 	for i := 0; i < n; i++ {
 		t0 := time.Now()
-		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+		resp, err := c.SandboxServiceClient.CreateSession(withRPCDeadline(), &pb.CreateSessionRequest{
 			TenantId: tenant, RuntimeClass: "gvisor",
 		})
 		tCreate := time.Since(t0)
@@ -1207,7 +1218,7 @@ func benchColdStart(c *client.Client, tenant string, n int) map[string][]time.Du
 		result["cold_total"] = append(result["cold_total"], tExec)
 		fmt.Fprintf(os.Stderr, "  cold %d/%d: create=%v total=%v\n", i+1, n, tCreate.Round(time.Millisecond), tExec.Round(time.Millisecond))
 
-		c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		c.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
 		if execErr != nil {
 			fmt.Fprintf(os.Stderr, "  cold start %d: exec failed: %v\n", i+1, execErr)
 		}
@@ -1220,7 +1231,7 @@ func benchWarmClaim(c *client.Client, tenant string, n int) map[string][]time.Du
 	result := map[string][]time.Duration{"warm_total": {}, "warm_create": {}, "warm_exec": {}}
 	for i := 0; i < n; i++ {
 		t0 := time.Now()
-		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+		resp, err := c.SandboxServiceClient.CreateSession(withRPCDeadline(), &pb.CreateSessionRequest{
 			TenantId: tenant, RuntimeClass: "gvisor",
 		})
 		tCreate := time.Since(t0)
@@ -1238,7 +1249,7 @@ func benchWarmClaim(c *client.Client, tenant string, n int) map[string][]time.Du
 		result["warm_total"] = append(result["warm_total"], tExec)
 		fmt.Fprintf(os.Stderr, "  warm %d/%d: claim=%v total=%v\n", i+1, n, tCreate.Round(time.Millisecond), tExec.Round(time.Millisecond))
 
-		c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		c.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
 		if execErr != nil {
 			fmt.Fprintf(os.Stderr, "  warm claim %d: exec failed: %v\n", i+1, execErr)
 		}
@@ -1252,7 +1263,7 @@ func benchLifecycle(c *client.Client, tenant string, n int) map[string][]time.Du
 	result := map[string][]time.Duration{"lifecycle_create": {}, "lifecycle_exec": {}, "lifecycle_destroy": {}}
 	for i := 0; i < n; i++ {
 		t0 := time.Now()
-		resp, err := c.SandboxServiceClient.CreateSession(context.Background(), &pb.CreateSessionRequest{
+		resp, err := c.SandboxServiceClient.CreateSession(withRPCDeadline(), &pb.CreateSessionRequest{
 			TenantId: tenant, RuntimeClass: "gvisor",
 		})
 		tCreate := time.Since(t0)
@@ -1268,7 +1279,7 @@ func benchLifecycle(c *client.Client, tenant string, n int) map[string][]time.Du
 		tExec := time.Since(t0)
 		result["lifecycle_exec"] = append(result["lifecycle_exec"], tExec)
 
-		_, destroyErr := c.SandboxServiceClient.DestroySession(context.Background(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
+		_, destroyErr := c.SandboxServiceClient.DestroySession(withRPCDeadline(), &pb.DestroySessionRequest{SessionId: resp.SessionId})
 		tDestroy := time.Since(t0)
 		result["lifecycle_destroy"] = append(result["lifecycle_destroy"], tDestroy)
 		fmt.Fprintf(os.Stderr, "  lifecycle %d/%d: create=%v exec=%v destroy=%v\n", i+1, n,
@@ -1386,7 +1397,7 @@ func LogCommand() cli.Command {
 			follow := ctx.Bool("follow")
 			lastNext := int64(-1)
 			for {
-				resp, err := client.SandboxServiceClient.GetTranscript(context.Background(), &pb.GetTranscriptRequest{
+				resp, err := client.SandboxServiceClient.GetTranscript(withRPCDeadline(), &pb.GetTranscriptRequest{
 					SessionId: sid,
 					Offset:    offset,
 					Limit:     ctx.Int64("limit"),
@@ -1436,7 +1447,7 @@ func EventsCommand() cli.Command {
 			}
 			defer client.Close()
 
-			resp, err := client.SandboxServiceClient.GetEvents(context.Background(), &pb.GetEventsRequest{
+			resp, err := client.SandboxServiceClient.GetEvents(withRPCDeadline(), &pb.GetEventsRequest{
 				SessionId: sid,
 				Limit:     ctx.Int64("limit"),
 			})
@@ -1471,7 +1482,7 @@ func PsCommand() cli.Command {
 			}
 			defer client.Close()
 
-			resp, err := client.SandboxServiceClient.GetProcesses(context.Background(), &pb.GetProcessesRequest{
+			resp, err := client.SandboxServiceClient.GetProcesses(withRPCDeadline(), &pb.GetProcessesRequest{
 				SessionId: sid,
 			})
 			if err != nil {
@@ -1549,7 +1560,7 @@ func ExposeCommand() cli.Command {
 				return exitErr
 			}
 			defer client.Close()
-			resp, err := client.SandboxServiceClient.ExposeService(context.Background(), &pb.ExposeServiceRequest{
+			resp, err := client.SandboxServiceClient.ExposeService(withRPCDeadline(), &pb.ExposeServiceRequest{
 				SessionId: sid, Port: int32(port), Host: ctx.String("host"),
 			})
 			if err != nil {
@@ -1581,7 +1592,7 @@ func UnexposeCommand() cli.Command {
 				return exitErr
 			}
 			defer client.Close()
-			resp, err := client.SandboxServiceClient.UnexposeService(context.Background(), &pb.UnexposeServiceRequest{
+			resp, err := client.SandboxServiceClient.UnexposeService(withRPCDeadline(), &pb.UnexposeServiceRequest{
 				SessionId: sid, Port: int32(port),
 			})
 			if err != nil {
@@ -1608,7 +1619,7 @@ func ExposedCommand() cli.Command {
 				return exitErr
 			}
 			defer client.Close()
-			resp, err := client.SandboxServiceClient.ListExposed(context.Background(), &pb.ListExposedRequest{
+			resp, err := client.SandboxServiceClient.ListExposed(withRPCDeadline(), &pb.ListExposedRequest{
 				SessionId: sid,
 			})
 			if err != nil {
@@ -1655,7 +1666,7 @@ func AllowHostsCommand() cli.Command {
 			if err != nil {
 				return printErrorExit(err.Error(), 2)
 			}
-			resp, err := client.SandboxServiceClient.UpdateAllowedHosts(context.Background(), &pb.UpdateAllowedHostsRequest{
+			resp, err := client.SandboxServiceClient.UpdateAllowedHosts(withRPCDeadline(), &pb.UpdateAllowedHostsRequest{
 				SessionId: sid, Hosts: hosts,
 			})
 			if err != nil {
@@ -1701,7 +1712,7 @@ func resolveAllowedHosts(ctx *cli.Context, client *client.Client, sid string) ([
 // adjustAllowedHosts reads the current allowlist and applies --remove then
 // --add (full replacement semantics on the live list).
 func adjustAllowedHosts(ctx *cli.Context, client *client.Client, sid string) ([]string, error) {
-	cur, err := client.SandboxServiceClient.GetSession(context.Background(), &pb.GetSessionRequest{SessionId: sid})
+	cur, err := client.SandboxServiceClient.GetSession(withRPCDeadline(), &pb.GetSessionRequest{SessionId: sid})
 	if err != nil {
 		return nil, fmt.Errorf("allow-hosts: read current: %w", err)
 	}
