@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/sirupsen/logrus"
 	"net"
 	"net/http"
 	"strconv"
@@ -369,8 +371,18 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 			SecretRefs:   pbSecretRefsToAPI(req.SecretRefs),
 		},
 	}
-	if err := o.createSession(ctx, session); err != nil {
+	// Use the CREATED object (with its assigned resourceVersion) for the
+	// status update below — UpdateStatus on the stale in-memory object (RV "")
+	// is rejected by the apiserver with a conflict, and the swallowed error
+	// left every session with an empty status (phase/podIP never persisted;
+	// KIP-24 expose proxying 503'd with "session has no pod IP yet").
+	created, err := o.createSession(ctx, session)
+	if err != nil {
 		return nil, err
+	}
+	session = created
+	if session == nil {
+		return nil, status.Errorf(codes.Internal, "create session %s: empty response", sessionID)
 	}
 
 	// Persistent sessions (tenant set) get a dedicated workspace PVC, mounted via a
@@ -623,9 +635,11 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 			SecretRefs:      append([]sandboxv1.SecretRef(nil), parent.Spec.SecretRefs...),
 		},
 	}
-	if err := o.createSession(ctx, child); err != nil {
-		return nil, status.Errorf(codes.Internal, "create sub-agent: %v", err)
+	created, cerr := o.createSession(ctx, child)
+	if cerr != nil {
+		return nil, status.Errorf(codes.Internal, "create sub-agent: %v", cerr)
 	}
+	child = created
 
 	// M1 workspace-session reuse (KIP-16 L1 / issue #514): the sub-agent shares
 	// the parent's pod + sandboxd instead of provisioning a new pod. The child
@@ -861,21 +875,31 @@ func (o *Orchestrator) getSession(ctx context.Context, sessionID string) (*sandb
 	return unstructuredToSession(u)
 }
 
-func (o *Orchestrator) createSession(ctx context.Context, session *sandboxv1.SandboxSession) error {
+func (o *Orchestrator) createSession(ctx context.Context, session *sandboxv1.SandboxSession) (*sandboxv1.SandboxSession, error) {
 	u, err := sessionToUnstructured(session)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, err = o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Create(ctx, u, metav1.CreateOptions{})
-	return err
+	created, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Create(ctx, u, metav1.CreateOptions{})
+	if err != nil {
+		return nil, err
+	}
+	// Return the created object so callers keep its resourceVersion for
+	// follow-up status updates.
+	return unstructuredToSession(created)
 }
 
 func (o *Orchestrator) updateSessionStatus(ctx context.Context, session *sandboxv1.SandboxSession) {
 	u, err := sessionToUnstructured(session)
 	if err != nil {
+		logrus.Errorf("sandbox: session %s to unstructured: %v", session.Name, err)
 		return
 	}
-	o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{})
+	if _, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}); err != nil {
+		// Never swallow: a failed status write leaves phase/podIP empty, which
+		// breaks expose proxying ("session has no pod IP yet") and pause/resume.
+		logrus.Errorf("sandbox: update session %s status: %v", session.Name, err)
+	}
 }
 
 func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeClass, pvcName, cpu, memory string) (*corev1.Pod, error) {
