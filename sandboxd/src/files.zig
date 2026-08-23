@@ -71,12 +71,16 @@ pub fn writeChunk(path: []const u8, content: []const u8, mode: []const u8, offse
     const open_flags: std.os.linux.O = if (append_mode)
         .{ .CREAT = true, .ACCMODE = .WRONLY, .APPEND = true }
     else if (offset > 0)
-        .{ .ACCMODE = .WRONLY } // positional writes never truncate
+        .{ .CREAT = true, .ACCMODE = .WRONLY } // positional write; never truncates
     else
         .{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true };
     const open_mode: u32 = 0o644;
 
-    var fd = std.os.linux.open(full_path.ptr, open_flags, open_mode);
+    // open returns an errno-encoded usize; bitcast to isize so fd < 0 is a
+    // real check. Casting the raw usize (huge on error) directly to i32 would
+    // panic ("integer does not fit").
+    var fd_raw = std.os.linux.open(full_path.ptr, open_flags, open_mode);
+    var fd: isize = @bitCast(fd_raw);
     if (fd < 0) {
         // ENOENT: the parent directory does not exist yet — mkdir it once and
         // retry, instead of issuing mkdir-per-path-component on EVERY write
@@ -85,15 +89,17 @@ pub fn writeChunk(path: []const u8, content: []const u8, mode: []const u8, offse
         const dir = std.fs.path.dirname(full_path);
         if (dir == null or dir.?.len == 0) return error.OpenFailed;
         mkdirRecursive(dir.?) catch return error.OpenFailed;
-        fd = std.os.linux.open(full_path.ptr, open_flags, open_mode);
+        fd_raw = std.os.linux.open(full_path.ptr, open_flags, open_mode);
+        fd = @bitCast(fd_raw);
         if (fd < 0) return error.OpenFailed;
     }
     defer _ = std.os.linux.close(@intCast(fd));
 
+    const fd_i32: i32 = @intCast(fd);
     const write_rc = if (offset > 0)
-        std.os.linux.pwrite(@intCast(fd), content.ptr, content.len, offset)
+        std.os.linux.pwrite(fd_i32, content.ptr, content.len, offset)
     else
-        std.os.linux.write(@intCast(fd), content.ptr, content.len);
+        std.os.linux.write(fd_i32, content.ptr, content.len);
     if (write_rc < 0) return error.WriteFailed;
 }
 
@@ -140,7 +146,7 @@ pub fn handleRead(allocator: std.mem.Allocator, client_fd: i32, query: []const u
     }
 
     var content_buf: []u8 = undefined;
-    if (readRange(path, offset, length)) |actual| {
+    if (readRange(allocator, path, offset, length)) |actual| {
         content_buf = actual;
     } else |err| {
         const status: []const u8 = if (err == error.NotFound) "404 Not Found" else "500 Internal Server Error";
@@ -174,19 +180,21 @@ pub fn handleRead(allocator: std.mem.Allocator, client_fd: i32, query: []const u
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }
 
-/// readRange reads up to max_len bytes at offset from <workspace>/<path>
-/// into a freshly allocated buffer (caller frees). max_len 0 = legacy whole-
-/// file cap (64MB, KIP-16 M7); otherwise exactly the chunked-transfer window:
-/// the buffer is bounded by the requested length, so pull never holds more
-/// than one chunk in memory. Returns error.NotFound when the file is missing,
-/// error.ReadFailed on I/O errors. Short reads (< requested) mean EOF.
-pub fn readRange(path: []const u8, offset: i64, max_len: usize) ![]u8 {
+/// readRange reads up to max_len bytes at offset from <workspace>/<path> into
+/// a freshly allocated buffer with the CALLER's allocator (the caller frees it
+/// with the same allocator — page_allocator-here/request-allocator-there was
+/// UB and crashed /files/read under the DebugAllocator). max_len 0 = legacy
+/// whole-file cap (64MB, KIP-16 M7); otherwise exactly the chunked-transfer
+/// window: the buffer is bounded by the requested length, so pull never holds
+/// more than one chunk in memory. Returns error.NotFound when the file is
+/// missing, error.ReadFailed on I/O errors. Short reads (< requested) mean EOF.
+pub fn readRange(allocator: std.mem.Allocator, path: []const u8, offset: i64, max_len: usize) ![]u8 {
     if (path.len == 0) return error.NotFound;
-    const allocator = std.heap.page_allocator;
     const full_path = try path_util.resolveWorkspacePath(allocator, path);
     defer allocator.free(full_path);
 
-    const fd = std.os.linux.open(full_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    const fd_raw = std.os.linux.open(full_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    const fd: isize = @bitCast(fd_raw);
     if (fd < 0) return error.NotFound;
     defer _ = std.os.linux.close(@intCast(fd));
 

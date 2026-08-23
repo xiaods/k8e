@@ -229,7 +229,7 @@ test "writeChunk w-mode creates and truncates" {
     try files.writeChunk(path, "hello", "w", 0);
     try files.writeChunk(path, "hi", "w", 0); // second w truncates
 
-    const got = try files.readRange(path, 0, 0);
+    const got = try files.readRange(testing.allocator, path, 0, 0);
     defer testing.allocator.free(got);
     try testing.expectEqualStrings("hi", got);
 }
@@ -245,7 +245,7 @@ test "writeChunk positional offset reassembles chunks without truncation" {
     try files.writeChunk(path, "BBBB", "", 4);
     try files.writeChunk(path, "CC", "", 8);
 
-    const got = try files.readRange(path, 0, 0);
+    const got = try files.readRange(testing.allocator, path, 0, 0);
     defer testing.allocator.free(got);
     try testing.expectEqualStrings("AAAABBBBCC", got);
 }
@@ -260,17 +260,17 @@ test "readRange window bounds the read and short window signals EOF" {
     try files.writeChunk(path, payload, "w", 0);
 
     // Full first window.
-    const win1 = try files.readRange(path, 0, 10);
+    const win1 = try files.readRange(testing.allocator, path, 0, 10);
     defer testing.allocator.free(win1);
     try testing.expectEqualStrings("0123456789", win1);
 
     // Second window: short read (< requested) = EOF, exactly the tail.
-    const win2 = try files.readRange(path, 10, 10);
+    const win2 = try files.readRange(testing.allocator, path, 10, 10);
     defer testing.allocator.free(win2);
     try testing.expectEqualStrings("abcdef", win2);
 
     // Window past EOF: empty.
-    const win3 = try files.readRange(path, 999, 10);
+    const win3 = try files.readRange(testing.allocator, path, 999, 10);
     defer testing.allocator.free(win3);
     try testing.expectEqual(@as(usize, 0), win3.len);
 }
@@ -283,7 +283,7 @@ test "writeChunk offset past end extends file (sparse)" {
 
     try files.writeChunk(path, "XY", "", 4);
 
-    const got = try files.readRange(path, 0, 64);
+    const got = try files.readRange(testing.allocator, path, 0, 64);
     defer testing.allocator.free(got);
     try testing.expectEqual(@as(usize, 6), got.len);
     try testing.expectEqualStrings("\x00\x00\x00\x00XY", got[0..6]);
@@ -291,5 +291,5 @@ test "writeChunk offset past end extends file (sparse)" {
 
 test "readRange missing file returns NotFound" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    try testing.expectError(error.NotFound, files.readRange("/tmp/k8e-files-test-does-not-exist.bin", 0, 10));
+    try testing.expectError(error.NotFound, files.readRange(testing.allocator, "/tmp/k8e-files-test-does-not-exist.bin", 0, 10));
 }
