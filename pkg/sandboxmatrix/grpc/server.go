@@ -640,7 +640,10 @@ func (s *Server) WriteFile(ctx context.Context, req *pb.WriteFileRequest) (*pb.W
 	if mode == "" {
 		mode = "w"
 	}
-	body := map[string]any{"path": req.Path, "content": req.Content, "mode": mode}
+	// Chunked-transfer fields (KIP-24 push): offset positions the write;
+	// encoding "base64" carries binary-safe payloads. Legacy calls send the
+	// zero values and sandboxd behaves exactly as before.
+	body := map[string]any{"path": req.Path, "content": req.Content, "mode": mode, "offset": req.Offset, "encoding": req.Encoding}
 	resp, err := sandboxdPost(ctx, podIP, "/files/write", body)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd write: %v", err)
@@ -654,16 +657,23 @@ func (s *Server) ReadFile(ctx context.Context, req *pb.ReadFileRequest) (*pb.Rea
 	if err != nil {
 		return nil, err
 	}
-	resp, err := sandboxdGet(ctx, podIP, fmt.Sprintf("/files/read?path=%s", req.Path))
+	url := fmt.Sprintf("/files/read?path=%s", req.Path)
+	if req.Offset > 0 || req.Length > 0 || req.Encoding != "" {
+		// Chunked-transfer window (KIP-24 pull); legacy requests keep the
+		// bare URL so old sandboxd binaries stay compatible.
+		url = fmt.Sprintf("/files/read?path=%s&offset=%d&length=%d&enc=%s", req.Path, req.Offset, req.Length, req.Encoding)
+	}
+	resp, err := sandboxdGet(ctx, podIP, url)
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd read: %v", err)
 	}
 	defer resp.Body.Close()
 	var result struct {
-		Content string `json:"content"`
+		Content  string `json:"content"`
+		Encoding string `json:"encoding"`
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
-	return &pb.ReadFileResponse{Content: result.Content}, nil
+	return &pb.ReadFileResponse{Content: result.Content, Encoding: result.Encoding}, nil
 }
 
 func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.ListFilesResponse, error) {

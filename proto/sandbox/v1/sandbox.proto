@@ -144,12 +144,30 @@ message WriteFileRequest {
   string session_id = 1;
   string path       = 2;
   string content    = 3;
-  string mode       = 4;
+  string mode       = 4;  // "w" truncate | "a" append (ignored when offset > 0)
+  // Chunked transfer: write content at this byte offset in the remote file.
+  // 0 with mode="w" truncates first (legacy behavior); offset > 0 writes at
+  // that position without truncating, extending the file as needed.
+  int64  offset     = 5;
+  // "" = legacy escaped-text, "base64" = binary-safe chunk payload.
+  string encoding   = 6;
 }
 message WriteFileResponse { bool ok = 1; }
 
-message ReadFileRequest  { string session_id = 1; string path = 2; }
-message ReadFileResponse { string content    = 1; }
+message ReadFileRequest  {
+  string session_id = 1;
+  string path       = 2;
+  // Ranged read window [offset, offset+length). Both 0 = whole file
+  // (legacy behavior).
+  int64  offset     = 3;
+  int64  length     = 4;
+  // "" = legacy escaped-text, "base64" = binary-safe response payload.
+  string encoding   = 5;
+}
+message ReadFileResponse {
+  string content  = 1;
+  string encoding = 2;  // echoed encoding so callers decode correctly
+}
 
 message ListFilesRequest  {
   string session_id = 1;

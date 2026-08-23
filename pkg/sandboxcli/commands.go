@@ -2,10 +2,12 @@ package sandboxcli
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -729,6 +731,162 @@ func ReadCommand() cli.Command {
 			} else {
 				printJSON(map[string]any{"content": resp.Content, "path": path})
 			}
+			return nil
+		},
+	}
+}
+
+// ── Push / Pull: chunked streaming file transfer (constant memory) ─────────
+//
+// Sandbox-as-tool pattern: agents live OUTSIDE the sandbox and need to move
+// local files in and out. The legacy write/read commands buffer the whole
+// file (stdin ReadAll + one 64MiB-capped gRPC message + JSON re-marshals at
+// every hop). push/pull transfer in bounded base64 chunks at explicit
+// offsets, so peak memory is one chunk regardless of file size, files larger
+// than the 64MiB gRPC cap work, and binary payloads survive the JSON hop.
+
+// defaultChunkBytes bounds per-RPC memory for push/pull. 4MiB keeps gRPC
+// messages far under the 64MiB cap with base64's 4/3 overhead.
+const defaultChunkBytes = 4 << 20
+
+func PushCommand() cli.Command {
+	return cli.Command{
+		Name:      "push",
+		Usage:     "Stream a local file into the sandbox (chunked, constant memory)",
+		ArgsUsage: "<session-id> <local-file> [remote-path]",
+		Flags: []cli.Flag{
+			cli.IntFlag{Name: "chunk-mb", Value: 4, Usage: "Chunk size in MiB (memory bound per RPC)"},
+		},
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().Get(0)
+			local := ctx.Args().Get(1)
+			if sid == "" || local == "" {
+				return printErrorExit("usage: k8e-sandbox-cli push <session-id> <local-file> [remote-path]", 1)
+			}
+			remote := ctx.Args().Get(2)
+			if remote == "" {
+				remote = filepath.Base(local)
+			}
+
+			f, err := os.Open(local)
+			if err != nil {
+				return printErrorExit("open "+local+": "+err.Error(), 1)
+			}
+			defer f.Close()
+
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			chunk := ctx.Int("chunk-mb") << 20
+			buf := make([]byte, chunk) // reused: one chunk of memory total
+			var total int64
+			for offset := int64(0); ; offset += int64(chunk) {
+				n, readErr := io.ReadFull(f, buf)
+				if n == 0 && readErr != nil {
+					break // clean EOF
+				}
+				// First chunk truncates/creates the remote file; later chunks
+				// pwrite at their offset (mode ignored when offset > 0).
+				mode := ""
+				if offset == 0 {
+					mode = "w"
+				}
+				resp, werr := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
+					SessionId: sid,
+					Path:      remote,
+					Content:   base64.StdEncoding.EncodeToString(buf[:n]),
+					Mode:      mode,
+					Offset:    offset,
+					Encoding:  "base64",
+				})
+				if werr != nil {
+					return printErrorExit(fmt.Sprintf("push chunk at offset %d: %s", offset, werr.Error()), 1)
+				}
+				if !resp.Ok {
+					return printErrorExit(fmt.Sprintf("push chunk at offset %d rejected", offset), 1)
+				}
+				total += int64(n)
+				if readErr != nil {
+					break // short read = EOF
+				}
+			}
+			if total == 0 {
+				// Zero-byte local file: still create/truncate the remote.
+				if _, err := client.SandboxServiceClient.WriteFile(context.Background(), &pb.WriteFileRequest{
+					SessionId: sid, Path: remote, Mode: "w",
+				}); err != nil {
+					return printErrorExit("push: "+err.Error(), 1)
+				}
+			}
+			printJSON(map[string]any{"ok": true, "path": remote, "bytes": total})
+			return nil
+		},
+	}
+}
+
+func PullCommand() cli.Command {
+	return cli.Command{
+		Name:      "pull",
+		Usage:     "Stream a file out of the sandbox to a local path (chunked, constant memory)",
+		ArgsUsage: "<session-id> <remote-path> [local-file]",
+		Flags: []cli.Flag{
+			cli.IntFlag{Name: "chunk-mb", Value: 4, Usage: "Chunk size in MiB (memory bound per RPC)"},
+		},
+		Action: func(ctx *cli.Context) error {
+			sid := ctx.Args().Get(0)
+			remote := ctx.Args().Get(1)
+			if sid == "" || remote == "" {
+				return printErrorExit("usage: k8e-sandbox-cli pull <session-id> <remote-path> [local-file]", 1)
+			}
+			local := ctx.Args().Get(2)
+			if local == "" {
+				local = filepath.Base(remote)
+			}
+
+			client, exitErr := newClientFromCtx(ctx)
+			if exitErr != nil {
+				return exitErr
+			}
+			defer client.Close()
+
+			out, err := os.Create(local)
+			if err != nil {
+				return printErrorExit("create "+local+": "+err.Error(), 1)
+			}
+			defer out.Close()
+
+			chunk := ctx.Int("chunk-mb") << 20
+			var total int64
+			for offset := int64(0); ; offset += int64(chunk) {
+				resp, rerr := client.SandboxServiceClient.ReadFile(context.Background(), &pb.ReadFileRequest{
+					SessionId: sid,
+					Path:      remote,
+					Offset:    offset,
+					Length:    int64(chunk),
+					Encoding:  "base64",
+				})
+				if rerr != nil {
+					return printErrorExit(fmt.Sprintf("pull chunk at offset %d: %s", offset, rerr.Error()), 1)
+				}
+				if resp.Encoding != "base64" {
+					return printErrorExit("pull: gateway/sandboxd does not support binary chunked reads (upgrade the server)", 1)
+				}
+				data, derr := base64.StdEncoding.DecodeString(resp.Content)
+				if derr != nil {
+					return printErrorExit("pull: decode chunk: "+derr.Error(), 1)
+				}
+				if _, err := out.Write(data); err != nil {
+					return printErrorExit("write "+local+": "+err.Error(), 1)
+				}
+				total += int64(len(data))
+				if len(data) < chunk {
+					break // short window = EOF
+				}
+			}
+			printJSON(map[string]any{"ok": true, "path": remote, "local": local, "bytes": total})
 			return nil
 		},
 	}

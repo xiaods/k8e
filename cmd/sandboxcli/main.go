@@ -38,6 +38,8 @@ func main() {
 		sandboxcli.DestroyCommand(),
 		sandboxcli.WriteCommand(),
 		sandboxcli.ReadCommand(),
+		sandboxcli.PushCommand(),
+		sandboxcli.PullCommand(),
 		sandboxcli.ListCommand(),
 		sandboxcli.SubagentCommand(),
 		sandboxcli.ConfirmCommand(),

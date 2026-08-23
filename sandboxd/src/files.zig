@@ -7,6 +7,8 @@ const WriteRequest = struct {
     path: []const u8 = "",
     content: []const u8 = "",
     mode: []const u8 = "w",
+    offset: i64 = 0,
+    encoding: []const u8 = "",
 };
 
 pub fn handleWrite(allocator: std.mem.Allocator, client_fd: i32, body: []const u8) !void {
@@ -15,14 +17,54 @@ pub fn handleWrite(allocator: std.mem.Allocator, client_fd: i32, body: []const u
         return;
     };
     defer parsed.deinit();
-    const req = parsed.value;
 
-    if (req.path.len == 0) {
+    if (parsed.value.path.len == 0) {
         try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"path required\"}");
         return;
     }
 
-    const full_path = try path_util.resolveWorkspacePath(allocator, req.path);
+    // Decode binary-safe payloads before writing. Base64 chunks come from the
+    // CLI push command; legacy callers send raw text (encoding = "").
+    var owned: ?[]u8 = null;
+    defer if (owned) |o| allocator.free(o);
+    var content = parsed.value.content;
+    if (std.mem.eql(u8, parsed.value.encoding, "base64")) {
+        const dec = std.base64.standard.Decoder;
+        const n = dec.calcSizeForSlice(content) catch {
+            try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid base64\"}");
+            return;
+        };
+        const decoded = try allocator.alloc(u8, n);
+        dec.decode(decoded, content) catch {
+            allocator.free(decoded);
+            try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid base64\"}");
+            return;
+        };
+        owned = decoded;
+        content = decoded;
+    }
+
+    writeChunk(parsed.value.path, content, parsed.value.mode, parsed.value.offset) catch |err| {
+        const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"{s}\"}}", .{@errorName(err)});
+        defer allocator.free(msg);
+        try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", msg);
+        return;
+    };
+    try main.writeResponse(client_fd, "200 OK", "application/json", "{\"ok\":true}");
+}
+
+/// writeChunk writes content to <workspace>/<path> honoring chunked-transfer
+/// semantics (KIP-24 push):
+///   - offset > 0: positional write at that byte offset, no truncate — the
+///     file must already exist (created by the first w-mode chunk); extends
+///     the file when writing past its current end.
+///   - mode "a": append (legacy).
+///   - otherwise (mode "w", offset 0): create/truncate then write (legacy).
+pub fn writeChunk(path: []const u8, content: []const u8, mode: []const u8, offset: i64) !void {
+    if (path.len == 0) return error.PathRequired;
+
+    const allocator = std.heap.page_allocator;
+    const full_path = try path_util.resolveWorkspacePath(allocator, path);
     defer allocator.free(full_path);
 
     // Ensure parent directory exists using mkdir recursion
@@ -30,30 +72,24 @@ pub fn handleWrite(allocator: std.mem.Allocator, client_fd: i32, body: []const u
         mkdirRecursive(dir) catch {};
     }
 
-    const append_mode = std.mem.eql(u8, req.mode, "a");
-    const open_flags = if (append_mode)
-        std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .APPEND = true }
+    const append_mode = offset <= 0 and std.mem.eql(u8, mode, "a");
+    const open_flags: std.os.linux.O = if (append_mode)
+        .{ .CREAT = true, .ACCMODE = .WRONLY, .APPEND = true }
+    else if (offset > 0)
+        .{ .ACCMODE = .WRONLY } // positional writes never truncate
     else
-        std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true };
-    const mode: u32 = 0o644;
+        .{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true };
+    const open_mode: u32 = 0o644;
 
-    const fd = std.os.linux.open(full_path.ptr, open_flags, mode);
-    if (fd < 0) {
-        const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"open failed\"}}", .{});
-        defer allocator.free(msg);
-        try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", msg);
-        return;
-    }
+    const fd = std.os.linux.open(full_path.ptr, open_flags, open_mode);
+    if (fd < 0) return error.OpenFailed;
     defer _ = std.os.linux.close(@intCast(fd));
 
-    const write_rc = std.os.linux.write(@intCast(fd), req.content.ptr, req.content.len);
-    if (write_rc < 0) {
-        const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"write failed\"}}", .{});
-        defer allocator.free(msg);
-        try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", msg);
-        return;
-    }
-    try main.writeResponse(client_fd, "200 OK", "application/json", "{\"ok\":true}");
+    const write_rc = if (offset > 0)
+        std.os.linux.pwrite(@intCast(fd), content.ptr, content.len, offset)
+    else
+        std.os.linux.write(@intCast(fd), content.ptr, content.len);
+    if (write_rc < 0) return error.WriteFailed;
 }
 
 fn mkdirRecursive(dir: []const u8) !void {
@@ -79,32 +115,84 @@ pub fn handleRead(allocator: std.mem.Allocator, client_fd: i32, query: []const u
         return;
     };
 
-    const full_path = try path_util.resolveWorkspacePath(allocator, path);
-    defer allocator.free(full_path);
+    // Chunked-transfer window (KIP-24 pull): offset/length select a byte
+    // range; enc=base64 returns a binary-safe payload. Defaults preserve the
+    // legacy whole-file escaped-text behavior.
+    var offset: i64 = 0;
+    var length: usize = 0;
+    var use_b64 = false;
+    if (extractQueryParam(query, "offset")) |v| {
+        offset = std.fmt.parseInt(i64, v, 10) catch 0;
+    }
+    if (extractQueryParam(query, "length")) |v| {
+        length = std.fmt.parseInt(usize, v, 10) catch 0;
+    }
+    if (extractQueryParam(query, "enc")) |v| {
+        use_b64 = std.mem.eql(u8, v, "base64");
+    }
 
-    const fd = std.os.linux.open(full_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
-    if (fd < 0) {
-        const msg = try std.fmt.allocPrint(allocator, "{{\"error\":\"not found\"}}", .{});
-        defer allocator.free(msg);
-        try main.writeResponse(client_fd, "404 Not Found", "application/json", msg);
+    var content_buf: []u8 = undefined;
+    if (readRange(path, offset, length)) |actual| {
+        content_buf = actual;
+    } else |err| {
+        const status: []const u8 = if (err == error.NotFound) "404 Not Found" else "500 Internal Server Error";
+        const msg: []const u8 = if (err == error.NotFound)
+            "{\"error\":\"not found\"}"
+        else
+            "{\"error\":\"read failed\"}";
+        try main.writeResponse(client_fd, status, "application/json", msg);
         return;
     }
-    defer _ = std.os.linux.close(@intCast(fd));
+    defer allocator.free(content_buf);
 
-    // Read file content (up to 64MB; raised from 10MB so snapshot restore and
-    // large-file reads work — see KIP-16 M7)
-    const max_size: usize = 64 * 1024 * 1024;
+    if (use_b64) {
+        // Base64 output is JSON-safe as-is — no escaping pass, no size blowup
+        // beyond the inherent 4/3.
+        const enc = std.base64.standard.Encoder;
+        const encoded = try allocator.alloc(u8, enc.calcSize(content_buf.len));
+        defer allocator.free(encoded);
+        _ = enc.encode(encoded, content_buf);
+        const resp = try std.fmt.allocPrint(allocator, "{{\"content\":\"{s}\",\"encoding\":\"base64\"}}", .{encoded});
+        defer allocator.free(resp);
+        try main.writeResponse(client_fd, "200 OK", "application/json", resp);
+        return;
+    }
 
-    const content = try allocator.alloc(u8, max_size);
-    defer allocator.free(content);
-    const n = std.os.linux.read(@intCast(fd), content.ptr, max_size);
-    const actual = if (n > 0) content[0..@as(usize, @intCast(n))] else &[_]u8{};
-
-    const escaped = try exec.jsonEscape(allocator, actual);
+    // Legacy escaped-text response.
+    const escaped = try exec.jsonEscape(allocator, content_buf);
     defer allocator.free(escaped);
     const resp = try std.fmt.allocPrint(allocator, "{{\"content\":\"{s}\"}}", .{escaped});
     defer allocator.free(resp);
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
+}
+
+/// readRange reads up to max_len bytes at offset from <workspace>/<path>
+/// into a freshly allocated buffer (caller frees). max_len 0 = legacy whole-
+/// file cap (64MB, KIP-16 M7); otherwise exactly the chunked-transfer window:
+/// the buffer is bounded by the requested length, so pull never holds more
+/// than one chunk in memory. Returns error.NotFound when the file is missing,
+/// error.ReadFailed on I/O errors. Short reads (< requested) mean EOF.
+pub fn readRange(path: []const u8, offset: i64, max_len: usize) ![]u8 {
+    if (path.len == 0) return error.NotFound;
+    const allocator = std.heap.page_allocator;
+    const full_path = try path_util.resolveWorkspacePath(allocator, path);
+    defer allocator.free(full_path);
+
+    const fd = std.os.linux.open(full_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
+    if (fd < 0) return error.NotFound;
+    defer _ = std.os.linux.close(@intCast(fd));
+
+    const window: usize = if (max_len > 0) max_len else 64 * 1024 * 1024;
+    const buf = try allocator.alloc(u8, window);
+    errdefer allocator.free(buf);
+
+    const n = std.os.linux.pread(@intCast(fd), buf.ptr, buf.len, offset);
+    if (n < 0) return error.ReadFailed;
+    const actual: usize = @intCast(n);
+
+    if (actual == buf.len) return buf; // full window
+    const out = try allocator.realloc(buf, actual);
+    return out;
 }
 
 pub fn handleList(allocator: std.mem.Allocator, client_fd: i32, query: []const u8) !void {
