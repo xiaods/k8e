@@ -89,6 +89,11 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		AdvertiseHostname: cfg.AdvertiseHostname,
 		ExposeBaseURL:     cfg.ExposeBaseURL,
 		AdvertiseIP:       cfg.AdvertiseIP,
+		// The embedded e2b server (same host process) dials the gateway over
+		// loopback with CA trust but NO client certificate (see
+		// runEmbeddedE2B / newLocalClient). LocalAuth permits exactly those
+		// loopback connections; every remote peer still requires full mTLS.
+		LocalAuth: true,
 	})
 	go func() {
 		if err := srv.Start(ctx); err != nil {
