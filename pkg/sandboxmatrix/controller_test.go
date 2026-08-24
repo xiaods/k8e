@@ -13,7 +13,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/dynamic"
 	dynfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes"
 	kubefake "k8s.io/client-go/kubernetes/fake"
 )
 
@@ -26,6 +28,22 @@ func defaultCfg() config.SandboxConfig {
 		GRPCPort:       50051,
 		Namespace:      "sandbox-matrix",
 	}
+}
+
+func fakeSandboxClients() (dynamic.Interface, kubernetes.Interface) {
+	scheme := runtime.NewScheme()
+	gvk := func(kind string) schema.GroupVersionKind {
+		return schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: kind}
+	}
+	scheme.AddKnownTypeWithName(gvk("SandboxWarmPool"), &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(gvk("SandboxWarmPoolList"), &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(gvk("SandboxMatrix"), &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(gvk("SandboxMatrixList"), &unstructured.UnstructuredList{})
+	listKinds := map[schema.GroupVersionResource]string{
+		warmPoolGVR:    "SandboxWarmPoolList",
+		localMatrixGVR: "SandboxMatrixList",
+	}
+	return dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds), kubefake.NewSimpleClientset()
 }
 
 func TestRecycleUnhealthyWarmPods(t *testing.T) {
@@ -208,21 +226,9 @@ func TestReapIfIdle_UsesPodTTLOverride(t *testing.T) {
 }
 
 func TestReconcileWarmPools_NoPoolCR_CreatesNoPods(t *testing.T) {
-	// Default install stages CRDs only — no SandboxWarmPool instance — so the
-	// reconciler is a no-op. First CreateSession is a cold start (KIP-25).
+	// Without a SandboxWarmPool CR the reconciler is a no-op (KIP-25).
 	ctx := context.Background()
-	scheme := runtime.NewScheme()
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxWarmPool"}, &unstructured.Unstructured{})
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxWarmPoolList"}, &unstructured.UnstructuredList{})
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrix"}, &unstructured.Unstructured{})
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrixList"}, &unstructured.UnstructuredList{})
-	listKinds := map[schema.GroupVersionResource]string{
-		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxwarmpools"}: "SandboxWarmPoolList",
-		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}:  "SandboxMatrixList",
-	}
-	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
-	k8s := kubefake.NewSimpleClientset()
-
+	dyn, k8s := fakeSandboxClients()
 	reconcileWarmPools(ctx, k8s, dyn, defaultCfg(), nil, nil)
 
 	pods, err := k8s.CoreV1().Pods("sandbox-matrix").List(ctx, metav1.ListOptions{})
@@ -238,17 +244,7 @@ func TestWarmPoolReconciler_RefillTrigger(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	scheme := runtime.NewScheme()
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxWarmPool"}, &unstructured.Unstructured{})
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxWarmPoolList"}, &unstructured.UnstructuredList{})
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrix"}, &unstructured.Unstructured{})
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrixList"}, &unstructured.UnstructuredList{})
-	listKinds := map[schema.GroupVersionResource]string{
-		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxwarmpools"}: "SandboxWarmPoolList",
-		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}:  "SandboxMatrixList",
-	}
-	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
-	k8s := kubefake.NewSimpleClientset()
+	dyn, k8s := fakeSandboxClients()
 	ns := "sandbox-matrix"
 
 	pool := &unstructured.Unstructured{Object: map[string]interface{}{
@@ -293,14 +289,7 @@ func TestWarmPoolReconciler_RefillTrigger(t *testing.T) {
 
 func TestUpdateSandboxMatrixStatus_WritesMetrics(t *testing.T) {
 	ctx := context.Background()
-	scheme := runtime.NewScheme()
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrix"}, &unstructured.Unstructured{})
-	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrixList"}, &unstructured.UnstructuredList{})
-	listKinds := map[schema.GroupVersionResource]string{
-		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}: "SandboxMatrixList",
-	}
-	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
-	k8s := kubefake.NewSimpleClientset()
+	dyn, k8s := fakeSandboxClients()
 	ns := "sandbox-matrix"
 
 	matrix := &unstructured.Unstructured{Object: map[string]interface{}{
