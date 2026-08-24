@@ -207,6 +207,33 @@ func TestReapIfIdle_UsesPodTTLOverride(t *testing.T) {
 	}
 }
 
+func TestReconcileWarmPools_NoPoolCR_CreatesNoPods(t *testing.T) {
+	// Default install stages CRDs only — no SandboxWarmPool instance — so the
+	// reconciler is a no-op. First CreateSession is a cold start (KIP-25).
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxWarmPool"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxWarmPoolList"}, &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrix"}, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(schema.GroupVersionKind{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Kind: "SandboxMatrixList"}, &unstructured.UnstructuredList{})
+	listKinds := map[schema.GroupVersionResource]string{
+		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxwarmpools"}: "SandboxWarmPoolList",
+		{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}:  "SandboxMatrixList",
+	}
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
+	k8s := kubefake.NewSimpleClientset()
+
+	reconcileWarmPools(ctx, k8s, dyn, defaultCfg(), nil, nil)
+
+	pods, err := k8s.CoreV1().Pods("sandbox-matrix").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list pods: %v", err)
+	}
+	if len(pods.Items) != 0 {
+		t.Fatalf("expected 0 warm pods without a SandboxWarmPool CR, got %d", len(pods.Items))
+	}
+}
+
 func TestWarmPoolReconciler_RefillTrigger(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

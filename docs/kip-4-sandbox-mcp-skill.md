@@ -2,7 +2,9 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-04-04 | outdated |
+| @xiaods | 2026-08-24 | **Outdated** — superseded by [KIP-8](./kip-8-skill-cli-replace-mcp.md). `pkg/sandboxmcp/` and `k8e sandbox-mcp` were removed; agents use `k8e-sandbox-cli` + SKILL.md. |
+
+> Historical ADR. Do not implement MCP as a first-class agent door. KIP-16 M9 still allows a future MCP *adapter* that consumes the same proto/catalog, but that is not this design.
 
 ## Summary
 
@@ -319,7 +321,7 @@ Add `NewSandboxMCPCommand` following the `sandbox_gateway.go` pattern. Register 
 
 ### Task 5 — End-to-End Integration + Agent Config Docs
 
-- `docs/sandbox-mcp-quickstart.md`: per-agent install snippets (claude code, kiro-cli, gemini cli)
+- `docs/sandbox-mcp-quickstart.md`: per-agent install snippets (claude code, kiro-cli, gemini cli) — **never added; do not create.** Agent install path is `k8e-sandbox-cli connect` + SKILL.md (KIP-8).
 - Integration test: spawn `k8e sandbox-mcp` subprocess → `initialize` → `tools/list` (assert 10 tools) → `sandbox_create_session` → `sandbox_exec` → `sandbox_destroy_session`
 
 **Demo:** In claude code, say "run this Python snippet in a sandbox" — agent automatically calls K8E sandbox tools and returns the output.

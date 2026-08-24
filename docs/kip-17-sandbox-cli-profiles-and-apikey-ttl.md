@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-12 | Accepted (implemented with #538) |
+| @xiaods | 2026-08-24 | Implemented (#538) — `~/.k8e/sandbox/profiles.yaml` + `--profile` / `K8E_SANDBOX_PROFILE`; `k8e sandbox-apikey create` defaults to 30-day TTL |
 
 ## Summary
 

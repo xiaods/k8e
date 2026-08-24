@@ -1,17 +1,18 @@
-# KIP-21 follow-up: migrating the sandbox ingress bridge to EndpointSlice
+# KIP-23: migrating the sandbox ingress bridge to EndpointSlice
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @pi-agent-e2b-gateway | 2026-08-17 | Accepted — implemented (merged via PR #550/#551); `e2b-gateway.yaml` now ships `discovery.k8s.io/v1 EndpointSlice` |
+| @pi-agent-e2b-gateway | 2026-08-24 | Implemented (PR #550/#551) — `e2b-gateway.yaml` ships `discovery.k8s.io/v1 EndpointSlice`. Originally drafted as “KIP-21 follow-up”; numbered KIP-23 so each file has a unique integer. Depends on [KIP-21](./kip-21-host-advertise-ip-resolution.md) loopback-proof `%{ADVERTISE_IP}%`. |
 
 ## Summary
 
 `manifests/sandbox-matrix/e2b-gateway.yaml` bridges the two host-resident
-services (embedded e2b HTTP `:3676`, sandbox gRPC `:50051`) into the cluster
-with core `v1` `Endpoints` objects (manual, headless-Service pattern). This
-note evaluates migrating that bridge to `discovery.k8s.io/v1 EndpointSlice`
-— the modern, non-deprecated replacement — and documents the exact design so
-the switch can be made independently of the KIP-21 loopback fix.
+services (embedded e2b HTTP `:3676`, sandbox gRPC `:50051`) into the cluster.
+The original design used core `v1` `Endpoints` (manual, headless-Service
+pattern). This KIP migrates that bridge to `discovery.k8s.io/v1 EndpointSlice`
+— the modern replacement — and documents the exact design. It shipped with
+the [KIP-21](./kip-21-host-advertise-ip-resolution.md) loopback-proof
+advertise-IP fix rather than as a later independent switch.
 
 **Decision (updated): implemented.** The original decision deferred the
 migration until the KIP-21 correctness fix (loopback-proof `advertiseIP()`)

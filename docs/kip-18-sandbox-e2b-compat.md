@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-15 | Accepted — implemented in PR #541 |
+| @xiaods | 2026-08-24 | Implemented (PR #541) — official `e2b` SDK talks to the embedded e2b HTTP server. PTY 501s closed by [KIP-19](./kip-19-sandbox-pty-terminal-primitive.md) M4. Ingress address correctness: [KIP-21](./kip-21-host-advertise-ip-resolution.md) + [KIP-23](./kip-23-endpointslice-migration.md). |
 
 ## Summary
 
@@ -137,15 +137,15 @@ e2b-gateway.yaml`): a `GatewayClass` (`io.cilium/gateway-controller`) + a
   passthrough)** to the headless `sandbox-grpc-gateway` Service + Endpoints
   pointing at the host's `--advertise-address`.
 
-> **Errata (KIP-21):** the Endpoints address is resolved **loopback-proof** —
-> `advertiseIP()` never emits loopback (`127.0.0.1`/`::1`) because Kubernetes
-> rejects loopback Endpoint addresses, which left the Gateway with no healthy
-> backends on a flag-less default install. Resolution order:
-> `--advertise-address` → non-loopback `--bind-address` → default-route
-> interface (`utilnet.ChooseHostInterface`). If no routable address can be
-> resolved, `e2b-gateway.yaml` is **not staged** and the server logs an
-> actionable `--advertise-address <node-ip>` hint. See
-> [docs/kip-21-host-advertise-ip-resolution.md](kip-21-host-advertise-ip-resolution.md).
+> **Errata (KIP-21 / KIP-23):** the backend address is resolved **loopback-proof**
+> ([KIP-21](kip-21-host-advertise-ip-resolution.md)) — `advertiseIP()` never
+> emits loopback (`127.0.0.1`/`::1`). Resolution order: `--advertise-address` →
+> non-loopback `--bind-address` → default-route interface
+> (`utilnet.ChooseHostInterface`). If no routable address can be resolved,
+> `e2b-gateway.yaml` is **not staged** and the server logs an actionable
+> `--advertise-address <node-ip>` hint. The bridge objects are
+> `discovery.k8s.io/v1 EndpointSlice`, not core `v1 Endpoints`
+> ([KIP-23](kip-23-endpointslice-migration.md)).
 
 The gRPC listener is deliberately L4 passthrough, **not** GRPCRoute with TLS
 termination: the gateway speaks strong mTLS (client certs signed by the sandbox
@@ -435,8 +435,9 @@ a still-running process from a second consumer would only matter for sandboxd
 *background* processes (`/exec/background`), which have their own poll
 surface; not a gap for the E2B Connect path. A keepalive decorator
 (`keepaliveSubscriber`, mutex-guarded, idle 15 s) keeps long streams alive
-through proxy timeouts. PTY stays unsupported: sandboxd has no PTY and the
-SDK's `pty.create` path cannot be faked honestly.
+through proxy timeouts. PTY is implemented (KIP-19): `pty.create` /
+`sendInput` / `resize` / `kill` map onto the gateway terminal RPCs via
+`pkg/sandbox/e2b/pty.go`.
 
 ## 6. Filesystem surface
 
@@ -594,8 +595,8 @@ Downloads get extension-based `Content-Type` and single-range `Range` support
   `Process/List`/`Connect` are node-independent. Reconcilers stay
   leader-gated (`leader.go`).
 - **Gateway manifests (shipped).** `manifests/sandbox-matrix/e2b-gateway.yaml`:
-  HTTPRoute :80/:443 → e2b-server headless Service + Endpoints (host
-  `--advertise-address`), TCPRoute :50051 L4 passthrough → headless
+  HTTPRoute :80/:443 → e2b-server headless Service + EndpointSlice (host
+  advertise IP, KIP-21/23), TCPRoute :50051 L4 passthrough → headless
   `sandbox-grpc-gateway` (mTLS preserved).
 - **`k8e e2b-server` kept as a thin compat wrapper** (same logic, in-memory
   store, documented single-node semantics).
@@ -604,10 +605,11 @@ Downloads get extension-based `Content-Type` and single-range `Range` support
 
 | Surface | Status | Why |
 |---|---|---|
-| PTY: `process.Process/Update`, `UpdatePTY`, SDK `pty.create` | 501 | sandboxd has no PTY; cannot be faked honestly |
+| PTY: SDK `pty.create` / `sendInput` / `resize` / `kill` | **shipped** ([KIP-19](./kip-19-sandbox-pty-terminal-primitive.md) M4, `pkg/sandbox/e2b/pty.go`) | pid→terminal_id mapping lives in the e2b layer |
+| `process.Process/Update`, `UpdatePTY` | 501 | no official SDK path depends on these beyond the pty.* helpers now wired |
 | `process.Process/StreamInput` | 501 (**permanent**) | no official SDK calls it (verified); `send_stdin` uses unary `SendInput` |
 | `filesystem.Filesystem/WatchDir` (streaming) | 501 | the SDK uses the polling trio, which is shipped |
-| `GET /sandboxes/:id/metrics` | `[]` | K8E has no metrics pipeline yet — honest absence |
+| `GET /sandboxes/:id/metrics` | `[]` | E2B metrics envelope is still an honest absence; the k8e **gateway** exposes Prometheus (KIP-16 M5), which is a different surface |
 | xattr `metadata` (`user.e2b.*`) | not returned | no SDK surface depends on it for the supported flows |
 | `domain` in the create response | omitted | SDK tolerates absence (`isinstance str` else `None`); k8e's sandboxUrl is explicit |
 | `Connect` by tag (`ProcessSelector.tag`) | unimplemented | SDK never sends tag (verified) |
@@ -624,12 +626,12 @@ write/read/list/stat/rename/makeDir/remove, byte round-trips, signed-URL
 download/upload, watch (`watchDir` via the polling trio), `metadata.name`
 idempotency.
 
-**Honest 501s (SDK methods throw, with a machine-readable hint):** PTY
-(`pty.create`), `process.Process/Update`, `StreamInput`, `UpdatePTY`,
-streaming `WatchDir` (the polling trio works), metrics (returns `[]`),
-templates registry (only runtime-class names accepted as `templateID`),
-pause of an ephemeral (EmptyDir) sandbox (409 — no persistent workspace to
-survive the release).
+**Honest 501s (SDK methods throw, with a machine-readable hint):**
+`process.Process/Update`, `StreamInput`, `UpdatePTY`, streaming `WatchDir`
+(the polling trio works), metrics (returns `[]`), templates registry (only
+runtime-class names accepted as `templateID`), pause of an ephemeral
+(EmptyDir) sandbox (409 — no persistent workspace to survive the release).
+**PTY (`pty.create` / sendInput / resize / kill) is implemented** (KIP-19 M4).
 
 `sendStdin`/`closeStdin` and `sendSignal`/`handle.kill` are **not** in that
 list: sandboxd gained a process-control table plus `/exec/stdin`,
@@ -699,9 +701,10 @@ the same reason).
   the existing sandbox client (mTLS + LocalAuth). This is a real socket hop
   inside the process, but it reuses the battle-tested client path and keeps a
   clean seam if a future in-process `Gateway` adapter replaces it.
-- **PTY / metrics backlog**: sandboxd has no PTY and K8E has no metrics
-  pipeline; adding them un-gates the remaining 501 surfaces. `StreamInput`
-  and streaming `WatchDir` are deliberately not scheduled (no SDK consumers).
+- **PTY**: shipped (KIP-19). **Metrics**: the E2B `GET /sandboxes/:id/metrics`
+  envelope is still an honest empty list; the k8e gateway Prometheus endpoint
+  (KIP-16 M5) is a different surface. `StreamInput` and streaming `WatchDir`
+  are deliberately not scheduled (no SDK consumers).
 - **Pause with memory retention** (CubeSandbox's full snapshot pause /
   resume) would need a VM snapshot engine (CubeCoW-style); today's pause is
   the honest filesystem-only variant (release pod, keep PVC, cold-boot
@@ -1218,8 +1221,9 @@ capability name when absent; unknown backends resolve to empty. Domains:
 lifecycle, commands, filesystem, run_code, pause_resume, network_*,
 platform_lifecycle, host_mount, volume_plugin, auth_simple_key.
 
-**K8E:** KIP-18 defines honest 501s (PTY, watch, metrics, template registry,
-ephemeral pause). A capability map turns every 501 surface into an
+**K8E:** KIP-18 defines honest 501s (watch streaming, metrics envelope,
+template registry, ephemeral pause; PTY is no longer a 501). A capability map
+turns every 501 surface into an
 explainable skip ("backend k8e does not support capability pty") and makes
 the honest-501 contract continuously auditable — when sandboxd gains a
 capability, flipping one set bit un-gates the cases.

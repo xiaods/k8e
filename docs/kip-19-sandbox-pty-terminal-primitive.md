@@ -2,17 +2,17 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-17 | Implemented — M1–M3 (proto 7 RPC, sandboxd `pty.zig`, gateway `terminal.go`, dsh `spawnTerminal`) + M4 E2B `pty.*` compat closed (PR #544/#556) |
+| @xiaods | 2026-08-24 | Implemented — M1–M4 (proto 7 RPC, sandboxd `pty.zig`, gateway `terminal.go`, dsh `spawnTerminal`, E2B `pty.*` in `pkg/sandbox/e2b/pty.go`; PR #544/#556) |
 
 > 关联 KIP：KIP-14（mTLS 动态证书）、KIP-16（沙箱架构教训 / catalog M9）、KIP-18（E2B 兼容）、**KIP-20（dsh-k8e-sandbox 插件——其 Phase 2 的 `spawnTerminal` 依赖本 KIP 先行）**。
 > 本 KIP 是 KIP-20 已决问题 #2 的展开：为 k8e sandbox 增加 PTY 原语，使 dsh 的 terminal seam（以及 E2B SDK 的 `pty.*` 面）能被完整实现。
 
-## 实现状态（2026-08-17）
+## 实现状态（2026-08-24）
 
 - **M1 proto / sandboxd / gateway**：已实现并合入 main（PR #544）。`proto/sandbox/v1/sandbox.proto` 含 7 个 `Terminal*` RPC；`sandboxd/src/pty.zig`（PTY 分配 / 会话首领启动 / 输入输出泵 / `TIOCSWINSZ` 尺寸 / 前台组 / 信号 / 会话树 TERM→KILL）+ 终端会话表；`pkg/sandboxmatrix/grpc/terminal.go`（RPC 处理器 + `TerminalStream` SSE 代理 + terminal_id 路由注册表）。
 - **M2 测试**：`sandboxd/src/pty_test.zig`、`pkg/sandboxmatrix/grpc/terminal_test.go`。
-- **M3 dsh 消费**：`@k8e-sandbox/dsh-k8e-sandbox-subprocess` 的 `spawnTerminal` 已实现（直连 gRPC `createTerminal`，随 `@k8e-sandbox/*@0.1.1` 发布）。
-- **M4 E2B 兼容层 `pty.*` 闭合**：**未实现**——`pkg/sandbox/e2b/envd.go` 仍拒绝 `pty` 请求（“PTY sessions are not supported”），待 KIP-18 兼容层接入本原语。
+- **M3 dsh 消费**：`@k8e-sandbox/dsh-k8e-sandbox-subprocess` 的 `spawnTerminal` 已实现（直连 gRPC `createTerminal`）。
+- **M4 E2B 兼容层 `pty.*` 闭合**：已实现（`pkg/sandbox/e2b/pty.go` + `pty_test.go`）。兼容层自建 `pid → terminal_id` 映射，网关只暴露 canonical `terminal_id`。
 
 ## 摘要
 
@@ -287,16 +287,16 @@ E2B 兼容层（KIP-18）用 `pid` 寻址，而本原语只暴露 canonical `ter
 
 ## 验收标准
 
-- [ ] `CreateTerminal` 在沙箱内分配 PTY，argv 作为会话首领 + 控制终端启动（`ps -o sid=,tpgid=` 验证 sid == pid，tpgid == pid）。
-- [ ] `TerminalWrite` 写 master → 终端进程在 slave 收到；`TerminalStream` 收到 echo/输出，顺序正确，UTF-8 不破。
-- [ ] `TerminalResize` 后 `stty size`（或 `TIOCGWINSZ`）反映新 rows/cols，SIGWINCH 送达。
-- [ ] `TerminalForeground` 返回正确前台 pgid；`TerminalSignal`(INT/TSTP/TERM/KILL/HUP) 送达该 pgid。
-- [ ] `TerminalDestroy`：TERM→grace→KILL 升级，返回时 `ps` 证明该会话无存活进程组；幂等，重复 destroy 干净 not-found。
-- [ ] `TerminalStream` 断线重连回放环形缓冲；`truncated` 在缓冲溢出时置位；终帧 exit_code/signal 正确。
-- [ ] 网关：terminal_id 路由注册表在 create/destroy/session 销毁时正确增删；`TerminalStream` 走 mTLS 且被未认证调用拒绝。
-- [ ] dsh 快照：`@k8e-sandbox/dsh-k8e-sandbox-subprocess` 的 `spawnTerminal` 在 mock/真实网关上演 `bash` 终端，验证 write/read/Ctrl-C/resize/destroy 全链路。
-- [ ] E2B 兼容：`pty.create/sendInput/resize/kill` 经兼容层闭合（KIP-18）。
-- [ ] 文档：本 KIP + proto 注释 + `SKILL.md`/README 一处更新说明 PTY 面。
+- [x] `CreateTerminal` 在沙箱内分配 PTY，argv 作为会话首领 + 控制终端启动（`ps -o sid=,tpgid=` 验证 sid == pid，tpgid == pid）。
+- [x] `TerminalWrite` 写 master → 终端进程在 slave 收到；`TerminalStream` 收到 echo/输出，顺序正确，UTF-8 不破。
+- [x] `TerminalResize` 后 `stty size`（或 `TIOCGWINSZ`）反映新 rows/cols，SIGWINCH 送达。
+- [x] `TerminalForeground` 返回正确前台 pgid；`TerminalSignal`(INT/TSTP/TERM/KILL/HUP) 送达该 pgid。
+- [x] `TerminalDestroy`：TERM→grace→KILL 升级，返回时 `ps` 证明该会话无存活进程组；幂等，重复 destroy 干净 not-found。
+- [x] `TerminalStream` 断线重连回放环形缓冲；`truncated` 在缓冲溢出时置位；终帧 exit_code/signal 正确。
+- [x] 网关：terminal_id 路由注册表在 create/destroy/session 销毁时正确增删；`TerminalStream` 走 mTLS 且被未认证调用拒绝。
+- [x] dsh 快照：`@k8e-sandbox/dsh-k8e-sandbox-subprocess` 的 `spawnTerminal` 在 mock/真实网关上演 `bash` 终端，验证 write/read/Ctrl-C/resize/destroy 全链路。
+- [x] E2B 兼容：`pty.create/sendInput/resize/kill` 经兼容层闭合（KIP-18）。
+- [x] 文档：本 KIP + proto 注释 + `SKILL.md`/README 一处更新说明 PTY 面。
 
 ## 实现地图
 

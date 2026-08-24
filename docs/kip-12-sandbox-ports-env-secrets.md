@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-03 | Partially implemented — env (`--env`) + secrets (`--secret`, CRD SecretRef) shipped; service-port exposure delivered by KIP-24 |
+| @xiaods | 2026-08-24 | Implemented — env (`--env`) + secrets (`--secret`, CRD `SecretRef`, resolved at exec time) shipped; **ports/preview delivered by [KIP-24](./kip-24-sandbox-service-exposure.md)** as a k8e API Gateway reverse proxy (`/k8e/expose/<session>/<port>/`), not the Service+Ingress HMAC preview URL sketched in Part A below. Positioning ADR (harness vs compute) still stands. |
 
 ## Summary
 

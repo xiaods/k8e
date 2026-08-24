@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods (agent-assisted) | 2026-08-10 | Implemented — matrix M1–M12 + R1–R5 delivered across PRs #515–#533 (9 merged; rest pending review) |
+| @xiaods (agent-assisted) | 2026-08-24 | Implemented — P0/P1 matrix (M1–M12, R1–R5) in tree across PRs #515–#533. Remaining P2: catalog codegen depth, egress-proxy for DNS-proxy-off clusters, wire-level delta via registry. |
 
 ## Summary
 
@@ -160,13 +160,18 @@ All P0/P1 matrix rows are implemented or have a tracked issue. 12 PRs shipped:
 | #517 | M5 Prometheus collector (gateway metrics) | merged |
 | #518 | M5 sandboxd NDJSON event writer (disk-only, activity-gated) | merged |
 | #519 | M5 `GetEvents` RPC + CLI `events` | merged |
-| #520 | M1 slice 1: sub-agents reuse parent pod | review |
-| #521 | M2 zstd-compressed layer storage | review |
-| #522 | M2 multi-layer chunked snapshots + `--base` incremental | review |
-| #523 | M2 server-side snapshot layer registry (SnapshotPut/Get/List) | review |
-| #524 | M2 autosquash past threshold | review |
-| #525 | M2 CLI publishes/queries gateway registry (`--remote`) | review |
-| #526 | M10 slice 1: `allowed_hosts` enforced via Cilium toFQDNs (opt-in) | review |
+| #520 | M1 slice 1: sub-agents reuse parent pod | merged |
+| #521 | M2 zstd-compressed layer storage | merged |
+| #522 | M2 multi-layer chunked snapshots + `--base` incremental | merged |
+| #523 | M2 server-side snapshot layer registry (SnapshotPut/Get/List) | merged |
+| #524 | M2 autosquash past threshold | merged |
+| #525 | M2 CLI publishes/queries gateway registry (`--remote`) | merged |
+| #526 | M10 slice 1: `allowed_hosts` enforced via Cilium toFQDNs (opt-in) | merged |
+| #528 | M1 slice 2: per-session isolation | merged |
+| #530 | M5 process topology (`GetProcesses` / `ps`) | merged |
+| #531 | M11 transactional destroy | merged |
+| #532 | M6 run-registry rebuild | merged |
+| #533 | M9 CLI `catalog` | merged |
 
 ### Key design decisions recorded
 
@@ -176,30 +181,28 @@ All P0/P1 matrix rows are implemented or have a tracked issue. 12 PRs shipped:
 4. **M5 observability**: disk-only + activity-gated (read never triggers collection; idle daemon does zero work) — ephemeral-sandbox L5 principle, no new processes.
 5. **HA leader election for the embedded controller**: k8e supports multi-node control planes (`cluster-init` / `datastore-endpoint`), and the sandbox-matrix orchestrator runs embedded in every server process. The gRPC gateway is stateless and multi-node-safe, but the warm-pool / GC / idle-reaper / resetting-detector reconcilers are NOT — two servers reconciling the same pool would double-create/double-GC/double-reap. Reconcilers now contend on a `coordination.k8s.io` Lease (`sandboxmatrix-controller` in the `sandbox-matrix` namespace); only the elected leader runs them, the gateway serves on every node. Leader identity = `SandboxConfig.LeaderElectionIdentity` else hostname.
 
-### Remaining (all P2, tracked)
+### Remaining (P2 / follow-up, 2026-08-24)
+
+P0/P1 matrix rows and the original “review” PR cluster (#520–#533) are in tree.
+What is still open:
 
 | Item | Issue | Notes |
 |---|---|---|
-| M1 slice 2: per-session overlay isolation | #514 | upperdir per session in pod; trust boundary stays pod-level |
 | M2: wire-level delta transfer via registry | #511 | CLI `--base` computes delta locally; gateway-level transfer next |
-| M2: autosquash on incremental chain | #511 | done in #524; server-side chaining pending |
-| M3: operation catalog layering | — | proto as catalog seed → generated CLI/SDK validation (P2) |
-| M6: label-driven recovery | — | rebuild in-flight state from pod labels/CRD (P2) |
-| M9: single-catalog multi-adapter projection | — | proto → CLI/SDK generation (P2) |
-| M11: transactional destroy | — | idempotent destroy ledger (P2) |
-| M10 slice 2: egress-proxy for DNS-proxy-off clusters | #510 | alternative enforcement path |
-| M5: process topology by namespace identity | #513 | /proc ns/pid matching (P2) |
+| M3: operation catalog layering depth | — | `catalog` CLI shipped (#533); proto→CLI/SDK *generation* still P2 |
+| M9: single-catalog multi-adapter projection | — | same as M3 — adapters still hand-written |
+| M10 slice 2: egress-proxy for DNS-proxy-off clusters | #510 | alternative to `--cilium-dns-proxy` toFQDNs |
+| M5: process topology by namespace identity | #513 | `GetProcesses` shipped; deeper `/proc` ns/pid matching is P2 |
 
 ### Maintainer action list
 
-1. Review + merge PRs #520–#526 (all CI-green; the cluster of 7 pending PRs unblocks the full M1/M2/M10 story).
-2. Decide #510's remaining option: egress-proxy for DNS-proxy-off clusters, or document current opt-in posture.
-3. After merge, add integration tests against a live cluster for toFQDNs enforcement and sub-agent pod reuse.
-4. Track P2 backlog (M3/M6/M9/M11, M5 topology) as separate KIPs or issues.
+1. Decide #510's remaining option: egress-proxy for DNS-proxy-off clusters, or document the current opt-in `--cilium-dns-proxy` posture as the supported path.
+2. Add live-cluster integration tests for toFQDNs enforcement and sub-agent pod reuse.
+3. Track remaining P2 (M3/M9 codegen, M2 wire-level delta, M5 ns identity) as separate KIPs or issues.
 
 ## Related work
 
-- [KIP-3](./kip-3-agentic-ai-sandbox-matrix.md) — matrix / sessions / Cilium allowlist 设计（`allowed_hosts` 未执行即源于此）
+- [KIP-3](./kip-3-agentic-ai-sandbox-matrix.md) — matrix / sessions / Cilium allowlist 设计（M10 slice 1 now enforces `allowed_hosts` via toFQDNs when `--cilium-dns-proxy` is on）
 - [KIP-8](./kip-8-skill-cli-replace-mcp.md) — CLI-first distribution
 - [KIP-10](./kip-10-sandbox-snapshot.md) — snapshots（R2/M2 直接改进对象）
 - [KIP-11](./kip-11-background-sandbox-execution.md) — background（M12 改进对象）

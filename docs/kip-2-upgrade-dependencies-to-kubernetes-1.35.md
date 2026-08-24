@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-03-04 | Implemented |
+| @xiaods | 2026-08-24 | Implemented — original target was Kubernetes v1.35.1; the tree now tracks **v1.35.5-k3s1** |
 
 ## Summary
 

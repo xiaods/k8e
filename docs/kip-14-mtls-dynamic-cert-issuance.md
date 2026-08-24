@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-04 | Implemented — Login RPC issues 90-day client certs with lazy renewal (<30d); API keys TTL-managed (`k8e sandbox-apikey`, #538) |
+| @xiaods | 2026-08-24 | Implemented — Login RPC issues 90-day client certs with lazy renewal (<30d remaining); API keys TTL-managed (`k8e sandbox-apikey`, #538). Multi-profile cert dirs: [KIP-17](./kip-17-sandbox-cli-profiles-and-apikey-ttl.md). |
 
 ## Summary
 

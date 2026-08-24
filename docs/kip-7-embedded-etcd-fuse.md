@@ -2,14 +2,10 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-22 | Design |
+| @xiaods | 2026-08-24 | Implemented — `pkg/embedw` wraps `embed.StartEtcd`; `pkg/etcd` consumes it |
 
----
-
-> **状态**: Implemented
-> **作者**: xiaods
-> **日期**: 2025-05-20
-> **关联**: KIP-6 (Embedded etcd 设计方案)
+**Created**: 2025-05-20
+**Relates to**: [KIP-6](./kip-6-embedded-etcd-design.md)
 
 ---
 
@@ -291,11 +287,11 @@ go.etcd.io/etcd/server/v3 v3.6.7  →  github.com/k3s-io/etcd/server/v3 v3.6.7-k
 
 ## 8. 里程碑时间线
 
-| 阶段 | 内容 | 预计时间 |
+| 阶段 | 内容 | 状态 (2026-08-24) |
 |---|---|---|
-| Phase 1 | 创建 `pkg/embedw/` 封装包 | 1-2 天 |
-| Phase 2 | 渐进替换 `etcd.cluster()` | 1 天 |
-| Phase 3 | 清理 build.zig 中 SQLite 代码 | 1 小时 |
-| Phase 4 | 全流程回归测试 | 1-2 天 |
-| Phase 5 | 性能基准对比 | 半天 |
-| 发布 | 合并到 main | — |
+| Phase 1 | 创建 `pkg/embedw/` 封装包 | **shipped** |
+| Phase 2 | 渐进替换 `etcd.cluster()` | **shipped** (`pkg/etcd` imports `pkg/embedw`) |
+| Phase 3 | 清理 build.zig 中 SQLite 代码 | **shipped** (KIP-6; no SQLite/kine runtime) |
+| Phase 4 | 全流程回归测试 | covered by existing etcd / cluster tests |
+| Phase 5 | 性能基准对比 | not a gate; embed path is the only path |
+| 发布 | 合并到 main | **done** |

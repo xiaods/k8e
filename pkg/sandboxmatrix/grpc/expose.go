@@ -24,7 +24,7 @@ import (
 // proxies to the pod's cluster IP, and the per-session CNP gains an ingress
 // rule allowing the gateway/e2b-server to the exposed port.
 //
-// Design: docs/sandbox-expose-tunnel.md
+// Design: docs/kip-24-sandbox-service-exposure.md
 
 // ExposedEntry is one live gateway-proxied exposure for a session.
 type ExposedEntry struct {

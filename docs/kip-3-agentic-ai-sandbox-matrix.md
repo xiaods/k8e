@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-02 | Implemented (revised — see [Alignment with Perplexity Sandbox](#alignment-with-perplexity-sandbox-revised-2026-06-02)) |
+| @xiaods | 2026-08-24 | Implemented — matrix / sessions / warm pool / gRPC / RuntimeClass / Cilium CNP in tree. FUSE was never shipped (PVC/EmptyDir only). Later extensions: [KIP-16](./kip-16-sandbox-architecture-lessons-ephemeral.md) (CAS, transcripts, obs), [KIP-18](./kip-18-sandbox-e2b-compat.md) (E2B), [KIP-19](./kip-19-sandbox-pty-terminal-primitive.md) (PTY), [KIP-24](./kip-24-sandbox-service-exposure.md) (expose). See [Alignment with Perplexity Sandbox](#alignment-with-perplexity-sandbox-revised-2026-06-02). |
 
 ## Summary
 
@@ -1161,3 +1161,4 @@ None. This is a purely additive feature. All new CRDs, controllers, and manifest
 - [Zig language](https://ziglang.org/) — cross-platform systems programming language used for `sandboxd`
 - [KIP-1](./kip-1-native-etcd-storage-client.md) — Native etcd storage client
 - [KIP-2](./kip-2-upgrade-dependencies-to-kubernetes-1.35.md) — Kubernetes 1.35 dependency upgrade
+- [KIP-25](./kip-25-sandbox-warm-pool.md) — `SandboxWarmPool` CRD fields, adaptive sizing, idle TTL

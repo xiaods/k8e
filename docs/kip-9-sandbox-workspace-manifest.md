@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-03 | Implemented |
+| @xiaods | 2026-08-24 | Implemented — `k8e-sandbox-cli create --manifest` / `--git-repo` materializes into `/workspace` after CreateSession |
 
 ## Summary
 

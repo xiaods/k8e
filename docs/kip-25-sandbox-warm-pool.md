@@ -1,12 +1,29 @@
-# SandboxWarmPool 使用文档
+# KIP-25: SandboxWarmPool 使用文档
 
-| 更新 | 状态 |
-|------|------|
-| 2026-08-04 | Current |
+| Author | Updated | Status |
+|--------|---------|--------|
+| @xiaods | 2026-08-24 | Implemented — reconciler, claim, adaptive sizing, idle TTL, runtime-class matching, `POST /ready` handshake, and a **default `SandboxWarmPool` of `size: 1`** staged from `manifests/sandbox-matrix/default-warm-pool.yaml`. |
 
-`SandboxWarmPool` 是 K8E 沙箱矩阵的预热池 CRD：预先启动一批 sandbox pod（`sandbox.k8e.io/state=warm`），会话创建时原子领取（`warm → active`），避免冷启动延迟。本文档覆盖字段语义与调优，重点是自适应扩缩字段 `maxSize` / `minSize` / `idleTTLSeconds`。
+> Promoted from unnumbered `sandbox-warm-pool.md`. Architecture: [KIP-3](kip-3-agentic-ai-sandbox-matrix.md); readiness handshake: [KIP-16](kip-16-sandbox-architecture-lessons-ephemeral.md) M8.
 
-架构背景见 [KIP-3: Agentic AI Sandbox Matrix](kip-3-agentic-ai-sandbox-matrix.md)。
+### What “warm” actually is
+
+Warm-pool units are **Pods** labeled `sandbox.k8e.io/state=warm` in namespace `sandbox-matrix`. They are **not** `SandboxSession` objects. `kubectl get sandboxsession` stays empty until a client calls `CreateSession` / `k8e-sandbox-cli run`.
+
+```bash
+# stock install now stages this CR (size: 1)
+kubectl get sandboxwarmpool -n sandbox-matrix
+
+# SandboxSession is still empty until a client CreateSession / run
+kubectl get sandboxsession -n sandbox-matrix
+
+# the real warm inventory
+kubectl get pods -n sandbox-matrix -l sandbox.k8e.io/state=warm
+```
+
+`CreateSession` with a `tenant_id` (CLI `--tenant` / `K8E_SANDBOX_TENANT`) **never** claims a warm pod — persistent sessions cold-start a PVC-backed pod. Only ephemeral sessions (no tenant) can adopt EmptyDir warm pods.
+
+`SandboxWarmPool` 是预热池 CRD：预先启动一批 sandbox pod，会话创建时原子领取（`warm → active`）。本文档覆盖字段语义与调优，重点是自适应扩缩字段 `maxSize` / `minSize` / `idleTTLSeconds`。
 
 ## 字段总览
 
@@ -40,8 +57,10 @@ status:
 
 ## 基础用法
 
+默认安装已经 apply 了 `sandbox-matrix/default`（`size: 1`, `runtimeClass: gvisor`）。要加大池子或改 runtime，改这份 CR 即可；删掉它则不再预热（控制器不会自动重建）。
+
 ```bash
-# 创建预热池（5 个 gVisor warm pod）
+# 默认池已存在时，扩到 5 个 gVisor warm pod
 kubectl apply -f - <<'EOF'
 apiVersion: k8e.sh/v1alpha1
 kind: SandboxWarmPool

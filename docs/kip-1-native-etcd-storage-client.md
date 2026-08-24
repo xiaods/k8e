@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-02-17 | Implemented |
+| @xiaods | 2026-08-24 | Implemented — `pkg/etcdstorage` is the native `clientv3` client; kine is gone |
 
 ## Summary
 

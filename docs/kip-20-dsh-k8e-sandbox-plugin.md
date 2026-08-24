@@ -2,19 +2,20 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-17 | Implemented & published — `@k8e-sandbox/*@0.3.6` (npm); Phase 2 gRPC transport, KIP-19 terminals, prefs web UI, and KIP-24 expose/allow-hosts tools |
+| @xiaods | 2026-08-24 | Implemented & published — `@k8e-sandbox/*` (npm); Phase 1+2 gRPC transport, KIP-19 terminals, prefs web UI, KIP-24 expose/allow-hosts tools |
 
 > 关联 KIP：KIP-3（sandbox matrix）、KIP-8（skill-cli 取代 MCP）、KIP-14（mTLS 动态证书）、KIP-16（沙箱架构教训 / catalog）、KIP-17（CLI 多 profile 与 API key TTL）、KIP-18（E2B 兼容）、**KIP-19（sandbox PTY 终端原语——本 KIP Phase 2 的 `spawnTerminal` 依赖它先行）**。
 > 关联仓库：`deepseek-harness`（下称 **dsh**）——插件化 agent harness，vendored Cordis，“everything is a plugin”。
 
-## 实现状态（2026-08-17）
+## 实现状态（2026-08-24）
 
-- **Phase 1 + Phase 2 已实现**并发布 npm `@k8e-sandbox/*@0.1.1`（PR #553/#554）：
+- **Phase 1 + Phase 2 已实现**并发布 npm `@k8e-sandbox/*`（PR #553/#554 及后续）：
   所有者服务（owner）、CLI/gRPC 双传输 client、fs / subprocess provider（流式 stdio 与
-  `spawnTerminal`，后者依赖 KIP-19）、host-ui / client-ui、bundle。加载方式：
+  `spawnTerminal`，后者依赖 KIP-19）、host-ui / client-ui、bundle、KIP-24 expose/allow-hosts 工具。加载方式：
   `dsh plugin --profile <name> add @k8e-sandbox/dsh-k8e-sandbox-bundle`。
-- **未实现（可选）**：模型面工具的 snapshot/pause/resume/ps/confirm 子集（当前工具包提供 session 状态/销毁、前台 exec、后台 exec + poll；其余依赖 CLI 命令面扩展）。
+- **未实现（可选）**：模型面工具的 snapshot/pause/resume/ps/confirm 子集（当前工具包提供 session 状态/销毁、前台 exec、后台 exec + poll、expose；其余仍可走 CLI）。
 - **已知限制**：`@deepseek-ai/dsh-*` 系列为私有包（公共 npm 不可用），运行时由 dsh 安装提供 peer 依赖。
+- **非目标仍成立**：PTY 原语已由 KIP-19 提供，本 KIP 消费它，不再自造。
 
 ## 摘要
 

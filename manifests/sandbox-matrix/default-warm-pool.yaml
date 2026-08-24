@@ -1,0 +1,14 @@
+# Default warm pool (KIP-25): one pre-booted sandbox so the first ephemeral
+# CreateSession / k8e-sandbox-cli run can claim instead of cold-starting.
+# Scale or delete this CR to change the default; the controller does not
+# recreate it. Persistent sessions (--tenant) still cold-start (PVC).
+apiVersion: k8e.sh/v1alpha1
+kind: SandboxWarmPool
+metadata:
+  name: default
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  size: 1
+  runtimeClass: gvisor
