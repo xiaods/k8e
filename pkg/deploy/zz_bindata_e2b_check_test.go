@@ -109,3 +109,27 @@ func assertCount(t *testing.T, content []byte, token string, want int, name stri
 		t.Fatalf("%s must contain %q exactly %d times, got %d", name, token, want, n)
 	}
 }
+
+// TestE2BPoolShape guards the pool manifest shapes: blocks[].cidr is a FLAT
+// CIDR string and serviceSelector is a bare LabelSelector in cilium.io/v2
+// (nested {cidr:…} / {selector:…} forms are rejected by the apiserver).
+func TestE2BPoolShape(t *testing.T) {
+	gw := assetBytes(t, "sandbox-matrix/e2b-gateway.yaml")
+	assertContains(t, gw, "  blocks:\n  - cidr:", "e2b-gateway.yaml")
+	assertContains(t, gw, "serviceSelector:\n    matchLabels:", "e2b-gateway.yaml")
+	assertNoneContain(t, gw, "e2b-gateway.yaml", []string{
+		"- cidr:\n      cidr:",
+		"serviceSelector:\n    selector:",
+	})
+}
+
+// TestE2BEndpointSlicesBothParsed guards against silently-dropped YAML
+// documents (a missing --- separator merged the e2b-server EndpointSlice into
+// the pool doc, which made the parser emit ONE EndpointSlice — Gateway→e2b
+// 'no healthy upstream' on every fresh install).
+func TestE2BEndpointSlicesBothParsed(t *testing.T) {
+	content := assetBytes(t, "sandbox-matrix/e2b-gateway.yaml")
+	if got := bytes.Count(content, []byte("kind: EndpointSlice")); got != 2 {
+		t.Fatalf("expected 2 EndpointSlice docs in manifest, got %d", got)
+	}
+}
