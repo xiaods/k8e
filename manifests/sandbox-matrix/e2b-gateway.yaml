@@ -108,7 +108,7 @@ ports:
 - name: http
   port: 3676
   protocol: TCP
-
+---
 apiVersion: cilium.io/v2
 kind: CiliumLoadBalancerIPPool
 metadata:
@@ -121,13 +121,11 @@ spec:
   # generated cilium-gateway-e2b Service stays <pending> and the Gateway
   # never reaches Programmed=True (bare-metal one-click expose, KIP-24).
   blocks:
-  - cidr:
-      cidr: "%{ADVERTISE_IP}%/32"
+  - cidr: "%{ADVERTISE_IP}%/32"
   # Scope strictly to the e2b Gateway's own LoadBalancer Service.
   serviceSelector:
-    selector:
-      matchLabels:
-        io.cilium.gateway/owning-gateway: e2b
+    matchLabels:
+      io.cilium.gateway/owning-gateway: e2b
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
