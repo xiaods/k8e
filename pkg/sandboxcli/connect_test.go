@@ -455,3 +455,49 @@ func TestConnFlag_EmptyWhenNowhereSet(t *testing.T) {
 		t.Fatalf("connFlag(profile) = %q, want empty", got)
 	}
 }
+
+func TestResetCerts_FallsBackToDefaultDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
+
+	dir := filepath.Join(home, ".k8e", "sandbox")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"ca.crt", "client.crt", "client.key", "endpoint", "config.json"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resetCerts(&ResolvedConn{Endpoint: "sandbox.example.com:50051"}) // CertDir empty → default dir
+
+	for _, f := range []string{"ca.crt", "client.crt", "client.key", "endpoint"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists after reset (err=%v)", f, err)
+		}
+	}
+	// Non-cert files must be preserved.
+	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
+		t.Fatalf("config.json should survive cert reset: %v", err)
+	}
+}
+
+func TestResetCerts_ExplicitCertDir(t *testing.T) {
+	custom := t.TempDir()
+	t.Setenv("K8E_SANDBOX_CERT_DIR", "")
+	for _, f := range []string{"ca.crt", "client.crt"} {
+		if err := os.WriteFile(filepath.Join(custom, f), []byte("x"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resetCerts(&ResolvedConn{Endpoint: "sandbox.example.com:50051", CertDir: custom})
+
+	for _, f := range []string{"ca.crt", "client.crt"} {
+		if _, err := os.Stat(filepath.Join(custom, f)); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists after reset", f)
+		}
+	}
+}

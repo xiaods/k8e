@@ -117,11 +117,7 @@ func connectAction(ctx *cli.Context) error {
 	apikey := resolved.APIKey
 
 	if ctx.Bool(flagResetCerts) {
-		if dir := resolved.CertDir; dir != "" {
-			for _, f := range []string{"ca.crt", "client.crt", "client.key", "endpoint"} {
-				_ = os.Remove(filepath.Join(dir, f))
-			}
-		}
+		resetCerts(resolved)
 	}
 
 	mode, cfgEndpoint, err := resolveConnectMode(endpoint, apikey)
@@ -168,6 +164,24 @@ func connectAction(ctx *cli.Context) error {
 
 	printConnectSuccess(mode, cfgEndpoint, cliPath, installedAgents, installResults)
 	return nil
+}
+
+// resetCerts deletes cached trust material (CA, client cert/key, endpoint
+// stamp) for this connection so the next dial re-bootstraps from the API key.
+// When no explicit cert_dir was configured it falls back to the default cache
+// dir (~/.k8e/sandbox) — otherwise --reset-certs would silently no-op on
+// default installs while the dial keeps trusting the stale CA there.
+func resetCerts(resolved *ResolvedConn) {
+	dir := resolved.CertDir
+	if dir == "" {
+		dir, _ = dataDir()
+	}
+	if dir == "" {
+		return
+	}
+	for _, f := range []string{"ca.crt", "client.crt", "client.key", "endpoint"} {
+		_ = os.Remove(filepath.Join(dir, f))
+	}
 }
 
 func connectSkillOnly(ctx *cli.Context) error {
