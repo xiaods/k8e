@@ -2,7 +2,9 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-05-19 | outdated |
+| @xiaods | 2026-08-24 | **Outdated** — Layer 1 depended on [KIP-4](./kip-4-sandbox-mcp-skill.md) MCP, which [KIP-8](./kip-8-skill-cli-replace-mcp.md) replaced. OpenClaw / any SKILL-driven harness consumes `k8e-sandbox-cli`; DeepSeek Harness uses [KIP-20](./kip-20-dsh-k8e-sandbox-plugin.md). |
+
+> Historical ADR. gRPC and CRD control-plane access still exist; the MCP-based OpenClaw integration described here was never shipped.
 
 ## Summary
 

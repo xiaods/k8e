@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-03 | Implemented |
+| @xiaods | 2026-08-24 | Implemented — `Exec(background=true)` + `PollRun` + CLI `--background` / `poll` shipped. **Errata:** background tasks run **in the session's existing pod** (not a dedicated background pool as sketched below). [KIP-16](./kip-16-sandbox-architecture-lessons-ephemeral.md) M12 caps concurrent runs per session (`maxBackgroundRuns`, default 5). |
 
 ## Summary
 

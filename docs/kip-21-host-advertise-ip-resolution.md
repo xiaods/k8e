@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @pi-agent-e2b-gateway | 2026-08-17 | Accepted — implemented (merged via PR #550); EndpointSlice bridge landed as KIP-21 follow-up |
+| @pi-agent-e2b-gateway | 2026-08-24 | Implemented (PR #550) — `advertiseIP()` is loopback-proof. EndpointSlice migration is [KIP-23](./kip-23-endpointslice-migration.md) (same change set, PR #551 folded into #550). |
 
 ## Summary
 

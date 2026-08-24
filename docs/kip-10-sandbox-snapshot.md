@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-03 | Implemented |
+| @xiaods | 2026-08-24 | Implemented — original client-side `tar.gz` under `~/.k8e/sandbox/snapshots/` shipped, then **evolved by [KIP-16](./kip-16-sandbox-architecture-lessons-ephemeral.md) M2** into a SHA-256 CAS layerstore (`pkg/sandboxlayer`) with zstd, chunked multi-layer manifests, `--base` incremental restore, server-side `SnapshotPut/Get/List` registry, and autosquash. CLI `snapshot save/list/restore/delete` remains the user surface. |
 
 ## Summary
 

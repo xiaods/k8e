@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-04 | Proposed |
+| @xiaods | 2026-08-24 | Partially implemented — Python lazy venv (`sandboxd/src/venv.zig`, `PATH`/`VIRTUAL_ENV=/workspace/.venv`) ships on every exec; **`npm_config_cache` / `npm_config_prefix` redirect is not in `sandboxd`** (no npm env injection). |
 
 ## Summary
 
@@ -12,7 +12,9 @@
 
 ### 当前状态
 
-sandbox pod 已通过 `SecurityContext.ReadOnlyRootFilesystem: true` 强制执行只读根文件系统（`orchestrator.go:661`），`/workspace` 由 PVC 或 EmptyDir 挂载为唯一可写路径。但 **没有对包管理器做任何重定向**：
+> **2026-08-24：** Python 路径已落地（`sandboxd` 每次 exec 调 `venv.ensureVenv()`，默认 `PATH`/`VIRTUAL_ENV` 指向 `/workspace/.venv`）。下表的 pip 行已过时；**npm 行仍准确**——`sandboxd` 没有 `npm_config_*` 注入。
+
+sandbox pod 已通过 `SecurityContext.ReadOnlyRootFilesystem: true` 强制执行只读根文件系统，`/workspace` 由 PVC 或 EmptyDir 挂载为唯一可写路径。设计时（2026-06-04）**没有对包管理器做任何重定向**：
 
 | 操作 | 目标路径 | 当前行为 |
 |------|---------|---------|

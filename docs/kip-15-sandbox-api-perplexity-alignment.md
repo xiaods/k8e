@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods (agent-assisted) | 2026-08-06 | Partially implemented — wave PRs #520–#533 merged; remainder under review |
+| @xiaods (agent-assisted) | 2026-08-24 | Partially implemented — compute surface mostly closed (waves + KIP-16/18/19/24). Remaining vs this KIP's parity bar: ShareFile/artifacts, generic `InstallPackages`, egress-proxy credential injection (toFQDNs is opt-in, not a secret-injecting proxy). |
 
 ## Summary
 
@@ -12,7 +12,9 @@
 
 **一句话结论：** 能力上对齐行业「agent code tool」的 **compute 契约**（session / exec / files / background / artifacts / 安全边界）；交付上保持 **vendor-neutral**：任何 Claude / Codex / Cursor / 自研 agent 都能用同一 gRPC/CLI 契约调用，不绑定 Perplexity/OpenAI 的 Agent API 循环。
 
-不完备处仍集中在：**可观测执行结果、secrets/egress、暂停恢复、文件变更查询、端口预览、制品导出**。
+**2026-08-24 对照实现：** 可观测执行结果（transcript / events / `duration_ms`）、secret_refs、Pause/Resume、`ListFiles(since)`、端口预览（KIP-24）、GetSession 均已落地。仍缺：**制品导出（ShareFile）**、**通用 InstallPackages**、**egress proxy 侧注入凭证**（Cilium `toFQDNs` 只做域名放行）。
+
+不完备处（历史原文，已部分过期）：可观测执行结果、secrets/egress、暂停恢复、文件变更查询、端口预览、制品导出。
 
 ## Sources
 
@@ -102,24 +104,25 @@
 
 ### 2.1 gRPC `SandboxService` (today)
 
-| RPC | Status | Maps to Perplexity |
+| RPC | Status (2026-08-24) | Maps to Perplexity |
 |-----|--------|--------------------|
-| `CreateSession` | ✅ (+ `env` in #502) | create container/session |
+| `CreateSession` | ✅ (+ `env` / `secret_refs`) | create container/session |
 | `DestroySession` | ✅ | teardown |
-| `Exec` / `ExecStream` | ✅ | run code / stream |
-| `Exec(background)` + `PollRun` | ✅ (KIP-11) | background + poll |
-| `WriteFile` / `ReadFile` / `ListFiles` | ✅ | FS ops（list 的 since 在 CLI 侧） |
-| `PipInstall` | ✅ | runtime packages (Python-centric) |
+| `Exec` / `ExecStream` | ✅ (`duration_ms`, truncation flags in sandboxd) | run code / stream |
+| `Exec(background)` + `PollRun` | ✅ (KIP-11; cap default 5, KIP-16 M12) | background + poll |
+| `WriteFile` / `ReadFile` / `ListFiles` | ✅ (`ListFiles(since)` in proto) | FS ops |
+| `PipInstall` | ✅ | runtime packages (Python-centric; generic InstallPackages still missing) |
 | `RunSubAgent` | ✅ K8E-specific | N/A（Perplexity 无对等） |
 | `ConfirmAction` / `ApproveAction` | ✅ K8E-specific | governance（Perplexity 侧偏 harness） |
 | `Login` | ✅ (KIP-14 mTLS) | auth |
-| `GetSession` / `ListSessions` | ❌ | session inspect |
-| `PauseSession` / `ResumeSession` | ❌ | pause/resume |
-| `ListFiles(since)` 一等字段 | ⚠️ CLI only | modification tracking |
-| `ExposePort` / `UnexposePort` | ❌ (KIP-12 A) | preview（Perplexity 公开文未强调） |
-| `SecretRef` on create | ❌ (#485 / KIP-12 B) | secret-safe config |
-| Artifact registry (share/list/download) | ⚠️ snapshot 间接 | share_file |
-| `duration_ms` / structured `status` enum | ⚠️ 弱 | results[] shape |
+| `GetSession` / `ListSessions` | ✅ | session inspect |
+| `PauseSession` / `ResumeSession` | ✅ (PVC sessions only; ephemeral refused) | pause/resume |
+| `ListFiles(since)` 一等字段 | ✅ | modification tracking |
+| `ExposeService` / `UnexposeService` / `ListExposed` | ✅ ([KIP-24](./kip-24-sandbox-service-exposure.md); not HMAC Ingress) | preview |
+| `SecretRef` on create | ✅ (resolved at exec time; still injected as guest env, not proxy-side) | secret-safe config |
+| Artifact registry (share/list/download) | ⚠️ snapshot / CAS registry 间接；无 ShareFile | share_file |
+| `duration_ms` / structured `status` enum | ✅ sandboxd ExecResult | results[] shape |
+| Terminals, snapshots, events, processes | ✅ KIP-16 / KIP-19 | beyond Perplexity public surface |
 
 ### 2.2 Isolation & security (infra)
 
@@ -127,8 +130,8 @@
 |------------|-----|------------|
 | Isolation | gVisor / Kata / Firecracker RuntimeClass | “isolated K8s pod” |
 | Warm pool | ✅ | 未公开细节 |
-| Default egress | Cilium deny + `allowed_hosts` | no direct net + egress proxy |
-| Secret injection | 明文 `env` only；secret-ref 未落地 | proxy injects credentials |
+| Default egress | Cilium deny + `allowed_hosts` (toFQDNs when `--cilium-dns-proxy`) | no direct net + egress proxy |
+| Secret injection | `secret_refs` resolved at exec time into guest env (not proxy-side) | proxy injects credentials |
 | Resource limits | matrix CRD / pod limits 部分 | built-in limits |
 | Human approval | `confirm`/`approve` | 未作为 sandbox 一等 API |
 
@@ -474,10 +477,16 @@ K8E Sandbox API 可宣称与 Perplexity **compute 层 parity** 当且仅当：
 
 ## 10. Next actions (suggested issues)
 
-1. **#485** — secret_refs (Wave 1)  
-2. **Issue: GetSession + ExecResponse.duration_ms/status/truncated** (Wave 2)  
-3. **Issue: ListFiles.modified_since in proto** (Wave 2)  
-4. **Issue: PauseSession/ResumeSession** (Wave 2)  
-5. **Issue: ShareFile/artifacts** (Wave 2)  
-6. **Issue: ExposePort (KIP-12 A)** (Wave 2)  
-7. **KIP-16** — egress proxy + credential injection (Wave 1–2)  
+Closed since this KIP was written:
+
+1. **#485** — secret_refs — **shipped** (KIP-12 B)
+2. GetSession + ExecResponse.duration_ms/status/truncated — **shipped**
+3. ListFiles.modified_since in proto — **shipped** (KIP-16 M2)
+4. PauseSession/ResumeSession — **shipped** (KIP-18)
+5. ExposePort (KIP-12 A) — **shipped as KIP-24** (`ExposeService`, gateway reverse proxy)
+
+Still open:
+
+6. **ShareFile/artifacts** — still snapshot/CAS-indirect; no dedicated artifact catalog RPC
+7. **egress-proxy + credential injection** — M10 slice 1 is Cilium `toFQDNs` (opt-in `--cilium-dns-proxy`); no proxy-side secret injection (KIP-16 M10 slice 2 / #510)
+8. **generic InstallPackages** — still Python-centric `PipInstall`  

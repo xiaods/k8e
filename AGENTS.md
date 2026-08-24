@@ -139,4 +139,4 @@ See `docs/agents/` for the configuration files that engineering skills consume:
 
 - **Issue tracker**: [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) — issues live in GitHub Issues, managed via `gh` CLI
 - **Triage labels**: [docs/agents/triage-labels.md](docs/agents/triage-labels.md) — standard five-role label vocabulary
-- **Domain docs**: [docs/agents/domain.md](docs/agents/domain.md) — how skills should consume `docs/adr/`, key terms, and repo structure
+- **Domain docs**: [docs/agents/domain.md](docs/agents/domain.md) — how skills should consume KIPs; **status index is [docs/README.md](docs/README.md)** (KIP-1 … KIP-25)

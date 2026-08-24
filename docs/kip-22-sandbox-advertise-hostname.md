@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @pi-agent | 2026-08-18 | Accepted — implemented |
+| @pi-agent | 2026-08-24 | Implemented — `--sandbox-advertise-hostname` (config-file / env fallback `K8E_SANDBOX_ADVERTISED_HOSTNAME`); gateway server cert regenerates when the SAN set changes |
 
 ## Summary
 

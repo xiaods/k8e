@@ -9,6 +9,17 @@ import (
 // is complete and staged with the KIP-21 loopback-safe advertise-IP bridge.
 // Kept as a thin composition of small helpers to stay under DeepSource's
 // cognitive-complexity bound (GO-R1005).
+func TestDefaultWarmPoolManifestStaged(t *testing.T) {
+	b := assetBytes(t, "sandbox-matrix/default-warm-pool.yaml")
+	assertAllContain(t, b, "default-warm-pool.yaml", []string{
+		"kind: SandboxWarmPool",
+		"name: default",
+		"namespace: sandbox-matrix",
+		"size: 1",
+		"runtimeClass: gvisor",
+	})
+}
+
 func TestE2BGatewayAPIManifestsStaged(t *testing.T) {
 	for _, name := range []string{
 		"sandbox-matrix/e2b-gateway.yaml",

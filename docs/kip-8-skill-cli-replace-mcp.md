@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-06-03 | Implemented |
+| @xiaods | 2026-08-24 | Implemented — `pkg/sandboxmcp/` is gone; the agent door is `k8e-sandbox-cli` + embedded SKILL.md. The command surface has grown past the original 9+1 list (snapshot, poll, log, events, ps, catalog, expose, allow-hosts, profiles, PTY-adjacent tools). |
 
 ## Summary
 
