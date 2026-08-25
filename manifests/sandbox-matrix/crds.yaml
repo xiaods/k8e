@@ -28,9 +28,9 @@ spec:
           spec:
             type: object
             properties:
-              warmPoolSize: {type: integer}
+              warmPoolSize: {type: integer, minimum: 0}
               runtimeClass: {type: string}
-              sessionTTL: {type: integer}
+              sessionTTL: {type: integer, minimum: 0}
               defaultAllowedHosts:
                 type: array
                 items: {type: string}
@@ -42,10 +42,10 @@ spec:
               rateLimits:
                 type: object
                 properties:
-                  writeBurst: {type: integer}
-                  writeRate: {type: number}
-                  readBurst: {type: integer}
-                  readRate: {type: number}
+                  writeBurst: {type: integer, minimum: 0}
+                  writeRate: {type: number, minimum: 0}
+                  readBurst: {type: integer, minimum: 0}
+                  readRate: {type: number, minimum: 0}
           status:
             type: object
             properties:
@@ -98,7 +98,7 @@ spec:
                 items: {type: string}
               runtimeClass: {type: string}
               parentSessionID: {type: string}
-              depth: {type: integer}
+              depth: {type: integer, minimum: 0}
               env:
                 type: object
                 additionalProperties: {type: string}
@@ -113,7 +113,16 @@ spec:
           status:
             type: object
             properties:
-              phase: {type: string}
+              phase:
+                type: string
+                enum:
+                - Warm
+                - Active
+                - Paused
+                - Resetting
+                - Terminating
+                - BackgroundRunning
+                - BackgroundCompleted
               podName: {type: string}
               podIP: {type: string}
               workspacePVC: {type: string}
@@ -155,11 +164,11 @@ spec:
           spec:
             type: object
             properties:
-              size: {type: integer}
+              size: {type: integer, minimum: 0}
               runtimeClass: {type: string}
-              minSize: {type: integer}
-              maxSize: {type: integer}
-              idleTTLSeconds: {type: integer}
+              minSize: {type: integer, minimum: 0}
+              maxSize: {type: integer, minimum: 0}
+              idleTTLSeconds: {type: integer, minimum: 0}
               templateRef:
                 type: object
                 properties:

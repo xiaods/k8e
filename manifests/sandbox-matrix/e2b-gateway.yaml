@@ -240,8 +240,13 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:
+  # sectionName: http — attach ONLY to the :80 listener, same reasoning as
+  # e2b-control-plane above: an unqualified parentRef would also try to attach
+  # to the :443 listener (Invalid until the sandbox-e2b TLS secret exists) and
+  # to the :50051 TCP listener (HTTPRoute is not an allowed kind there).
   parentRefs:
   - name: e2b
+    sectionName: http
   rules:
   # envd surface + signed files: /e2b/envd, /e2b/api (alias), /files.
   - matches:
@@ -251,6 +256,11 @@ spec:
     - path:
         type: PathPrefix
         value: /files
+    timeouts:
+      # The envd surface carries long-lived Connect/WebSocket streams (exec,
+      # file watch, process control). Envoy's default request timeout would
+      # kill those sessions mid-stream; 0s explicitly disables it.
+      request: 0s
     backendRefs:
     - name: e2b-server
       port: 3676
