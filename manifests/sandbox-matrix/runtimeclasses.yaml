@@ -9,12 +9,28 @@ kind: RuntimeClass
 metadata:
   name: kata
 handler: kata-runtime
+# Kata containers run inside a hardware-virtualized VM: account for the VM
+# overhead in scheduling (podFixed) and keep pods off nodes without KVM, the
+# same taint firecracker tolerates below.
+overhead:
+  podFixed:
+    memory: "160Mi"
+    cpu: "250m"
+scheduling:
+  tolerations:
+  - key: sandbox.k8e.io/kvm
+    operator: Exists
 ---
 apiVersion: node.k8s.io/v1
 kind: RuntimeClass
 metadata:
   name: firecracker
 handler: firecracker
+# MicroVM overhead accounted for in scheduling.
+overhead:
+  podFixed:
+    memory: "128Mi"
+    cpu: "100m"
 scheduling:
   tolerations:
   - key: sandbox.k8e.io/kvm
