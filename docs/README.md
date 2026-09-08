@@ -33,7 +33,7 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 |-----|-------|--------|
 | [KIP-3](kip-3-agentic-ai-sandbox-matrix.md) | Agentic AI Sandbox Matrix (sessions, warm pool, gRPC, Cilium) | Implemented |
 | [KIP-25](kip-25-sandbox-warm-pool.md) | `SandboxWarmPool` CRD: fields, adaptive sizing, idle TTL | Implemented — default install stages a `size: 1` pool |
-| [KIP-8](kip-8-skill-cli-replace-mcp.md) | SKILL + CLI replace MCP | Implemented |
+| [KIP-8](kip-8-skill-cli-replace-mcp.md) | CLI + Skill and API Key MCP entry | CLI implemented; MCP cluster acceptance pending |
 | [KIP-9](kip-9-sandbox-workspace-manifest.md) | Workspace manifest (`--manifest` / `--git-repo`) | Implemented |
 | [KIP-10](kip-10-sandbox-snapshot.md) | Workspace snapshot | Implemented — original client `tar.gz` evolved into KIP-16 M2 CAS layerstore |
 | [KIP-11](kip-11-background-sandbox-execution.md) | Background exec + poll | Implemented — runs in the **same** session pod, capped (`maxBackgroundRuns`, default 5); dedicated background pool was not shipped |
@@ -65,7 +65,7 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 
 | KIP | Title | Status |
 |-----|-------|--------|
-| [KIP-4](kip-4-sandbox-mcp-skill.md) | Sandbox MCP skill (`k8e sandbox-mcp`) | **Outdated** — superseded by [KIP-8](kip-8-skill-cli-replace-mcp.md). `pkg/sandboxmcp/` does not exist. |
+| [KIP-4](kip-4-sandbox-mcp-skill.md) | Sandbox MCP skill (`k8e sandbox-mcp`) | **Outdated** — superseded by [KIP-8](kip-8-skill-cli-replace-mcp.md). The rebuilt `pkg/sandboxmcp/` uses the new HTTP protocol and API Key authentication. |
 | [KIP-5](kip-5-openclaw-sandbox-management.md) | OpenClaw via MCP | **Outdated** — depended on KIP-4 MCP. Agents consume the CLI + skill (KIP-8) or the dsh plugin (KIP-20). |
 
 Agent-facing repo conventions live under [`docs/agents/`](agents/). Those files (`domain.md`, `issue-tracker.md`, `triage-labels.md`) are skill conventions, not KIPs.

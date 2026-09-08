@@ -2,11 +2,11 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-09-08 | Revised design; MCP reimplementation pending |
+| @xiaods | 2026-09-08 | MCP implementation in progress; cluster acceptance pending |
 
 ## 2026-09-08 修订：本地 CLI 与远程 MCP 并存
 
-本节替代下方历史版本中“删除 MCP、仅保留 CLI”的产品决策。2026-06-03 的 CLI 迁移已经实现；本次 MCP 重建尚未实现，不能据本文宣称远程入口已可用。保留历史正文用于解释迁移背景，不把旧命令示例、时延估计和会话设计当作当前规范。
+本节替代下方历史版本中“删除 MCP、仅保留 CLI”的产品决策。2026-06-03 的 CLI 迁移已经实现；MCP 入口、API Key 认证、持久化去重和部署清单已进入代码，真实 K8E 集群重启与正式客户端互通仍待验收。首期仅支持 API Key；通用客户端自动登录与 OAuth 集成延后评估。保留历史正文用于解释迁移背景，不把旧命令示例、时延估计和会话设计当作当前规范。
 
 ### 目标与架构
 
@@ -37,13 +37,13 @@ MCP adapter 不启动 CLI 子进程，不调用依赖 cli.Context、stdout 或�
 
 ### 认证与所有权
 
-当前 gRPC mTLS interceptor 验证客户端身份与证书吊销；这不等于逐资源授权。公开 MCP 入口前必须建立并测试下列边界：
+当前 gRPC mTLS interceptor 验证客户端身份与证书吊销；MCP 入口通过 K8E 的 sandbox-matrix/sandbox-apikeys Secret 校验 Bearer API Key，并复用 keys.json 格式和有效期逻辑。公开 MCP 入口前必须建立并测试下列边界：
 
 1. 每个请求由服务端认证取得稳定 principal，不能信任模型传入的 tenant、owner、profile、endpoint 或任意转发身份头。
 2. 沙箱创建时持久化 owner；查询、执行、文件访问、销毁及运行轮询均校验 owner。运行 handle 必须可追溯到所属沙箱与 principal，列表也按 owner 过滤。
 3. 首期仅允许访问通过该入口创建且具有可信 owner 记录的沙箱；旧的无 owner 沙箱不自动授予远程用户。管理迁移需独立授权流程。
 4. 后端连接身份不能悄悄退化为全局管理员权限。若由受信服务账号访问 gRPC，则入口必须强制逐资源授权，后端仅允许受信入口访问，并明确这一部署信任边界。
-5. 对标准远程客户端的授权机制按官方 HTTP authorization 规范实现；现有 K8E API key/mTLS 是后端认证，不能冒充已经实现 MCP OAuth。任何受限认证试验必须标注兼容性，不能宣称通用客户端正式可用。
+5. 首期仅支持能设置 Authorization 请求头的客户端；不声明 OAuth 自动登录兼容性，不提供 issuer、introspection 或 OAuth 资源发现。每次请求重新读取 API Key Secret；过期、撤销和模糊身份拒绝，存储故障返回 503。owner 由 Secret UID、记录名和 created_at 派生，轮换保留记录名和 created_at，重建记录应使用新 created_at；旧版无创建时间记录不得复用名称给其他用户。
 6. 默认关闭入口；显式配置启用。远程传输使用 HTTPS，验证 Origin，限制请求大小和操作超时，不记录凭证。反向代理负责哪些校验必须在部署文档中明确。
 
 ### 幂等、持久化与断线
@@ -66,7 +66,7 @@ MCP adapter 不启动 CLI 子进程，不调用依赖 cli.Context、stdout 或�
 | D | 后端集成与恢复验证 | 跨副本重复提交只产生一次业务提交；崩溃后的不确定状态可查询；后台结果恢复 |
 | E | 回归、客户端互操作与性能比较 | CLI+skill 原行为保持；声明支持的 MCP 客户端实测；相同工作负载对比 |
 
-验收测试使用 fake backend 覆盖协议与拒绝路径、真实持久化接口覆盖竞争/重启；运行集群验收前不能把单元测试通过等同于生产就绪。部署启用、发布和生产变更不包含在代码实现授权内。
+验收测试使用 fake backend 覆盖协议与拒绝路径，独立 Python 客户端覆盖 wire discovery/call/dedup/poll，Kubernetes 测试覆盖跨进程 ConfigMap CAS 和可选 K8E 容器重启。真实集群命令见 `manifests/sandbox-mcp/README.md`；在该验收完成前不能把单元测试通过等同于生产就绪。部署启用、发布和生产变更不包含在代码实现授权内。
 
 ### 依据
 

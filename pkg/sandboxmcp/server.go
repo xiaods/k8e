@@ -158,7 +158,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	principal, err := s.auth(r)
 	if err != nil || principal.ID == "" {
-		fail(w, 401, nil, -32000, "Authentication required")
+		status := http.StatusUnauthorized
+		var authErr *authenticationError
+		if errors.As(err, &authErr) {
+			status = authErr.status
+			if authErr.challenge != "" {
+				w.Header().Set("WWW-Authenticate", authErr.challenge)
+			}
+		}
+		fail(w, status, nil, -32000, "Authentication required")
 		return
 	}
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))

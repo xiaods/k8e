@@ -1,0 +1,165 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8e-mcp
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8e-mcp
+  namespace: k8e-mcp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-state
+  namespace: k8e-mcp
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-state
+  namespace: k8e-mcp
+subjects:
+  - kind: ServiceAccount
+    name: k8e-mcp
+    namespace: k8e-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-state
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-api-key-reader
+  namespace: sandbox-matrix
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [sandbox-apikeys]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-api-key-reader
+  namespace: sandbox-matrix
+subjects:
+  - kind: ServiceAccount
+    name: k8e-mcp
+    namespace: k8e-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-api-key-reader
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8e-mcp
+  namespace: k8e-mcp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: k8e-mcp
+  template:
+    metadata:
+      labels:
+        app: k8e-mcp
+    spec:
+      serviceAccountName: k8e-mcp
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp
+          image: k8e-mcp:local
+          imagePullPolicy: IfNotPresent
+          command: [/usr/local/bin/k8e-sandbox-cli]
+          args:
+            - mcp-serve
+            - --listen=:8443
+            - --tls-cert=/credentials/public/tls.crt
+            - --tls-key=/credentials/public/tls.key
+            - --gateway=sandbox-grpc-gateway.sandbox-matrix.svc:50051
+            - --gateway-ca=/credentials/gateway/ca.crt
+            - --gateway-cert=/credentials/gateway/tls.crt
+            - --gateway-key=/credentials/gateway/tls.key
+            - --state-namespace=k8e-mcp
+          ports:
+            - name: https
+              containerPort: 8443
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            tcpSocket:
+              port: https
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              scheme: HTTPS
+              port: https
+              path: /healthz
+          livenessProbe:
+            tcpSocket:
+              port: https
+          volumeMounts:
+            - name: public-tls
+              mountPath: /credentials/public
+              readOnly: true
+            - name: gateway-tls
+              mountPath: /credentials/gateway
+              readOnly: true
+      volumes:
+        - name: public-tls
+          secret:
+            secretName: mcp-public-tls
+        - name: gateway-tls
+          secret:
+            secretName: mcp-gateway-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8e-mcp
+  namespace: k8e-mcp
+spec:
+  selector:
+    app: k8e-mcp
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: k8e-mcp
+  namespace: k8e-mcp
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: k8e-mcp

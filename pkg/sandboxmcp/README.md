@@ -1,34 +1,40 @@
-# MCP HTTP boundary (in progress)
+# MCP API Key entry
 
-`Server` implements the KIP-8 MCP 2026-07-28 request/response boundary without
-opening a listener. It is not yet a deployable MCP service.
+The standalone sandbox CLI exposes `mcp-serve`, an HTTPS MCP 2026-07-28 entry
+using K8E API keys. Configure a client with the `/mcp` URL and
+`Authorization: Bearer <bare K8E key>`. OAuth login/discovery is not implemented;
+clients must support explicit Authorization headers and this protocol version.
 
-Implemented: authenticated principal injection, exact Origin allowlist, request
-size/deadline limits, per-request protocol metadata, header/body checks,
-`server/discover`, stable `tools/list`, and `tools/call`. Only tools capability is
-advertised. JSON responses include the modern result discriminator. There is no
-protocol session, initialization handshake, SSE stream, or Tasks extension.
+The service reads `sandbox-matrix/sandbox-apikeys` on every authenticated request,
+using the shared K8E `keys.json` codec and expiry checks. Revocation applies to
+subsequent requests; already admitted work is not cancelled. Kubernetes failures
+fail closed with 503, and invalid credentials receive 401. Duplicate keys assigned
+to multiple identities are rejected. API keys are never sent to the gateway.
 
-Tool callbacks own argument validation and resource authorization. Authentication
-is a required dependency; the fake authentication in tests is not a supported
-production credential mechanism. No generic CLI handler or process environment
-is used. Schemas currently describe object arguments; actual K8E schemas and
-validation must be implemented together with the backend adapter. Do not attach
-schemas with `x-mcp-header` until custom parameter header validation is supported.
+Ownership uses Secret UID, record name and created_at, not the credential bytes.
+Rotate a v2 record by changing its key while preserving name and created_at.
+Deleting/recreating a record with a new created_at gives it a new identity.
+Legacy records lack created_at: never recycle their names for different users.
+Recreating the entire Secret changes its UID and requires deliberate ownership
+migration. No automatic adoption of previous OAuth-owned or legacy sessions occurs.
 
-Next implementation slice:
+The nine tools validate ownership for sessions/runs and persist atomic operation
+admission in ConfigMaps. Lost replies and uncertain completion writes remain
+unknown and never trigger automatic resubmission. State records must be retained;
+there is no automatic GC or unknown-outcome reconciler.
 
-1. Add the principal/owner and durable operation store, including concurrent
-   admission and unknown-result recovery tests.
-2. Add concrete K8E tool schemas and a gRPC backend; enforce ownership on every
-   handle, including background run polling.
-3. Add standards-compatible HTTP authorization, HTTPS deployment configuration,
-   and an opt-in listener. No anonymous or shared-default-session mode.
-4. Validate real-client interoperability and restart/cross-replica behavior before
-   marking the revised KIP implemented. CLI behavior remains unchanged.
+Only discover/list/call are advertised; there are no protocol sessions, initialize
+handshake, SSE streams or Tasks extensions. Browser CORS preflight is not supported.
+The `/healthz` endpoint reports process health, not gateway or Kubernetes readiness.
 
-Validation:
+Deployment and initialization: `manifests/sandbox-mcp/README.md`.
 
 ```sh
-go test -race ./pkg/sandboxmcp -count=1
+go test -race ./pkg/sandboxmcp ./cmd/sandboxcli -count=1
+MCP_RUN_INTEROP=1 go test ./pkg/sandboxmcp -run TestIndependentPythonClient -v
+MCP_TEST_KUBECONFIG=/path/to/k8e.yaml go test ./pkg/sandboxmcp -run TestKubernetesRestartRecovery -v
 ```
+
+The Python test uses real HTTPS with a simulated backend. The cluster test uses
+a real Kubernetes API with a simulated backend; full sandbox end-to-end and
+official client interoperability remain separate acceptance work.
