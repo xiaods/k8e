@@ -23,6 +23,9 @@ automatically available there):
 docker build -f manifests/sandbox-mcp/Dockerfile -t k8e-mcp:local .
 ```
 
+The runtime image is a non-root `scratch` image containing the static CLI and
+the CA bundle required for gateway TLS verification.
+
 For a registry deployment, replace the image with your published immutable digest.
 Initialize using operator-provisioned public TLS and authorized gateway mTLS files:
 
