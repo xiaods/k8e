@@ -39,58 +39,82 @@ func Command() cli.Command {
 }
 
 func serveCommand(command *cli.Context) error {
+	if err := validateServeOptions(command); err != nil {
+		return err
+	}
+	connection, err := connectGateway(command)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	core, err := connectKubernetes(command)
+	if err != nil {
+		return err
+	}
+	handler, err := buildHandler(command, connection, core)
+	if err != nil {
+		return err
+	}
+	return serveHTTP(command, handler)
+}
+
+func validateServeOptions(command *cli.Context) error {
 	for _, name := range []string{"tls-cert", "tls-key", "api-key-namespace", "api-key-secret", "gateway", "gateway-ca", "gateway-cert", "gateway-key", "state-namespace"} {
 		if command.String(name) == "" {
 			return errors.New("required MCP option: --" + name)
 		}
 	}
+	return nil
+}
+
+func connectGateway(command *cli.Context) (*grpc.ClientConn, error) {
 	certificate, err := tls.LoadX509KeyPair(command.String("gateway-cert"), command.String("gateway-key"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rootPEM, err := os.ReadFile(command.String("gateway-ca"))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(rootPEM) {
-		return errors.New("gateway CA has no certificates")
+		return nil, errors.New("gateway CA has no certificates")
 	}
-	connection, err := grpc.NewClient(command.String("gateway"), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, Certificates: []tls.Certificate{certificate}})))
-	if err != nil {
-		return err
-	}
-	defer connection.Close()
+	return grpc.NewClient(command.String("gateway"), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, Certificates: []tls.Certificate{certificate}})))
+}
+
+func connectKubernetes(command *cli.Context) (typedcore.CoreV1Interface, error) {
 	var kubeConfig *rest.Config
+	var err error
 	if command.String("kubeconfig") == "" {
 		kubeConfig, err = rest.InClusterConfig()
 	} else {
 		kubeConfig, err = clientcmd.BuildConfigFromFlags("", command.String("kubeconfig"))
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	kubeConfig.Timeout = 10 * time.Second
-	core, err := typedcore.NewForConfig(kubeConfig)
-	if err != nil {
-		return err
-	}
+	return typedcore.NewForConfig(kubeConfig)
+}
+
+func buildHandler(command *cli.Context, connection *grpc.ClientConn, core typedcore.CoreV1Interface) (*Server, error) {
 	store, err := NewKubernetesStore(core.ConfigMaps(command.String("state-namespace")))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	service, err := NewService(pb.NewSandboxServiceClient(connection), store)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	authenticate, err := NewAPIKeyAuthenticator(core.Secrets(command.String("api-key-namespace")), command.String("api-key-secret"))
 	if err != nil {
-		return err
+		return nil, err
 	}
-	handler, err := New(Config{Authenticate: authenticate, Tools: service.Tools(), AllowedOrigins: command.StringSlice("allowed-origin")})
-	if err != nil {
-		return err
-	}
+	return New(Config{Authenticate: authenticate, Tools: service.Tools(), AllowedOrigins: command.StringSlice("allowed-origin")})
+}
+
+func serveHTTP(command *cli.Context, handler http.Handler) error {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", handler)
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) { writer.WriteHeader(http.StatusNoContent) })

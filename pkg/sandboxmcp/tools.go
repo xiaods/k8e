@@ -87,33 +87,15 @@ func (service *Service) Tools() []Tool {
 
 func parseArguments(raw json.RawMessage, fields, required []string) (arguments, error) {
 	var parsed arguments
-	var values map[string]json.RawMessage
-	if json.Unmarshal(raw, &values) != nil || values == nil {
-		return parsed, &InvalidParams{Message: "Object arguments required"}
+	values, err := decodeArgumentMap(raw)
+	if err != nil {
+		return parsed, err
 	}
-	allowed := map[string]bool{}
-	for _, field := range fields {
-		allowed[field] = true
+	if err := validateArgumentValues(values, fields); err != nil {
+		return parsed, err
 	}
-	for field, value := range values {
-		if !allowed[field] || bytes.Equal(value, []byte("null")) {
-			return parsed, &InvalidParams{Message: "Unexpected or null argument: " + field}
-		}
-		if field != "timeout" {
-			var text string
-			limit := 256
-			if field == "command" || field == "content" {
-				limit = 256 * 1024
-			}
-			if json.Unmarshal(value, &text) != nil || len(text) > limit || (field != "content" && strings.TrimSpace(text) == "") {
-				return parsed, &InvalidParams{Message: "Invalid argument: " + field}
-			}
-		}
-	}
-	for _, field := range required {
-		if _, ok := values[field]; !ok {
-			return parsed, &InvalidParams{Message: "Missing argument: " + field}
-		}
+	if err := requireArguments(values, required); err != nil {
+		return parsed, err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -130,6 +112,48 @@ func parseArguments(raw json.RawMessage, fields, required []string) (arguments, 
 		parsed.Timeout = 30
 	}
 	return parsed, nil
+}
+
+func decodeArgumentMap(raw json.RawMessage) (map[string]json.RawMessage, error) {
+	var values map[string]json.RawMessage
+	if json.Unmarshal(raw, &values) != nil || values == nil {
+		return nil, &InvalidParams{Message: "Object arguments required"}
+	}
+	return values, nil
+}
+
+func validateArgumentValues(values map[string]json.RawMessage, fields []string) error {
+	allowed := map[string]bool{}
+	for _, field := range fields {
+		allowed[field] = true
+	}
+	for field, value := range values {
+		if !allowed[field] || bytes.Equal(value, []byte("null")) {
+			return &InvalidParams{Message: "Unexpected or null argument: " + field}
+		}
+		if field != "timeout" && !validTextArgument(field, value) {
+			return &InvalidParams{Message: "Invalid argument: " + field}
+		}
+	}
+	return nil
+}
+
+func validTextArgument(field string, value json.RawMessage) bool {
+	var text string
+	limit := 256
+	if field == "command" || field == "content" {
+		limit = 256 * 1024
+	}
+	return json.Unmarshal(value, &text) == nil && len(text) <= limit && (field == "content" || strings.TrimSpace(text) != "")
+}
+
+func requireArguments(values map[string]json.RawMessage, required []string) error {
+	for _, field := range required {
+		if _, ok := values[field]; !ok {
+			return &InvalidParams{Message: "Missing argument: " + field}
+		}
+	}
+	return nil
 }
 
 func dataResult(value any) (CallResult, error) {
@@ -161,21 +185,10 @@ func (service *Service) call(ctx context.Context, principal Principal, name stri
 		return CallResult{}, errors.New("principal required")
 	}
 	if name == "sandbox_operation" {
-		record, err := service.store.Get(ctx, recordKey("operation", principal.ID, parsed.OperationKind, parsed.OperationID))
-		if err != nil || record.Owner != principal.ID {
-			return CallResult{}, errors.New("operation inaccessible")
-		}
-		return operationResult(record, parsed.OperationID)
+		return service.recoverOperation(ctx, principal, parsed)
 	}
 	if name == "sandbox_poll" {
-		if _, err := service.owner(ctx, principal, "run", parsed.RunID); err != nil {
-			return CallResult{}, err
-		}
-		response, err := service.backend.PollRun(ctx, &pb.PollRunRequest{RunId: parsed.RunID})
-		if err != nil {
-			return CallResult{}, err
-		}
-		return protoResult(response)
+		return service.pollRun(ctx, principal, parsed.RunID)
 	}
 	if name != "sandbox_create" {
 		if _, err := service.owner(ctx, principal, "session", parsed.SessionID); err != nil {
@@ -204,6 +217,84 @@ func (service *Service) call(ctx context.Context, principal Principal, name stri
 	default:
 		return service.mutate(ctx, principal, name, parsed)
 	}
+}
+
+func (service *Service) recoverOperation(ctx context.Context, principal Principal, parsed arguments) (CallResult, error) {
+	record, err := service.store.Get(ctx, recordKey("operation", principal.ID, parsed.OperationKind, parsed.OperationID))
+	if err != nil || record.Owner != principal.ID {
+		return CallResult{}, errors.New("operation inaccessible")
+	}
+	return operationResult(record, parsed.OperationID)
+}
+
+func (service *Service) pollRun(ctx context.Context, principal Principal, runID string) (CallResult, error) {
+	if _, err := service.owner(ctx, principal, "run", runID); err != nil {
+		return CallResult{}, err
+	}
+	response, err := service.backend.PollRun(ctx, &pb.PollRunRequest{RunId: runID})
+	if err != nil {
+		return CallResult{}, err
+	}
+	return protoResult(response)
+}
+
+func (service *Service) executeMutation(ctx context.Context, principal Principal, name string, parsed arguments, record Record) (CallResult, error) {
+	switch name {
+	case "sandbox_create":
+		return service.createSandbox(ctx, principal, record)
+	case "sandbox_exec":
+		return service.execSandbox(ctx, principal, parsed)
+	case "sandbox_destroy":
+		return service.destroySandbox(ctx, parsed)
+	case "sandbox_write":
+		return service.writeSandbox(ctx, parsed)
+	default:
+		return CallResult{}, fmt.Errorf("unsupported mutation")
+	}
+}
+
+func (service *Service) createSandbox(ctx context.Context, principal Principal, record Record) (CallResult, error) {
+	if _, err := service.store.Create(ctx, recordKey("session", record.SessionID), Record{Owner: principal.ID, State: "owned", SessionID: record.SessionID}); err != nil {
+		return CallResult{}, err
+	}
+	response, err := service.backend.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: record.SessionID, RuntimeClass: "gvisor"})
+	if err != nil {
+		return CallResult{}, err
+	}
+	if response == nil || response.SessionId != record.SessionID {
+		return CallResult{}, errors.New("backend changed session handle")
+	}
+	return dataResult(map[string]any{"session_id": record.SessionID})
+}
+
+func (service *Service) execSandbox(ctx context.Context, principal Principal, parsed arguments) (CallResult, error) {
+	response, err := service.backend.Exec(ctx, &pb.ExecRequest{SessionId: parsed.SessionID, Command: parsed.Command, Timeout: parsed.Timeout, Workdir: "/workspace", Background: true})
+	if err != nil {
+		return CallResult{}, err
+	}
+	if response == nil || response.RunId == "" {
+		return CallResult{}, errors.New("missing run handle")
+	}
+	if _, err := service.store.Create(ctx, recordKey("run", response.RunId), Record{Owner: principal.ID, State: "owned", SessionID: parsed.SessionID}); err != nil {
+		return CallResult{}, err
+	}
+	return protoResult(response)
+}
+
+func (service *Service) destroySandbox(ctx context.Context, parsed arguments) (CallResult, error) {
+	response, err := service.backend.DestroySession(ctx, &pb.DestroySessionRequest{SessionId: parsed.SessionID})
+	if err != nil {
+		return CallResult{}, err
+	}
+	return protoResult(response)
+}
+
+func (service *Service) writeSandbox(ctx context.Context, parsed arguments) (CallResult, error) {
+	response, err := service.backend.WriteFile(ctx, &pb.WriteFileRequest{SessionId: parsed.SessionID, Path: parsed.Path, Content: parsed.Content, Mode: "w"})
+	if err != nil {
+		return CallResult{}, err
+	}
+	return protoResult(response)
 }
 
 func operationResult(record Record, operationID string) (CallResult, error) {
@@ -240,47 +331,7 @@ func (service *Service) mutate(ctx context.Context, principal Principal, name st
 		return CallResult{}, err
 	}
 	record = created
-	var result CallResult
-	switch name {
-	case "sandbox_create":
-		_, err = service.store.Create(ctx, recordKey("session", record.SessionID), Record{Owner: principal.ID, State: "owned", SessionID: record.SessionID})
-		if err == nil {
-			var response *pb.CreateSessionResponse
-			response, err = service.backend.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: record.SessionID, RuntimeClass: "gvisor"})
-			if err == nil && (response == nil || response.SessionId != record.SessionID) {
-				err = errors.New("backend changed session handle")
-			}
-			if err == nil {
-				result, err = dataResult(map[string]any{"session_id": record.SessionID})
-			}
-		}
-	case "sandbox_exec":
-		var response *pb.ExecResponse
-		response, err = service.backend.Exec(ctx, &pb.ExecRequest{SessionId: parsed.SessionID, Command: parsed.Command, Timeout: parsed.Timeout, Workdir: "/workspace", Background: true})
-		if err == nil && (response == nil || response.RunId == "") {
-			err = errors.New("missing run handle")
-		}
-		if err == nil {
-			_, err = service.store.Create(ctx, recordKey("run", response.RunId), Record{Owner: principal.ID, State: "owned", SessionID: parsed.SessionID})
-		}
-		if err == nil {
-			result, err = protoResult(response)
-		}
-	case "sandbox_destroy":
-		var response *pb.DestroySessionResponse
-		response, err = service.backend.DestroySession(ctx, &pb.DestroySessionRequest{SessionId: parsed.SessionID})
-		if err == nil {
-			result, err = protoResult(response)
-		}
-	case "sandbox_write":
-		var response *pb.WriteFileResponse
-		response, err = service.backend.WriteFile(ctx, &pb.WriteFileRequest{SessionId: parsed.SessionID, Path: parsed.Path, Content: parsed.Content, Mode: "w"})
-		if err == nil {
-			result, err = protoResult(response)
-		}
-	default:
-		err = fmt.Errorf("unsupported mutation")
-	}
+	result, err := service.executeMutation(ctx, principal, name, parsed, record)
 	if err != nil {
 		return operationResult(record, parsed.OperationID)
 	}

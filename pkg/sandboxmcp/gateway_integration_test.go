@@ -97,43 +97,11 @@ func TestGatewayWithKubernetesMock(t *testing.T) {
 	store, _ := NewKubernetesStore(core.CoreV1().ConfigMaps("mcp-state"))
 	authenticate, _ := NewAPIKeyAuthenticator(core.CoreV1().Secrets("sandbox-matrix"), "sandbox-apikeys")
 	newHandler := func() *Server {
-		service, err := NewService(pb.NewSandboxServiceClient(connection), store)
-		if err != nil {
-			t.Fatal(err)
-		}
-		handler, err := New(Config{Authenticate: authenticate, Tools: service.Tools()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return handler
+		return newGatewayHandler(t, connection, store, authenticate)
 	}
 	handler := newHandler()
 	call := func(key, name string, arguments map[string]any, rejected bool) map[string]any {
-		t.Helper()
-		request := newRequest("tools/call", arguments)
-		var body map[string]any
-		_ = json.NewDecoder(request.Body).Decode(&body)
-		body["params"].(map[string]any)["name"] = name
-		encoded, _ := json.Marshal(body)
-		updated := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(string(encoded)))
-		updated.Header = request.Header
-		updated.Header.Set("Mcp-Name", name)
-		updated.Header.Set("Authorization", "Bearer "+key)
-		response := httptest.NewRecorder()
-		handler.ServeHTTP(response, updated)
-		var envelope struct {
-			Result struct {
-				IsError bool           `json:"isError"`
-				Data    map[string]any `json:"structuredContent"`
-			}
-		}
-		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
-			t.Fatal(err)
-		}
-		if response.Code != 200 || envelope.Result.IsError != rejected {
-			t.Fatalf("%s: %s", name, response.Body.String())
-		}
-		return envelope.Result.Data
+		return callGatewayTool(t, handler, key, name, arguments, rejected)
 	}
 	created := call("alice-key", "sandbox_create", map[string]any{"operation_id": "create"}, false)
 	session := created["session_id"]
@@ -156,12 +124,53 @@ func TestGatewayWithKubernetesMock(t *testing.T) {
 	handler = newHandler()
 	replayed := call("alice-key", "sandbox_exec", execArgs, false)
 	if replayed["run_id"] != submitted["run_id"] || submissions.Load() != 1 {
-		 t.Fatal("duplicate execution after MCP reconstruction")
+		t.Fatal("duplicate execution after MCP reconstruction")
 	}
 	call("alice-key", "sandbox_operation", map[string]any{"operation_kind": "sandbox_exec", "operation_id": "exec"}, false)
 	call("alice-key", "sandbox_poll", map[string]any{"run_id": submitted["run_id"]}, false)
 	call("bob-key", "sandbox_poll", map[string]any{"run_id": submitted["run_id"]}, true)
 	call("alice-key", "sandbox_destroy", map[string]any{"session_id": session, "operation_id": "destroy"}, false)
+}
+
+func newGatewayHandler(t *testing.T, connection *grpc.ClientConn, store RecordStore, authenticate Authenticate) *Server {
+	t.Helper()
+	service, err := NewService(pb.NewSandboxServiceClient(connection), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := New(Config{Authenticate: authenticate, Tools: service.Tools()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler
+}
+
+func callGatewayTool(t *testing.T, handler *Server, key, name string, arguments map[string]any, rejected bool) map[string]any {
+	t.Helper()
+	request := newRequest("tools/call", arguments)
+	var body map[string]any
+	_ = json.NewDecoder(request.Body).Decode(&body)
+	body["params"].(map[string]any)["name"] = name
+	encoded, _ := json.Marshal(body)
+	updated := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(string(encoded)))
+	updated.Header = request.Header
+	updated.Header.Set("Mcp-Name", name)
+	updated.Header.Set("Authorization", "Bearer "+key)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, updated)
+	var envelope struct {
+		Result struct {
+			IsError bool           `json:"isError"`
+			Data    map[string]any `json:"structuredContent"`
+		}
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != 200 || envelope.Result.IsError != rejected {
+		t.Fatalf("%s: %s", name, response.Body.String())
+	}
+	return envelope.Result.Data
 }
 
 func installConfigMapCAS(client *kubefake.Clientset) {

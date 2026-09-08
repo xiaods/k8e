@@ -73,8 +73,23 @@ type Server struct {
 // handler at /mcp on an HTTPS server with transport timeouts and request limits.
 // No listener is started, and there is no anonymous fallback.
 func New(c Config) (*Server, error) {
+	if err := normalizeConfig(&c); err != nil {
+		return nil, err
+	}
+	tools, err := snapshotTools(c.Tools)
+	if err != nil {
+		return nil, err
+	}
+	origins, err := explicitOrigins(c.AllowedOrigins)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{auth: c.Authenticate, tools: tools, origins: origins, version: c.Version, maxBytes: c.MaxRequestBytes, timeout: c.Timeout}, nil
+}
+
+func normalizeConfig(c *Config) error {
 	if c.Authenticate == nil {
-		return nil, errors.New("MCP authentication is required")
+		return errors.New("MCP authentication is required")
 	}
 	if c.MaxRequestBytes == 0 {
 		c.MaxRequestBytes = 1 << 20
@@ -83,11 +98,15 @@ func New(c Config) (*Server, error) {
 		c.Timeout = 30 * time.Second
 	}
 	if c.MaxRequestBytes < 1 || c.Timeout < 0 {
-		return nil, errors.New("invalid MCP limits")
+		return errors.New("invalid MCP limits")
 	}
-	s := &Server{auth: c.Authenticate, version: c.Version, maxBytes: c.MaxRequestBytes, timeout: c.Timeout, origins: map[string]bool{}}
+	return nil
+}
+
+func snapshotTools(configured []Tool) ([]Tool, error) {
+	var tools []Tool
 	seen := map[string]bool{}
-	for _, t := range c.Tools {
+	for _, t := range configured {
 		if t.Name == "" || seen[t.Name] || t.Call == nil {
 			return nil, fmt.Errorf("invalid or duplicate MCP tool %q", t.Name)
 		}
@@ -97,16 +116,21 @@ func New(c Config) (*Server, error) {
 		}
 		t.InputSchema = append(json.RawMessage(nil), t.InputSchema...)
 		seen[t.Name] = true
-		s.tools = append(s.tools, t)
+		tools = append(tools, t)
 	}
-	sort.Slice(s.tools, func(i, j int) bool { return s.tools[i].Name < s.tools[j].Name })
-	for _, o := range c.AllowedOrigins {
+	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
+	return tools, nil
+}
+
+func explicitOrigins(configured []string) (map[string]bool, error) {
+	origins := map[string]bool{}
+	for _, o := range configured {
 		if o == "" || o == "*" || o == "null" {
 			return nil, errors.New("explicit origins required")
 		}
-		s.origins[o] = true
+		origins[o] = true
 	}
-	return s, nil
+	return origins, nil
 }
 
 type request struct {
@@ -146,38 +170,50 @@ func fail(w http.ResponseWriter, status int, id json.RawMessage, code int, msg s
 	reply(w, status, id, nil, &rpcError{Code: code, Message: msg})
 }
 
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) validateTransport(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		fail(w, 405, nil, -32600, "Only POST is supported")
-		return
+		return false
 	}
 	if origins := r.Header.Values("Origin"); len(origins) > 0 && (len(origins) != 1 || !s.origins[origins[0]]) {
 		fail(w, 403, nil, -32600, "Origin rejected")
-		return
+		return false
 	}
-	principal, err := s.auth(r)
-	if err != nil || principal.ID == "" {
-		status := http.StatusUnauthorized
-		var authErr *authenticationError
-		if errors.As(err, &authErr) {
-			status = authErr.status
-			if authErr.challenge != "" {
-				w.Header().Set("WWW-Authenticate", authErr.challenge)
-			}
-		}
-		fail(w, status, nil, -32000, "Authentication required")
-		return
-	}
+	return true
+}
+
+func validateMediaHeaders(w http.ResponseWriter, r *http.Request) bool {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		fail(w, 415, nil, -32600, "Content-Type must be application/json")
-		return
+		return false
 	}
 	if !accepts(r, "application/json") || !accepts(r, "text/event-stream") {
 		fail(w, 406, nil, -32600, "Accept must include application/json and text/event-stream")
-		return
+		return false
 	}
+	return true
+}
+
+func (s *Server) authenticateRequest(w http.ResponseWriter, r *http.Request) (Principal, bool) {
+	principal, err := s.auth(r)
+	if err == nil && principal.ID != "" {
+		return principal, true
+	}
+	status := http.StatusUnauthorized
+	var authErr *authenticationError
+	if errors.As(err, &authErr) {
+		status = authErr.status
+		if authErr.challenge != "" {
+			w.Header().Set("WWW-Authenticate", authErr.challenge)
+		}
+	}
+	fail(w, status, nil, -32000, "Authentication required")
+	return Principal{}, false
+}
+
+func (s *Server) decodeRequest(w http.ResponseWriter, r *http.Request) (request, map[string]json.RawMessage, bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxBytes))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
@@ -186,39 +222,65 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			fail(w, 400, nil, -32700, "Cannot read request")
 		}
-		return
+		return request{}, nil, false
 	}
 	if !utf8.Valid(body) || !json.Valid(body) {
 		fail(w, 400, nil, -32700, "Invalid JSON")
-		return
+		return request{}, nil, false
 	}
 	var req request
 	if err := json.Unmarshal(body, &req); err != nil || req.JSONRPC != "2.0" || req.Method == "" || !validID(req.ID) {
 		fail(w, 400, nil, -32600, "Invalid request")
-		return
+		return request{}, nil, false
 	}
 	var params map[string]json.RawMessage
 	if json.Unmarshal(req.Params, &params) != nil || params == nil {
 		fail(w, 400, req.ID, -32602, "Object params required")
-		return
+		return request{}, nil, false
 	}
+	return req, params, true
+}
+
+func validateRequestMetadata(w http.ResponseWriter, r *http.Request, req request, params map[string]json.RawMessage) bool {
 	var meta map[string]json.RawMessage
 	if json.Unmarshal(params["_meta"], &meta) != nil || meta == nil {
 		fail(w, 400, req.ID, -32602, "Request metadata required")
-		return
+		return false
 	}
 	var version string
-	var capabilities map[string]json.RawMessage
-	if json.Unmarshal(meta[metaPrefix+"protocolVersion"], &version) != nil || version == "" || json.Unmarshal(meta[metaPrefix+"clientCapabilities"], &capabilities) != nil || capabilities == nil {
+	if json.Unmarshal(meta[metaPrefix+"protocolVersion"], &version) != nil || version == "" {
 		fail(w, 400, req.ID, -32602, "Version and client capabilities required")
-		return
+		return false
+	}
+	var capabilities map[string]json.RawMessage
+	if json.Unmarshal(meta[metaPrefix+"clientCapabilities"], &capabilities) != nil || capabilities == nil {
+		fail(w, 400, req.ID, -32602, "Version and client capabilities required")
+		return false
 	}
 	if !matchesHeader(r, "MCP-Protocol-Version", version) || !matchesHeader(r, "Mcp-Method", req.Method) {
 		fail(w, 400, req.ID, -32020, "Request header mismatch")
-		return
+		return false
 	}
 	if version != ProtocolVersion {
 		reply(w, 400, req.ID, nil, &rpcError{Code: -32022, Message: "Unsupported protocol version", Data: map[string]any{"supported": []string{ProtocolVersion}, "requested": version}})
+		return false
+	}
+	return true
+}
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.validateTransport(w, r) {
+		return
+	}
+	principal, ok := s.authenticateRequest(w, r)
+	if !ok {
+		return
+	}
+	if !validateMediaHeaders(w, r) {
+		return
+	}
+	req, params, ok := s.decodeRequest(w, r)
+	if !ok || !validateRequestMetadata(w, r, req, params) {
 		return
 	}
 	info := map[string]any{metaPrefix + "serverInfo": map[string]string{"name": "k8e-sandbox", "version": s.version}}
@@ -236,48 +298,39 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(w, 200, req.ID, map[string]any{"resultType": "complete", "tools": tools, "ttlMs": 0, "cacheScope": "private", "_meta": info}, nil)
 	case "tools/call":
-		var name string
-		if json.Unmarshal(params["name"], &name) != nil || name == "" {
-			fail(w, 400, req.ID, -32602, "Tool name required")
+		name, args, valid := toolCallArguments(w, r, req.ID, params)
+		if !valid {
 			return
 		}
-		if !matchesHeader(r, "Mcp-Name", name) {
-			fail(w, 400, req.ID, -32020, "Tool header mismatch")
-			return
-		}
-		args := params["arguments"]
-		if len(args) == 0 {
-			args = json.RawMessage(`{}`)
-		}
-		var object map[string]json.RawMessage
-		if json.Unmarshal(args, &object) != nil || object == nil {
-			fail(w, 400, req.ID, -32602, "Object arguments required")
-			return
-		}
-		for _, t := range s.tools {
-			if t.Name == name {
-				ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
-				defer cancel()
-				result, err := t.Call(ctx, principal, args)
-				if err != nil {
-					var invalid *InvalidParams
-					if errors.As(err, &invalid) {
-						fail(w, 400, req.ID, -32602, invalid.Message)
-						return
-					}
-					result = CallResult{IsError: true, Content: []TextContent{{Type: "text", Text: "Sandbox operation failed"}}}
-				}
-				if result.Content == nil {
-					result.Content = []TextContent{}
-				}
-				reply(w, 200, req.ID, map[string]any{"resultType": "complete", "content": result.Content, "structuredContent": result.StructuredContent, "isError": result.IsError, "_meta": info}, nil)
-				return
-			}
-		}
-		fail(w, 400, req.ID, -32602, "Unknown tool")
+		s.invokeTool(w, r, principal, req.ID, name, args, info)
 	default:
 		fail(w, 404, req.ID, -32601, "Method not found")
 	}
+}
+
+func (s *Server) invokeTool(w http.ResponseWriter, r *http.Request, principal Principal, id json.RawMessage, name string, args json.RawMessage, info map[string]any) {
+	for _, tool := range s.tools {
+		if tool.Name != name {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
+		defer cancel()
+		result, err := tool.Call(ctx, principal, args)
+		if err != nil {
+			var invalid *InvalidParams
+			if errors.As(err, &invalid) {
+				fail(w, 400, id, -32602, invalid.Message)
+				return
+			}
+			result = CallResult{IsError: true, Content: []TextContent{{Type: "text", Text: "Sandbox operation failed"}}}
+		}
+		if result.Content == nil {
+			result.Content = []TextContent{}
+		}
+		reply(w, 200, id, map[string]any{"resultType": "complete", "content": result.Content, "structuredContent": result.StructuredContent, "isError": result.IsError, "_meta": info}, nil)
+		return
+	}
+	fail(w, 400, id, -32602, "Unknown tool")
 }
 
 func validID(id json.RawMessage) bool {
@@ -293,6 +346,28 @@ func validID(id json.RawMessage) bool {
 		return true
 	}
 	return false
+}
+
+func toolCallArguments(w http.ResponseWriter, r *http.Request, id json.RawMessage, params map[string]json.RawMessage) (string, json.RawMessage, bool) {
+	var name string
+	if json.Unmarshal(params["name"], &name) != nil || name == "" {
+		fail(w, 400, id, -32602, "Tool name required")
+		return "", nil, false
+	}
+	if !matchesHeader(r, "Mcp-Name", name) {
+		fail(w, 400, id, -32020, "Tool header mismatch")
+		return "", nil, false
+	}
+	args := params["arguments"]
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(args, &object) != nil || object == nil {
+		fail(w, 400, id, -32602, "Object arguments required")
+		return "", nil, false
+	}
+	return name, args, true
 }
 func matchesHeader(r *http.Request, key, want string) bool {
 	values := r.Header.Values(key)
