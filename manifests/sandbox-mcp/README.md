@@ -61,6 +61,36 @@ second creates a temporary namespace and verifies real ConfigMap CAS and recover
 in separate processes. On a dedicated local K8E container, additionally set
 `MCP_TEST_RESTART_CONTAINER` to restart that control plane between phases.
 
+For an OrbStack-hosted K8E control plane, use the repository helper. It starts
+K8E with `--cluster-init` (required for the managed embedded datastore), waits
+for `/readyz`, then runs the restart recovery test against the generated
+kubeconfig:
+
+```sh
+K8E_BINARY=/tmp/k8e-mcp-server hack/test-sandbox-mcp-orbstack.sh
+```
+
+The helper leaves its container and data available for inspection and refuses
+to replace an existing container. Choose another `K8E_MCP_CONTAINER`,
+`K8E_MCP_DATA_DIR` and `K8E_MCP_API_PORT` for an independent run.
+
+Validated on OrbStack Linux on 2026-09-08: the native K8E control plane
+started with `--cluster-init`, passed `/readyz`, and passed the race-enabled
+`TestKubernetesRestartRecovery` including an actual container restart (8.731s).
+Completed results, unknown-outcome non-replay and ownership survived restart.
+The race-enabled `TestGatewayWithKubernetesMock` also passed inside Linux
+(1.082s); it exercises production gRPC handlers with Kubernetes and sandboxd
+fixtures, without gateway mTLS or real workload pods:
+
+```sh
+go test -race -tags mcp_integration ./pkg/sandboxmcp -run '^TestGatewayWithKubernetesMock$' -v -count=1
+```
+
+This validates Kubernetes API persistence and restart recovery with the sandbox
+backend simulated by the test. It does not claim real gVisor pod execution or
+public gateway TLS acceptance; those require an agent-enabled K8E deployment
+and imported gateway certificates.
+
 For deployed gateway acceptance, set `MCP_TEST_API_KEY` in the environment, then:
 
 ```sh

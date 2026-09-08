@@ -33,6 +33,8 @@ Deployment and initialization: `manifests/sandbox-mcp/README.md`.
 go test -race ./pkg/sandboxmcp ./cmd/sandboxcli -count=1
 MCP_RUN_INTEROP=1 go test ./pkg/sandboxmcp -run TestIndependentPythonClient -v
 MCP_TEST_KUBECONFIG=/path/to/k8e.yaml go test ./pkg/sandboxmcp -run TestKubernetesRestartRecovery -v
+# OrbStack: native K8E control plane with managed embedded etcd.
+K8E_BINARY=/tmp/k8e-mcp-server hack/test-sandbox-mcp-orbstack.sh
 ```
 
 The Python test uses real HTTPS with a simulated backend. The cluster test uses
