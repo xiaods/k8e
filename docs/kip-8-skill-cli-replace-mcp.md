@@ -1,8 +1,86 @@
-# KIP-8: SKILL + CLI 替换 MCP 协议层
+# KIP-8: CLI + Skill 与 MCP 双入口
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-24 | Implemented — `pkg/sandboxmcp/` is gone; the agent door is `k8e-sandbox-cli` + embedded SKILL.md. The command surface has grown past the original 9+1 list (snapshot, poll, log, events, ps, catalog, expose, allow-hosts, profiles, PTY-adjacent tools). |
+| @xiaods | 2026-09-08 | Revised design; MCP reimplementation pending |
+
+## 2026-09-08 修订：本地 CLI 与远程 MCP 并存
+
+本节替代下方历史版本中“删除 MCP、仅保留 CLI”的产品决策。2026-06-03 的 CLI 迁移已经实现；本次 MCP 重建尚未实现，不能据本文宣称远程入口已可用。保留历史正文用于解释迁移背景，不把旧命令示例、时延估计和会话设计当作当前规范。
+
+### 目标与架构
+
+面向本地编码、CI 和脚本保留 CLI + skill；面向远程、多客户端服务增加 MCP 2026-07-28 Streamable HTTP 入口。gRPC Gateway、sandboxd 和 Kubernetes 会话继续作为执行后端。
+
+```text
+本地编码 / CI       -> CLI + skill ------+
+远程 MCP 客户端     -> MCP HTTP adapter -+-> gRPC Gateway -> sandboxd
+自有宿主            -> 原生工具插件 ------+
+```
+
+MCP adapter 不启动 CLI 子进程，不调用依赖 cli.Context、stdout 或进程环境修改的 CLI handler。复用显式配置的 gRPC client；需要共享的语言包装、操作结果与会话初始化逻辑在独立接口中实现。连接池按后端及认证身份隔离。禁止在并发请求中调用 `ApplyResolvedConn` 修改全局环境。
+
+旧 MCP 进程退出时丢失默认会话属于旧实现的状态设计问题，不是 MCP 协议限制。CLI 每次启动进程并建立连接，常驻适配器有连接复用优势；两条路径的实际延迟和 token 成本以相同工作负载测量，不沿用历史 localhost 握手估计作为结论。
+
+### 协议范围
+
+以 MCP **2026-07-28** 为唯一首期协议版本，不默默接受旧版初始化请求。首期采用单一 `/mcp` POST 端点和普通 JSON 响应；请求级 SSE 按需求后续增加。
+
+- 实现 `server/discover`、`tools/list`、`tools/call`，只声明已经实现的能力。
+- 按规范处理每请求版本、client capabilities、HTTP metadata 与 body 一致性校验；发现方法遵循其专门规则。
+- 普通结果包含 `resultType: complete`；工具列表包含 `ttlMs`、`cacheScope`，稳定排序。鉴权相关的列表使用 private 缓存范围，不能跨身份共享。
+- 不建立协议级 session，不使用 `Mcp-Session-Id`，不实现旧 `initialize` 握手或 GET SSE 端点。沙箱 `session_id` 是业务 handle，生命周期独立于 HTTP 连接。
+- 不声明未实现的 subscriptions、resources、prompts、Tasks、MRTR 或 Skills 扩展。Tasks 后续可以适配现有后台任务，但必须完成扩展协商及持久化语义，不能只改结果字段。
+- JSON-RPC 参数错误、协议错误、认证失败与沙箱程序非零退出分别表达。程序失败保留结构化 `exit_code`，不误报成传输失败。
+
+首期工具覆盖：创建/查询/销毁沙箱、提交后台命令、轮询结果、读取/写入/列出文件。所有操作显式携带沙箱或运行 handle；不使用跨用户共享的 default session。长任务通过 `run_id + poll` 返回，PTY、快照和服务暴露保留现有 CLI/gRPC 路径，后续按客户端需求扩展。
+
+### 认证与所有权
+
+当前 gRPC mTLS interceptor 验证客户端身份与证书吊销；这不等于逐资源授权。公开 MCP 入口前必须建立并测试下列边界：
+
+1. 每个请求由服务端认证取得稳定 principal，不能信任模型传入的 tenant、owner、profile、endpoint 或任意转发身份头。
+2. 沙箱创建时持久化 owner；查询、执行、文件访问、销毁及运行轮询均校验 owner。运行 handle 必须可追溯到所属沙箱与 principal，列表也按 owner 过滤。
+3. 首期仅允许访问通过该入口创建且具有可信 owner 记录的沙箱；旧的无 owner 沙箱不自动授予远程用户。管理迁移需独立授权流程。
+4. 后端连接身份不能悄悄退化为全局管理员权限。若由受信服务账号访问 gRPC，则入口必须强制逐资源授权，后端仅允许受信入口访问，并明确这一部署信任边界。
+5. 对标准远程客户端的授权机制按官方 HTTP authorization 规范实现；现有 K8E API key/mTLS 是后端认证，不能冒充已经实现 MCP OAuth。任何受限认证试验必须标注兼容性，不能宣称通用客户端正式可用。
+6. 默认关闭入口；显式配置启用。远程传输使用 HTTPS，验证 Origin，限制请求大小和操作超时，不记录凭证。反向代理负责哪些校验必须在部署文档中明确。
+
+### 幂等、持久化与断线
+
+新版 Streamable HTTP 不支持 SSE Last-Event-ID 恢复。网络失败后新的 JSON-RPC request ID 不能保证业务去重。首期将创建沙箱和执行提交视为必须去重的操作：
+
+- 客户端提交稳定 `operation_id`，服务端按 `(principal, operation_kind, operation_id)` 原子登记请求摘要和状态；相同键不同参数明确拒绝。
+- 重复请求返回已有 handle 或可查询状态，不重复创建沙箱或执行命令。记录由多副本共享并持久化，不能仅保存在 MCP 进程内存。
+- 写入已受理记录后、后端执行完成前的进程崩溃必须有明确恢复策略。提交结果不确定时返回可查询的 unknown/reconciling 状态，禁止盲目重新执行；不宣称跨后端 exactly-once。
+- 业务 `session_id`、`run_id` 与 operation 记录一起跨 adapter 重启恢复。后台任务与其轮询 HTTP 请求取消分离；取消一次轮询不会杀死后台进程。
+- 如果后续增加前台 SSE，关闭响应流应按规范传递取消，但取消不是回滚。必须验证 context 到后端进程的实际传播，不能只关闭 HTTP socket。
+
+### 实施顺序与验收
+
+| 阶段 | 交付物 | 必须验证 |
+|------|--------|----------|
+| A | 显式客户端配置、principal/owner 与 operation 存储接口 | 并发身份不串扰；持久化原子性；相同键不同参数拒绝 |
+| B | MCP HTTP 协议处理与工具适配 | discover/list/call；版本/头部校验；错误与结构化结果；请求限制 |
+| C | 认证、CLI/服务启用配置与部署文档 | 匿名拒绝；伪造身份拒绝；不同用户不可读取、执行、销毁或轮询对方资源 |
+| D | 后端集成与恢复验证 | 跨副本重复提交只产生一次业务提交；崩溃后的不确定状态可查询；后台结果恢复 |
+| E | 回归、客户端互操作与性能比较 | CLI+skill 原行为保持；声明支持的 MCP 客户端实测；相同工作负载对比 |
+
+验收测试使用 fake backend 覆盖协议与拒绝路径、真实持久化接口覆盖竞争/重启；运行集群验收前不能把单元测试通过等同于生产就绪。部署启用、发布和生产变更不包含在代码实现授权内。
+
+### 依据
+
+- [MCP 2026-07-28 变更说明](https://modelcontextprotocol.io/specification/2026-07-28/changelog)
+- [Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
+- [Tasks 扩展](https://modelcontextprotocol.io/extensions/tasks/overview)
+- [Skills Over MCP 工作组](https://modelcontextprotocol.io/community/working-groups/skills-over-mcp)：属于独立扩展工作，不作为首期前置依赖。
+- 本仓库：`proto/sandbox/v1/sandbox.proto`、`pkg/sandboxcli/commands.go`、`pkg/sandboxcli/profile.go`、`pkg/sandboxmatrix/grpc/server.go`、`plugins/deepseek-harness/packages/dsh-k8e-sandbox-client/src/grpc.ts`。
+
+---
+
+## 历史版本：2026-06-03 CLI 迁移（已实现）
+
+截至 2026-08-24，CLI 迁移已完成，命令集扩展至 snapshot、poll、log、events、ps、catalog、expose、allow-hosts、profiles 及 PTY 相关功能。该历史验收不代表本次重建的 MCP 已通过验收。
 
 ## Summary
 
