@@ -18,48 +18,72 @@ import (
 	"unicode/utf8"
 )
 
+// ProtocolVersion is the MCP revision implemented by this HTTP boundary.
 const ProtocolVersion = "2026-07-28"
 const metaPrefix = "io.modelcontextprotocol/"
 
 // Principal is established by authentication, never by tool arguments.
 type Principal struct{ ID string }
+
+// Authenticate validates an HTTP request and returns its stable caller identity.
 type Authenticate func(*http.Request) (Principal, error)
 
+// TextContent is a plain-text MCP content item.
 type TextContent struct {
+	// Type is the MCP content discriminator and is normally "text".
 	Type string `json:"type"`
+	// Text contains the public-safe tool response.
 	Text string `json:"text"`
 }
+
+// CallResult is the result returned by an MCP tool handler.
 type CallResult struct {
-	Content           []TextContent `json:"content"`
-	StructuredContent any           `json:"structuredContent,omitempty"`
-	IsError           bool          `json:"isError,omitempty"`
+	// Content is the human-readable MCP result content.
+	Content []TextContent `json:"content"`
+	// StructuredContent carries the machine-readable result when available.
+	StructuredContent any `json:"structuredContent,omitempty"`
+	// IsError reports a tool-level failure inside a successful JSON-RPC response.
+	IsError bool `json:"isError,omitempty"`
 }
 
 // Tool handlers must validate arguments and enforce principal ownership before
 // side effects. InputSchema is descriptive; the protocol boundary is not a
 // general-purpose JSON Schema interpreter.
 type Tool struct {
-	Name        string                                                                `json:"name"`
-	Description string                                                                `json:"description"`
-	InputSchema json.RawMessage                                                       `json:"inputSchema"`
-	Call        func(context.Context, Principal, json.RawMessage) (CallResult, error) `json:"-"`
+	// Name is the stable identifier clients use with tools/call.
+	Name string `json:"name"`
+	// Description explains the operation and its retry behavior.
+	Description string `json:"description"`
+	// InputSchema describes the accepted JSON arguments.
+	InputSchema json.RawMessage `json:"inputSchema"`
+	// Call executes the tool for an authenticated principal.
+	Call func(context.Context, Principal, json.RawMessage) (CallResult, error) `json:"-"`
 }
 
 // InvalidParams is a public-safe argument validation failure from a handler.
 // Other errors are deliberately hidden to avoid leaking backend internals.
 type InvalidParams struct{ Message string }
 
+// Error returns the public-safe validation message.
 func (e *InvalidParams) Error() string { return e.Message }
 
+// Config defines the authenticated MCP handler and its transport limits.
 type Config struct {
-	Authenticate    Authenticate
-	Tools           []Tool
-	AllowedOrigins  []string
-	Version         string
+	// Authenticate is required and runs for every request.
+	Authenticate Authenticate
+	// Tools is snapshotted and sorted when the server is constructed.
+	Tools []Tool
+	// AllowedOrigins lists explicit browser origins accepted by the handler.
+	AllowedOrigins []string
+	// Version identifies the server implementation in MCP metadata.
+	Version string
+	// MaxRequestBytes caps the JSON request body size.
 	MaxRequestBytes int64
-	Timeout         time.Duration
+	// Timeout caps each tool invocation.
+	Timeout time.Duration
 }
 
+// Server is an authenticated MCP HTTP handler with immutable tool schemas.
 type Server struct {
 	auth     Authenticate
 	tools    []Tool
@@ -268,6 +292,7 @@ func validateRequestMetadata(w http.ResponseWriter, r *http.Request, req request
 	return true
 }
 
+// ServeHTTP validates the MCP transport envelope and dispatches one JSON-RPC request.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !s.validateTransport(w, r) {
 		return

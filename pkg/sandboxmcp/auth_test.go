@@ -35,7 +35,7 @@ func TestAPIKeyLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request := httptest.NewRequest(http.MethodPost, "/mcp", http.NoBody)
 	request.Header.Set("Authorization", "Bearer original")
 	first, err := authenticate(request)
 	if err != nil || first.ID == "" {
@@ -74,7 +74,7 @@ func TestAPIKeyHTTPFailures(t *testing.T) {
 	authenticate, _ := NewAPIKeyAuthenticator(fixture, "sandbox-apikeys")
 	server, _ := New(Config{Authenticate: authenticate})
 	for _, authorization := range []string{"", "Basic valid", "Bearer invalid"} {
-		request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		request := httptest.NewRequest(http.MethodPost, "/mcp", http.NoBody)
 		request.Header.Set("Authorization", authorization)
 		response := httptest.NewRecorder()
 		server.ServeHTTP(response, request)
@@ -82,12 +82,12 @@ func TestAPIKeyHTTPFailures(t *testing.T) {
 			t.Fatal(response)
 		}
 	}
-	request := httptest.NewRequest(http.MethodPost, "/mcp?api_key=valid", nil)
+	request := httptest.NewRequest(http.MethodPost, "/mcp?api_key=valid", http.NoBody)
 	request.Header.Set("Authorization", "Bearer valid")
 	if _, err := authenticate(request); err == nil {
 		t.Fatal("query credential accepted")
 	}
-	request = httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	request = httptest.NewRequest(http.MethodPost, "/mcp", http.NoBody)
 	request.Header.Add("Authorization", "Bearer valid")
 	request.Header.Add("Authorization", "Bearer valid")
 	if _, err := authenticate(request); err == nil {

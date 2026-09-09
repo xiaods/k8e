@@ -25,10 +25,10 @@ func TestKubernetesRestartRecovery(t *testing.T) {
 	defer cancel()
 	phase := os.Getenv("MCP_TEST_PHASE")
 	if phase == "" {
-		runRecoveryCoordinator(t, ctx, core)
+		runRecoveryCoordinator(ctx, t, core)
 		return
 	}
-	runRecoveryChild(t, ctx, core, phase, os.Getenv("MCP_TEST_NAMESPACE"))
+	runRecoveryChild(t, core, phase, os.Getenv("MCP_TEST_NAMESPACE"))
 }
 
 func recoveryCoreClient(t *testing.T, configPath string) typedcore.CoreV1Interface {
@@ -45,17 +45,17 @@ func recoveryCoreClient(t *testing.T, configPath string) typedcore.CoreV1Interfa
 	return core
 }
 
-func runRecoveryCoordinator(t *testing.T, ctx context.Context, core typedcore.CoreV1Interface) {
+func runRecoveryCoordinator(ctx context.Context, t *testing.T, core typedcore.CoreV1Interface) {
 	t.Helper()
 	namespace, err := core.Namespaces().Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "mcp-recovery-test-"}}, metav1.CreateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { deleteRecoveryNamespace(t, core, namespace.Name) })
-	verifyConfigMapCAS(t, ctx, core.ConfigMaps(namespace.Name))
-	runRecoveryProcess(t, ctx, "submit", namespace.Name)
-	restartRecoveryContainer(t, ctx, core, namespace.Name)
-	runRecoveryProcess(t, ctx, "recover", namespace.Name)
+	verifyConfigMapCAS(ctx, t, core.ConfigMaps(namespace.Name))
+	runRecoveryProcess(ctx, t, "submit", namespace.Name)
+	restartRecoveryContainer(ctx, t, core, namespace.Name)
+	runRecoveryProcess(ctx, t, "recover", namespace.Name)
 }
 
 func deleteRecoveryNamespace(t *testing.T, core typedcore.CoreV1Interface, namespace string) {
@@ -66,7 +66,7 @@ func deleteRecoveryNamespace(t *testing.T, core typedcore.CoreV1Interface, names
 	}
 }
 
-func verifyConfigMapCAS(t *testing.T, ctx context.Context, maps typedcore.ConfigMapInterface) {
+func verifyConfigMapCAS(ctx context.Context, t *testing.T, maps typedcore.ConfigMapInterface) {
 	t.Helper()
 	store, _ := NewKubernetesStore(maps)
 	record, err := store.Create(ctx, "cas-probe", Record{Owner: "probe", State: "unknown"})
@@ -87,7 +87,7 @@ func verifyConfigMapCAS(t *testing.T, ctx context.Context, maps typedcore.Config
 	}
 }
 
-func runRecoveryProcess(t *testing.T, ctx context.Context, phase, namespace string) {
+func runRecoveryProcess(ctx context.Context, t *testing.T, phase, namespace string) {
 	t.Helper()
 	process := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestKubernetesRestartRecovery$", "-test.v")
 	process.Env = append(os.Environ(), "MCP_TEST_PHASE="+phase, "MCP_TEST_NAMESPACE="+namespace)
@@ -98,7 +98,7 @@ func runRecoveryProcess(t *testing.T, ctx context.Context, phase, namespace stri
 	}
 }
 
-func restartRecoveryContainer(t *testing.T, ctx context.Context, core typedcore.CoreV1Interface, namespace string) {
+func restartRecoveryContainer(ctx context.Context, t *testing.T, core typedcore.CoreV1Interface, namespace string) {
 	t.Helper()
 	container := os.Getenv("MCP_TEST_RESTART_CONTAINER")
 	if container == "" {
@@ -121,7 +121,7 @@ func restartRecoveryContainer(t *testing.T, ctx context.Context, core typedcore.
 	}
 }
 
-func runRecoveryChild(t *testing.T, ctx context.Context, core typedcore.CoreV1Interface, phase, namespace string) {
+func runRecoveryChild(t *testing.T, core typedcore.CoreV1Interface, phase, namespace string) {
 	t.Helper()
 	if phase != "submit" && phase != "recover" {
 		t.Fatal("invalid test phase")
@@ -135,15 +135,15 @@ func runRecoveryChild(t *testing.T, ctx context.Context, core typedcore.CoreV1In
 	if err != nil {
 		t.Fatal(err)
 	}
-	sessionID := submitRecoveryOperations(t, ctx, service, backend)
+	sessionID := submitRecoveryOperations(t, service, backend)
 	if phase == "recover" {
-		assertRecoveredOperations(t, ctx, service, backend)
+		assertRecoveredOperations(t, service, backend)
 	} else if backend.creates != 1 || backend.execs != 2 || sessionID == "" {
 		t.Fatal("submission did not reach backend")
 	}
 }
 
-func submitRecoveryOperations(t *testing.T, ctx context.Context, service *Service, backend *testBackend) string {
+func submitRecoveryOperations(t *testing.T, service *Service, backend *testBackend) string {
 	t.Helper()
 	created, err := invoke(t, service, "alice", "sandbox_create", map[string]any{"operation_id": "create"})
 	if err != nil {
@@ -162,7 +162,7 @@ func submitRecoveryOperations(t *testing.T, ctx context.Context, service *Servic
 	return sessionID
 }
 
-func assertRecoveredOperations(t *testing.T, ctx context.Context, service *Service, backend *testBackend) {
+func assertRecoveredOperations(t *testing.T, service *Service, backend *testBackend) {
 	t.Helper()
 	if backend.creates != 0 || backend.execs != 0 {
 		t.Fatal("restart replayed a backend mutation")

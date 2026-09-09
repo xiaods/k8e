@@ -14,26 +14,43 @@ import (
 	typedcore "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
-var ErrRecordMissing = errors.New("MCP record not found")
-var ErrRecordExists = errors.New("MCP record already exists")
+var (
+	// ErrRecordMissing indicates that durable MCP state does not exist.
+	ErrRecordMissing = errors.New("MCP record not found")
+	// ErrRecordExists indicates that an operation was already admitted atomically.
+	ErrRecordExists = errors.New("MCP record already exists")
+)
 
+// Record is a versioned ownership or operation result stored by the MCP service.
 type Record struct {
-	Owner     string          `json:"owner"`
-	Digest    string          `json:"digest,omitempty"`
-	State     string          `json:"state"`
-	SessionID string          `json:"session_id,omitempty"`
-	Result    json.RawMessage `json:"result,omitempty"`
-	Version   string          `json:"-"`
+	// Owner is the stable authenticated principal identifier.
+	Owner string `json:"owner"`
+	// Digest binds an admitted operation to its original arguments.
+	Digest string `json:"digest,omitempty"`
+	// State records whether an operation is admitted, complete, unknown, or owned.
+	State string `json:"state"`
+	// SessionID associates ownership and operation records with a sandbox.
+	SessionID string `json:"session_id,omitempty"`
+	// Result preserves a completed operation response for retry recovery.
+	Result json.RawMessage `json:"result,omitempty"`
+	// Version carries the storage resource version used for compare-and-swap updates.
+	Version string `json:"-"`
 }
 
+// RecordStore provides atomic creation and versioned updates for durable MCP state.
 type RecordStore interface {
+	// Create admits a new record and fails with ErrRecordExists on collision.
 	Create(context.Context, string, Record) (Record, error)
+	// Get loads an existing record.
 	Get(context.Context, string) (Record, error)
+	// Update replaces a record using its storage version.
 	Update(context.Context, string, Record) error
 }
 
+// KubernetesStore persists MCP records as Kubernetes ConfigMaps.
 type KubernetesStore struct{ maps typedcore.ConfigMapInterface }
 
+// NewKubernetesStore creates a record store using a namespace-scoped ConfigMap client.
 func NewKubernetesStore(maps typedcore.ConfigMapInterface) (*KubernetesStore, error) {
 	if maps == nil {
 		return nil, errors.New("ConfigMap client required")
@@ -70,6 +87,7 @@ func decodeRecord(configMap *corev1.ConfigMap) (Record, error) {
 	return record, nil
 }
 
+// Create atomically creates a ConfigMap-backed record.
 func (store *KubernetesStore) Create(ctx context.Context, key string, record Record) (Record, error) {
 	configMap, err := encodeRecord(key, record)
 	if err != nil {
@@ -85,6 +103,7 @@ func (store *KubernetesStore) Create(ctx context.Context, key string, record Rec
 	return decodeRecord(created)
 }
 
+// Get reads and validates a ConfigMap-backed record.
 func (store *KubernetesStore) Get(ctx context.Context, key string) (Record, error) {
 	configMap, err := store.maps.Get(ctx, key, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
@@ -96,6 +115,7 @@ func (store *KubernetesStore) Get(ctx context.Context, key string) (Record, erro
 	return decodeRecord(configMap)
 }
 
+// Update replaces a record using Kubernetes resource-version conflict detection.
 func (store *KubernetesStore) Update(ctx context.Context, key string, record Record) error {
 	if record.Version == "" {
 		return errors.New("record version required")

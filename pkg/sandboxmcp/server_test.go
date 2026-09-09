@@ -92,7 +92,7 @@ func TestRejectedRequestsNeverInvokeBackend(t *testing.T) {
 	}
 }
 func TestDiscoveryAndCallWithoutHandshake(t *testing.T) {
-	s := testServer(t, func(ctx context.Context, p Principal, args json.RawMessage) (CallResult, error) {
+	s := testServer(t, func(ctx context.Context, p Principal, _ json.RawMessage) (CallResult, error) {
 		if p.ID != "alice" {
 			t.Fatalf("principal=%v", p)
 		}

@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// Service exposes sandbox gRPC operations as authenticated MCP tools.
 type Service struct {
 	backend pb.SandboxServiceClient
 	store   RecordStore
@@ -33,6 +34,7 @@ type arguments struct {
 	Timeout       int32  `json:"timeout,omitempty"`
 }
 
+// NewService creates a tool service backed by the sandbox gateway and durable state.
 func NewService(backend pb.SandboxServiceClient, store RecordStore) (*Service, error) {
 	if backend == nil || store == nil {
 		return nil, errors.New("backend and durable store required")
@@ -40,6 +42,7 @@ func NewService(backend pb.SandboxServiceClient, store RecordStore) (*Service, e
 	return &Service{backend: backend, store: store}, nil
 }
 
+// Tools returns the sandbox tool definitions bound to this service.
 func (service *Service) Tools() []Tool {
 	definitions := []struct {
 		name, description string

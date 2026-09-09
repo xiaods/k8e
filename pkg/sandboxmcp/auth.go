@@ -20,6 +20,7 @@ type authenticationError struct {
 
 func (err *authenticationError) Error() string { return "API key rejected" }
 
+// NewAPIKeyAuthenticator authenticates bearer keys against the named Kubernetes Secret.
 func NewAPIKeyAuthenticator(secrets typedcore.SecretInterface, secretName string) (Authenticate, error) {
 	if secrets == nil || secretName == "" {
 		return nil, errors.New("API key Secret client and name required")

@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// Command returns the mcp-serve CLI command and its deployment-facing options.
 func Command() cli.Command {
 	flags := []cli.Flag{
 		cli.StringFlag{Name: "listen", Value: "127.0.0.1:8443", EnvVar: "K8E_MCP_LISTEN"},
@@ -117,7 +118,7 @@ func buildHandler(command *cli.Context, connection *grpc.ClientConn, core typedc
 func serveHTTP(command *cli.Context, handler http.Handler) error {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", handler)
-	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, request *http.Request) { writer.WriteHeader(http.StatusNoContent) })
+	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) })
 	server := &http.Server{Addr: command.String("listen"), Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 45 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 * 1024, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
