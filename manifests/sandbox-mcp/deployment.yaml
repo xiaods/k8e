@@ -89,17 +89,15 @@ spec:
           command: [/usr/local/bin/k8e-sandbox-cli]
           args:
             - mcp-serve
-            - --listen=:8443
-            - --tls-cert=/credentials/public/tls.crt
-            - --tls-key=/credentials/public/tls.key
+            - --listen=:8080
             - --gateway=sandbox-grpc-gateway.sandbox-matrix.svc:50051
             - --gateway-ca=/credentials/gateway/ca.crt
             - --gateway-cert=/credentials/gateway/tls.crt
             - --gateway-key=/credentials/gateway/tls.key
             - --state-namespace=k8e-mcp
           ports:
-            - name: https
-              containerPort: 8443
+            - name: http
+              containerPort: 8080
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -114,28 +112,22 @@ spec:
               memory: 512Mi
           startupProbe:
             tcpSocket:
-              port: https
+              port: http
             failureThreshold: 30
             periodSeconds: 2
           readinessProbe:
             httpGet:
-              scheme: HTTPS
-              port: https
+              scheme: HTTP
+              port: http
               path: /healthz
           livenessProbe:
             tcpSocket:
-              port: https
+              port: http
           volumeMounts:
-            - name: public-tls
-              mountPath: /credentials/public
-              readOnly: true
             - name: gateway-tls
               mountPath: /credentials/gateway
               readOnly: true
       volumes:
-        - name: public-tls
-          secret:
-            secretName: mcp-public-tls
         - name: gateway-tls
           secret:
             secretName: mcp-gateway-tls
@@ -145,13 +137,56 @@ kind: Service
 metadata:
   name: k8e-mcp
   namespace: k8e-mcp
+  labels:
+    app.kubernetes.io/managed-by: k8e
 spec:
   selector:
     app: k8e-mcp
   ports:
-    - name: https
-      port: 443
-      targetPort: https
+    - name: http
+      port: 80
+      targetPort: http
+      appProtocol: http
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: sandbox-gateway-to-mcp
+  namespace: k8e-mcp
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: sandbox-matrix
+  to:
+    - group: ""
+      kind: Service
+      name: k8e-mcp
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: k8e-mcp
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  parentRefs:
+    - name: e2b
+      sectionName: https
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      timeouts:
+        request: 45s
+      backendRefs:
+        - name: k8e-mcp
+          namespace: k8e-mcp
+          port: 80
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget

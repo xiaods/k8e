@@ -36,7 +36,7 @@ func Command() cli.Command {
 		cli.StringFlag{Name: "state-namespace", EnvVar: "K8E_MCP_STATE_NAMESPACE"},
 		cli.StringFlag{Name: "kubeconfig", EnvVar: "KUBECONFIG"},
 	}
-	return cli.Command{Name: "mcp-serve", Usage: "Serve MCP over HTTPS using K8E API keys and an explicit mTLS sandbox gateway", Flags: flags, Action: serveCommand}
+	return cli.Command{Name: "mcp-serve", Usage: "Serve MCP using K8E API keys and an explicit mTLS sandbox gateway", Flags: flags, Action: serveCommand}
 }
 
 func serveCommand(command *cli.Context) error {
@@ -60,10 +60,13 @@ func serveCommand(command *cli.Context) error {
 }
 
 func validateServeOptions(command *cli.Context) error {
-	for _, name := range []string{"tls-cert", "tls-key", "api-key-namespace", "api-key-secret", "gateway", "gateway-ca", "gateway-cert", "gateway-key", "state-namespace"} {
+	for _, name := range []string{"api-key-namespace", "api-key-secret", "gateway", "gateway-ca", "gateway-cert", "gateway-key", "state-namespace"} {
 		if command.String(name) == "" {
 			return errors.New("required MCP option: --" + name)
 		}
+	}
+	if (command.String("tls-cert") == "") != (command.String("tls-key") == "") {
+		return errors.New("MCP TLS requires both --tls-cert and --tls-key")
 	}
 	return nil
 }
@@ -123,7 +126,13 @@ func serveHTTP(command *cli.Context, handler http.Handler) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	completed := make(chan error, 1)
-	go func() { completed <- server.ListenAndServeTLS(command.String("tls-cert"), command.String("tls-key")) }()
+	go func() {
+		if command.String("tls-cert") == "" {
+			completed <- server.ListenAndServe()
+			return
+		}
+		completed <- server.ListenAndServeTLS(command.String("tls-cert"), command.String("tls-key"))
+	}()
 	select {
 	case err := <-completed:
 		if errors.Is(err, http.ErrServerClosed) {

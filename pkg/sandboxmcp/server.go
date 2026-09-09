@@ -94,8 +94,8 @@ type Server struct {
 }
 
 // New validates configuration and snapshots tool schemas. Mount the returned
-// handler at /mcp on an HTTPS server with transport timeouts and request limits.
-// No listener is started, and there is no anonymous fallback.
+// handler at /mcp behind an HTTPS listener with transport timeouts and request
+// limits. No listener is started, and there is no anonymous fallback.
 func New(c Config) (*Server, error) {
 	if err := normalizeConfig(&c); err != nil {
 		return nil, err

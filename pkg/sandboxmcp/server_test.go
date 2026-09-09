@@ -1,6 +1,7 @@
 package sandboxmcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -121,6 +122,38 @@ func TestDiscoveryAndCallWithoutHandshake(t *testing.T) {
 		if method == "tools/call" && out.Result["isError"] != false {
 			t.Error("program failure became protocol error")
 		}
+	}
+}
+
+func TestGatewayTerminatedHTTP(t *testing.T) {
+	s := testServer(t, func(context.Context, Principal, json.RawMessage) (CallResult, error) {
+		return CallResult{Content: []TextContent{{Type: "text", Text: "ready"}}}, nil
+	})
+	mux := http.NewServeMux()
+	mux.Handle("/mcp", s)
+	original := newRequest("server/discover", nil)
+	body, err := io.ReadAll(original.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(body))
+	request.Host = "k8e-mcp.k8e-mcp.svc"
+	if request.TLS != nil {
+		t.Fatal("gateway backend request unexpectedly used TLS")
+	}
+	request.Header = original.Header.Clone()
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	var result struct {
+		Result struct {
+			ResultType string `json:"resultType"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || result.Result.ResultType != "complete" {
+		t.Fatalf("status=%d result=%+v", response.Code, result)
 	}
 }
 func TestBackendErrorsAreSanitized(t *testing.T) {

@@ -34,7 +34,9 @@ How the engineering skills should consume this repo's domain documentation.
 └── sandboxd/                    # Runtime daemon (Zig)
 ```
 
-Do **not** treat KIP-4 / KIP-5 as current design: they are Outdated (MCP). There is no `docs/sandbox-mcp-quickstart.md` and no `pkg/sandboxmcp/`.
+Do **not** treat KIP-4 / KIP-5 as current design: their stdio/SSE MCP design is
+outdated. KIP-8 now defines the dual entry: CLI + skill for local coding and the
+rebuilt `pkg/sandboxmcp/` API Key HTTP adapter for remote clients.
 
 ## Key terms
 
@@ -43,7 +45,10 @@ When naming domain concepts (in issue titles, PRDs, refactors), use the terms as
 - **Sandbox** — an isolated execution environment (Kubernetes pod with a pluggable RuntimeClass: gVisor, Kata, Firecracker).
 - **Session** — a user-agent's live interaction with a sandbox, tracked via CRD (`SandboxSession`).
 - **Warm pool** — pre-booted sandbox pods that reduce session startup latency (`SandboxWarmPool` CRD).
-- **SKILL + CLI** — `k8e-sandbox-cli` commands; the shell-based bridge between AI agents and the sandbox orchestration layer (replaced MCP as of KIP-8).
+- **SKILL + CLI** — `k8e-sandbox-cli` commands for local coding and shell-based
+  agents.
+- **MCP HTTP adapter** — API Key authenticated remote entry, deployed behind
+  the K8E Cilium Gateway API at `/mcp`; it projects the same gRPC backend.
 - **Tenant ID** — the `tenantID` field used for cross-process session reuse via state files and `FindActiveSession()`.
 - **Orchestrator** — the gRPC-side logic that creates/destroys pods and manages sandbox lifecycle.
 - **E2B layer** — the embedded HTTP/Connect adapter (`pkg/sandbox/e2b`) that makes the official `e2b` SDK work against K8E (KIP-18).

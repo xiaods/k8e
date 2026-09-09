@@ -1,8 +1,10 @@
 # Deploy MCP with K8E API keys
 
-K8E server supplies the Kubernetes cluster and sandbox gRPC gateway. MCP runs as
-an independent HTTPS deployment. No OAuth issuer, introspection service, resource
-configuration or OAuth client secret is required.
+K8E server supplies the Kubernetes cluster, sandbox gRPC gateway and Cilium
+Gateway API entry. MCP runs as an independent deployment. The existing
+`sandbox-matrix/e2b` Gateway terminates public TLS and routes `/mcp` to the
+MCP Service over cluster-internal HTTP. No OAuth issuer, introspection service,
+resource configuration or OAuth client secret is required.
 
 Create a named key using the existing K8E server command:
 
@@ -27,28 +29,48 @@ The runtime image is a non-root `scratch` image containing the static CLI and
 the CA bundle required for gateway TLS verification.
 
 For a registry deployment, replace the image with your published immutable digest.
-Initialize using operator-provisioned public TLS and authorized gateway mTLS files:
+Initialize using authorized gateway mTLS files. If the API Gateway already has
+the `sandbox-matrix/sandbox-e2b` TLS Secret, omit `--public-cert` and
+`--public-key`. Supply both options to install or deliberately update that
+shared Gateway certificate:
 
 ```sh
 bash hack/init-sandbox-mcp.sh --kubeconfig /path/to/k8e.yaml \
-  --public-cert /path/to/public/tls.crt --public-key /path/to/public/tls.key \
   --gateway-ca /path/to/gateway/ca.crt \
   --gateway-cert /path/to/gateway/tls.crt --gateway-key /path/to/gateway/tls.key \
+  --public-cert /path/to/public/tls.crt --public-key /path/to/public/tls.key \
+  --hostname mcp.example.com \
   --apply
 ```
 
 Without `--apply`, only local input checks run. With it, the script verifies the
-existing API key Secret, creates the namespace and TLS Secrets, applies the
-deployment, and rolls it to reload certificates. It does not print credential
-contents or copy API keys. No ConfigMap for authentication settings is needed.
+existing API key Secret and the K8E API Gateway, creates the namespace, verifies
+or explicitly updates `sandbox-matrix/sandbox-e2b`, creates the gateway mTLS
+client Secret, applies the Deployment, Service, ReferenceGrant and HTTPRoute,
+then waits for the Deployment, the Gateway's `https` listener and route
+references. Before reporting success, it makes an unauthenticated HTTPS request
+to `/mcp` and requires the MCP backend's expected `405` response; this verifies
+certificate trust and hostname matching without exposing an API Key. It does
+not print credential contents or copy API keys. No ConfigMap for authentication
+settings is needed. A replacement shared certificate must cover every hostname
+already served by the HTTPS listener.
+
+The script prints the final client URL. `--hostname` should match the public
+certificate and DNS record. When omitted, the script uses the first address from
+`Gateway/e2b.status.addresses`; this works directly when the certificate
+contains that IP.
 
 RBAC grants ConfigMap get/create/update in `k8e-mcp`, plus get on exactly
 `sandbox-matrix/sandbox-apikeys`. The deployment uses two replicas and a disruption
 budget, non-root execution and a read-only filesystem. `/healthz` reports process
-health only. Route HTTPS through your existing gateway to Service `k8e-mcp:443`;
-this manifest does not create public DNS, certificates or ingress automatically.
+health only. The HTTPRoute lives in `sandbox-matrix` so it can attach to the
+Gateway's namespace-local HTTPS listener. A narrow ReferenceGrant in `k8e-mcp`
+allows only that HTTPRoute kind and namespace to reference Service `k8e-mcp`.
+Authorization headers and MCP metadata pass through unchanged. Public DNS still
+points to the Gateway address and remains operator-managed.
 
-Clients connect to `https://YOUR_HOST/mcp` with `Authorization: Bearer <key>`.
+Clients connect to the printed `https://YOUR_HOST/mcp` URL with
+`Authorization: Bearer <key>`.
 Configuration syntax varies by client. Only clients supporting custom headers
 and MCP 2026-07-28 are in scope; automatic OAuth login is deferred.
 
@@ -90,9 +112,9 @@ go test -race -tags mcp_integration ./pkg/sandboxmcp -run '^TestGatewayWithKuber
 ```
 
 This validates Kubernetes API persistence and restart recovery with the sandbox
-backend simulated by the test. It does not claim real gVisor pod execution or
-public gateway TLS acceptance; those require an agent-enabled K8E deployment
-and imported gateway certificates.
+backend simulated by the test. Public gateway acceptance additionally requires
+a running Cilium Gateway controller, a DNS name or reachable Gateway address,
+and a certificate valid for that client-visible host.
 
 For deployed gateway acceptance, set `MCP_TEST_API_KEY` in the environment, then:
 
