@@ -94,6 +94,8 @@ spec:
             - --gateway-ca=/credentials/gateway/ca.crt
             - --gateway-cert=/credentials/gateway/tls.crt
             - --gateway-key=/credentials/gateway/tls.key
+            - --api-key-namespace=sandbox-matrix
+            - --api-key-secret=sandbox-apikeys
             - --state-namespace=k8e-mcp
           ports:
             - name: http
@@ -119,7 +121,10 @@ spec:
             httpGet:
               scheme: HTTP
               port: http
-              path: /healthz
+              path: /readyz
+            timeoutSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
           livenessProbe:
             tcpSocket:
               port: http

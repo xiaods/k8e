@@ -81,6 +81,10 @@ type Config struct {
 	MaxRequestBytes int64
 	// Timeout caps each tool invocation.
 	Timeout time.Duration
+	// Ready optionally verifies downstream dependencies (durable state and the
+	// sandbox gateway). A nil Ready keeps the handler process-health only, so
+	// /readyz reports ready whenever the process is serving.
+	Ready func(context.Context) error
 }
 
 // Server is an authenticated MCP HTTP handler with immutable tool schemas.
@@ -91,6 +95,7 @@ type Server struct {
 	version  string
 	maxBytes int64
 	timeout  time.Duration
+	ready    func(context.Context) error
 }
 
 // New validates configuration and snapshots tool schemas. Mount the returned
@@ -108,7 +113,16 @@ func New(c Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{auth: c.Authenticate, tools: tools, origins: origins, version: c.Version, maxBytes: c.MaxRequestBytes, timeout: c.Timeout}, nil
+	return &Server{auth: c.Authenticate, tools: tools, origins: origins, version: c.Version, maxBytes: c.MaxRequestBytes, timeout: c.Timeout, ready: c.Ready}, nil
+}
+
+// Ready reports whether the downstream dependencies this handler needs are
+// reachable. Callers should bound the context; a nil probe is always ready.
+func (s *Server) Ready(ctx context.Context) error {
+	if s.ready == nil {
+		return nil
+	}
+	return s.ready(ctx)
 }
 
 func normalizeConfig(c *Config) error {

@@ -1,7 +1,11 @@
 package sandboxmcp
 
 import (
+	"context"
+	"errors"
 	"flag"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -23,6 +27,41 @@ func TestValidateServeOptionsRejectsIncompleteTLS(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "both --tls-cert and --tls-key") {
 			t.Fatalf("cert=%q key=%q: %v", files[0], files[1], err)
 		}
+	}
+}
+
+func TestReadinessReflectsDependencies(t *testing.T) {
+	authenticate := func(*http.Request) (Principal, error) { return Principal{ID: "a"}, nil }
+	healthy := false
+	server, err := New(Config{Authenticate: authenticate, Ready: func(context.Context) error {
+		if healthy {
+			return nil
+		}
+		return errors.New("downstream down")
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := readinessHandler(server)
+	response := httptest.NewRecorder()
+	probe(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unhealthy dependency reported ready: %d", response.Code)
+	}
+	healthy = true
+	response = httptest.NewRecorder()
+	probe(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("healthy dependency reported unready: %d", response.Code)
+	}
+	plain, err := New(Config{Authenticate: authenticate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = httptest.NewRecorder()
+	readinessHandler(plain)(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("default readiness probe must report ready: %d", response.Code)
 	}
 }
 

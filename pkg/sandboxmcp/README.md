@@ -25,7 +25,9 @@ there is no automatic GC or unknown-outcome reconciler.
 
 Only discover/list/call are advertised; there are no protocol sessions, initialize
 handshake, SSE streams or Tasks extensions. Browser CORS preflight is not supported.
-The `/healthz` endpoint reports process health, not gateway or Kubernetes readiness.
+The `/healthz` endpoint reports process health only; `/readyz` verifies the
+ConfigMap state store and the sandbox gateway connection and returns 503 while
+either is unavailable.
 
 Deployment and initialization: `manifests/sandbox-mcp/README.md`.
 

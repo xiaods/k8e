@@ -23,12 +23,36 @@ automatically available there):
 
 ```sh
 docker build -f manifests/sandbox-mcp/Dockerfile -t k8e-mcp:local .
+# Import into the target node's containerd (k8s.io namespace):
+docker save k8e-mcp:local | docker exec -i <k8e-node-container> ctr -n k8s.io images import -
 ```
 
 The runtime image is a non-root `scratch` image containing the static CLI and
-the CA bundle required for gateway TLS verification.
+the CA bundle required for gateway TLS verification. Importing an image only
+matters on an agent-enabled K8E (the control-plane-only OrbStack recovery
+harness has no node, so MCP pods cannot schedule there).
 
 For a registry deployment, replace the image with your published immutable digest.
+
+### Gateway mTLS material
+
+`mcp-serve` reaches the sandbox gRPC gateway with a client certificate signed by
+the sandbox CA. Bootstrap that pair from the same API key you created above —
+the CLI performs the gateway `Login` handshake and writes `ca.crt`, `client.crt`
+and `client.key`:
+
+```sh
+K8E_SANDBOX_CERT_DIR=/path/to/gateway-mtls \
+  k8e-sandbox-cli connect --endpoint <gateway-host>:50051 \
+  --apikey <bare-key-from-sandbox-apikey-create> --skip-skill
+```
+
+Pass those three files as `--gateway-ca/--gateway-cert/--gateway-key` below. The
+files are the adapter's own backend identity: keep them out of source control and
+treat the directory as secret material. The gateway only verifies that a client
+certificate is present and unrevoked; the MCP adapter, not gRPC mTLS, is what
+enforces per-resource ownership (see `pkg/sandboxmcp/README.md`).
+
 Initialize using authorized gateway mTLS files. If the API Gateway already has
 the `sandbox-matrix/sandbox-e2b` TLS Secret, omit `--public-cert` and
 `--public-key`. Supply both options to install or deliberately update that
@@ -48,12 +72,17 @@ existing API key Secret and the K8E API Gateway, creates the namespace, verifies
 or explicitly updates `sandbox-matrix/sandbox-e2b`, creates the gateway mTLS
 client Secret, applies the Deployment, Service, ReferenceGrant and HTTPRoute,
 then waits for the Deployment, the Gateway's `https` listener and route
-references. Before reporting success, it makes an unauthenticated HTTPS request
-to `/mcp` and requires the MCP backend's expected `405` response; this verifies
-certificate trust and hostname matching without exposing an API Key. It does
-not print credential contents or copy API keys. No ConfigMap for authentication
-settings is needed. A replacement shared certificate must cover every hostname
-already served by the HTTPS listener.
+references. If the Deployment does not become ready it prints pod status,
+the deployment description and recent logs, then exits non-zero. Before
+reporting success, it makes an unauthenticated HTTPS request to `/mcp` and
+requires the MCP backend's expected `405` response; this verifies certificate
+trust and hostname matching without exposing an API Key. Export
+`MCP_PROBE_API_KEY` (environment, never argv) to additionally call
+`server/discover` with `Authorization: Bearer` and require `200`, which proves
+the full authenticated path end to end. It does not print credential contents or
+copy API keys. No ConfigMap for authentication settings is needed. A replacement
+shared certificate must cover every hostname already served by the HTTPS
+listener.
 
 The script prints the final client URL. `--hostname` should match the public
 certificate and DNS record. When omitted, the script uses the first address from
@@ -63,7 +92,9 @@ contains that IP.
 RBAC grants ConfigMap get/create/update in `k8e-mcp`, plus get on exactly
 `sandbox-matrix/sandbox-apikeys`. The deployment uses two replicas and a disruption
 budget, non-root execution and a read-only filesystem. `/healthz` reports process
-health only. The HTTPRoute lives in `sandbox-matrix` so it can attach to the
+health only; `/readyz` additionally verifies the ConfigMap state store and the
+sandbox gateway, so a replica that cannot serve tool calls leaves Service
+endpoints instead of accepting traffic. The HTTPRoute lives in `sandbox-matrix` so it can attach to the
 Gateway's namespace-local HTTPS listener. A narrow ReferenceGrant in `k8e-mcp`
 allows only that HTTPRoute kind and namespace to reference Service `k8e-mcp`.
 Authorization headers and MCP metadata pass through unchanged. Public DNS still

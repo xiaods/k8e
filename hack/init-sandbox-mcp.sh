@@ -23,7 +23,18 @@ needed. An existing sandbox-matrix/sandbox-e2b certificate is reused unless a
 new public certificate pair is supplied explicitly. The existing k8e API
 Gateway exposes https://HOST/mcp. Without --apply, validates local inputs only.
 The deployment uses k8e-mcp:local; import that image into K8E containerd first.
+
+Set MCP_PROBE_API_KEY (environment, never argv) to additionally prove the
+authenticated MCP path by calling server/discover and requiring HTTP 200.
 EOF
+}
+
+rollout_failure_diagnostics() {
+  echo "k8e-mcp did not become ready; collecting diagnostics:" >&2
+  kubectl "${kubectl_args[@]}" -n k8e-mcp get pods -o wide >&2 || true
+  kubectl "${kubectl_args[@]}" -n k8e-mcp describe deployment/k8e-mcp >&2 || true
+  kubectl "${kubectl_args[@]}" -n k8e-mcp logs deployment/k8e-mcp --all-containers --tail=40 >&2 || true
+  echo "check that --gateway-ca/--gateway-cert/--gateway-key are a valid, unexpired mTLS client pair for the sandbox gateway" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -92,7 +103,10 @@ fi
 kubectl "${kubectl_args[@]}" -n k8e-mcp create secret generic mcp-gateway-tls --from-file=ca.crt="$gateway_ca" --from-file=tls.crt="$gateway_cert" --from-file=tls.key="$gateway_key" --dry-run=client -o yaml | kubectl "${kubectl_args[@]}" apply --server-side --field-manager=k8e-mcp-init -f -
 kubectl "${kubectl_args[@]}" apply -f "$repo_root/manifests/sandbox-mcp/deployment.yaml"
 kubectl "${kubectl_args[@]}" -n k8e-mcp rollout restart deployment/k8e-mcp
-kubectl "${kubectl_args[@]}" -n k8e-mcp rollout status deployment/k8e-mcp --timeout=120s
+if ! kubectl "${kubectl_args[@]}" -n k8e-mcp rollout status deployment/k8e-mcp --timeout=120s; then
+  rollout_failure_diagnostics
+  exit 1
+fi
 kubectl "${kubectl_args[@]}" -n sandbox-matrix wait --for=condition=Programmed gateway/e2b --timeout=120s
 kubectl "${kubectl_args[@]}" -n sandbox-matrix wait --for=jsonpath='{.status.listeners[?(@.name=="https")].conditions[?(@.type=="Programmed")].status}'=True gateway/e2b --timeout=120s
 kubectl "${kubectl_args[@]}" -n sandbox-matrix wait --for=jsonpath='{.status.listeners[?(@.name=="https")].conditions[?(@.type=="ResolvedRefs")].status}'=True gateway/e2b --timeout=120s
@@ -122,4 +136,18 @@ if [[ -n "$hostname" && ( "$gateway_address" == *:* || "$gateway_address" =~ ^[0
 fi
 status="$(curl "${curl_args[@]}" "https://$endpoint_authority/mcp")"
 [[ "$status" == 405 ]] || { echo "MCP HTTPS probe expected 405, got $status" >&2; exit 1; }
+if [[ -n "${MCP_PROBE_API_KEY:-}" ]]; then
+  probe_body='{"jsonrpc":"2.0","id":"init-probe","method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}'
+  auth_status="$(curl "${curl_args[@]}" \
+    --request POST \
+    --header "Authorization: Bearer ${MCP_PROBE_API_KEY}" \
+    --header 'Content-Type: application/json' \
+    --header 'Accept: application/json, text/event-stream' \
+    --header 'MCP-Protocol-Version: 2026-07-28' \
+    --header 'Mcp-Method: server/discover' \
+    --data "$probe_body" \
+    "https://$endpoint_authority/mcp")"
+  [[ "$auth_status" == 200 ]] || { echo "authenticated MCP probe expected 200, got $auth_status" >&2; exit 1; }
+  echo "Authenticated MCP probe passed (server/discover returned 200)."
+fi
 echo "MCP endpoint: https://$endpoint_authority/mcp"
