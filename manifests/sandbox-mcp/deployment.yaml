@@ -1,0 +1,206 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8e-mcp
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8e-mcp
+  namespace: k8e-mcp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-state
+  namespace: k8e-mcp
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, create, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-state
+  namespace: k8e-mcp
+subjects:
+  - kind: ServiceAccount
+    name: k8e-mcp
+    namespace: k8e-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-state
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mcp-api-key-reader
+  namespace: sandbox-matrix
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [sandbox-apikeys]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mcp-api-key-reader
+  namespace: sandbox-matrix
+subjects:
+  - kind: ServiceAccount
+    name: k8e-mcp
+    namespace: k8e-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mcp-api-key-reader
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8e-mcp
+  namespace: k8e-mcp
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: k8e-mcp
+  template:
+    metadata:
+      labels:
+        app: k8e-mcp
+    spec:
+      serviceAccountName: k8e-mcp
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp
+          image: k8e-mcp:local
+          imagePullPolicy: IfNotPresent
+          command: [/usr/local/bin/k8e-sandbox-cli]
+          args:
+            - mcp-serve
+            - --listen=:8080
+            - --gateway=sandbox-grpc-gateway.sandbox-matrix.svc:50051
+            - --gateway-ca=/credentials/gateway/ca.crt
+            - --gateway-cert=/credentials/gateway/tls.crt
+            - --gateway-key=/credentials/gateway/tls.key
+            - --api-key-namespace=sandbox-matrix
+            - --api-key-secret=sandbox-apikeys
+            - --state-namespace=k8e-mcp
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 16Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            tcpSocket:
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              scheme: HTTP
+              port: http
+              path: /readyz
+            timeoutSeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket:
+              port: http
+          volumeMounts:
+            - name: gateway-tls
+              mountPath: /credentials/gateway
+              readOnly: true
+      volumes:
+        - name: gateway-tls
+          secret:
+            secretName: mcp-gateway-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8e-mcp
+  namespace: k8e-mcp
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  selector:
+    app: k8e-mcp
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      appProtocol: http
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: sandbox-gateway-to-mcp
+  namespace: k8e-mcp
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: sandbox-matrix
+  to:
+    - group: ""
+      kind: Service
+      name: k8e-mcp
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: k8e-mcp
+  namespace: sandbox-matrix
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  parentRefs:
+    - name: e2b
+      sectionName: https
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /mcp
+      timeouts:
+        request: 45s
+      backendRefs:
+        - name: k8e-mcp
+          namespace: k8e-mcp
+          port: 80
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: k8e-mcp
+  namespace: k8e-mcp
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: k8e-mcp

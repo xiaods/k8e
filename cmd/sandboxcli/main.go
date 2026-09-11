@@ -7,13 +7,16 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/sandboxcli"
+	"github.com/xiaods/k8e/pkg/sandboxmcp"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
 func main() {
 	// Stage embedded skill files for connect (agent harness install).
-	if err := sandboxcli.StageSkills(); err != nil {
-		logrus.Fatalf("Failed to stage skill files: %v", err)
+	if len(os.Args) < 2 || os.Args[1] != "mcp-serve" {
+		if err := sandboxcli.StageSkills(); err != nil {
+			logrus.Fatalf("Failed to stage skill files: %v", err)
+		}
 	}
 
 	app := cli.NewApp()
@@ -27,6 +30,7 @@ func main() {
 		cli.StringFlag{Name: "profile", EnvVar: "K8E_SANDBOX_PROFILE", Usage: "Named profile from ~/.k8e/sandbox/profiles.yaml (KIP-17; not server /etc/k8e/config.yaml)"},
 	}
 	commands := []cli.Command{
+		sandboxmcp.Command(),
 		sandboxcli.ConnectCommand(),
 		sandboxcli.LoginCommand(),
 		sandboxcli.DoctorCommand(),

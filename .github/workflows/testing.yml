@@ -18,6 +18,26 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  mcp:
+    name: MCP API Key and HTTPS interoperability
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Test MCP and initialization
+        run: |
+          MCP_RUN_INTEROP=1 go test -race ./pkg/sandboxmcp ./cmd/sandboxcli -count=1
+          go test -race -tags mcp_integration ./pkg/sandboxmcp -run '^TestGatewayWithKubernetesMock$' -count=1
+          python3 tests/mcp/test_init.py
+          bash -n hack/init-sandbox-mcp.sh hack/test-sandbox-mcp-orbstack.sh
+      - name: Build MCP deployment image
+        run: docker build -f manifests/sandbox-mcp/Dockerfile -t k8e-mcp:test .
+
   build:
     name: Build & Test (linux/amd64)
     runs-on: ubuntu-latest
