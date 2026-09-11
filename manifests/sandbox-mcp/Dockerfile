@@ -1,4 +1,4 @@
-FROM golang:1.25.9 AS build
+FROM golang:1.26.7 AS build
 WORKDIR /src
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/k8e-sandbox-cli ./cmd/sandboxcli

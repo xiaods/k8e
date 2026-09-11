@@ -23,7 +23,8 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 | KIP | Title | Status |
 |-----|-------|--------|
 | [KIP-1](kip-1-native-etcd-storage-client.md) | Native etcd storage client (replace kine) | Implemented |
-| [KIP-2](kip-2-upgrade-dependencies-to-kubernetes-1.35.md) | Kubernetes 1.35 dependency upgrade | Implemented (tree now tracks **v1.35.5-k3s1**) |
+| [KIP-2](kip-2-upgrade-dependencies-to-kubernetes-1.35.md) | Kubernetes 1.35 dependency upgrade | Implemented — baseline superseded by [KIP-26](kip-26-upgrade-dependencies-to-kubernetes-1.37.md) |
+| [KIP-26](kip-26-upgrade-dependencies-to-kubernetes-1.37.md) | Kubernetes 1.37 dependency upgrade | Implemented (tree now tracks **v1.37.0-k3s1**) |
 | [KIP-6](kip-6-embedded-etcd-design.md) | Embedded etcd as sole datastore | Implemented |
 | [KIP-7](kip-7-embedded-etcd-fuse.md) | Fuse official `embed.StartEtcd` (`pkg/embedw`) | Implemented |
 
@@ -78,7 +79,8 @@ Agent-facing repo conventions live under [`docs/agents/`](agents/). Those files 
 - **KIP-24** was drafted as `sandbox-expose-tunnel.md`. Code, proto, CLI, and
   SKILL.md already called it KIP-24; the filename now matches.
 - **KIP-25** was the unnumbered `sandbox-warm-pool.md` operator how-to. Default install now stages `manifests/sandbox-matrix/default-warm-pool.yaml` (`size: 1`).
-- There is no KIP-26+. New proposals take the next free integer.
+- **KIP-26** advances the dependency baseline set by KIP-2 from Kubernetes `v1.35.5-k3s1`
+  to `v1.37.0-k3s1`. The next free integer is **KIP-27**.
 
 ## How to add a KIP
 

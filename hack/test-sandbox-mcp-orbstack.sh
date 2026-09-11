@@ -5,7 +5,7 @@ container_name="${K8E_MCP_CONTAINER:-k8e-mcp-recovery-init}"
 host_port="${K8E_MCP_API_PORT:-16444}"
 data_dir="${K8E_MCP_DATA_DIR:-/tmp/k8e-mcp-cluster-init}"
 binary="${K8E_BINARY:-/tmp/k8e-mcp-server}"
-image="${K8E_MCP_IMAGE:-golang:1.25.9}"
+image="${K8E_MCP_IMAGE:-golang:1.26.7}"
 
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
 command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }

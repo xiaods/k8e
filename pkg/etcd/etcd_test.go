@@ -657,6 +657,10 @@ func startMock(ctx context.Context, e *ETCD, isLearner, isCorrupt, noLeader bool
 }
 
 type mockEtcd struct {
+	etcdserverpb.UnimplementedKVServer
+	etcdserverpb.UnimplementedClusterServer
+	etcdserverpb.UnimplementedMaintenanceServer
+
 	e           *ETCD
 	mu          *sync.RWMutex
 	calls       map[string]int
@@ -708,6 +712,10 @@ func (m *mockEtcd) alarms() []*etcdserverpb.AlarmMember {
 func (m *mockEtcd) Range(context.Context, *etcdserverpb.RangeRequest) (*etcdserverpb.RangeResponse, error) {
 	m.inc("range")
 	return nil, unsupported("range")
+}
+func (m *mockEtcd) RangeStream(*etcdserverpb.RangeRequest, grpc.ServerStreamingServer[etcdserverpb.RangeStreamResponse]) error {
+	m.inc("rangestream")
+	return unsupported("rangestream")
 }
 func (m *mockEtcd) Put(context.Context, *etcdserverpb.PutRequest) (*etcdserverpb.PutResponse, error) {
 	m.inc("put")
