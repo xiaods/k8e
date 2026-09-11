@@ -44,13 +44,13 @@ func TestReadinessReflectsDependencies(t *testing.T) {
 	}
 	probe := readinessHandler(server)
 	response := httptest.NewRecorder()
-	probe(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	probe(response, httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unhealthy dependency reported ready: %d", response.Code)
 	}
 	healthy = true
 	response = httptest.NewRecorder()
-	probe(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	probe(response, httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody))
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("healthy dependency reported unready: %d", response.Code)
 	}
@@ -59,7 +59,7 @@ func TestReadinessReflectsDependencies(t *testing.T) {
 		t.Fatal(err)
 	}
 	response = httptest.NewRecorder()
-	readinessHandler(plain)(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	readinessHandler(plain)(response, httptest.NewRequest(http.MethodGet, "/readyz", http.NoBody))
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("default readiness probe must report ready: %d", response.Code)
 	}

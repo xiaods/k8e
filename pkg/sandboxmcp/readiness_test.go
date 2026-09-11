@@ -3,14 +3,12 @@ package sandboxmcp
 import (
 	"context"
 	"errors"
-	"net"
 	"testing"
 	"time"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
 
@@ -21,44 +19,37 @@ func (failingStore) Get(context.Context, string) (Record, error) {
 	return Record{}, errors.New("storage down")
 }
 
-// readinessBackend answers the probe RPC with an application error, proving the
-// gateway is reachable without performing real work.
-type readinessBackend struct {
-	pb.UnimplementedSandboxServiceServer
+// stubSandboxClient returns a fixed gateway error so the readiness check can be
+// exercised without opening a listener, which would need insecure credentials.
+type stubSandboxClient struct {
+	pb.SandboxServiceClient
+	err error
 }
 
-func (readinessBackend) GetSession(context.Context, *pb.GetSessionRequest) (*pb.GetSessionResponse, error) {
-	return nil, status.Error(codes.InvalidArgument, "session_id required")
+func (client stubSandboxClient) GetSession(context.Context, *pb.GetSessionRequest, ...grpc.CallOption) (*pb.GetSessionResponse, error) {
+	return nil, client.err
 }
 
 func TestReadinessChecksStateAndGateway(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := readiness(failingStore{}, nil)(ctx); err == nil {
+	store := &testStore{records: map[string]Record{}}
+	answered := status.Error(codes.InvalidArgument, "session_id required")
+
+	if err := readiness(failingStore{}, stubSandboxClient{err: answered})(ctx); err == nil {
 		t.Fatal("state store failure reported ready")
 	}
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// Any application-level error proves the gateway answered.
+	if err := readiness(store, stubSandboxClient{err: answered})(ctx); err != nil {
+		t.Fatalf("reachable gateway reported unready: %v", err)
 	}
-	grpcServer := grpc.NewServer()
-	pb.RegisterSandboxServiceServer(grpcServer, readinessBackend{})
-	go grpcServer.Serve(listener)
-	connection, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		t.Fatal(err)
+	if err := readiness(store, stubSandboxClient{})(ctx); err != nil {
+		t.Fatalf("healthy gateway reported unready: %v", err)
 	}
-	defer connection.Close()
-
-	client := pb.NewSandboxServiceClient(connection)
-	store := &testStore{records: map[string]Record{}}
-	if err := readiness(store, client)(ctx); err != nil {
-		t.Fatalf("reachable dependencies reported unready: %v", err)
-	}
-
-	grpcServer.Stop()
-	if err := readiness(store, client)(ctx); err == nil {
-		t.Fatal("unreachable gateway reported ready")
+	// Transport and credential failures mean the adapter cannot serve tool calls.
+	for _, code := range []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Canceled, codes.Unauthenticated} {
+		if err := readiness(store, stubSandboxClient{err: status.Error(code, "gateway down")})(ctx); err == nil {
+			t.Fatalf("%v gateway reported ready", code)
+		}
 	}
 }
