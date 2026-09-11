@@ -180,34 +180,57 @@ func installConfigMapCAS(client *kubefake.Clientset) {
 	client.PrependReactor("*", "configmaps", func(action ktesting.Action) (bool, runtime.Object, error) {
 		lock.Lock()
 		defer lock.Unlock()
-		var configMap *corev1.ConfigMap
-		switch action.GetVerb() {
-		case "create":
-			configMap = action.(ktesting.CreateAction).GetObject().(*corev1.ConfigMap).DeepCopy()
-		case "update":
-			configMap = action.(ktesting.UpdateAction).GetObject().(*corev1.ConfigMap).DeepCopy()
-		default:
+		configMap, ok := configMapFromAction(action)
+		if !ok {
 			return false, nil, nil
 		}
 		previous, err := client.Tracker().Get(resourceID, action.GetNamespace(), configMap.Name)
-		if action.GetVerb() == "create" && err == nil {
-			return true, nil, apierrors.NewAlreadyExists(resourceID.GroupResource(), configMap.Name)
-		}
-		if action.GetVerb() == "update" {
-			if err != nil {
-				return true, nil, err
-			}
-			if previous.(*corev1.ConfigMap).ResourceVersion != configMap.ResourceVersion {
-				return true, nil, apierrors.NewConflict(resourceID.GroupResource(), configMap.Name, fmt.Errorf("stale version"))
-			}
+		if err := configMapCASError(action, previous, err, configMap, resourceID); err != nil {
+			return true, nil, err
 		}
 		version++
 		configMap.ResourceVersion = fmt.Sprint(version)
-		if action.GetVerb() == "create" {
-			err = client.Tracker().Create(resourceID, configMap, action.GetNamespace())
-		} else {
-			err = client.Tracker().Update(resourceID, configMap, action.GetNamespace())
-		}
+		err = storeConfigMap(client, resourceID, action, configMap)
 		return true, configMap, err
 	})
+}
+
+// configMapFromAction extracts the ConfigMap under test, or reports that this
+// reactor should let the request through untouched.
+func configMapFromAction(action ktesting.Action) (*corev1.ConfigMap, bool) {
+	switch action.GetVerb() {
+	case "create":
+		return action.(ktesting.CreateAction).GetObject().(*corev1.ConfigMap).DeepCopy(), true
+	case "update":
+		return action.(ktesting.UpdateAction).GetObject().(*corev1.ConfigMap).DeepCopy(), true
+	default:
+		return nil, false
+	}
+}
+
+// configMapCASError enforces create-once and the resource-version match that
+// real ConfigMaps require on update.
+func configMapCASError(action ktesting.Action, previous runtime.Object, getErr error, configMap *corev1.ConfigMap, resourceID schema.GroupVersionResource) error {
+	switch action.GetVerb() {
+	case "create":
+		if getErr == nil {
+			return apierrors.NewAlreadyExists(resourceID.GroupResource(), configMap.Name)
+		}
+	case "update":
+		if getErr != nil {
+			return getErr
+		}
+		if previous.(*corev1.ConfigMap).ResourceVersion != configMap.ResourceVersion {
+			return apierrors.NewConflict(resourceID.GroupResource(), configMap.Name, fmt.Errorf("stale version"))
+		}
+	}
+	return nil
+}
+
+// storeConfigMap persists the intercepted create or update.
+func storeConfigMap(client *kubefake.Clientset, resourceID schema.GroupVersionResource, action ktesting.Action, configMap *corev1.ConfigMap) error {
+	if action.GetVerb() == "create" {
+		return client.Tracker().Create(resourceID, configMap, action.GetNamespace())
+	}
+	return client.Tracker().Update(resourceID, configMap, action.GetNamespace())
 }

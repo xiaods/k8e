@@ -10,7 +10,7 @@ image="${K8E_MCP_IMAGE:-golang:1.25.9}"
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
 command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }
 command -v go >/dev/null || { echo "go is required" >&2; exit 2; }
-test -x "$binary" || { echo "missing executable K8E_BINARY=$binary" >&2; exit 2; }
+[[ -x "$binary" ]] || { echo "missing executable K8E_BINARY=$binary" >&2; exit 2; }
 cd "$(dirname "$0")/.."
 mkdir -p "$data_dir"
 
@@ -30,7 +30,7 @@ docker run -d --name "$container_name" \
 
 kubeconfig="$data_dir/client-kubeconfig.yaml"
 for _ in $(seq 1 120); do
-  if test -s "$data_dir/kubeconfig.yaml"; then
+  if [[ -s "$data_dir/kubeconfig.yaml" ]]; then
     cp "$data_dir/kubeconfig.yaml" "$kubeconfig"
     kubectl --kubeconfig "$kubeconfig" config set-cluster default --server="https://127.0.0.1:${host_port}" >/dev/null
     if kubectl --kubeconfig "$kubeconfig" --request-timeout=2s get --raw=/readyz >/dev/null 2>&1; then
@@ -39,7 +39,7 @@ for _ in $(seq 1 120); do
   fi
   sleep 1
 done
-test -s "$kubeconfig" || { echo "K8E did not write kubeconfig" >&2; exit 1; }
+[[ -s "$kubeconfig" ]] || { echo "K8E did not write kubeconfig" >&2; exit 1; }
 kubectl --kubeconfig "$kubeconfig" --request-timeout=10s get --raw=/readyz >/dev/null
 
 MCP_TEST_KUBECONFIG="$kubeconfig" \

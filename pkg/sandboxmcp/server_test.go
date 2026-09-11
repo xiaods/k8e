@@ -92,6 +92,32 @@ func TestRejectedRequestsNeverInvokeBackend(t *testing.T) {
 		})
 	}
 }
+
+// rpcEnvelope is the subset of a JSON-RPC response these tests assert on.
+type rpcEnvelope struct {
+	ID     string         `json:"id"`
+	Result map[string]any `json:"result"`
+}
+
+// assertCompleteResult verifies one stateless success response.
+func assertCompleteResult(t *testing.T, method string, w *httptest.ResponseRecorder) {
+	t.Helper()
+	var out rpcEnvelope
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if w.Code != 200 || out.ID != "req-1" || out.Result["resultType"] != "complete" {
+		t.Fatalf("%s: %s", method, w.Body)
+	}
+	if w.Header().Get("Mcp-Session-Id") != "" {
+		t.Error("protocol session created")
+	}
+	if method != "tools/call" && out.Result["cacheScope"] != "private" {
+		t.Error("unsafe caching")
+	}
+	if method == "tools/call" && out.Result["isError"] != false {
+		t.Error("program failure became protocol error")
+	}
+}
+
 func TestDiscoveryAndCallWithoutHandshake(t *testing.T) {
 	s := testServer(t, func(ctx context.Context, p Principal, _ json.RawMessage) (CallResult, error) {
 		if p.ID != "alice" {
@@ -105,23 +131,7 @@ func TestDiscoveryAndCallWithoutHandshake(t *testing.T) {
 	for _, method := range []string{"server/discover", "tools/list", "tools/call"} {
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, newRequest(method, map[string]any{}))
-		var out struct {
-			ID     string
-			Result map[string]any
-		}
-		json.Unmarshal(w.Body.Bytes(), &out)
-		if w.Code != 200 || out.ID != "req-1" || out.Result["resultType"] != "complete" {
-			t.Fatalf("%s: %s", method, w.Body)
-		}
-		if w.Header().Get("Mcp-Session-Id") != "" {
-			t.Error("protocol session created")
-		}
-		if method != "tools/call" && out.Result["cacheScope"] != "private" {
-			t.Error("unsafe caching")
-		}
-		if method == "tools/call" && out.Result["isError"] != false {
-			t.Error("program failure became protocol error")
-		}
+		assertCompleteResult(t, method, w)
 	}
 }
 
@@ -224,6 +234,21 @@ func TestSchemaSnapshotAndConfig(t *testing.T) {
 	}
 }
 
+// unsupportedVersionResponse mirrors the -32022 error payload asserted below.
+type unsupportedVersionResponse struct {
+	Error unsupportedVersionError `json:"error"`
+}
+
+type unsupportedVersionError struct {
+	Code int                    `json:"code"`
+	Data unsupportedVersionData `json:"data"`
+}
+
+type unsupportedVersionData struct {
+	Supported []string `json:"supported"`
+	Requested string   `json:"requested"`
+}
+
 func TestUnsupportedVersionResponse(t *testing.T) {
 	s := testServer(t, func(context.Context, Principal, json.RawMessage) (CallResult, error) {
 		t.Fatal("called")
@@ -235,15 +260,7 @@ func TestUnsupportedVersionResponse(t *testing.T) {
 	r.Header.Set("MCP-Protocol-Version", "1900-01-01")
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
-	var out struct {
-		Error struct {
-			Code int
-			Data struct {
-				Supported []string
-				Requested string
-			}
-		}
-	}
+	var out unsupportedVersionResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}

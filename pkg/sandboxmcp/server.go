@@ -20,7 +20,12 @@ import (
 
 // ProtocolVersion is the MCP revision implemented by this HTTP boundary.
 const ProtocolVersion = "2026-07-28"
-const metaPrefix = "io.modelcontextprotocol/"
+
+const (
+	metaPrefix           = "io.modelcontextprotocol/"
+	mediaTypeJSON        = "application/json"
+	mediaTypeEventStream = "text/event-stream"
+)
 
 // Principal is established by authentication, never by tool arguments.
 type Principal struct{ ID string }
@@ -199,7 +204,7 @@ func reply(w http.ResponseWriter, status int, id json.RawMessage, result any, er
 		status = http.StatusInternalServerError
 		data = []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Response encoding failed"}}`)
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", mediaTypeJSON)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(data)
@@ -223,11 +228,11 @@ func (s *Server) validateTransport(w http.ResponseWriter, r *http.Request) bool 
 
 func validateMediaHeaders(w http.ResponseWriter, r *http.Request) bool {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" {
+	if err != nil || media != mediaTypeJSON {
 		fail(w, 415, nil, -32600, "Content-Type must be application/json")
 		return false
 	}
-	if !accepts(r, "application/json") || !accepts(r, "text/event-stream") {
+	if !accepts(r, mediaTypeJSON) || !accepts(r, mediaTypeEventStream) {
 		fail(w, 406, nil, -32600, "Accept must include application/json and text/event-stream")
 		return false
 	}

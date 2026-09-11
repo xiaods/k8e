@@ -105,7 +105,7 @@ func parseArguments(raw json.RawMessage, fields, required []string) (arguments, 
 	if err := decoder.Decode(&parsed); err != nil {
 		return parsed, &InvalidParams{Message: "Invalid arguments"}
 	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
+	if decoder.Decode(new(any)) != io.EOF {
 		return parsed, &InvalidParams{Message: "Invalid arguments"}
 	}
 	if _, ok := values["timeout"]; ok && (parsed.Timeout < 1 || parsed.Timeout > 3600) {

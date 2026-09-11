@@ -23,21 +23,38 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// Flag names are declared once and reused by the command definition and every
+// accessor, so a rename cannot leave a stale literal behind.
+const (
+	flagListen          = "listen"
+	flagAllowedOrigin   = "allowed-origin"
+	flagTLSCert         = "tls-cert"
+	flagTLSKey          = "tls-key"
+	flagAPIKeyNamespace = "api-key-namespace"
+	flagAPIKeySecret    = "api-key-secret"
+	flagGateway         = "gateway"
+	flagGatewayCA       = "gateway-ca"
+	flagGatewayCert     = "gateway-cert"
+	flagGatewayKey      = "gateway-key"
+	flagStateNamespace  = "state-namespace"
+	flagKubeconfig      = "kubeconfig"
+)
+
 // Command returns the mcp-serve CLI command and its deployment-facing options.
 func Command() cli.Command {
 	flags := []cli.Flag{
-		cli.StringFlag{Name: "listen", Value: "127.0.0.1:8443", EnvVar: "K8E_MCP_LISTEN"},
-		cli.StringSliceFlag{Name: "allowed-origin", EnvVar: "K8E_MCP_ALLOWED_ORIGINS"},
-		cli.StringFlag{Name: "tls-cert", EnvVar: "K8E_MCP_TLS_CERT"},
-		cli.StringFlag{Name: "tls-key", EnvVar: "K8E_MCP_TLS_KEY"},
-		cli.StringFlag{Name: "api-key-namespace", Value: "sandbox-matrix", EnvVar: "K8E_MCP_API_KEY_NAMESPACE"},
-		cli.StringFlag{Name: "api-key-secret", Value: "sandbox-apikeys", EnvVar: "K8E_MCP_API_KEY_SECRET"},
-		cli.StringFlag{Name: "gateway", EnvVar: "K8E_MCP_GATEWAY"},
-		cli.StringFlag{Name: "gateway-ca", EnvVar: "K8E_MCP_GATEWAY_CA"},
-		cli.StringFlag{Name: "gateway-cert", EnvVar: "K8E_MCP_GATEWAY_CERT"},
-		cli.StringFlag{Name: "gateway-key", EnvVar: "K8E_MCP_GATEWAY_KEY"},
-		cli.StringFlag{Name: "state-namespace", EnvVar: "K8E_MCP_STATE_NAMESPACE"},
-		cli.StringFlag{Name: "kubeconfig", EnvVar: "KUBECONFIG"},
+		cli.StringFlag{Name: flagListen, Value: "127.0.0.1:8443", EnvVar: "K8E_MCP_LISTEN"},
+		cli.StringSliceFlag{Name: flagAllowedOrigin, EnvVar: "K8E_MCP_ALLOWED_ORIGINS"},
+		cli.StringFlag{Name: flagTLSCert, EnvVar: "K8E_MCP_TLS_CERT"},
+		cli.StringFlag{Name: flagTLSKey, EnvVar: "K8E_MCP_TLS_KEY"},
+		cli.StringFlag{Name: flagAPIKeyNamespace, Value: "sandbox-matrix", EnvVar: "K8E_MCP_API_KEY_NAMESPACE"},
+		cli.StringFlag{Name: flagAPIKeySecret, Value: "sandbox-apikeys", EnvVar: "K8E_MCP_API_KEY_SECRET"},
+		cli.StringFlag{Name: flagGateway, EnvVar: "K8E_MCP_GATEWAY"},
+		cli.StringFlag{Name: flagGatewayCA, EnvVar: "K8E_MCP_GATEWAY_CA"},
+		cli.StringFlag{Name: flagGatewayCert, EnvVar: "K8E_MCP_GATEWAY_CERT"},
+		cli.StringFlag{Name: flagGatewayKey, EnvVar: "K8E_MCP_GATEWAY_KEY"},
+		cli.StringFlag{Name: flagStateNamespace, EnvVar: "K8E_MCP_STATE_NAMESPACE"},
+		cli.StringFlag{Name: flagKubeconfig, EnvVar: "KUBECONFIG"},
 	}
 	return cli.Command{Name: "mcp-serve", Usage: "Serve MCP using K8E API keys and an explicit mTLS sandbox gateway", Flags: flags, Action: serveCommand}
 }
@@ -98,23 +115,23 @@ func readinessHandler(server *Server) http.HandlerFunc {
 }
 
 func validateServeOptions(command *cli.Context) error {
-	for _, name := range []string{"api-key-namespace", "api-key-secret", "gateway", "gateway-ca", "gateway-cert", "gateway-key", "state-namespace"} {
+	for _, name := range []string{flagAPIKeyNamespace, flagAPIKeySecret, flagGateway, flagGatewayCA, flagGatewayCert, flagGatewayKey, flagStateNamespace} {
 		if command.String(name) == "" {
 			return errors.New("required MCP option: --" + name)
 		}
 	}
-	if (command.String("tls-cert") == "") != (command.String("tls-key") == "") {
-		return errors.New("MCP TLS requires both --tls-cert and --tls-key")
+	if (command.String(flagTLSCert) == "") != (command.String(flagTLSKey) == "") {
+		return errors.New("MCP TLS requires both --" + flagTLSCert + " and --" + flagTLSKey)
 	}
 	return nil
 }
 
 func connectGateway(command *cli.Context) (*grpc.ClientConn, error) {
-	certificate, err := tls.LoadX509KeyPair(command.String("gateway-cert"), command.String("gateway-key"))
+	certificate, err := tls.LoadX509KeyPair(command.String(flagGatewayCert), command.String(flagGatewayKey))
 	if err != nil {
 		return nil, err
 	}
-	rootPEM, err := os.ReadFile(command.String("gateway-ca"))
+	rootPEM, err := os.ReadFile(command.String(flagGatewayCA))
 	if err != nil {
 		return nil, err
 	}
@@ -122,16 +139,16 @@ func connectGateway(command *cli.Context) (*grpc.ClientConn, error) {
 	if !roots.AppendCertsFromPEM(rootPEM) {
 		return nil, errors.New("gateway CA has no certificates")
 	}
-	return grpc.NewClient(command.String("gateway"), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, Certificates: []tls.Certificate{certificate}})))
+	return grpc.NewClient(command.String(flagGateway), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, Certificates: []tls.Certificate{certificate}})))
 }
 
 func connectKubernetes(command *cli.Context) (typedcore.CoreV1Interface, error) {
 	var kubeConfig *rest.Config
 	var err error
-	if command.String("kubeconfig") == "" {
+	if command.String(flagKubeconfig) == "" {
 		kubeConfig, err = rest.InClusterConfig()
 	} else {
-		kubeConfig, err = clientcmd.BuildConfigFromFlags("", command.String("kubeconfig"))
+		kubeConfig, err = clientcmd.BuildConfigFromFlags("", command.String(flagKubeconfig))
 	}
 	if err != nil {
 		return nil, err
@@ -141,7 +158,7 @@ func connectKubernetes(command *cli.Context) (typedcore.CoreV1Interface, error) 
 }
 
 func buildHandler(command *cli.Context, connection *grpc.ClientConn, core typedcore.CoreV1Interface) (*Server, error) {
-	store, err := NewKubernetesStore(core.ConfigMaps(command.String("state-namespace")))
+	store, err := NewKubernetesStore(core.ConfigMaps(command.String(flagStateNamespace)))
 	if err != nil {
 		return nil, err
 	}
@@ -149,11 +166,11 @@ func buildHandler(command *cli.Context, connection *grpc.ClientConn, core typedc
 	if err != nil {
 		return nil, err
 	}
-	authenticate, err := NewAPIKeyAuthenticator(core.Secrets(command.String("api-key-namespace")), command.String("api-key-secret"))
+	authenticate, err := NewAPIKeyAuthenticator(core.Secrets(command.String(flagAPIKeyNamespace)), command.String(flagAPIKeySecret))
 	if err != nil {
 		return nil, err
 	}
-	return New(Config{Authenticate: authenticate, Tools: service.Tools(), AllowedOrigins: command.StringSlice("allowed-origin"), Ready: readiness(store, pb.NewSandboxServiceClient(connection))})
+	return New(Config{Authenticate: authenticate, Tools: service.Tools(), AllowedOrigins: command.StringSlice(flagAllowedOrigin), Ready: readiness(store, pb.NewSandboxServiceClient(connection))})
 }
 
 func serveHTTP(command *cli.Context, server *Server) error {
@@ -161,16 +178,16 @@ func serveHTTP(command *cli.Context, server *Server) error {
 	mux.Handle("/mcp", server)
 	mux.HandleFunc("/healthz", func(writer http.ResponseWriter, _ *http.Request) { writer.WriteHeader(http.StatusNoContent) })
 	mux.HandleFunc("/readyz", readinessHandler(server))
-	httpServer := &http.Server{Addr: command.String("listen"), Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 45 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 * 1024, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
+	httpServer := &http.Server{Addr: command.String(flagListen), Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 45 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 * 1024, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	completed := make(chan error, 1)
 	go func() {
-		if command.String("tls-cert") == "" {
+		if command.String(flagTLSCert) == "" {
 			completed <- httpServer.ListenAndServe()
 			return
 		}
-		completed <- httpServer.ListenAndServeTLS(command.String("tls-cert"), command.String("tls-key"))
+		completed <- httpServer.ListenAndServeTLS(command.String(flagTLSCert), command.String(flagTLSKey))
 	}()
 	select {
 	case err := <-completed:
