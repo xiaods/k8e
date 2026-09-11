@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	helmcrd "github.com/k3s-io/helm-controller/pkg/crd"
+	helmcrds "github.com/k3s-io/helm-controller/pkg/crds"
 	"github.com/k3s-io/helm-controller/pkg/generated/controllers/helm.cattle.io"
 	"github.com/pkg/errors"
 	"github.com/rancher/wrangler/v3/pkg/crd"
@@ -80,15 +80,25 @@ func registerCrds(ctx context.Context, config *Config, restConfig *rest.Config) 
 		return err
 	}
 
-	factory.BatchCreateCRDs(ctx, crds(config)...)
+	crdList, err := crds(config)
+	if err != nil {
+		return err
+	}
+	factory.BatchCreateCRDs(ctx, crdList...)
 
 	return factory.BatchWait()
 }
 
-func crds(config *Config) []crd.CRD {
+func crds(config *Config) ([]crd.CRD, error) {
 	defaultCrds := addoncrd.List()
 	if !config.ControlConfig.DisableHelmController {
-		defaultCrds = append(defaultCrds, helmcrd.List()...)
+		helmCRDs, err := helmcrds.List()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to list helm-controller CRDs")
+		}
+		for _, helmCRD := range helmCRDs {
+			defaultCrds = append(defaultCrds, crd.CRD{Override: helmCRD})
+		}
 	}
-	return defaultCrds
+	return defaultCrds, nil
 }

@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-24 | Implemented — original target was Kubernetes v1.35.1; the tree now tracks **v1.35.5-k3s1** |
+| @xiaods | 2026-08-24 | Implemented — original target was Kubernetes v1.35.1; the tree then tracked **v1.35.5-k3s1**. Errata: that baseline was superseded by [KIP-26](kip-26-upgrade-dependencies-to-kubernetes-1.37.md), which moved the tree to **v1.37.0-k3s1**. The breaking-change records below remain the reference for the 1.35 jump |
 
 ## Summary
 
