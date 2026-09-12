@@ -106,16 +106,19 @@ enable_keychain = true
 {{end}}
 
 {{- if .SandboxRuntimes.Firecracker }}
+# The "aws.firecracker" runtime is provided by firecracker-containerd. Never
+# declare a devmapper snapshotter proxy here: containerd already links in a
+# devmapper snapshotter plugin (pkg/containerd/builtins_linux.go), and registering
+# the same plugin id twice makes containerd panic on startup with
+# "plugin: id already registered", taking the node down before it can run a
+# single container -- and only ever on hosts that expose /dev/kvm, which are
+# exactly the ones that turn this runtime on. The built-in snapshotter is used
+# instead, and nothing in this config selects a proxy snapshotter.
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."firecracker"]
   runtime_type = "aws.firecracker"
 [plugins."io.containerd.grpc.v1.cri".containerd.runtimes."firecracker".options]
   kernel_image_path = "/var/lib/firecracker-containerd/runtime/hello-vmlinux.bin"
   root_drive = "/var/lib/firecracker-containerd/runtime/default-rootfs.img"
-
-[proxy_plugins]
-  [proxy_plugins.devmapper]
-    type = "snapshot"
-    address = "/run/containerd-dev-snapshotter/snapshotter.sock"
 {{end}}
 `
 
