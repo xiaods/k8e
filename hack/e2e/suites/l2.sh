@@ -36,7 +36,7 @@ else
 fi
 
 server_version="$(e2e_kubectl get --raw=/version 2>/dev/null | jq -r '.gitVersion' 2>/dev/null || true)"
-if [ -n "${server_version}" ] && [ "${server_version}" != "null" ]; then
+if [[ -n "${server_version}" ]] && [[ "${server_version}" != "null" ]]; then
     e2e_ok "/version exposes gitVersion (${server_version})"
 else
     e2e_bad "/version exposes gitVersion"
@@ -45,7 +45,7 @@ fi
 # --- node registration ---------------------------------------------------
 
 node="$(e2e_kubectl get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-if [ -n "${node}" ]; then
+if [[ -n "${node}" ]]; then
     e2e_ok "node ${node} registered"
 else
     e2e_bad "node registered"
@@ -53,13 +53,13 @@ else
 fi
 
 node_version="$(e2e_kubectl get node "${node}" -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null || true)"
-if [ -n "${node_version}" ]; then
+if [[ -n "${node_version}" ]]; then
     e2e_ok "kubelet reports a version (${node_version})"
 else
     e2e_bad "kubelet reports a version"
 fi
 
-if [ -n "${server_version}" ] && [ "${node_version}" = "${server_version}" ]; then
+if [[ -n "${server_version}" ]] && [[ "${node_version}" = "${server_version}" ]]; then
     e2e_ok "kubelet runs in-process at the server version (${node_version})"
 else
     e2e_bad "kubelet runs in-process at the server version (node=${node_version} server=${server_version})"
@@ -70,7 +70,7 @@ fi
 ready_status="$(e2e_kubectl get node "${node}" -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status}{end}' 2>/dev/null || true)"
 ready_message="$(e2e_kubectl get node "${node}" -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.message}{end}' 2>/dev/null || true)"
 
-if [ "${ready_status}" = "False" ]; then
+if [[ "${ready_status}" = "False" ]]; then
     e2e_ok "node is NotReady (no CNI in this profile)"
 else
     e2e_bad "node is NotReady (no CNI in this profile), status=${ready_status}"
@@ -84,7 +84,7 @@ fi
 
 for condition in MemoryPressure DiskPressure PIDPressure; do
     condition_status="$(e2e_kubectl get node "${node}" -o jsonpath="{range .status.conditions[?(@.type==\"${condition}\")]}{.status}{end}" 2>/dev/null || true)"
-    if [ "${condition_status}" = "False" ]; then
+    if [[ "${condition_status}" = "False" ]]; then
         e2e_ok "node has no ${condition}"
     else
         e2e_bad "node has no ${condition} (${condition_status})"
@@ -170,7 +170,7 @@ else
 fi
 
 pod_ip="$(e2e_kubectl get pod "${pod}" -o jsonpath='{.status.podIP}' 2>/dev/null || true)"
-if [ -n "${pod_ip}" ]; then
+if [[ -n "${pod_ip}" ]]; then
     e2e_ok "pod reports an IP (${pod_ip})"
 else
     e2e_bad "pod reports an IP"
@@ -180,7 +180,7 @@ e2e_kubectl delete pod "${pod}" --ignore-not-found --wait=false >/dev/null 2>&1 
 
 # --- restart recovery ----------------------------------------------------
 
-if [ "${E2E_SKIP_GO_TESTS:-0}" = "1" ]; then
+if [[ "${E2E_SKIP_GO_TESTS:-0}" = "1" ]]; then
     e2e_log "skipping restart recovery test (E2E_SKIP_GO_TESTS=1)"
 elif ! command -v go >/dev/null 2>&1; then
     e2e_warn "go toolchain not found; skipping restart recovery test"

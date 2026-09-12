@@ -12,7 +12,7 @@ set -euo pipefail
 
 . "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+if [[ "${1:-}" = "-h" ]] || [[ "${1:-}" = "--help" ]]; then
     e2e_usage
     exit 0
 fi
@@ -40,7 +40,7 @@ extra_docker_args=()
 docker_env=(-e GOCACHE=/gocache)
 if command -v go >/dev/null 2>&1; then
     host_cache="$(go env GOMODCACHE 2>/dev/null || true)"
-    if [ -n "${host_cache}" ] && [ -d "${host_cache}" ]; then
+    if [[ -n "${host_cache}" ]] && [[ -d "${host_cache}" ]]; then
         extra_docker_args+=(-v "${host_cache}":/go/pkg/mod)
         e2e_log "reusing host module cache ${host_cache}"
     fi

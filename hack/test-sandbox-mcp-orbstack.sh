@@ -22,11 +22,11 @@ export E2E_GO_TEST_ARGS="${E2E_GO_TEST_ARGS:--race}"
 # Historically the cluster was left behind for post-mortem debugging.
 export E2E_KEEP="${E2E_KEEP:-${K8E_MCP_KEEP:-1}}"
 
-if [ -n "${K8E_MCP_DATA_DIR:-}" ]; then
+if [[ -n "${K8E_MCP_DATA_DIR:-}" ]]; then
     export E2E_DATA_DIR="${K8E_MCP_DATA_DIR}"
 fi
 
-if [ -n "${K8E_MCP_IMAGE:-}" ]; then
+if [[ -n "${K8E_MCP_IMAGE:-}" ]]; then
     export E2E_IMAGE="${K8E_MCP_IMAGE}"
     export E2E_SKIP_IMAGE_BUILD=1
 fi

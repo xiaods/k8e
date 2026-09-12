@@ -53,7 +53,7 @@ done
 # --- agent is disabled, so no node is registered -------------------------
 
 node_count="$(e2e_kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' ')"
-if [ "${node_count}" = "0" ]; then
+if [[ "${node_count}" = "0" ]]; then
     e2e_ok "--disable-agent leaves the cluster without nodes"
 else
     e2e_bad "--disable-agent leaves the cluster without nodes (found ${node_count})"
@@ -167,7 +167,7 @@ fi
 
 # --- restart recovery ----------------------------------------------------
 
-if [ "${E2E_SKIP_GO_TESTS:-0}" = "1" ]; then
+if [[ "${E2E_SKIP_GO_TESTS:-0}" = "1" ]]; then
     e2e_log "skipping restart recovery test (E2E_SKIP_GO_TESTS=1)"
 elif ! command -v go >/dev/null 2>&1; then
     e2e_warn "go toolchain not found; skipping restart recovery test"

@@ -8,7 +8,7 @@ set -euo pipefail
 
 . "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+if [[ "${1:-}" = "-h" ]] || [[ "${1:-}" = "--help" ]]; then
     e2e_usage
     exit 0
 fi
@@ -23,7 +23,7 @@ else
     e2e_log "container ${E2E_CONTAINER} already gone"
 fi
 
-if [ "${E2E_PURGE}" = "1" ]; then
+if [[ "${E2E_PURGE}" = "1" ]]; then
     e2e_log "purging ${E2E_STATE_DIR}"
     rm -rf "${E2E_STATE_DIR}"
     # Runtime storage lives on its own volume (see E2E_CONTAINERD_ROOT in lib.sh).

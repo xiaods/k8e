@@ -9,7 +9,7 @@ set -uo pipefail
 
 . "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+if [[ "${1:-}" = "-h" ]] || [[ "${1:-}" = "--help" ]]; then
     e2e_usage
     exit 0
 fi
@@ -47,7 +47,7 @@ capture 02-container-inspect.txt docker inspect "${E2E_CONTAINER}"
 capture 03-container-logs.txt docker logs --timestamps --tail 4000 "${E2E_CONTAINER}"
 
 # 04 — cluster inventory
-if [ -f "${E2E_KUBECONFIG}" ] && kubectl --kubeconfig "${E2E_KUBECONFIG}" --request-timeout=5s version >/dev/null 2>&1; then
+if [[ -f "${E2E_KUBECONFIG}" ]] && kubectl --kubeconfig "${E2E_KUBECONFIG}" --request-timeout=5s version >/dev/null 2>&1; then
     capture 04-nodes.txt e2e_kubectl get nodes -o wide
     capture 05-pods.txt e2e_kubectl get pods -A -o wide
     capture 06-events.txt e2e_kubectl get events -A --sort-by=.lastTimestamp
@@ -57,7 +57,7 @@ if [ -f "${E2E_KUBECONFIG}" ] && kubectl --kubeconfig "${E2E_KUBECONFIG}" --requ
     capture 10-endpointslices.txt e2e_kubectl get endpointslices -A
     capture 11-leases.txt e2e_kubectl get leases -A
     capture 12-sandbox-crs.txt e2e_kubectl get sandboxsessions,sandboxwarmpools -A
-    if [ "${E2E_PROFILE}" = "l3" ] && e2e_container_running; then
+    if [[ "${E2E_PROFILE}" = "l3" ]] && e2e_container_running; then
         capture 13-cilium-status.txt docker exec "${E2E_CONTAINER}" /usr/local/bin/k8e kubectl \
             -n kube-system exec ds/cilium -- cilium status --verbose
     fi
@@ -84,7 +84,7 @@ if e2e_container_running; then
         docker exec "${E2E_CONTAINER}" sh -c 'find "$1" -maxdepth 4 -name "*.log" -type f 2>&1 | head -40' e2e-diag \
             "${E2E_IN_CONTAINER_DATA_DIR}/data" || true
     } >"${E2E_DIAG_DIR}/14-data-dir.txt" 2>&1 || true
-elif [ -d "${E2E_DATA_DIR}" ]; then
+elif [[ -d "${E2E_DATA_DIR}" ]]; then
     # Container gone: fall back to whatever the host user is allowed to see.
     find "${E2E_DATA_DIR}" -maxdepth 3 2>&1 | head -200 >"${E2E_DIAG_DIR}/14-data-dir.txt" 2>&1 || true
 fi

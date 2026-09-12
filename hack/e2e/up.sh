@@ -9,7 +9,7 @@ set -euo pipefail
 
 . "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 
-if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+if [[ "${1:-}" = "-h" ]] || [[ "${1:-}" = "--help" ]]; then
     e2e_usage
     exit 0
 fi
@@ -18,8 +18,8 @@ e2e_set_profile "${1:-${E2E_PROFILE}}"
 
 e2e_require_cmds docker kubectl
 
-[ -n "${E2E_BINARY}" ] || e2e_die "E2E_BINARY must be set"
-[ -x "${E2E_BINARY}" ] || e2e_die "missing executable E2E_BINARY=${E2E_BINARY} (run 'make k8e' first)"
+[[ -n "${E2E_BINARY}" ]] || e2e_die "E2E_BINARY must be set"
+[[ -x "${E2E_BINARY}" ]] || e2e_die "missing executable E2E_BINARY=${E2E_BINARY} (run 'make k8e' first)"
 
 e2e_build_image
 
@@ -34,7 +34,7 @@ fi
 
 # A fresh cluster by default: stale state is a common source of confusing
 # failures. E2E_REUSE=1 keeps an existing data directory.
-if [ "${E2E_REUSE:-0}" != "1" ]; then
+if [[ "${E2E_REUSE:-0}" != "1" ]]; then
     rm -rf "${E2E_DATA_DIR}"
 fi
 mkdir -p "${E2E_DATA_DIR}" "${E2E_DIAG_DIR}" "${E2E_STATE_DIR}"
@@ -49,7 +49,7 @@ mkdir -p "${E2E_DATA_DIR}" "${E2E_DIAG_DIR}" "${E2E_STATE_DIR}"
 # entrypoint links it back to the path containerd was configured with.
 storage_args=()
 if e2e_profile_needs_agent; then
-    if [ "${E2E_REUSE:-0}" != "1" ]; then
+    if [[ "${E2E_REUSE:-0}" != "1" ]]; then
         docker volume rm -f "${E2E_CONTAINERD_ROOT_VOLUME}" >/dev/null 2>&1 || true
     fi
     storage_args+=(-v "${E2E_CONTAINERD_ROOT_VOLUME}:${E2E_CONTAINERD_VOLUME_PATH}")
@@ -57,13 +57,13 @@ fi
 
 flags=()
 while IFS= read -r line; do
-    [ -n "${line}" ] || continue
+    [[ -n "${line}" ]] || continue
     flags+=("${line}")
 done < <(e2e_profile_flags)
 
 docker_args=()
 while IFS= read -r line; do
-    [ -n "${line}" ] || continue
+    [[ -n "${line}" ]] || continue
     docker_args+=("${line}")
 done < <(e2e_profile_docker_args)
 
@@ -75,10 +75,10 @@ fi
 
 e2e_log "starting ${E2E_CONTAINER} (profile=${E2E_PROFILE}, image=${E2E_IMAGE})"
 e2e_log "server flags: ${flags[*]:-<none>}"
-if [ "${#docker_args[@]}" -gt 0 ]; then
+if [[ ${#docker_args[@]} -gt 0 ]]; then
     e2e_log "docker flags: ${docker_args[*]}"
 fi
-if [ "${#storage_args[@]}" -gt 0 ]; then
+if [[ ${#storage_args[@]} -gt 0 ]]; then
     e2e_log "runtime storage: ${storage_args[*]}"
 fi
 
@@ -111,7 +111,7 @@ else
 fi
 
 if e2e_profile_needs_agent; then
-    if [ "${E2E_EXPECT_NODE_READY}" = "1" ]; then
+    if [[ "${E2E_EXPECT_NODE_READY}" = "1" ]]; then
         if e2e_wait_node_ready; then
             e2e_log "node is Ready"
         else

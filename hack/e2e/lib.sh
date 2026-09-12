@@ -147,7 +147,7 @@ e2e_check_absent() {
 
 e2e_summary() {
     printf '\n[e2e:%s] %d checks, %d failures\n' "${E2E_PROFILE}" "${E2E_CHECKS}" "${E2E_FAILURES}"
-    if [ "${E2E_FAILURES}" -ne 0 ]; then
+    if [[ "${E2E_FAILURES}" -ne 0 ]]; then
         return 1
     fi
     return 0
@@ -161,7 +161,7 @@ e2e_require_cmds() {
             missing="${missing} ${cmd}"
         fi
     done
-    if [ -n "${missing}" ]; then
+    if [[ -n "${missing}" ]]; then
         e2e_die "missing required commands:${missing}"
     fi
 }
@@ -206,7 +206,7 @@ e2e_profile_flags() {
         ;;
     *) ;;
     esac
-    if [ -n "${E2E_EXTRA_SERVER_ARGS}" ]; then
+    if [[ -n "${E2E_EXTRA_SERVER_ARGS}" ]]; then
         # Intentionally word-split: the value is a flag list.
         # shellcheck disable=SC2086
         printf '%s\n' ${E2E_EXTRA_SERVER_ARGS}
@@ -214,18 +214,18 @@ e2e_profile_flags() {
 }
 
 e2e_profile_needs_agent() {
-    [ "${E2E_PROFILE}" != "l1" ]
+    [[ "${E2E_PROFILE}" != "l1" ]]
 }
 
 # Extra docker arguments required by the profile.
 e2e_profile_docker_args() {
     if e2e_profile_needs_agent; then
         printf '%s\n' --privileged --cgroupns=host
-        if [ -d /lib/modules ]; then
+        if [[ -d /lib/modules ]]; then
             printf '%s\n' -v /lib/modules:/lib/modules:ro
         fi
     fi
-    if [ "${E2E_PROFILE}" = "l3" ] && [ -d /sys/fs/bpf ]; then
+    if [[ "${E2E_PROFILE}" = "l3" ]] && [[ -d /sys/fs/bpf ]]; then
         printf '%s\n' -v /sys/fs/bpf:/sys/fs/bpf
     fi
 }
@@ -237,11 +237,11 @@ e2e_container_exists() {
 }
 
 e2e_container_running() {
-    [ "$(docker inspect -f '{{.State.Running}}' "$E2E_CONTAINER" 2>/dev/null)" = "true" ]
+    [[ "$(docker inspect -f '{{.State.Running}}' "$E2E_CONTAINER" 2>/dev/null)" = "true" ]]
 }
 
 e2e_build_image() {
-    if [ "${E2E_SKIP_IMAGE_BUILD}" = "1" ]; then
+    if [[ "${E2E_SKIP_IMAGE_BUILD}" = "1" ]]; then
         e2e_log "skipping image build (E2E_SKIP_IMAGE_BUILD=1)"
         return 0
     fi
@@ -283,7 +283,7 @@ e2e_rewrite_kubeconfig() {
 e2e_wait_api() {
     local deadline log
     deadline=$(($(date +%s) + E2E_API_TIMEOUT))
-    while [ "$(date +%s)" -lt "${deadline}" ]; do
+    while [[ "$(date +%s)" -lt "${deadline}" ]]; do
         if ! e2e_container_running; then
             log="$(docker logs --tail 200 "${E2E_CONTAINER}" 2>&1 || true)"
             printf '\n--- container logs ---\n%s\n' "${log}" >&2
@@ -318,7 +318,7 @@ e2e_wait_api() {
 e2e_wait_manifests() {
     local deadline
     deadline=$(($(date +%s) + E2E_STAGING_TIMEOUT))
-    while [ "$(date +%s)" -lt "${deadline}" ]; do
+    while [[ "$(date +%s)" -lt "${deadline}" ]]; do
         if ! e2e_container_running; then
             e2e_die "container ${E2E_CONTAINER} exited while waiting for addon staging"
         fi
@@ -334,7 +334,7 @@ e2e_wait_manifests() {
 e2e_wait_node_ready() {
     local deadline
     deadline=$(($(date +%s) + E2E_NODE_TIMEOUT))
-    while [ "$(date +%s)" -lt "${deadline}" ]; do
+    while [[ "$(date +%s)" -lt "${deadline}" ]]; do
         if ! e2e_container_running; then
             e2e_die "container ${E2E_CONTAINER} exited while waiting for the node"
         fi
@@ -353,7 +353,7 @@ e2e_wait_node_ready() {
 e2e_wait_node_registered() {
     local deadline
     deadline=$(($(date +%s) + E2E_NODE_TIMEOUT))
-    while [ "$(date +%s)" -lt "${deadline}" ]; do
+    while [[ "$(date +%s)" -lt "${deadline}" ]]; do
         if ! e2e_container_running; then
             e2e_die "container ${E2E_CONTAINER} exited while waiting for a node"
         fi
@@ -379,7 +379,7 @@ e2e_wait_namespace_ready() {
     local namespace="${1:-default}"
     local deadline
     deadline=$(($(date +%s) + ${E2E_NAMESPACE_TIMEOUT:-120}))
-    while [ "$(date +%s)" -lt "${deadline}" ]; do
+    while [[ "$(date +%s)" -lt "${deadline}" ]]; do
         if ! e2e_container_running; then
             e2e_die "container ${E2E_CONTAINER} exited while waiting for namespace ${namespace}"
         fi
@@ -400,7 +400,7 @@ e2e_wait_pod_running() {
     local timeout="${2:-120}"
     local deadline phase
     deadline=$(($(date +%s) + timeout))
-    while [ "$(date +%s)" -lt "${deadline}" ]; do
+    while [[ "$(date +%s)" -lt "${deadline}" ]]; do
         phase="$(e2e_kubectl get pod "${pod}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
         case "${phase}" in
         Running) return 0 ;;
@@ -461,11 +461,11 @@ e2e_verify_containerd_root() {
 # while walking the index. `--platform` trims the index down to the node's
 # architecture, which is what the node can execute anyway.
 e2e_preload_images() {
-    [ -n "${E2E_PRELOAD_IMAGES:-}" ] || return 0
+    [[ -n "${E2E_PRELOAD_IMAGES:-}" ]] || return 0
 
     local deadline image platform save_flags
     deadline=$(($(date +%s) + ${E2E_PRELOAD_TIMEOUT:-300}))
-    while [ "$(date +%s)" -lt "${deadline}" ]; do
+    while [[ "$(date +%s)" -lt "${deadline}" ]]; do
         if ! e2e_container_running; then
             e2e_die "container ${E2E_CONTAINER} exited while waiting for containerd"
         fi
@@ -492,7 +492,7 @@ e2e_preload_images() {
     # plain docker-archive that imports as-is, so the flag is simply optional.
     save_flags=()
     platform="$(e2e_node_platform)"
-    if [ -n "${platform}" ] && docker save --help 2>&1 | grep -q -- '--platform'; then
+    if [[ -n "${platform}" ]] && docker save --help 2>&1 | grep -q -- '--platform'; then
         save_flags+=(--platform "${platform}")
     else
         e2e_warn "docker save does not support --platform; importing whatever the daemon exports"
@@ -510,7 +510,7 @@ e2e_preload_images() {
 e2e_require_cluster() {
     e2e_container_running || e2e_die "container ${E2E_CONTAINER} is not running (run hack/e2e/up.sh first)"
     e2e_api_ready || e2e_die "K8E API is not ready"
-    [ -f "${E2E_KUBECONFIG}" ] || e2e_die "missing kubeconfig ${E2E_KUBECONFIG}"
+    [[ -f "${E2E_KUBECONFIG}" ]] || e2e_die "missing kubeconfig ${E2E_KUBECONFIG}"
 }
 
 e2e_in_container() {
