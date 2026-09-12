@@ -25,6 +25,7 @@ capture() {
         "$@"
         printf '\n### exit: %d\n' "$?"
     } >"${E2E_DIAG_DIR}/${file}" 2>&1 || true
+    return 0
 }
 
 e2e_log "collecting diagnostics into ${E2E_DIAG_DIR}"
@@ -85,6 +86,16 @@ if e2e_container_running; then
         printf '\n### iptables\n'; docker exec "${E2E_CONTAINER}" iptables -L -n 2>&1 || true
         printf '\n### data tarball bin\n'; docker exec "${E2E_CONTAINER}" sh -c 'ls -l /test/data/data/*/bin 2>&1' || true
     } >"${E2E_DIAG_DIR}/15-in-container-network.txt" 2>&1 || true
+fi
+
+# 16 — runtime logs. containerd's log lives under its root directory, which is on
+# the runtime volume and therefore invisible from the /test bind mount; it is the
+# one file that explains a containerd that refuses to start, and `docker cp`
+# reaches it even when the container is already dead.
+if e2e_container_exists; then
+    capture 16-containerd-log.txt e2e_containerd_log 400
+    capture 17-runtime-layout.txt docker exec "${E2E_CONTAINER}" sh -c \
+        'ls -la "${K8E_E2E_CONTAINERD_ROOT}"; echo "--- /test/data/agent"; ls -la /test/data/agent'
 fi
 
 e2e_log "diagnostics written:"

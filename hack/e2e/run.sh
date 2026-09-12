@@ -28,16 +28,22 @@ for suite in "${suites[@]}"; do
     [ -f "${script}" ] || e2e_die "unknown suite '${suite}' (${script} not found); suites/l1.sh and suites/l2.sh are implemented so far"
 done
 
-"${E2E_DIR}/up.sh" "${E2E_PROFILE}"
-
-for suite in "${suites[@]}"; do
-    script="${E2E_DIR}/suites/${suite}.sh"
-    e2e_log "running suite ${suite}"
-    if ! bash "${script}"; then
-        e2e_bad "suite ${suite} failed"
-        status=1
-    fi
-done
+# A bring-up failure is reported and diagnosed exactly like a suite failure:
+# otherwise up.sh dying (containerd refusing to start, the API never becoming
+# ready) would skip dump-logs.sh and leave CI without a single artifact.
+if "${E2E_DIR}/up.sh" "${E2E_PROFILE}"; then
+    for suite in "${suites[@]}"; do
+        script="${E2E_DIR}/suites/${suite}.sh"
+        e2e_log "running suite ${suite}"
+        if ! bash "${script}"; then
+            e2e_bad "suite ${suite} failed"
+            status=1
+        fi
+    done
+else
+    e2e_bad "cluster bring-up failed"
+    status=1
+fi
 
 if [ "${status}" -ne 0 ]; then
     e2e_log "collecting diagnostics after failure"

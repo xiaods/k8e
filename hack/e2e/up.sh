@@ -85,7 +85,7 @@ fi
 
 docker run -d --name "${E2E_CONTAINER}" \
     -p "127.0.0.1:${E2E_API_PORT}:${E2E_IN_CONTAINER_API_PORT}" \
-    -v "${E2E_DATA_DIR}:/test" \
+    -v "${E2E_DATA_DIR}:${E2E_IN_CONTAINER_DATA_DIR}" \
     -v "${E2E_BINARY}:/usr/local/bin/k8e:ro" \
     "${storage_args[@]+"${storage_args[@]}"}" \
     "${docker_args[@]+"${docker_args[@]}"}" \
@@ -93,8 +93,8 @@ docker run -d --name "${E2E_CONTAINER}" \
     "${E2E_IMAGE}" \
     /usr/local/bin/k8e server \
     --cluster-init \
-    --data-dir /test/data \
-    --write-kubeconfig /test/kubeconfig.yaml \
+    --data-dir "${E2E_IN_CONTAINER_DATA_DIR}/data" \
+    --write-kubeconfig "${E2E_IN_CONTAINER_KUBECONFIG}" \
     --https-listen-port "${E2E_IN_CONTAINER_API_PORT}" \
     --tls-san 127.0.0.1 \
     "${flags[@]+"${flags[@]}"}" >/dev/null

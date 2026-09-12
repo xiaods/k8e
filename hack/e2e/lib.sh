@@ -17,6 +17,10 @@ E2E_KEEP="${E2E_KEEP:-0}"
 E2E_PURGE="${E2E_PURGE:-0}"
 E2E_SKIP_IMAGE_BUILD="${E2E_SKIP_IMAGE_BUILD:-0}"
 E2E_IN_CONTAINER_API_PORT="${E2E_IN_CONTAINER_API_PORT:-6443}"
+# Where up.sh mounts ${E2E_DATA_DIR} inside the container, and the kubeconfig the
+# server writes there. Defined once so the mount and its readers cannot drift.
+E2E_IN_CONTAINER_DATA_DIR="${E2E_IN_CONTAINER_DATA_DIR:-/test}"
+E2E_IN_CONTAINER_KUBECONFIG="${E2E_IN_CONTAINER_KUBECONFIG:-${E2E_IN_CONTAINER_DATA_DIR}/kubeconfig.yaml}"
 E2E_IMAGE="${E2E_IMAGE:-k8e-e2e:local}"
 E2E_EXTRA_SERVER_ARGS="${E2E_EXTRA_SERVER_ARGS:-}"
 E2E_GO_TEST_ARGS="${E2E_GO_TEST_ARGS:-}"
@@ -35,15 +39,18 @@ e2e_set_profile() {
     : "${E2E_DIAG_DIR:=${E2E_STATE_DIR}/diagnostics}"
     : "${E2E_BINARY:=${E2E_REPO}/bin/k8e}"
     : "${E2E_KUBECONFIG:=${E2E_STATE_DIR}/kubeconfig}"
-    # up.sh runs the server with --data-dir /test/data and mounts ${E2E_DATA_DIR}
-    # at /test, so the staged addon manifests land here on the host.
+    # up.sh runs the server with
+    # --data-dir ${E2E_IN_CONTAINER_DATA_DIR}/data and mounts ${E2E_DATA_DIR}
+    # there, so the staged addon manifests land here on the host.
     : "${E2E_MANIFESTS_DIR:=${E2E_DATA_DIR}/data/server/manifests}"
     # Each profile publishes its API on its own host port so that clusters kept
-    # alive with E2E_KEEP=1 do not fight over a single port.
+    # alive with E2E_KEEP=1 do not fight over a single port. An unknown profile is
+    # rejected by the case further down, so no port default is needed here.
     case "${E2E_PROFILE}" in
     l1) : "${E2E_API_PORT:=16443}" ;;
     l2) : "${E2E_API_PORT:=16444}" ;;
     l3) : "${E2E_API_PORT:=16445}" ;;
+    *) ;;
     esac
     # Dedicated cgroup subtree for kubelet. The container entrypoint creates it
     # before k8e starts; keeping the host's cgroup tree untouched.
@@ -93,6 +100,7 @@ e2e_set_profile() {
     export E2E_EXPECT_NODE_READY E2E_PRELOAD_IMAGES
     export E2E_API_TIMEOUT E2E_NODE_TIMEOUT E2E_STAGING_TIMEOUT E2E_KEEP E2E_PURGE
     export E2E_SKIP_IMAGE_BUILD E2E_IN_CONTAINER_API_PORT E2E_EXTRA_SERVER_ARGS
+    export E2E_IN_CONTAINER_DATA_DIR E2E_IN_CONTAINER_KUBECONFIG
     export E2E_GO_TEST_ARGS E2E_SKIP_GO_TESTS
 }
 
@@ -189,6 +197,7 @@ e2e_profile_flags() {
             --egress-selector-mode disabled \
             "--kubelet-arg=cgroup-root=${E2E_CGROUP_ROOT}"
         ;;
+    *) ;;
     esac
     if [ -n "${E2E_EXTRA_SERVER_ARGS}" ]; then
         # Intentionally word-split: the value is a flag list.
@@ -248,10 +257,17 @@ e2e_api_ready() {
 }
 
 # Copy the in-container kubeconfig out and point it at the published port.
+#
+# The server writes it as root with mode 0600, so the bind-mounted copy is only
+# readable by its owner: on Docker Desktop/OrbStack the mount is mapped to the
+# caller and `cp` works, but on a plain Linux host (CI) the unprivileged user
+# gets "Permission denied" instead. Reading it through the container works
+# everywhere, and the temp file keeps a half-written config from being used.
 e2e_rewrite_kubeconfig() {
-    local source="${E2E_DATA_DIR}/kubeconfig.yaml"
-    [ -s "${source}" ] || return 1
-    cp "${source}" "${E2E_KUBECONFIG}"
+    local tmp="${E2E_KUBECONFIG}.tmp"
+    e2e_in_container test -s "${E2E_IN_CONTAINER_KUBECONFIG}" || return 1
+    e2e_in_container cat "${E2E_IN_CONTAINER_KUBECONFIG}" >"${tmp}" || return 1
+    mv "${tmp}" "${E2E_KUBECONFIG}"
     kubectl --kubeconfig "${E2E_KUBECONFIG}" config set-cluster default \
         --server="https://127.0.0.1:${E2E_API_PORT}" >/dev/null
     return 0
@@ -264,6 +280,13 @@ e2e_wait_api() {
         if ! e2e_container_running; then
             log="$(docker logs --tail 200 "${E2E_CONTAINER}" 2>&1 || true)"
             printf '\n--- container logs ---\n%s\n' "${log}" >&2
+            if e2e_profile_needs_agent; then
+                # containerd logs to a file under its own root, not to stdout, so
+                # the dump above never shows why it refused to start (a config it
+                # rejects kills it before k8e can print anything useful).
+                printf '\n--- containerd log (last 50 lines) ---\n' >&2
+                e2e_containerd_log 50 >&2
+            fi
             # `zig build k8e` produces cmd/server, which -- unlike the release
             # cmd/k8e multicall binary -- embeds no runtime binaries. Profiles
             # with an agent therefore die trying to exec containerd from PATH.
@@ -373,6 +396,7 @@ e2e_wait_pod_running() {
         case "${phase}" in
         Running) return 0 ;;
         Failed | Succeeded) return 1 ;;
+        *) ;;
         esac
         sleep 3
     done
@@ -389,6 +413,7 @@ e2e_node_platform() {
     s390x) printf 'linux/s390x\n' ;;
     ppc64le) printf 'linux/ppc64le\n' ;;
     riscv64) printf 'linux/riscv64\n' ;;
+    *) ;;
     esac
 }
 
@@ -446,11 +471,11 @@ e2e_preload_images() {
     fi
 
     for image in ${E2E_PRELOAD_IMAGES}; do
-        if ! docker image inspect "${image}" >/dev/null 2>&1; then
-            if ! docker pull -q "${image}" >/dev/null; then
-                e2e_warn "could not pull ${image} on the host"
-                return 1
-            fi
+        # Reuse a local copy when there is one, otherwise pull it.
+        if ! docker image inspect "${image}" >/dev/null 2>&1 &&
+            ! docker pull -q "${image}" >/dev/null; then
+            e2e_warn "could not pull ${image} on the host"
+            return 1
         fi
     done
 
@@ -489,6 +514,21 @@ e2e_in_container() {
 # makes such commands fail with "unrecognized image format".
 e2e_in_container_stdin() {
     docker exec -i "${E2E_CONTAINER}" "$@"
+}
+
+# e2e_containerd_log [lines]
+# Print the tail of containerd's own log file.
+#
+# containerd writes it under its root directory, which lives on the runtime
+# volume and is therefore invisible from the /test bind mount: `docker cp` is the
+# only way to reach it, and unlike `docker exec` it also works on a stopped
+# container -- which is exactly when the log matters most.
+e2e_containerd_log() {
+    local lines="${1:-400}"
+    docker cp "${E2E_CONTAINER}:${E2E_CONTAINERD_ROOT}/containerd.log" - 2>/dev/null |
+        tar -xO 2>/dev/null |
+        tail -n "${lines}" || true
+    return 0
 }
 
 e2e_usage() {
