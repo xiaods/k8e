@@ -11,6 +11,9 @@ DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
 NERDCTL_VERSION=2.0.0
 CILIUM_CHART_VERSION=${VERSION_CILIUM_CHART}
+# The release CDNs queried below occasionally drop a connection mid-transfer,
+# and a single transient error should not fail the whole build.
+FETCH_ATTEMPTS=${FETCH_ATTEMPTS:-5}
 
 umask 022
 rm -rf ${CHARTS_DIR}
@@ -21,12 +24,55 @@ mkdir -p ${DATA_DIR}
 mkdir -p ${CHARTS_DIR}
 mkdir -p bin
 
+# retry runs a command until it succeeds, backing off between attempts.
+retry() {
+  local attempt
+  for ((attempt = 1; attempt <= FETCH_ATTEMPTS; attempt++)); do
+    if "$@"; then
+      return 0
+    fi
+    echo "[WARN] attempt ${attempt}/${FETCH_ATTEMPTS} failed: $*" >&2
+    sleep $((attempt * 2))
+  done
+  echo "[ERROR] gave up after ${FETCH_ATTEMPTS} attempts: $*" >&2
+  return 1
+}
+
+# clone_repo drops any partial checkout first, because git clone refuses to
+# write into a directory that a failed attempt already created.
+clone_repo() {
+  local url="$1" dir="$2" branch="$3"
+  rm -rf "${dir}"
+  retry git clone --single-branch --branch="${branch}" --depth=1 "${url}" "${dir}"
+}
+
+# fetch_to_file downloads to a file and only reports success for a complete
+# gzip stream. Piping curl straight into tar hid curl's exit status, so a
+# truncated transfer surfaced as a "gzip: stdin: unexpected end of file"
+# error far away from the actual cause.
+fetch_to_file() {
+  local url="$1" dest="$2"
+  rm -f "${dest}"
+  if curl --compressed -sfL \
+    --retry 3 --retry-delay 2 --connect-timeout 15 \
+    -o "${dest}" "${url}" \
+    && gzip -t "${dest}"; then
+    return 0
+  fi
+  rm -f "${dest}"
+  return 1
+}
+
+download_artifact() {
+  retry fetch_to_file "$1" "$2"
+}
+
 case ${OS} in
   linux)
-     git clone --single-branch --branch=${VERSION_RUNC} --depth=1 https://github.com/opencontainers/runc ${RUNC_DIR}
+     clone_repo https://github.com/opencontainers/runc "${RUNC_DIR}" "${VERSION_RUNC}"
     ;;
   windows)
-    git clone --single-branch --branch=${VERSION_HCSSHIM} --depth=1 https://github.com/microsoft/hcsshim ${HCSSHIM_DIR}
+    clone_repo https://github.com/microsoft/hcsshim "${HCSSHIM_DIR}" "${VERSION_HCSSHIM}"
     ;;
   *)
     echo "[ERROR] unrecognized opertaing system: ${OS}"
@@ -34,21 +80,35 @@ case ${OS} in
     ;;
 esac
 
-git clone --single-branch --branch=${VERSION_CONTAINERD} --depth=1 https://${PKG_CONTAINERD_K8E/\/v*/} ${CONTAINERD_DIR}
+clone_repo "https://${PKG_CONTAINERD_K8E/\/v*/}" "${CONTAINERD_DIR}" "${VERSION_CONTAINERD}"
 
 download_and_package_nerdctl() {
-echo "download nerdctl..."
-if [ ${ARCH} = amd64 ]; then
-  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-amd64.tar.gz | tar -zxf - -C bin
-elif [ ${ARCH} = aarch64 ] || [ ${ARCH} = arm64 ]; then
-  curl --compressed -sfL https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-arm64.tar.gz | tar -zxf - -C bin
-fi
+  echo "download nerdctl..."
+  local arch
+  case ${ARCH} in
+    amd64)
+      arch=amd64
+      ;;
+    aarch64 | arm64)
+      arch=arm64
+      ;;
+    *)
+      echo "[ERROR] nerdctl has no prebuilt binary for ${ARCH}"
+      exit 1
+      ;;
+  esac
+  local tarball=${DATA_DIR}/nerdctl-${NERDCTL_VERSION}-linux-${arch}.tar.gz
+  download_artifact \
+    "https://github.com/containerd/nerdctl/releases/download/v${NERDCTL_VERSION}/nerdctl-${NERDCTL_VERSION}-linux-${arch}.tar.gz" \
+    "${tarball}"
+  tar -xzf "${tarball}" -C bin
 }
 
 download_and_package_cilium() {
   echo "download Cilium Helm chart..."
-  curl --compressed -sfL -o ${CHARTS_DIR}/cilium-${CILIUM_CHART_VERSION}.tgz \
-    https://helm.cilium.io/cilium-${CILIUM_CHART_VERSION}.tgz
+  download_artifact \
+    "https://helm.cilium.io/cilium-${CILIUM_CHART_VERSION}.tgz" \
+    "${CHARTS_DIR}/cilium-${CILIUM_CHART_VERSION}.tgz"
 }
 
 download_and_package_nerdctl

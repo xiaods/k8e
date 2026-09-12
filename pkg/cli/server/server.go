@@ -61,6 +61,40 @@ func validateSandboxFlags(cfg *cmds.Server) error {
 	return nil
 }
 
+// applyBundleDisables marks the components that are switched off by a dedicated
+// flag -- rather than by --disable=<name> -- as both skipped and disabled, so
+// that the manifests they bundle are neither staged nor applied:
+//
+//   - cilium (--disable-cilium): its chart and CRDs come from the k8e manifests.
+//   - ccm (--disable-cloud-controller): ccm.yaml only carries RBAC for the
+//     embedded cloud controller, and staging it would leave a cluster-role
+//     grant behind for a component that never runs.
+//   - sandbox-matrix (--disable-sandbox-matrix): manifests/sandbox-matrix ships
+//     the CRDs, RuntimeClasses, default warm pool, network policy and Gateway
+//     API bridge for the sandbox stack, none of which is reconciled once the
+//     matrix is off, leaving orphaned CRDs and an ownerless SandboxWarmPool.
+//
+// Kept out of run() because that function's cyclomatic complexity is already at
+// its limit; this is self-contained flag wiring.
+func applyBundleDisables(controlConfig *config.Control, cfg *cmds.Server) {
+	if cfg.DisableCilium {
+		controlConfig.Skips["cilium"] = true
+		controlConfig.Disables["cilium"] = true
+	}
+	if cfg.DisableCCM {
+		controlConfig.Skips["ccm"] = true
+		controlConfig.Disables["ccm"] = true
+	}
+	if cfg.DisableSandboxMatrix {
+		controlConfig.Skips["sandbox-matrix"] = true
+		controlConfig.Disables["sandbox-matrix"] = true
+	}
+}
+
+// run starts the k8e server: it resolves the runtime configuration, brings up the
+// control plane and blocks until it is shut down.
+//
+// skipcq: GO-R1005
 func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomControllers, controllers server.CustomControllers) error {
 	var err error
 	// Validate build env
@@ -370,10 +404,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		serverConfig.ControlConfig.Skips[disable] = true
 		serverConfig.ControlConfig.Disables[disable] = true
 	}
-	if cfg.DisableCilium {
-		serverConfig.ControlConfig.Skips["cilium"] = true
-		serverConfig.ControlConfig.Disables["cilium"] = true
-	}
+	applyBundleDisables(&serverConfig.ControlConfig, cfg)
 	serverConfig.ControlConfig.CiliumDNSProxyEnabled = cfg.CiliumDNSProxyEnabled
 
 	tlsMinVersionArg := getArgValueFromList("tls-min-version", serverConfig.ControlConfig.ExtraAPIArgs)

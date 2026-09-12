@@ -52,7 +52,7 @@ jobs:
           check-latest: true
           cache-dependency-path: go.sum
       - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Install dependencies
@@ -106,3 +106,112 @@ jobs:
           echo "--- sandboxcli binary (linux/amd64) ---"
           GOOS=linux   GOARCH=amd64   go build -o /dev/null ./cmd/sandboxcli/
           echo "All cross-compile targets OK"
+
+  e2e-l1:
+    name: E2E L1 (control plane)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.sum
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config build-essential libc6-dev zlib1g-dev libseccomp-dev
+      # `zig build k8e` only needs the Go toolchain: cmd/server does not import
+      # pkg/data, so no code generation or containerd/runc sources are required
+      # for the control-plane profile.
+      - name: Build k8e (linux/amd64)
+        run: make k8e
+      - name: Verify binary
+        run: |
+          test -x bin/k8e
+          file bin/k8e
+      - name: Build E2E image
+        run: docker build -f hack/e2e/Dockerfile -t k8e-e2e:local hack/e2e
+      - name: Run E2E profile l1
+        env:
+          E2E_SKIP_IMAGE_BUILD: '1'
+        run: |
+          bash -n hack/e2e/lib.sh hack/e2e/up.sh hack/e2e/down.sh \
+                  hack/e2e/run.sh hack/e2e/dump-logs.sh hack/e2e/build-linux.sh \
+                  hack/e2e/entrypoint.sh \
+                  hack/e2e/suites/l1.sh hack/e2e/suites/l2.sh hack/test-sandbox-mcp-orbstack.sh
+          make e2e E2E_PROFILE=l1
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-l1-diagnostics
+          path: /tmp/k8e-e2e/l1/diagnostics
+          if-no-files-found: ignore
+
+  e2e-l2:
+    name: E2E L2 (control plane + agent)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      GOOS: linux
+      GOARCH: amd64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache-dependency-path: go.sum
+      - name: Setup Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.16.0
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config build-essential libc6-dev zlib1g-dev libseccomp-dev
+      # Same control-plane binary as l1: the agent's runtime (containerd, runc)
+      # ships in the E2E image rather than in the k8e binary, so no code
+      # generation or pkg/data sources are involved here either.
+      - name: Build k8e (linux/amd64)
+        run: make k8e
+      - name: Verify binary
+        run: |
+          test -x bin/k8e
+          file bin/k8e
+      - name: Build E2E image
+        run: docker build -f hack/e2e/Dockerfile -t k8e-e2e:local hack/e2e
+      # The node has no registry access, so the suite's images are pulled here on
+      # the runner and imported into containerd by up.sh. The list is read from
+      # the harness so it cannot drift; pulling it up front turns registry
+      # problems (rate limits on shared runner IPs) into a fast, obvious failure
+      # instead of a late one inside the profile run.
+      - name: Pull suite images
+        run: |
+          . hack/e2e/lib.sh
+          e2e_set_profile l2
+          for image in ${E2E_PRELOAD_IMAGES}; do
+            echo "--- pulling ${image}"
+            docker pull -q "${image}"
+          done
+      - name: Run E2E profile l2
+        env:
+          E2E_SKIP_IMAGE_BUILD: '1'
+        run: |
+          bash -n hack/e2e/lib.sh hack/e2e/up.sh hack/e2e/down.sh \
+                  hack/e2e/run.sh hack/e2e/dump-logs.sh hack/e2e/build-linux.sh \
+                  hack/e2e/entrypoint.sh \
+                  hack/e2e/suites/l1.sh hack/e2e/suites/l2.sh hack/test-sandbox-mcp-orbstack.sh
+          make e2e E2E_PROFILE=l2
+      - name: Upload diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-l2-diagnostics
+          path: /tmp/k8e-e2e/l2/diagnostics
+          if-no-files-found: ignore

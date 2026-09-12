@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 
+	cadvisorcontainerd "github.com/google/cadvisor/lib/container/containerd"
 	"github.com/moby/sys/userns"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/cgroups"
@@ -29,13 +30,20 @@ func createRootlessConfig(argsMap map[string]string, controllers map[string]bool
 	logrus.Fatal("delegated cgroup v2 controllers are required for rootless.")
 }
 
+// applyRuntimeSocketArgs points kubelet and cadvisor at the container runtime and
+// image service sockets.
 func applyRuntimeSocketArgs(argsMap map[string]string, cfg *config.Agent) {
 	if cfg.RuntimeSocket == "" {
 		return
 	}
 	argsMap["serialize-image-pulls"] = "false"
 	if strings.Contains(cfg.RuntimeSocket, "containerd") {
-		argsMap["containerd"] = cfg.RuntimeSocket
+		// cadvisor needs the containerd endpoint to collect container stats. The
+		// kubelet used to expose this as a --containerd flag, but stopped
+		// registering it in v1.37, so the flag now makes kubelet fail to parse
+		// its own arguments ("unknown flag: --containerd") and the agent never
+		// comes up. Set the cadvisor flag value directly instead.
+		*cadvisorcontainerd.ArgContainerdEndpoint = strings.TrimPrefix(cfg.RuntimeSocket, socketPrefix)
 	}
 	// cadvisor wants the containerd CRI socket without the prefix, but kubelet wants it with the prefix
 	if strings.HasPrefix(cfg.RuntimeSocket, socketPrefix) {
