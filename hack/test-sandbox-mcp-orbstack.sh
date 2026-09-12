@@ -1,49 +1,34 @@
 #!/usr/bin/env bash
+# Legacy entry point for the local "cluster-init recovery" test.
+#
+# The real harness now lives in hack/e2e/. This wrapper only maps the historical
+# K8E_MCP_* variables onto the harness environment so existing muscle memory and
+# documentation keep working.
+#
+#   K8E_BINARY=/path/to/linux-k8e hack/test-sandbox-mcp-orbstack.sh
+#
+# See `hack/e2e/up.sh --help` for the underlying knobs.
 set -euo pipefail
 
-container_name="${K8E_MCP_CONTAINER:-k8e-mcp-recovery-init}"
-host_port="${K8E_MCP_API_PORT:-16444}"
-data_dir="${K8E_MCP_DATA_DIR:-/tmp/k8e-mcp-cluster-init}"
-binary="${K8E_BINARY:-/tmp/k8e-mcp-server}"
-image="${K8E_MCP_IMAGE:-golang:1.26.7}"
+repo="$(cd "$(dirname "$0")/.." && pwd)"
 
-command -v docker >/dev/null || { echo "docker is required" >&2; exit 2; }
-command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }
-command -v go >/dev/null || { echo "go is required" >&2; exit 2; }
-[[ -x "$binary" ]] || { echo "missing executable K8E_BINARY=$binary" >&2; exit 2; }
-cd "$(dirname "$0")/.."
-mkdir -p "$data_dir"
+export E2E_PROFILE="${E2E_PROFILE:-l1}"
+export E2E_CONTAINER="${E2E_CONTAINER:-${K8E_MCP_CONTAINER:-k8e-e2e-l1}}"
+export E2E_API_PORT="${E2E_API_PORT:-${K8E_MCP_API_PORT:-16444}}"
+export E2E_STATE_DIR="${E2E_STATE_DIR:-/tmp/k8e-e2e/${E2E_PROFILE}}"
+export E2E_BINARY="${E2E_BINARY:-${K8E_BINARY:-${repo}/bin/k8e}}"
+# The recovery test is the one place where the race detector earns its cost.
+export E2E_GO_TEST_ARGS="${E2E_GO_TEST_ARGS:--race}"
+# Historically the cluster was left behind for post-mortem debugging.
+export E2E_KEEP="${E2E_KEEP:-${K8E_MCP_KEEP:-1}}"
 
-docker run -d --name "$container_name" \
-  -p "127.0.0.1:${host_port}:6443" \
-  -v "$data_dir:/test" \
-  -v "$binary:/usr/local/bin/k8e:ro" \
-  "$image" \
-  k8e server --cluster-init \
-    --data-dir /test/data \
-    --write-kubeconfig /test/kubeconfig.yaml \
-    --https-listen-port 6443 \
-    --tls-san 127.0.0.1 \
-    --disable-agent --disable-sandbox-matrix --disable-e2b \
-    --disable-cilium --disable-cloud-controller \
-    --egress-selector-mode disabled >/dev/null
+if [ -n "${K8E_MCP_DATA_DIR:-}" ]; then
+    export E2E_DATA_DIR="${K8E_MCP_DATA_DIR}"
+fi
 
-kubeconfig="$data_dir/client-kubeconfig.yaml"
-for _ in $(seq 1 120); do
-  if [[ -s "$data_dir/kubeconfig.yaml" ]]; then
-    cp "$data_dir/kubeconfig.yaml" "$kubeconfig"
-    kubectl --kubeconfig "$kubeconfig" config set-cluster default --server="https://127.0.0.1:${host_port}" >/dev/null
-    if kubectl --kubeconfig "$kubeconfig" --request-timeout=2s get --raw=/readyz >/dev/null 2>&1; then
-      break
-    fi
-  fi
-  sleep 1
-done
-[[ -s "$kubeconfig" ]] || { echo "K8E did not write kubeconfig" >&2; exit 1; }
-kubectl --kubeconfig "$kubeconfig" --request-timeout=10s get --raw=/readyz >/dev/null
+if [ -n "${K8E_MCP_IMAGE:-}" ]; then
+    export E2E_IMAGE="${K8E_MCP_IMAGE}"
+    export E2E_SKIP_IMAGE_BUILD=1
+fi
 
-MCP_TEST_KUBECONFIG="$kubeconfig" \
-MCP_TEST_RESTART_CONTAINER="$container_name" \
-go test -race ./pkg/sandboxmcp -run '^TestKubernetesRestartRecovery$' -v -count=1
-
-echo "OrbStack K8E cluster-init recovery test passed: $container_name"
+exec bash "${repo}/hack/e2e/run.sh" "${E2E_PROFILE}" "$@"
