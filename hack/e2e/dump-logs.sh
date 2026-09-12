@@ -67,15 +67,26 @@ else
 fi
 
 # 14 — staged manifests and data directory (reveals addon/disable regressions)
-if [ -d "${E2E_DATA_DIR}" ]; then
+#
+# The server owns the data directory as root with mode 0700, so on a plain Linux
+# host only the container can read it. Listing it from the outside reports an empty
+# tree for a cluster that staged everything, which is how the addon-staging
+# regression this file exists to explain stayed invisible.
+if e2e_container_running; then
     {
-        printf '### staged manifests\n'
-        find "${E2E_DATA_DIR}" -maxdepth 4 -type d -name manifests -exec ls -la {} \; 2>/dev/null || true
+        printf '### staged manifests (%s)\n' "${E2E_IN_CONTAINER_MANIFESTS_DIR}"
+        docker exec "${E2E_CONTAINER}" sh -c 'ls -la "$1" 2>&1' e2e-diag \
+            "${E2E_IN_CONTAINER_MANIFESTS_DIR}" || true
         printf '\n### data directory (depth 2)\n'
-        find "${E2E_DATA_DIR}" -maxdepth 2 2>/dev/null | head -200 || true
+        docker exec "${E2E_CONTAINER}" sh -c 'find "$1" -maxdepth 2 2>&1 | head -200' e2e-diag \
+            "${E2E_IN_CONTAINER_DATA_DIR}/data" || true
         printf '\n### log files\n'
-        find "${E2E_DATA_DIR}" -maxdepth 4 -name '*.log' -type f 2>/dev/null | head -40 || true
+        docker exec "${E2E_CONTAINER}" sh -c 'find "$1" -maxdepth 4 -name "*.log" -type f 2>&1 | head -40' e2e-diag \
+            "${E2E_IN_CONTAINER_DATA_DIR}/data" || true
     } >"${E2E_DIAG_DIR}/14-data-dir.txt" 2>&1 || true
+elif [ -d "${E2E_DATA_DIR}" ]; then
+    # Container gone: fall back to whatever the host user is allowed to see.
+    find "${E2E_DATA_DIR}" -maxdepth 3 2>&1 | head -200 >"${E2E_DIAG_DIR}/14-data-dir.txt" 2>&1 || true
 fi
 
 # 15 — in-container network state

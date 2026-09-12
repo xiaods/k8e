@@ -144,6 +144,7 @@ jobs:
         run: |
           bash -n hack/e2e/lib.sh hack/e2e/up.sh hack/e2e/down.sh \
                   hack/e2e/run.sh hack/e2e/dump-logs.sh hack/e2e/build-linux.sh \
+                  hack/e2e/entrypoint.sh \
                   hack/e2e/suites/l1.sh hack/e2e/suites/l2.sh hack/test-sandbox-mcp-orbstack.sh
           make e2e E2E_PROFILE=l1
       - name: Upload diagnostics
@@ -204,6 +205,7 @@ jobs:
         run: |
           bash -n hack/e2e/lib.sh hack/e2e/up.sh hack/e2e/down.sh \
                   hack/e2e/run.sh hack/e2e/dump-logs.sh hack/e2e/build-linux.sh \
+                  hack/e2e/entrypoint.sh \
                   hack/e2e/suites/l1.sh hack/e2e/suites/l2.sh hack/test-sandbox-mcp-orbstack.sh
           make e2e E2E_PROFILE=l2
       - name: Upload diagnostics

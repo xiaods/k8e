@@ -39,10 +39,14 @@ e2e_set_profile() {
     : "${E2E_DIAG_DIR:=${E2E_STATE_DIR}/diagnostics}"
     : "${E2E_BINARY:=${E2E_REPO}/bin/k8e}"
     : "${E2E_KUBECONFIG:=${E2E_STATE_DIR}/kubeconfig}"
-    # up.sh runs the server with
-    # --data-dir ${E2E_IN_CONTAINER_DATA_DIR}/data and mounts ${E2E_DATA_DIR}
-    # there, so the staged addon manifests land here on the host.
-    : "${E2E_MANIFESTS_DIR:=${E2E_DATA_DIR}/data/server/manifests}"
+    # up.sh runs the server with --data-dir ${E2E_IN_CONTAINER_DATA_DIR}/data, so
+    # that is where the addon manifests are staged. The server creates the tree as
+    # root with mode 0700: on Docker Desktop/OrbStack the bind mount maps ownership
+    # to the caller and the host copy is readable, but on a plain Linux host (CI)
+    # the unprivileged user cannot even traverse ${E2E_DATA_DIR}/data, so every
+    # manifest check failed against a cluster that had staged them correctly.
+    # Reads therefore go into the container through `e2e_in_container`.
+    : "${E2E_IN_CONTAINER_MANIFESTS_DIR:=${E2E_IN_CONTAINER_DATA_DIR}/data/server/manifests}"
     # Each profile publishes its API on its own host port so that clusters kept
     # alive with E2E_KEEP=1 do not fight over a single port. An unknown profile is
     # rejected by the case further down, so no port default is needed here.
@@ -52,9 +56,6 @@ e2e_set_profile() {
     l3) : "${E2E_API_PORT:=16445}" ;;
     *) ;;
     esac
-    # Dedicated cgroup subtree for kubelet. The container entrypoint creates it
-    # before k8e starts; keeping the host's cgroup tree untouched.
-    : "${E2E_CGROUP_ROOT:=/k8e-e2e}"
     # containerd socket created by the agent inside the container.
     : "${E2E_CONTAINERD_SOCKET:=/run/k8e/containerd/containerd.sock}"
     : "${E2E_TEST_IMAGE:=busybox:1.36}"
@@ -94,8 +95,8 @@ e2e_set_profile() {
     esac
 
     export E2E_PROFILE E2E_CONTAINER E2E_STATE_DIR E2E_DATA_DIR E2E_DIAG_DIR
-    export E2E_BINARY E2E_KUBECONFIG E2E_IMAGE E2E_API_PORT E2E_MANIFESTS_DIR
-    export E2E_CGROUP_ROOT E2E_CONTAINERD_SOCKET E2E_TEST_IMAGE
+    export E2E_BINARY E2E_KUBECONFIG E2E_IMAGE E2E_API_PORT
+    export E2E_IN_CONTAINER_MANIFESTS_DIR E2E_CONTAINERD_SOCKET E2E_TEST_IMAGE
     export E2E_CONTAINERD_ROOT E2E_CONTAINERD_ROOT_VOLUME E2E_CONTAINERD_VOLUME_PATH
     export E2E_EXPECT_NODE_READY E2E_PRELOAD_IMAGES
     export E2E_API_TIMEOUT E2E_NODE_TIMEOUT E2E_STAGING_TIMEOUT E2E_KEEP E2E_PURGE
@@ -171,6 +172,14 @@ e2e_require_cmds() {
 #     disable semantics and restart recovery.
 # l2: control plane + agent, no CNI — validates kubelet/containerd bring-up.
 # l3: full stack including the bundled Cilium CNI/Gateway.
+#
+# None of them passes --kubelet-arg=cgroup-root. kubelet resolves that value
+# against the cgroup filesystem rather than the container root, and refuses to
+# start unless the subtree is already there:
+#   could not read controllers for cgroup ["k8e-e2e"]:
+#   open /sys/fs/cgroup/k8e-e2e/cgroup.controllers: no such file or directory
+# Leaving it unset is also what a real node runs: cgroups-per-qos is on by
+# default, so kubelet falls back to "/" (see cmd/kubelet/app/server.go).
 e2e_profile_flags() {
     case "${E2E_PROFILE}" in
     l1)
@@ -188,14 +197,12 @@ e2e_profile_flags() {
             --disable-e2b \
             --disable-cilium \
             --disable-cloud-controller \
-            --egress-selector-mode disabled \
-            "--kubelet-arg=cgroup-root=${E2E_CGROUP_ROOT}"
+            --egress-selector-mode disabled
         ;;
     l3)
         printf '%s\n' \
             --disable-cloud-controller \
-            --egress-selector-mode disabled \
-            "--kubelet-arg=cgroup-root=${E2E_CGROUP_ROOT}"
+            --egress-selector-mode disabled
         ;;
     *) ;;
     esac
@@ -305,7 +312,9 @@ e2e_wait_api() {
 
 # e2e_wait_manifests waits until the control plane has written its staged addon
 # manifests. Controllers (and therefore staging) only start once the API server
-# reports ready, so waiting on /readyz alone races with the staging step.
+# reports ready, so waiting on /readyz alone races with the staging step. The
+# directory is checked from inside the container, which can read the 0700 tree its
+# root-owned server created (see E2E_IN_CONTAINER_MANIFESTS_DIR).
 e2e_wait_manifests() {
     local deadline
     deadline=$(($(date +%s) + E2E_STAGING_TIMEOUT))
@@ -313,7 +322,7 @@ e2e_wait_manifests() {
         if ! e2e_container_running; then
             e2e_die "container ${E2E_CONTAINER} exited while waiting for addon staging"
         fi
-        if [ -d "${E2E_MANIFESTS_DIR}" ]; then
+        if e2e_in_container test -d "${E2E_IN_CONTAINER_MANIFESTS_DIR}" 2>/dev/null; then
             return 0
         fi
         sleep 2

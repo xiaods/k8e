@@ -118,30 +118,30 @@ fi
 
 # --- staged addon manifests ---------------------------------------------
 
-staged="${E2E_MANIFESTS_DIR}"
-if [ -d "${staged}" ]; then
-    e2e_ok "addon manifests staged at ${staged#${E2E_DATA_DIR}/}"
+staged="${E2E_IN_CONTAINER_MANIFESTS_DIR}"
+if e2e_in_container test -d "${staged}" 2>/dev/null; then
+    e2e_ok "addon manifests staged at ${staged}"
     for manifest in coredns.yaml local-storage.yaml runtimes.yaml rolebindings.yaml; do
-        if [ -f "${staged}/${manifest}" ]; then
+        if e2e_in_container test -f "${staged}/${manifest}" 2>/dev/null; then
             e2e_ok "staged ${manifest}"
         else
             e2e_bad "staged ${manifest}"
         fi
     done
     for manifest in cilium.yaml ccm.yaml; do
-        if [ -e "${staged}/${manifest}" ]; then
+        if e2e_in_container test -e "${staged}/${manifest}" 2>/dev/null; then
             e2e_bad "not staged ${manifest} (disabled)"
         else
             e2e_ok "not staged ${manifest} (disabled)"
         fi
     done
-    if [ -e "${staged}/sandbox-matrix" ]; then
+    if e2e_in_container test -e "${staged}/sandbox-matrix" 2>/dev/null; then
         e2e_bad "not staged sandbox-matrix/ (disabled)"
     else
         e2e_ok "not staged sandbox-matrix/ (disabled)"
     fi
 else
-    e2e_bad "addon manifests are staged under ${E2E_MANIFESTS_DIR}"
+    e2e_bad "addon manifests are staged under ${staged}"
 fi
 
 # --- in-container subcommands and loopback API ---------------------------

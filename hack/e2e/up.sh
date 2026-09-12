@@ -69,7 +69,6 @@ done < <(e2e_profile_docker_args)
 
 env_args=()
 if e2e_profile_needs_agent; then
-    env_args+=(-e "K8E_E2E_CGROUP_ROOT=${E2E_CGROUP_ROOT}")
     env_args+=(-e "K8E_E2E_CONTAINERD_ROOT=${E2E_CONTAINERD_ROOT}")
     env_args+=(-e "K8E_E2E_CONTAINERD_VOLUME=${E2E_CONTAINERD_VOLUME_PATH}")
 fi
@@ -106,7 +105,7 @@ fi
 e2e_log "API ready at https://127.0.0.1:${E2E_API_PORT} (kubeconfig ${E2E_KUBECONFIG})"
 
 if e2e_wait_manifests; then
-    e2e_log "addon manifests staged at ${E2E_MANIFESTS_DIR}"
+    e2e_log "addon manifests staged at ${E2E_IN_CONTAINER_MANIFESTS_DIR}"
 else
     e2e_warn "continuing without staged manifests; the suite will report the failure"
 fi

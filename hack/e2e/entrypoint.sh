@@ -1,14 +1,6 @@
 #!/bin/sh
 # k8e E2E container entrypoint.
-#
-# kubelet validates that the cgroup subtree named by --cgroup-root exists and
-# exposes cgroup.controllers, and refuses to start otherwise. Creating it here
-# instead of from the host after `docker run` keeps the setup race-free.
 set -e
-
-if [ -n "${K8E_E2E_CGROUP_ROOT:-}" ]; then
-    mkdir -p "${K8E_E2E_CGROUP_ROOT}" 2>/dev/null || true
-fi
 
 # containerd uses its root directory as the upper layer of the overlayfs it
 # mounts for every container rootfs. The E2E data directory is a host bind mount
