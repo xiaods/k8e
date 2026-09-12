@@ -30,6 +30,8 @@ func createRootlessConfig(argsMap map[string]string, controllers map[string]bool
 	logrus.Fatal("delegated cgroup v2 controllers are required for rootless.")
 }
 
+// applyRuntimeSocketArgs points kubelet and cadvisor at the container runtime and
+// image service sockets.
 func applyRuntimeSocketArgs(argsMap map[string]string, cfg *config.Agent) {
 	if cfg.RuntimeSocket == "" {
 		return

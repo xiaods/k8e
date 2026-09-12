@@ -7,6 +7,7 @@ import (
 	"sigs.k8s.io/cri-tools/cmd/crictl"
 )
 
+// Run executes the embedded crictl against the container runtime socket.
 func Run(ctx *cli.Context) error {
 	// crictl parses os.Args itself, so hand it only its own arguments.
 	// Without this, `k8e crictl ps` would reach crictl as

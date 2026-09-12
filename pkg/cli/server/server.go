@@ -91,6 +91,8 @@ func applyBundleDisables(controlConfig *config.Control, cfg *cmds.Server) {
 	}
 }
 
+// run starts the k8e server: it resolves the runtime configuration, brings up the
+// control plane and blocks until it is shut down.
 func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomControllers, controllers server.CustomControllers) error {
 	var err error
 	// Validate build env

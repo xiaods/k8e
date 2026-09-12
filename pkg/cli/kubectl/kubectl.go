@@ -7,6 +7,7 @@ import (
 	"github.com/xiaods/k8e/pkg/kubectl"
 )
 
+// Run executes the embedded kubectl against the cluster's kubeconfig.
 func Run(ctx *cli.Context) error {
 	// kubectl parses os.Args itself, so hand it only its own arguments.
 	// Without this, `k8e kubectl get pods` would reach kubectl as

@@ -7,6 +7,7 @@ import (
 	"github.com/xiaods/k8e/pkg/ctr"
 )
 
+// Run executes the embedded ctr against the containerd socket.
 func Run(ctx *cli.Context) error {
 	// ctr parses os.Args itself, so hand it only its own arguments.
 	// Without this, `k8e ctr namespaces ls` would reach ctr with the extra
