@@ -52,7 +52,7 @@ jobs:
           check-latest: true
           cache-dependency-path: go.sum
       - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Install dependencies
@@ -122,7 +122,7 @@ jobs:
           check-latest: true
           cache-dependency-path: go.sum
       - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Install dependencies
@@ -169,7 +169,7 @@ jobs:
           check-latest: true
           cache-dependency-path: go.sum
       - name: Setup Zig
-        uses: mlugg/setup-zig@v2
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
       - name: Install dependencies
