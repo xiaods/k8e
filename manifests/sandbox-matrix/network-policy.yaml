@@ -2,7 +2,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: sandbox-warm-deny-all
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
 spec:
   endpointSelector:
     matchLabels:

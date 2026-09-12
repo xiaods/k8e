@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -600,7 +601,7 @@ var ServerFlags = []cli.Flag{
 	&cli.StringFlag{
 		Name:        "sandbox-namespace",
 		Usage:       "(sandbox) Kubernetes namespace for sandbox workloads",
-		Value:       "sandbox-matrix",
+		Value:       config.DefaultSandboxNamespace,
 		Destination: &ServerConfig.SandboxNamespace,
 		EnvVar:      "K8E_SANDBOX_NAMESPACE",
 	},

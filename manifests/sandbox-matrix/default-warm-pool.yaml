@@ -6,7 +6,7 @@ apiVersion: k8e.sh/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: default
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:

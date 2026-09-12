@@ -1,6 +1,6 @@
 # KIP-18 e2b ingress: Cilium Gateway API fronting the k8e sandbox surfaces.
 #
-# Final architecture (KIP-18): sandbox-matrix + e2b-server BOTH embed in the
+# Final architecture (KIP-18): the sandbox namespace + e2b-server BOTH embed in the
 # k8e-server host process (embedded e2b is on by default; --disable-e2b to turn off); the Cilium Gateway API is the ONLY
 # external door for every sandbox port:
 #
@@ -33,14 +33,14 @@ apiVersion: v1
 kind: Service
 metadata:
   name: sandbox-grpc-gateway
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:
   # The sandbox gRPC gateway runs in the k8e-server host process on :50051,
   # not as a pod. This headless Service + EndpointSlice makes it reachable from
   # cluster pods (e.g. the e2b-server Deployment) by the stable DNS name
-  # sandbox-grpc-gateway.sandbox-matrix.svc. The EndpointSlice address points
+  # sandbox-grpc-gateway.%{SANDBOX_NAMESPACE}%.svc. The EndpointSlice address points
   # at the host's advertise IP (--advertise-address, default node-ip).
   clusterIP: None
   ports:
@@ -52,7 +52,7 @@ apiVersion: discovery.k8s.io/v1
 kind: EndpointSlice
 metadata:
   name: sandbox-grpc-gateway
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     kubernetes.io/service-name: sandbox-grpc-gateway
     endpointslice.kubernetes.io/managed-by: k8e
@@ -72,7 +72,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: e2b-server
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:
@@ -80,7 +80,7 @@ spec:
   # (embedded in k8e-server, on by default; --e2b-listen to override, default
   # 0.0.0.0:3676), not as a pod. This headless Service + EndpointSlice makes
   # it reachable from the Cilium Gateway API by the stable DNS name
-  # e2b-server.sandbox-matrix.svc. The EndpointSlice address points at the
+  # e2b-server.%{SANDBOX_NAMESPACE}%.svc. The EndpointSlice address points at the
   # host's advertise IP (--advertise-address, default node-ip) on the e2b
   # listen port — substituted at stage time and never loopback.
   clusterIP: None
@@ -93,7 +93,7 @@ apiVersion: discovery.k8s.io/v1
 kind: EndpointSlice
 metadata:
   name: e2b-server
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     kubernetes.io/service-name: e2b-server
     endpointslice.kubernetes.io/managed-by: k8e
@@ -142,7 +142,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
   name: e2b
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:
@@ -164,7 +164,7 @@ spec:
       namespaces:
         from: Same
   # TLS listener for https apiUrl: OPTIONAL. Provide a tls secret named
-  # sandbox-e2b (kubectl -n sandbox-matrix create secret tls sandbox-e2b
+  # sandbox-e2b (kubectl -n %{SANDBOX_NAMESPACE}% create secret tls sandbox-e2b
   # --cert=... --key=...); without the secret this listener reports Invalid,
   # which does not affect the :80 http listener or attached routes.
   - name: https
@@ -195,7 +195,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: TCPRoute
 metadata:
   name: sandbox-grpc
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:
@@ -211,7 +211,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: e2b-control-plane
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:
@@ -236,7 +236,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: e2b-envd
-  namespace: sandbox-matrix
+  namespace: %{SANDBOX_NAMESPACE}%
   labels:
     app.kubernetes.io/managed-by: k8e
 spec:

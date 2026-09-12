@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	e2bAPIKeySecretNS   = "sandbox-matrix"
 	e2bAPIKeySecretName = "sandbox-apikeys"
 	e2bAPIKeyReload     = 30 * time.Second
 )
@@ -56,10 +55,19 @@ func runEmbeddedE2B(ctx context.Context, cfg config.SandboxConfig, kubeconfig st
 	}
 	defer c.Close()
 
+	// Resolve the sandbox namespace once and thread it through the CRD state
+	// store and every Secret read so the embedded e2b surface agrees with the
+	// gateway/controller (--sandbox-namespace) instead of hardcoding
+	// sandbox-matrix.
+	namespace := cfg.Namespace
+	if namespace == "" {
+		namespace = config.DefaultSandboxNamespace
+	}
+
 	// CRD-backed state store for multi-node consistency. Fall back to the
 	// in-memory store if the cluster is unreachable (e.g. kubeconfig missing
 	// in an unusual embedding) — degrade to single-node semantics.
-	store, err := newEmbeddedStateStore(kubeconfig, cfg.Namespace)
+	store, err := newEmbeddedStateStore(kubeconfig, namespace)
 	if err != nil {
 		logrus.Warnf("e2b (embedded): CRD state store unavailable (%v); using in-memory (single-node semantics)", err)
 	}
@@ -76,8 +84,8 @@ func runEmbeddedE2B(ctx context.Context, cfg config.SandboxConfig, kubeconfig st
 	}, sandboxe2b.GatewayFromClient(c))
 
 	cache := &e2bAPIKeyCache{static: staticKey}
-	applyE2BAPIKeys(ctx, srv, cache, kubeconfig)
-	go reloadE2BAPIKeys(ctx, srv, cache, kubeconfig)
+	applyE2BAPIKeys(ctx, srv, cache, kubeconfig, namespace)
+	go reloadE2BAPIKeys(ctx, srv, cache, kubeconfig, namespace)
 
 	if err := sandboxe2b.ValidateE2BAPIKey(staticKey); err != nil {
 		logrus.Warnf("e2b (embedded): %v; official e2b SDK clients will not be able to authenticate — generate a hex key with `k8e sandbox-apikey create <name>` (pass the e2b_key field to the SDK)", err)
@@ -128,8 +136,8 @@ func (c *e2bAPIKeyCache) refresh(ok bool, set sandboxe2b.SecretKeySet, now time.
 	return []string{c.static}, true, droppedSecret
 }
 
-func applyE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIKeyCache, kubeconfig string) {
-	set, ok := loadSandboxAPIKeys(ctx, kubeconfig)
+func applyE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIKeyCache, kubeconfig, namespace string) {
+	set, ok := loadSandboxAPIKeys(ctx, kubeconfig, namespace)
 	keys, apply, _ := cache.refresh(ok, set, time.Now())
 	if !apply {
 		if cache.static == "" {
@@ -147,7 +155,7 @@ func applyE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIK
 	}
 }
 
-func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIKeyCache, kubeconfig string) {
+func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIKeyCache, kubeconfig, namespace string) {
 	ticker := time.NewTicker(e2bAPIKeyReload)
 	defer ticker.Stop()
 	for {
@@ -155,7 +163,7 @@ func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPI
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			set, ok := loadSandboxAPIKeys(ctx, kubeconfig)
+			set, ok := loadSandboxAPIKeys(ctx, kubeconfig, namespace)
 			keys, apply, droppedSecret := cache.refresh(ok, set, time.Now())
 			if !apply {
 				continue
@@ -172,7 +180,7 @@ func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPI
 // ok=false means the snapshot is not authoritative (transient API error or
 // corrupt payload); the caller fail-closes Secret-backed tokens. ok=true with
 // an empty set is a real empty/missing Secret and may replace the keyring.
-func loadSandboxAPIKeys(ctx context.Context, kubeconfig string) (sandboxe2b.SecretKeySet, bool) {
+func loadSandboxAPIKeys(ctx context.Context, kubeconfig, namespace string) (sandboxe2b.SecretKeySet, bool) {
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		return sandboxe2b.SecretKeySet{}, false
@@ -181,7 +189,7 @@ func loadSandboxAPIKeys(ctx context.Context, kubeconfig string) (sandboxe2b.Secr
 	if err != nil {
 		return sandboxe2b.SecretKeySet{}, false
 	}
-	secret, err := k8s.CoreV1().Secrets(e2bAPIKeySecretNS).Get(ctx, e2bAPIKeySecretName, metav1.GetOptions{})
+	secret, err := k8s.CoreV1().Secrets(namespace).Get(ctx, e2bAPIKeySecretName, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return sandboxe2b.SecretKeySet{}, true
 	}

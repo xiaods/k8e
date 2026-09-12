@@ -294,7 +294,18 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		dnsIPFamilyPolicy = "RequireDualStack"
 	}
 
+	// The sandbox namespace is operator-configurable (--sandbox-namespace /
+	// SandboxConfig.Namespace). Every sandbox-matrix manifest that names it
+	// (Namespace object, warm pool, gateway Services/Routes, network policy)
+	// is templated with %{SANDBOX_NAMESPACE}% so staging tracks the flag
+	// instead of hardcoding sandbox-matrix.
+	sandboxNamespace := controlConfig.SandboxConfig.Namespace
+	if sandboxNamespace == "" {
+		sandboxNamespace = config.DefaultSandboxNamespace
+	}
+
 	templateVars := map[string]string{
+		"%{SANDBOX_NAMESPACE}%":           sandboxNamespace,
 		"%{CLUSTER_DNS}%":                 controlConfig.ClusterDNS.String(),
 		"%{CLUSTER_DNS_LIST}%":            fmt.Sprintf("[%s]", util.JoinIPs(controlConfig.ClusterDNSs)),
 		"%{CLUSTER_DNS_IPFAMILYPOLICY}%":  dnsIPFamilyPolicy,

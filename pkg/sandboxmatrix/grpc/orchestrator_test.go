@@ -55,7 +55,7 @@ func newTestOrchestrator() *Orchestrator {
 	}
 	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
 	k8s := kubefake.NewSimpleClientset()
-	return NewOrchestrator(k8s, dyn)
+	return NewOrchestrator(k8s, dyn, sandboxNS)
 }
 
 // mustCreateSession creates a session and fails the test on error.

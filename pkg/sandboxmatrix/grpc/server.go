@@ -39,7 +39,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-const apiKeySecretNS = "sandbox-matrix"
 const apiKeySecretName = "sandbox-apikeys"
 
 const sandboxdPort = 2024
@@ -103,8 +102,13 @@ func sanitizePipPackage(raw string) (string, error) {
 
 // ServerConfig holds the configuration for a sandbox gRPC Server.
 type ServerConfig struct {
-	K8s            kubernetes.Interface
-	Dyn            dynamic.Interface
+	K8s kubernetes.Interface
+	Dyn dynamic.Interface
+	// Namespace is the Kubernetes namespace the gateway reads and writes
+	// sandbox resources in (sessions, pods, secrets, SandboxMatrix CRs).
+	// Threaded from SandboxConfig.Namespace (--sandbox-namespace); empty
+	// falls back to DefaultNamespace.
+	Namespace      string
 	CACertFile     string
 	CAKeyFile      string
 	ServerCertFile string
@@ -139,6 +143,7 @@ type Server struct {
 	k8s                   kubernetes.Interface
 	dyn                   dynamic.Interface
 	orch                  *Orchestrator
+	namespace             string
 	lisAddr               string
 	caCertFile            string
 	caKeyFile             string
@@ -181,14 +186,30 @@ type podIPCacheEntry struct {
 // path skips the API server almost always.
 const podIPTTL = 2 * time.Second
 
+// sandboxNamespace returns the sandbox namespace, defaulting to
+// DefaultNamespace when the Server was built without an explicit one (e.g.
+// direct struct construction). Keeps every gateway read path consistent with
+// --sandbox-namespace even when NewServer's defaulting is bypassed.
+func (s *Server) sandboxNamespace() string {
+	if s.namespace == "" {
+		return DefaultNamespace
+	}
+	return s.namespace
+}
+
 func NewServer(cfg ServerConfig) *Server {
 	port := cfg.GRPCPort
 	if port == 0 {
 		port = 50051
 	}
+	namespace := cfg.Namespace
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
 	s := &Server{
 		k8s:                   cfg.K8s,
 		dyn:                   cfg.Dyn,
+		namespace:             namespace,
 		lisAddr:               fmt.Sprintf("0.0.0.0:%d", port),
 		caCertFile:            cfg.CACertFile,
 		caKeyFile:             cfg.CAKeyFile,
@@ -202,7 +223,7 @@ func NewServer(cfg ServerConfig) *Server {
 		terminals:             make(map[string]terminalEntry),
 		podIPCache:            make(map[string]podIPCacheEntry),
 	}
-	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn)
+	s.orch = NewOrchestrator(cfg.K8s, cfg.Dyn, namespace)
 	if cfg.FQDNEnabled {
 		s.orch.SetFQDNEGressEnabled(true)
 	}
@@ -218,7 +239,7 @@ func NewServer(cfg ServerConfig) *Server {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		s.orch.RestoreExposedRegistry(ctx, sandboxNS)
+		s.orch.RestoreExposedRegistry(ctx, s.sandboxNamespace())
 	}()
 	RegisterSandboxMetrics(s.orch)
 	if cfg.LayerStoreDir != "" {
@@ -232,7 +253,7 @@ func NewServer(cfg ServerConfig) *Server {
 // loadAPIKeys reads API keys from the sandbox-apikeys Secret.
 // Supports legacy flat map and KIP-17 v2 records with TTL; expired keys are dropped.
 func (s *Server) loadAPIKeys(ctx context.Context) {
-	secret, err := s.k8s.CoreV1().Secrets(apiKeySecretNS).Get(ctx, apiKeySecretName, metav1.GetOptions{})
+	secret, err := s.k8s.CoreV1().Secrets(s.sandboxNamespace()).Get(ctx, apiKeySecretName, metav1.GetOptions{})
 	if err != nil {
 		logrus.Debugf("sandbox gRPC: no api-key secret found, all requests allowed")
 		s.replaceAPIKeys(nil)
@@ -322,7 +343,7 @@ func (s *Server) reloadConfigLoop(ctx context.Context) {
 // reloadRateLimits reads rate limit config from the SandboxMatrix CRD and applies it.
 func (s *Server) reloadRateLimits(ctx context.Context) {
 	matrixGVR := schema.GroupVersionResource{Group: "k8e.sh", Version: "v1alpha1", Resource: "sandboxmatrices"}
-	matrices, err := s.dyn.Resource(matrixGVR).Namespace("sandbox-matrix").List(ctx, metav1.ListOptions{})
+	matrices, err := s.dyn.Resource(matrixGVR).Namespace(s.sandboxNamespace()).List(ctx, metav1.ListOptions{})
 	if err != nil || len(matrices.Items) == 0 {
 		return
 	}
@@ -357,7 +378,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Clean up expired pending approvals from disconnected clients
 	go s.orch.StartApprovalGC(ctx)
 	// Rebuild background run registry from existing Session CRDs
-	go s.orch.RebuildRunRegistry(ctx, "sandbox-matrix")
+	go s.orch.RebuildRunRegistry(ctx, s.sandboxNamespace())
 
 	// Initialize sandbox CA and server certificate
 	caKey, caCert, err := ensureCA(s.caCertFile, s.caKeyFile)
@@ -435,7 +456,7 @@ func (s *Server) GetSession(ctx context.Context, req *pb.GetSessionRequest) (*pb
 	// forever and every exposed URL 503s with "session has no pod IP yet".
 	// Backfill it from the live pod list (and persist it) when empty.
 	if sess.Status.PodIP == "" {
-		if pods, perr := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+		if pods, perr := s.k8s.CoreV1().Pods(s.sandboxNamespace()).List(ctx, metav1.ListOptions{
 			LabelSelector: labelSessionID + "=" + req.SessionId,
 		}); perr == nil {
 			for i := range pods.Items {
@@ -456,7 +477,7 @@ func (s *Server) ListSessions(ctx context.Context, req *pb.ListSessionsRequest) 
 	if phase == "" {
 		phase = string(sandboxv1.SandboxPhaseActive)
 	}
-	sessions, err := s.orch.listSessions(ctx, sandboxNS, phase)
+	sessions, err := s.orch.listSessions(ctx, s.sandboxNamespace(), phase)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list sessions: %v", err)
 	}
@@ -691,7 +712,7 @@ func (s *Server) getSessionEnv(ctx context.Context, sessionID string) map[string
 }
 
 func (s *Server) readSecretKey(ctx context.Context, secretName, key string) (string, error) {
-	sec, err := s.k8s.CoreV1().Secrets(sandboxNS).Get(ctx, secretName, metav1.GetOptions{})
+	sec, err := s.k8s.CoreV1().Secrets(s.sandboxNamespace()).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
 	}
@@ -1089,7 +1110,7 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 	}
 	s.podIPMu.Unlock()
 
-	u, err := s.dyn.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessionID, metav1.GetOptions{})
+	u, err := s.dyn.Resource(sessionGVR).Namespace(s.sandboxNamespace()).Get(ctx, sessionID, metav1.GetOptions{})
 	if err != nil {
 		return "", status.Errorf(codes.NotFound, "session %s not found", sessionID)
 	}
@@ -1129,7 +1150,7 @@ func (s *Server) pollForPodIP(ctx context.Context, sessionID string) (string, er
 			return "", status.Errorf(codes.Canceled, "context cancelled waiting for pod IP")
 		case <-time.After(wait):
 		}
-		pods, err := s.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+		pods, err := s.k8s.CoreV1().Pods(s.sandboxNamespace()).List(ctx, metav1.ListOptions{
 			LabelSelector: labelSessionID + "=" + sessionID,
 		})
 		if err == nil {

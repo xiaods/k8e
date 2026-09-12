@@ -14,7 +14,7 @@ func TestDefaultWarmPoolManifestStaged(t *testing.T) {
 	assertAllContain(t, b, "default-warm-pool.yaml", []string{
 		"kind: SandboxWarmPool",
 		"name: default",
-		"namespace: sandbox-matrix",
+		"namespace: %{SANDBOX_NAMESPACE}%",
 		"size: 1",
 		"runtimeClass: gvisor",
 	})
@@ -69,6 +69,11 @@ func TestE2BGatewayAPIManifestsStaged(t *testing.T) {
 	assertContains(t, gw, "type: IPAddress", "e2b-gateway.yaml")
 	assertContains(t, gw, "kind: CiliumLoadBalancerIPPool", "e2b-gateway.yaml")
 	assertNoneContain(t, gw, "e2b-gateway.yaml", []string{"127.0.0.1", "::1"})
+
+	// The sandbox namespace is operator-configurable (--sandbox-namespace), so
+	// the manifest must be templated rather than pinned to sandbox-matrix.
+	assertContains(t, gw, "namespace: %{SANDBOX_NAMESPACE}%", "e2b-gateway.yaml")
+	assertNoneContain(t, gw, "e2b-gateway.yaml", []string{"namespace: sandbox-matrix"})
 
 	// The CRD bundle must include TCPRoute (L4 passthrough listener).
 	crds := assetBytes(t, "sandbox-matrix/gateway-api-crds.yaml")

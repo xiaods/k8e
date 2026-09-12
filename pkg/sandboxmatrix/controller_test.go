@@ -301,7 +301,7 @@ func TestUpdateSandboxMatrixStatus_WritesMetrics(t *testing.T) {
 		t.Fatalf("create matrix CR: %v", err)
 	}
 
-	orch := sandboxgrpc.NewOrchestrator(k8s, dyn)
+	orch := sandboxgrpc.NewOrchestrator(k8s, dyn, ns)
 	updateSandboxMatrixStatus(ctx, k8s, dyn, defaultCfg(), orch)
 
 	got, err := dyn.Resource(localMatrixGVR).Namespace(ns).Get(ctx, "default", metav1.GetOptions{})
