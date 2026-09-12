@@ -118,7 +118,10 @@ func controllerManager(ctx context.Context, cfg *config.Control) error {
 	}
 	if !cfg.DisableCCM {
 		argsMap["configure-cloud-routes"] = "false"
-		argsMap["controllers"] = argsMap["controllers"] + ",-service,-route,-cloud-node-lifecycle"
+		// The legacy cloud controllers (service-lb-controller, node-route-controller and
+		// cloud-node-lifecycle-controller) were removed from kube-controller-manager in
+		// Kubernetes 1.32, so they must not be disabled here: passing them causes
+		// "is not in the list of known controllers" and aborts startup.
 	}
 
 	if cfg.VLevel != 0 {
