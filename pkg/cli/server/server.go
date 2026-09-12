@@ -374,6 +374,24 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		serverConfig.ControlConfig.Skips["cilium"] = true
 		serverConfig.ControlConfig.Disables["cilium"] = true
 	}
+	// The bundled ccm.yaml manifest only contains RBAC for the embedded cloud
+	// controller. When the controller is disabled (--disable-cloud-controller,
+	// equivalent to --disable=ccm) its RBAC must not be staged or applied
+	// either, otherwise the cluster keeps a cluster-role grant for a component
+	// that never runs.
+	if cfg.DisableCCM {
+		serverConfig.ControlConfig.Skips["ccm"] = true
+		serverConfig.ControlConfig.Disables["ccm"] = true
+	}
+	// manifests/sandbox-matrix/* ships the CRDs, RuntimeClasses, default warm
+	// pool, network policy and Gateway API bridge for the sandbox stack. With
+	// --disable-sandbox-matrix no controller reconciles those objects, so the
+	// whole directory must be skipped instead of leaving orphaned CRDs and a
+	// SandboxWarmPool without an owner.
+	if cfg.DisableSandboxMatrix {
+		serverConfig.ControlConfig.Skips["sandbox-matrix"] = true
+		serverConfig.ControlConfig.Disables["sandbox-matrix"] = true
+	}
 	serverConfig.ControlConfig.CiliumDNSProxyEnabled = cfg.CiliumDNSProxyEnabled
 
 	tlsMinVersionArg := getArgValueFromList("tls-min-version", serverConfig.ControlConfig.ExtraAPIArgs)
