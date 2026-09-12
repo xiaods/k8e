@@ -28,6 +28,13 @@ const (
 	EgressSelectorModePod      = "pod"
 	CertificateRenewDays       = 90
 	StreamServerPort           = "10010"
+
+	// DefaultSandboxNamespace is the single source of truth for the fallback
+	// sandbox namespace. The effective value is SandboxConfig.Namespace
+	// (--sandbox-namespace / K8E_SANDBOX_NAMESPACE); the gateway/orchestrator,
+	// the embedded e2b surface, the CLI and the server cert SANs all resolve
+	// their default from here so nothing hardcodes "sandbox-matrix".
+	DefaultSandboxNamespace = "sandbox-matrix"
 )
 
 // TLSConfig holds TLS certificate file paths for etcd connections.

@@ -57,8 +57,8 @@ func TestTLSGatewayLoop(t *testing.T) {
 
 	// Seed the sandbox-apikeys Secret so Login can authenticate (legacy flat format).
 	keysJSON := []byte(`{"tls-test":"tls-test-key"}`)
-	if _, err := o.k8s.CoreV1().Secrets(apiKeySecretNS).Create(ctx, &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: apiKeySecretName, Namespace: apiKeySecretNS},
+	if _, err := o.k8s.CoreV1().Secrets(DefaultNamespace).Create(ctx, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: apiKeySecretName, Namespace: DefaultNamespace},
 		Data:       map[string][]byte{"keys.json": keysJSON},
 	}, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("seed api key secret: %v", err)

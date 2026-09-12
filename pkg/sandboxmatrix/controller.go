@@ -47,7 +47,7 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		cfg.GRPCPort = 50051
 	}
 	if cfg.Namespace == "" {
-		cfg.Namespace = "sandbox-matrix"
+		cfg.Namespace = config.DefaultSandboxNamespace
 	}
 
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -63,7 +63,7 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	// refillTrigger wakes the warm pool reconciler immediately after a warm pod
 	// claim, instead of waiting up to 10s for the next poll tick.
 	refillTrigger := make(chan struct{}, 1)
-	orch := sandboxgrpc.NewOrchestrator(k8s, dyn)
+	orch := sandboxgrpc.NewOrchestrator(k8s, dyn, cfg.Namespace)
 	orch.OnWarmClaim = func() {
 		select {
 		case refillTrigger <- struct{}{}:
@@ -79,6 +79,7 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	srv := sandboxgrpc.NewServer(sandboxgrpc.ServerConfig{
 		K8s:               k8s,
 		Dyn:               dyn,
+		Namespace:         cfg.Namespace,
 		CACertFile:        tlsDir + "/sandbox-ca.crt",
 		CAKeyFile:         tlsDir + "/sandbox-ca.key",
 		ServerCertFile:    tlsDir + "/sandbox-server.crt",

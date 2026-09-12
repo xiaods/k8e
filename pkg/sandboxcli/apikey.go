@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/urfave/cli"
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/sandbox/apikey"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,14 +19,23 @@ import (
 )
 
 const apiKeySecretName = "sandbox-apikeys"
-const apiKeySecretNS = "sandbox-matrix"
+
+// sandboxNamespace resolves the namespace api-key management reads/writes so it
+// matches the server-side --sandbox-namespace / SandboxConfig.Namespace. The
+// K8E_SANDBOX_NAMESPACE env override wins; otherwise the shared default.
+func sandboxNamespace() string {
+	if ns := strings.TrimSpace(os.Getenv("K8E_SANDBOX_NAMESPACE")); ns != "" {
+		return ns
+	}
+	return config.DefaultSandboxNamespace
+}
 
 func readAPIKeys() (map[string]apikey.Record, error) {
 	k8s, err := newK8sClient()
 	if err != nil {
 		return nil, fmt.Errorf("kubeconfig required for api-key management: %w", err)
 	}
-	secret, err := k8s.CoreV1().Secrets(apiKeySecretNS).Get(context.Background(), apiKeySecretName, metav1.GetOptions{})
+	secret, err := k8s.CoreV1().Secrets(sandboxNamespace()).Get(context.Background(), apiKeySecretName, metav1.GetOptions{})
 	if err != nil {
 		return map[string]apikey.Record{}, nil // secret not created yet — first key
 	}
@@ -52,13 +63,13 @@ func writeAPIKeys(store map[string]apikey.Record) error {
 		return err
 	}
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: apiKeySecretName, Namespace: apiKeySecretNS},
+		ObjectMeta: metav1.ObjectMeta{Name: apiKeySecretName, Namespace: sandboxNamespace()},
 		Data:       map[string][]byte{"keys.json": data},
 	}
 	// try update first, create if not found
-	_, err = k8s.CoreV1().Secrets(apiKeySecretNS).Update(context.Background(), secret, metav1.UpdateOptions{})
+	_, err = k8s.CoreV1().Secrets(sandboxNamespace()).Update(context.Background(), secret, metav1.UpdateOptions{})
 	if err != nil {
-		_, err = k8s.CoreV1().Secrets(apiKeySecretNS).Create(context.Background(), secret, metav1.CreateOptions{})
+		_, err = k8s.CoreV1().Secrets(sandboxNamespace()).Create(context.Background(), secret, metav1.CreateOptions{})
 	}
 	return err
 }

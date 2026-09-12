@@ -28,6 +28,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/xiaods/k8e/pkg/daemons/config"
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
@@ -38,8 +39,18 @@ const (
 	sandboxAPIGroup   = SandboxAPIGroup
 	sandboxAPIVersion = SandboxAPIGroup + "/v1alpha1"
 
-	maxDepth          = 1
-	sandboxNS         = "sandbox-matrix"
+	maxDepth = 1
+
+	// DefaultNamespace is the default Kubernetes namespace for sandbox
+	// workloads (warm pools, sessions, and their pods). It is only a fallback:
+	// the effective namespace is threaded from --sandbox-namespace /
+	// SandboxConfig.Namespace through NewOrchestrator and ServerConfig so no
+	// component silently hardcodes it.
+	DefaultNamespace = config.DefaultSandboxNamespace
+	// sandboxNS aliases DefaultNamespace for in-package call sites and tests
+	// that operate on the default namespace.
+	sandboxNS = DefaultNamespace
+
 	labelState        = "sandbox.k8e.io/state"
 	labelSessionID    = "sandbox.k8e.io/session-id"
 	labelRuntimeClass = "sandbox.k8e.io/runtime-class"
@@ -78,8 +89,11 @@ const approvalTTL = 5 * time.Minute
 
 // Orchestrator handles session lifecycle, sub-agent creation, and confirm_action gating.
 type Orchestrator struct {
-	k8s         kubernetes.Interface
-	dynamic     dynamic.Interface
+	k8s     kubernetes.Interface
+	dynamic dynamic.Interface
+	// namespace is the Kubernetes namespace sandbox sessions, pods, PVCs and
+	// CNPs live in. Threaded from SandboxConfig.Namespace (--sandbox-namespace).
+	namespace   string
 	mu          sync.Mutex
 	approvals   map[string]*pendingApproval
 	runRegistry map[string]string // run_id → session_id
@@ -115,10 +129,14 @@ type Orchestrator struct {
 	fqdnEgressEnabled bool
 }
 
-func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface) *Orchestrator {
+func NewOrchestrator(k8s kubernetes.Interface, dyn dynamic.Interface, namespace string) *Orchestrator {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
 	return &Orchestrator{
 		k8s:                k8s,
 		dynamic:            dyn,
+		namespace:          namespace,
 		approvals:          make(map[string]*pendingApproval),
 		runRegistry:        make(map[string]string),
 		exposed:            make(map[string][]*ExposedEntry),
@@ -253,7 +271,7 @@ func (o *Orchestrator) CheckCapacity(ctx context.Context) error {
 		return err
 	}
 
-	pods, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+	pods, err := o.k8s.CoreV1().Pods(o.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelState,
 	})
 	if err != nil {
@@ -324,7 +342,7 @@ func (o *Orchestrator) CreateSessionWithTTL(ctx context.Context, req *pb.CreateS
 
 // getMatrixConfig reads defaultAllowedHosts, sessionTTL, and resourceLimits from the first SandboxMatrix CRD.
 func (o *Orchestrator) getMatrixConfig(ctx context.Context) (allowedHosts []string, ttl int, cpu, memory string) {
-	list, err := o.dynamic.Resource(matrixGVR).Namespace(sandboxNS).List(ctx, metav1.ListOptions{})
+	list, err := o.dynamic.Resource(matrixGVR).Namespace(o.namespace).List(ctx, metav1.ListOptions{})
 	if err != nil || len(list.Items) == 0 {
 		return nil, defaultTTL, "", ""
 	}
@@ -361,7 +379,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	}
 	session := &sandboxv1.SandboxSession{
 		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
-		ObjectMeta: metav1.ObjectMeta{Name: sessionID, Namespace: sandboxNS},
+		ObjectMeta: metav1.ObjectMeta{Name: sessionID, Namespace: o.namespace},
 		Spec: sandboxv1.SandboxSessionSpec{
 			TenantID:     req.TenantId,
 			AllowedHosts: allowedHosts,
@@ -440,7 +458,7 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 	podIP, podName := o.findPodBySession(ctx, sessionID)
 	if podIP == "" && session.Status.PodName != "" {
 		// Fallback: fake clients may not support label selectors; use pod name from session
-		pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, session.Status.PodName, metav1.GetOptions{})
+		pod, err := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, session.Status.PodName, metav1.GetOptions{})
 		if err == nil {
 			podIP = pod.Status.PodIP
 			podName = pod.Name
@@ -457,7 +475,7 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 	}
 
 	// 4. Delete Session CRD (pod and PVC survive, return to pool)
-	return o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Delete(ctx, sessionID, metav1.DeleteOptions{})
+	return o.dynamic.Resource(sessionGVR).Namespace(o.namespace).Delete(ctx, sessionID, metav1.DeleteOptions{})
 }
 
 // destroyStepAnnotation records completed destroy steps (comma-separated) on
@@ -506,7 +524,7 @@ func (o *Orchestrator) updateSession(ctx context.Context, session *sandboxv1.San
 
 // findPodBySession returns pod IP and name for a session by label, or empty strings.
 func (o *Orchestrator) findPodBySession(ctx context.Context, sessionID string) (string, string) {
-	pods, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+	pods, err := o.k8s.CoreV1().Pods(o.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSessionID + "=" + sessionID,
 	})
 	if err != nil || len(pods.Items) == 0 {
@@ -536,7 +554,7 @@ func (o *Orchestrator) resetWorkspace(ctx context.Context, podIP string) {
 
 // releasePod relabels a pod from active to resetting and removes session-id label.
 func (o *Orchestrator) releasePod(ctx context.Context, podName string) {
-	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
+	pod, err := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return
 	}
@@ -545,7 +563,7 @@ func (o *Orchestrator) releasePod(ctx context.Context, podName string) {
 	}
 	pod.Labels[labelState] = StateResetting
 	delete(pod.Labels, labelSessionID)
-	o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{}) //nolint:errcheck
+	o.k8s.CoreV1().Pods(o.namespace).Update(ctx, pod, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
 // ListActiveSessions returns all Active SandboxSessions in the given namespace.
@@ -624,7 +642,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 	childID := fmt.Sprintf("%s-sub-%d", req.ParentSessionId, time.Now().UnixNano())
 	child := &sandboxv1.SandboxSession{
 		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
-		ObjectMeta: metav1.ObjectMeta{Name: childID, Namespace: sandboxNS},
+		ObjectMeta: metav1.ObjectMeta{Name: childID, Namespace: o.namespace},
 		Spec: sandboxv1.SandboxSessionSpec{
 			TenantID:        parent.Spec.TenantID,
 			AllowedHosts:    parent.Spec.AllowedHosts,
@@ -854,7 +872,7 @@ func (o *Orchestrator) getPodIPBySession(ctx context.Context, sessionID string) 
 		return session.Status.PodIP, nil
 	}
 	// Poll for pod IP
-	pods, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+	pods, err := o.k8s.CoreV1().Pods(o.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSessionID + "=" + sessionID,
 	})
 	if err != nil || len(pods.Items) == 0 || pods.Items[0].Status.PodIP == "" {
@@ -868,7 +886,7 @@ var bgSandboxdClient = &http.Client{Timeout: 10 * time.Second}
 // --- internal helpers ---
 
 func (o *Orchestrator) getSession(ctx context.Context, sessionID string) (*sandboxv1.SandboxSession, error) {
-	u, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessionID, metav1.GetOptions{})
+	u, err := o.dynamic.Resource(sessionGVR).Namespace(o.namespace).Get(ctx, sessionID, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -880,7 +898,7 @@ func (o *Orchestrator) createSession(ctx context.Context, session *sandboxv1.San
 	if err != nil {
 		return nil, err
 	}
-	created, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Create(ctx, u, metav1.CreateOptions{})
+	created, err := o.dynamic.Resource(sessionGVR).Namespace(o.namespace).Create(ctx, u, metav1.CreateOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -895,7 +913,7 @@ func (o *Orchestrator) updateSessionStatus(ctx context.Context, session *sandbox
 		logrus.Errorf("sandbox: session %s to unstructured: %v", session.Name, err)
 		return
 	}
-	if _, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}); err != nil {
+	if _, err := o.dynamic.Resource(sessionGVR).Namespace(o.namespace).UpdateStatus(ctx, u, metav1.UpdateOptions{}); err != nil {
 		// Never swallow: a failed status write leaves phase/podIP empty, which
 		// breaks expose proxying ("session has no pod IP yet") and pause/resume.
 		logrus.Errorf("sandbox: update session %s status: %v", session.Name, err)
@@ -908,7 +926,7 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 	// EmptyDir volume, and a running pod's volumes cannot be changed to mount a
 	// session PVC. Persistent sessions therefore cold-start with the PVC attached.
 	if pvcName == "" {
-		warm, err := o.k8s.CoreV1().Pods(sandboxNS).List(ctx, metav1.ListOptions{
+		warm, err := o.k8s.CoreV1().Pods(o.namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: labelState + "=" + stateWarm,
 		})
 		if err == nil {
@@ -930,7 +948,7 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 				// atomic claim: use resourceVersion for optimistic locking
 				pod.Labels[labelState] = stateActive
 				pod.Labels[labelSessionID] = sessionID
-				updated, uerr := o.k8s.CoreV1().Pods(sandboxNS).Update(ctx, pod, metav1.UpdateOptions{})
+				updated, uerr := o.k8s.CoreV1().Pods(o.namespace).Update(ctx, pod, metav1.UpdateOptions{})
 				if uerr == nil {
 					o.recordClaim(start, true)
 					// Pool just shrank by one: ask the controller to refill now.
@@ -946,7 +964,7 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("sandbox-%s", sessionID),
-			Namespace: sandboxNS,
+			Namespace: o.namespace,
 			Labels: map[string]string{
 				labelState:        stateActive,
 				labelSessionID:    sessionID,
@@ -956,7 +974,7 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 		},
 		Spec: sandboxPodSpec(runtimeClass, pvcName, cpu, memory),
 	}
-	created, cerr := o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, pod, metav1.CreateOptions{})
+	created, cerr := o.k8s.CoreV1().Pods(o.namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if cerr == nil {
 		o.recordClaim(start, false)
 	}
@@ -1074,7 +1092,7 @@ func (o *Orchestrator) PauseSession(ctx context.Context, sessionID string) error
 	// Delete the pod (CPU/memory released); the PVC and CRD survive.
 	podIP, podName := o.findPodBySession(ctx, sessionID)
 	if podIP == "" && session.Status.PodName != "" {
-		pod, gerr := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, session.Status.PodName, metav1.GetOptions{})
+		pod, gerr := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, session.Status.PodName, metav1.GetOptions{})
 		if gerr == nil {
 			podIP = pod.Status.PodIP
 			podName = pod.Name
@@ -1083,7 +1101,7 @@ func (o *Orchestrator) PauseSession(ctx context.Context, sessionID string) error
 	if podName != "" {
 		// Best-effort workspace flush would belong here (none exists yet);
 		// the PVC persists regardless.
-		if derr := o.k8s.CoreV1().Pods(sandboxNS).Delete(ctx, podName, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
+		if derr := o.k8s.CoreV1().Pods(o.namespace).Delete(ctx, podName, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
 			return status.Errorf(codes.Internal, "pause: delete pod %s: %v", podName, derr)
 		}
 	}
@@ -1136,7 +1154,7 @@ func (o *Orchestrator) ResumeSession(ctx context.Context, sessionID string) (*co
 
 // matrixResourceDefaults reads CPU/memory defaults from the SandboxMatrix CRD.
 func (o *Orchestrator) matrixResourceDefaults(ctx context.Context) (cpu, memory string) {
-	list, err := o.dynamic.Resource(matrixGVR).Namespace(sandboxNS).List(ctx, metav1.ListOptions{})
+	list, err := o.dynamic.Resource(matrixGVR).Namespace(o.namespace).List(ctx, metav1.ListOptions{})
 	if err != nil || len(list.Items) == 0 {
 		return "", ""
 	}
@@ -1148,7 +1166,7 @@ func (o *Orchestrator) matrixResourceDefaults(ctx context.Context) (cpu, memory 
 // ensureWorkspacePVC creates a PVC for the session workspace if it doesn't exist.
 func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string) (string, error) {
 	pvcName := "workspace-" + sessionID
-	_, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{})
+	_, err := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Get(ctx, pvcName, metav1.GetOptions{})
 	if err == nil {
 		return pvcName, nil
 	}
@@ -1156,7 +1174,7 @@ func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string)
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pvcName,
-			Namespace: sandboxNS,
+			Namespace: o.namespace,
 			Labels:    map[string]string{labelSessionID: sessionID},
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
@@ -1169,7 +1187,7 @@ func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string)
 			},
 		},
 	}
-	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
 		return "", fmt.Errorf("create workspace PVC: %w", err)
 	}
 	return pvcName, nil

@@ -40,6 +40,11 @@ const (
 	aescbcKeySize  = 32
 
 	RequestHeaderCN = "system:auth-proxy"
+
+	// defaultSandboxNamespace mirrors config.DefaultSandboxNamespace for the
+	// cert-SAN path, where the *config.Control parameter shadows the config
+	// package name inside genServerCerts.
+	defaultSandboxNamespace = config.DefaultSandboxNamespace
 )
 
 var kubeconfigTemplate = template.Must(template.New("kubeconfig").Parse(`apiVersion: v1
@@ -391,10 +396,20 @@ func genServerCerts(config *config.Control) error {
 		return err
 	}
 
+	// The sandbox gRPC gateway is bridged into the cluster via a headless
+	// Service in the sandbox namespace (--sandbox-namespace / SandboxConfig.
+	// Namespace), so its in-cluster DNS SANs must track that namespace instead
+	// of a hardcoded sandbox-matrix.
+	sandboxNS := config.SandboxConfig.Namespace
+	if sandboxNS == "" {
+		sandboxNS = defaultSandboxNamespace
+	}
+	gwName := "sandbox-grpc-gateway"
+	gwFQDN := gwName + "." + sandboxNS
 	altNames := &certutil.AltNames{
 		DNSNames: []string{
 			"kubernetes", "kubernetes.default", "kubernetes.default.svc", "kubernetes.default.svc." + config.ClusterDomain,
-			"sandbox-grpc-gateway", "sandbox-grpc-gateway.sandbox-matrix", "sandbox-grpc-gateway.sandbox-matrix.svc", "sandbox-grpc-gateway.sandbox-matrix.svc." + config.ClusterDomain,
+			gwName, gwFQDN, gwFQDN + ".svc", gwFQDN + ".svc." + config.ClusterDomain,
 		},
 	}
 
