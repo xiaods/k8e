@@ -3,6 +3,9 @@
 Guidance for AI coding agents (Claude Code, Codex, and others) working in this
 repository.
 
+> Claude Code reads this file directly — there is no separate `CLAUDE.md`. Keep
+> `AGENTS.md` as the single source of agent guidance.
+
 ## Project Overview
 
 K8E is a CNCF-conformant Kubernetes distribution packaged as a single `k8e`
