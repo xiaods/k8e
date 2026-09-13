@@ -1,6 +1,6 @@
 ---
 name: k8e-sandbox
-description: "Execute a goal inside the K8E sandbox (gVisor/Kata/Firecracker). Use when the user runs /k8e-sandbox <goal>, $k8e-sandbox <goal>, or asks to run/execute/test code safely off the host."
+description: "Run a goal end to end inside an isolated K8E sandbox pod (gVisor / Kata / Firecracker) instead of on the host: exec bash / Python / Node / TypeScript, install packages, move files in and out, reuse one session across calls, snapshot and restore the workspace, run background jobs, and publish an in-sandbox service through the k8e API Gateway. Use when the user invokes /k8e-sandbox <goal>, $k8e-sandbox <goal> or /skill:k8e-sandbox, or when work needs untrusted, disposable or reproducible Linux execution — running or testing code, installing dependencies, processing data or files, reproducing a bug in a clean box, or serving a dev app off the host. Egress is allowlisted, destructive actions are human-gated, and the connection is mTLS with multi-cluster profiles."
 argument-hint: "<goal>"
 user-invocable: true
 ---
@@ -22,6 +22,28 @@ $ARGUMENTS
 ```
 
 If `$ARGUMENTS` is empty and no goal is otherwise provided, ask the user for a sandbox goal and **stop** (do not invent work).
+
+## What this skill can do (capability map)
+
+Match the goal to a capability, then use the matching command. Exact flags live in
+the [command reference](#command-reference).
+
+| Goal shape | Capability | Command |
+|---|---|---|
+| Run a command, script or test suite | Isolated exec in the pod — `bash` (default), `python`, `node`, `ts` | `run`, `run --lang python`, `run --raw` |
+| Install dependencies | pip/npm writes land in `/workspace`, not the image (KIP-13) | `run 'pip install …'` |
+| Move files in / out | Chunked streaming — constant memory, binary-safe, any size | `push <sid> <local> [remote]`, `pull <sid> <remote> [local]` |
+| Keep state across calls | Auto session, `--tenant` for cross-process reuse, sub-agents share one pod + workspace | `run …`, `run --tenant`, `subagent <parent-sid>` |
+| Seed a workspace | Declarative manifest or a git clone at session creation (KIP-9) | `create --manifest`, `create --git-repo` |
+| Save / restore a workspace | Content-addressed snapshots (deduped; incremental via `--base`) | `snapshot save/list/restore/delete` |
+| Serve a web app or API | Publish an in-pod port through the k8e API Gateway — no port-forward, no inbound pod exposure (KIP-24) | `run --background` → `expose <port>` → `exposed` / `unexpose` |
+| Reach the internet | Session egress allowlist, updatable live while the pod runs | `allow-hosts --add/--remove/--clear`, or `--allowed-hosts` at create |
+| Watch or debug a run | Transcript replay, NDJSON event stream, process list, background poll | `log`, `events`, `ps`, `poll` |
+| Gate an irreversible step | Human-in-the-loop approval before the action runs | `confirm <sid> <action>` → `approve <aid>` |
+| Measure cold-start latency | Warm-pool benchmark | `benchmark` |
+| Drive it from another program | Machine-readable command surface; native MCP server | `catalog`, `mcp-serve` |
+| Target another cluster | mTLS client certs + named profiles; API keys with TTL (KIP-14 / KIP-17) | `--profile`, `connect`, `k8e sandbox-apikey create` |
+| Diagnose a broken setup | Self-check with auto-fix | `doctor`, `doctor --json`, `doctor --fix` |
 
 ## dsh (DeepSeek Harness) execution path
 
@@ -96,7 +118,7 @@ dsh --profile <name>          # restart the session
 | Tool call fails "not found" / unknown tool `k8e_sandbox_*` | plugin bundle not mounted | use section B (CLI-first); ask user to install the bundle |
 | Tool errors "gateway unreachable" / mTLS / deadline | gateway down or missing credentials | `k8e-sandbox-cli connect` (or with `--endpoint`/`--apikey`) outside dsh, restart dsh |
 | `bash`/`read` error with connection refused | session pod not ready | `k8e_sandbox_session_status`; wait and retry |
-| `k8e_sandbox_expose` returns 503 "no pod IP" | old server: session status.podIP empty | upgrade k8e server (rc7+), or `k8e-sandbox-cli connect` then retry |
+| `k8e_sandbox_expose` returns 503 "no pod IP" | server build predates the podIP backfill | upgrade the k8e server, or inspect the session with `k8e-sandbox-cli get <sid>` and retry |
 
 The CLI-first flow below (`k8e-sandbox-cli run ...`) is for harnesses where the sandbox is *not* mounted (Claude Code / Codex / Pi / dsh without the plugin).
 
@@ -164,12 +186,12 @@ profiles:
 ```
 
 ```bash
-k8e-sandbox-cli --profile prod connect --apikey k8e-...
+k8e-sandbox-cli --profile prod connect --apikey <64-hex key>
 k8e-sandbox-cli --profile prod run 'echo hi'
 # or: export K8E_SANDBOX_PROFILE=prod
 ```
 
-Priority: flags → env (`K8E_SANDBOX_ENDPOINT` / `APIKEY` / `CERT_DIR` / `PROFILE`) → profile → defaults. Cert dir: `K8E_SANDBOX_CERT_DIR` → `~/.k8e/sandbox`.
+Priority: flags → env → profile → last-connect fallback (`~/.k8e/sandbox/config.json`) → defaults. Flag/env pairs: `--endpoint`/`K8E_SANDBOX_ENDPOINT`, `--apikey`/`K8E_SANDBOX_APIKEY`, `--profile`/`K8E_SANDBOX_PROFILE`. The cert dir has **no flag**: `K8E_SANDBOX_CERT_DIR` → profile `cert_dir` → `~/.k8e/sandbox`. Other env: `K8E_SANDBOX_SESSION_ID`, `K8E_SANDBOX_TENANT`, `K8E_SANDBOX_DEVICE_NAME`, `K8E_SANDBOX_CONFIG` (profile file path).
 
 ## Procedure (always)
 
@@ -220,7 +242,7 @@ k8e-sandbox-cli run "python3 -m http.server 8080 --bind 127.0.0.1" --background
 k8e-sandbox-cli expose 8080     # -> {"url":"http://<gateway>/k8e/expose/<sid>/8080/",...}
 ```
 
-Useful commands: `run`, `write`, `read`, `list`, `create`, `get`, `sessions`, `destroy`, `status`, `log`, `events`, `ps`, `poll`, `subagent`, `confirm`, `approve`, `snapshot`, `benchmark`, `catalog`, `expose`, `unexpose`, `exposed`, `allow-hosts`.
+Useful commands: `run`, `write`, `read`, `list`, `push`, `pull`, `create`, `get`, `sessions`, `destroy`, `status`, `log`, `events`, `ps`, `poll`, `subagent`, `confirm`, `approve`, `snapshot`, `benchmark`, `catalog`, `expose`, `unexpose`, `exposed`, `allow-hosts`, `doctor`, `login`, `mcp-serve`.
 
 ### 4. Report
 
@@ -234,11 +256,14 @@ k8e-sandbox-cli connect
 
 # Remote — API key from server (default TTL 30d)
 k8e sandbox-apikey create my-agent
-# → {"name":"my-agent","key":"k8e-…","ttl_days":30,"expires_at":"…"}
+# → {"name":"my-agent","key":"<64-hex>","e2b_key":"e2b_<64-hex>",
+#    "ttl_days":30,"created_at":"…","expires_at":"…"}
+# Pass `key` (bare hex) to `connect --apikey`. Hand `e2b_key` to the official e2b
+# SDKs: they require the e2b_ prefix and the server strips it.
 # k8e sandbox-apikey create my-agent --ttl never   # optional non-expiring
 
-k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
-# Multi-cluster: k8e-sandbox-cli --profile prod connect --apikey k8e-...
+k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey <64-hex key>
+# Multi-cluster: k8e-sandbox-cli --profile prod connect --apikey <64-hex key>
 ```
 
 `connect` authenticates (mTLS), verifies the gateway, puts `k8e-sandbox-cli` on PATH when needed (symlink to `~/.local/bin/k8e-sandbox-cli`), and installs this skill into Claude / Codex / Pi / dsh discovery paths (`--agent dsh` or `--agent all`; dsh reads it from `~/.dsh/skills` or `~/.agents/skills`).
@@ -248,21 +273,23 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | Command | Purpose |
 |---------|---------|
 | `k8e-sandbox-cli --profile <name> …` | Use named profile from `~/.k8e/sandbox/profiles.yaml` |
-| `k8e-sandbox-cli connect` | Local/remote auth + install this skill into agent harnesses |
+| `k8e-sandbox-cli connect` | Local/remote auth + install this skill into agent harnesses (`--agent` auto/claude/codex/pi/dsh/all, `--reset-certs`, `--skip-verify`, `--skip-path`) |
 | `k8e-sandbox-cli connect --skill-only` | Re-install this skill only (no gateway dial) |
 | `k8e-sandbox-cli login` | Remote mTLS only (no skill install); optional `--device-name` |
+| `k8e-sandbox-cli doctor` | Self-check gateway / certs / skill install / PATH (`--json`, `--fix`) |
+| `k8e-sandbox-cli mcp-serve` | Serve the sandbox MCP endpoint for MCP-capable agents (`--listen`, `--gateway`, TLS + API-key flags) |
 | `k8e-sandbox-cli status` | Gateway + session probe |
-| `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--timeout`, `--raw`, `--session-id`, `--tenant`, `--background`, `--manifest`, `--git-repo`, `--allowed-hosts`) |
+| `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--timeout` seconds — default 30, `--raw`, `--session-id`, `--tenant`, `--background`, `--manifest`, `--git-repo`/`--git-ref`/`--git-path`, `--allowed-hosts`) |
 | `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`, `--manifest`, `--git-repo`) |
 | `k8e-sandbox-cli get <sid>` | Session introspection (phase, runtime, env keys) |
 | `k8e-sandbox-cli sessions` | List sessions |
-| `k8e-sandbox-cli write/read/list` | Workspace files; `list --since <ts>` for changed-file diff |
+| `k8e-sandbox-cli write/read/list` | Workspace files (`write --mode`, `read --raw`); `list --since <unix-ts>` returns only files modified after that timestamp |
 | `k8e-sandbox-cli push <sid> <local> [remote]` | Stream a local file INTO the sandbox (chunked 4MiB windows — constant memory, binary-safe, any size; `--chunk-mb` to tune) |
 | `k8e-sandbox-cli pull <sid> <remote> [local]` | Stream a sandbox file OUT to a local path (same chunked transfer) |
 | `k8e-sandbox-cli log <sid>` | Replay exec transcript (`--offset`, `--limit`, `--follow`) |
 | `k8e-sandbox-cli events <sid>` | Read daemon NDJSON event stream (`--limit`) |
 | `k8e-sandbox-cli ps <sid>` | List processes in the sandbox pod (pid, comm, state) |
-| `k8e-sandbox-cli poll <run-id>` | Poll a background run (`--follow`) |
+| `k8e-sandbox-cli poll <run-id>` | Wait for a `run --background` job and return its result |
 | `k8e-sandbox-cli subagent <parent-sid>` | Spawn child session (shares parent's pod + workspace — no new pod) |
 | `k8e-sandbox-cli confirm <sid> <action>` | Gate destructive action on human approval (`--timeout`, `--no-wait`) |
 | `k8e-sandbox-cli approve <aid>` | Approve a pending confirm (`--reject`, `--reason`) |
@@ -278,7 +305,7 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey k8e-...
 | `k8e-sandbox-cli catalog` | Emit machine-readable command surface (SDK generation) |
 | `k8e-sandbox-cli destroy <sid>` | Tear down session |
 
-Default run output is JSON: `stdout`, `stderr`, `exit_code`, `session_id`. Use `--raw` to stream text.
+Default `run` output is JSON: `stdout`, `stderr`, `exit_code`, `session_id`, `status`, `duration_ms`, `truncated`, `language`; `run --background` returns `run_id`, `status`, `session_id`. Use `--raw` to stream plain text instead.
 
 ## Service exposure (KIP-24)
 
