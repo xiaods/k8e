@@ -15,6 +15,58 @@ import (
 )
 
 func TestCertManagerBundle(t *testing.T) {
+	content := certManagerEmbedded(t)
+	parsed := parseCertManagerManifest(t, content)
+
+	t.Run("deployments", func(t *testing.T) {
+		for _, name := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
+			if !parsed.deployments[name] {
+				t.Errorf("missing deployment %s", name)
+			}
+		}
+	})
+
+	t.Run("crds", func(t *testing.T) {
+		for _, name := range []string{
+			"certificates.cert-manager.io",
+			"certificaterequests.cert-manager.io",
+			"issuers.cert-manager.io",
+			"clusterissuers.cert-manager.io",
+			"orders.acme.cert-manager.io",
+			"challenges.acme.cert-manager.io",
+		} {
+			if !parsed.crds[name] {
+				t.Errorf("missing CRD %s", name)
+			}
+		}
+	})
+
+	t.Run("runtime images", func(t *testing.T) {
+		for _, component := range []string{"controller", "cainjector", "webhook", "acmesolver"} {
+			image := "quay.io/jetstack/cert-manager-" + component + ":v1.21.2"
+			if !parsed.images[image] {
+				t.Errorf("missing runtime image %s", image)
+			}
+		}
+	})
+
+	t.Run("airgap coverage", func(t *testing.T) {
+		packaged := airgapImageSet(t)
+		for image := range parsed.images {
+			if !packaged[image] {
+				t.Errorf("runtime image missing from airgap list: %s", image)
+			}
+			if !strings.HasSuffix(image, ":v1.21.2") {
+				t.Errorf("unexpected cert-manager version: %s", image)
+			}
+		}
+	})
+}
+
+// certManagerEmbedded returns the embedded manifest after asserting it still
+// matches the on-disk source, so a stale bindata build fails loudly.
+func certManagerEmbedded(t *testing.T) []byte {
+	t.Helper()
 	content := assetBytes(t, "cert-manager.yaml")
 	source, err := os.ReadFile("../../manifests/cert-manager.yaml")
 	if err != nil {
@@ -23,6 +75,12 @@ func TestCertManagerBundle(t *testing.T) {
 	if !bytes.Equal(content, source) {
 		t.Fatal("cert-manager embedded manifest is stale; run the resource generator")
 	}
+	return content
+}
+
+// airgapImageSet returns the images shipped in the offline archive.
+func airgapImageSet(t *testing.T) map[string]bool {
+	t.Helper()
 	imageList, err := os.ReadFile("../../hack/airgap/image-list.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -31,9 +89,22 @@ func TestCertManagerBundle(t *testing.T) {
 	for _, image := range strings.Fields(string(imageList)) {
 		packaged[image] = true
 	}
-	images := map[string]bool{}
-	deployments := map[string]bool{}
-	crds := map[string]bool{}
+	return packaged
+}
+
+type certManagerManifest struct {
+	deployments map[string]bool
+	crds        map[string]bool
+	images      map[string]bool
+}
+
+func parseCertManagerManifest(t *testing.T, content []byte) certManagerManifest {
+	t.Helper()
+	parsed := certManagerManifest{
+		deployments: map[string]bool{},
+		crds:        map[string]bool{},
+		images:      map[string]bool{},
+	}
 	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader(content), 4096)
 	for {
 		var obj unstructured.Unstructured
@@ -46,48 +117,33 @@ func TestCertManagerBundle(t *testing.T) {
 		case "Issuer", "ClusterIssuer", "Certificate", "CertificateRequest":
 			t.Fatalf("default install must not request certificates: %s/%s", obj.GetKind(), obj.GetName())
 		case "CustomResourceDefinition":
-			crds[obj.GetName()] = true
+			parsed.crds[obj.GetName()] = true
 		case "Deployment":
-			deployments[obj.GetName()] = true
-			containers, _, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
-			if err != nil {
-				t.Fatal(err)
+			parsed.deployments[obj.GetName()] = true
+			collectCertManagerImages(t, parsed.images, obj)
+		}
+	}
+	return parsed
+}
+
+func collectCertManagerImages(t *testing.T, images map[string]bool, obj unstructured.Unstructured) {
+	t.Helper()
+	containers, _, err := unstructured.NestedSlice(obj.Object, "spec", "template", "spec", "containers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range containers {
+		container, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		image, _, _ := unstructured.NestedString(container, "image")
+		images[image] = true
+		args, _, _ := unstructured.NestedStringSlice(container, "args")
+		for _, arg := range args {
+			if solver, found := strings.CutPrefix(arg, "--acme-http01-solver-image="); found {
+				images[solver] = true
 			}
-			for _, item := range containers {
-				container := item.(map[string]interface{})
-				image, _, _ := unstructured.NestedString(container, "image")
-				images[image] = true
-				args, _, _ := unstructured.NestedStringSlice(container, "args")
-				for _, arg := range args {
-					if image, found := strings.CutPrefix(arg, "--acme-http01-solver-image="); found {
-						images[image] = true
-					}
-				}
-			}
-		}
-	}
-	for _, name := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
-		if !deployments[name] {
-			t.Errorf("missing deployment %s", name)
-		}
-	}
-	for _, name := range []string{"certificates.cert-manager.io", "certificaterequests.cert-manager.io", "issuers.cert-manager.io", "clusterissuers.cert-manager.io", "orders.acme.cert-manager.io", "challenges.acme.cert-manager.io"} {
-		if !crds[name] {
-			t.Errorf("missing CRD %s", name)
-		}
-	}
-	for _, component := range []string{"controller", "cainjector", "webhook", "acmesolver"} {
-		image := "quay.io/jetstack/cert-manager-" + component + ":v1.21.2"
-		if !images[image] {
-			t.Errorf("missing runtime image %s", image)
-		}
-	}
-	for image := range images {
-		if !packaged[image] {
-			t.Errorf("runtime image missing from airgap list: %s", image)
-		}
-		if !strings.HasSuffix(image, ":v1.21.2") {
-			t.Errorf("unexpected cert-manager version: %s", image)
 		}
 	}
 }
