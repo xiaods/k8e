@@ -13686,6 +13686,13 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 16Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -13757,6 +13764,13 @@ spec:
               drop:
               - ALL
             readOnlyRootFilesystem: true
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 16Mi
           env:
           - name: POD_NAMESPACE
             valueFrom:
@@ -13865,6 +13879,13 @@ spec:
               drop:
               - ALL
             readOnlyRootFilesystem: true
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+              ephemeral-storage: 16Mi
           env:
           - name: POD_NAMESPACE
             valueFrom:
