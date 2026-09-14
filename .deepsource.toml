@@ -1,5 +1,13 @@
 version = 1
 
+# go-bindata output: a single multi-hundred-KB byte slice plus generated
+# accessors, regenerated verbatim by the resource generator. It is already
+# excluded from Sonar via sonar.exclusions; counting it as hand-written Go
+# skews both issue counts and coverage metrics on every manifest bump.
+exclude_patterns = [
+  "pkg/deploy/zz_generated_bindata.go",
+]
+
 [[analyzers]]
 name = "go"
 enabled = true
