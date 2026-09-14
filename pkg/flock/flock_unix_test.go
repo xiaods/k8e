@@ -19,20 +19,37 @@ limitations under the License.
 package flock
 
 import (
-	"os/exec"
-	"strings"
+	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
-// checkLock checks whether any process is using the lock
+// checkLock reports whether the lock on path is currently held by another open
+// file description.
+//
+// This probes the lock directly instead of shelling out to lsof: lsof's -F
+// output is not portable, as macOS reports a blank lock field instead of lW/lR
+// for flock(2) locks, which made the previous implementation fail on non-Linux
+// hosts. flock() locks are bound to the open file description, so a second
+// open() in the same process still conflicts with the lock under test.
 func checkLock(path string) bool {
-	lockByte, _ := exec.Command("lsof", "-w", "-F", "lfn", path).Output()
-	locks := string(lockByte)
-	if locks == "" {
+	fd, err := unix.Open(path, unix.O_RDWR, 0600)
+	if err != nil {
 		return false
 	}
-	readWriteLock := strings.Split(locks, "\n")[2]
-	return readWriteLock == "lR" || readWriteLock == "lW"
+	defer unix.Close(fd)
+
+	// LOCK_NB makes the call return immediately instead of blocking when the
+	// lock is already held.
+	if err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return true
+	}
+
+	// We were able to take the lock, so it is not currently held. Release it
+	// again so that the caller's lock state is left unchanged.
+	_ = unix.Flock(fd, unix.LOCK_UN)
+	return false
 }
 
 func Test_UnitFlock(t *testing.T) {
@@ -44,7 +61,7 @@ func Test_UnitFlock(t *testing.T) {
 	}{
 		{
 			name: "Basic Flock Test",
-			path: "/tmp/testlock.test",
+			path: filepath.Join(t.TempDir(), "testlock.test"),
 
 			wantCheck: true,
 			wantErr:   false,
@@ -59,7 +76,7 @@ func Test_UnitFlock(t *testing.T) {
 			}
 
 			if got := checkLock(tt.path); got != tt.wantCheck {
-				t.Errorf("CheckLock() = %+v\nWant = %+v", got, tt.wantCheck)
+				t.Errorf("checkLock() = %+v\nWant = %+v", got, tt.wantCheck)
 			}
 
 			if err := Release(lock); (err != nil) != tt.wantErr {
@@ -67,7 +84,11 @@ func Test_UnitFlock(t *testing.T) {
 			}
 
 			if got := checkLock(tt.path); got == tt.wantCheck {
-				t.Errorf("CheckLock() = %+v\nWant = %+v", got, !tt.wantCheck)
+				t.Errorf("checkLock() = %+v\nWant = %+v", got, !tt.wantCheck)
+			}
+
+			if err := unix.Close(lock); err != nil {
+				t.Errorf("Close() error = %v", err)
 			}
 		})
 	}
