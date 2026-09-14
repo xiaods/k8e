@@ -171,6 +171,9 @@ If you only see a platform-suffixed name in the user's environment (no symlink y
 
 **mTLS bootstrap:** first remote connect/login uses an API key once; CLI stores `ca.crt` + `client.crt` + `client.key` (private key never leaves the machine). Client certs last **90 days** and auto-renew when **&lt;30 days** remain. API keys default to **30-day TTL** (`k8e sandbox-apikey create name`, override with `--ttl 90d|never`).
 
+First authentication verifies the gateway using system trust, a cached CA, or an administrator-provided `--ca-file /path/to/sandbox-ca.crt` on `connect`/`login`. Obtain that CA through a trusted channel. Private-CA gateways require the CA on first use. `--insecure-bootstrap` explicitly bypasses server verification only when no CA is selected; this exposes the API key to server impersonation and must not be the default recovery step. `login` always authenticates the supplied API key, even with valid cached credentials. Concurrent CLI processes serialize credential initialization and renewal.
+
+
 **Profiles** (`~/.k8e/sandbox/profiles.yaml`, override with `K8E_SANDBOX_CONFIG`):
 
 ```yaml
@@ -267,7 +270,7 @@ k8e sandbox-apikey create my-agent
 # SDKs: they require the e2b_ prefix and the server strips it.
 # k8e sandbox-apikey create my-agent --ttl never   # optional non-expiring
 
-k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey <64-hex key>
+k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey <64-hex key> --ca-file /path/to/sandbox-ca.crt
 # Multi-cluster: k8e-sandbox-cli --profile prod connect --apikey <64-hex key>
 ```
 
@@ -378,7 +381,7 @@ Default allowed hosts (cluster `SandboxMatrix.spec.defaultAllowedHosts`): `pypi.
 
 | Exit | Meaning | Action |
 |------|---------|--------|
-| 2 | TLS / cert / unreachable | Server reinstalled or CA rotated? Re-run `connect --reset-certs --apikey <key>` (clears the cached CA and re-bootstraps trust); otherwise check profile `cert_dir` |
+| 2 | TLS / cert / unreachable | Server reinstalled or CA rotated? Re-run `connect --reset-certs --apikey <key> --ca-file /path/to/trusted-new-ca.crt` (validates new credentials before replacing cached files); otherwise check profile `cert_dir` |
 | 1 | Command/session error | Read JSON error; recreate session if gone; re-create API key if TTL expired |
 | 8 | ResourceExhausted | Wait or free warm pool capacity |
 

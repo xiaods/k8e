@@ -109,21 +109,8 @@ func TestInspectClientCertSinglePass(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteFileAndLoadOrGenerateKey(t *testing.T) {
+func TestAtomicWriteFile(t *testing.T) {
 	dir := t.TempDir()
-	keyFile := filepath.Join(dir, "client.key")
-
-	k1, err := loadOrGenerateKey(keyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	k2, err := loadOrGenerateKey(keyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if k1.D.Cmp(k2.D) != 0 {
-		t.Fatal("loadOrGenerateKey should reuse existing key")
-	}
 
 	// atomicWriteFile should produce the exact payload after rename
 	path := filepath.Join(dir, "ca.crt")

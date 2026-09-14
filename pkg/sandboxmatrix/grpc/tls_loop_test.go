@@ -3,9 +3,10 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"net"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -45,10 +46,8 @@ func waitForPort(t *testing.T, port int) {
 
 // TestTLSGatewayLoop verifies the full mTLS bootstrap + status path over a
 // real gateway: server issues its sandbox CA + server cert, the client
-// bootstraps via Login (insecure) with an API key, then dials with mTLS and
-// the availability probe (DestroySession noop → NotFound) succeeds. This is
-// the exact path `k8e sandbox status` exercises; a regression here means the
-// gateway handshake (currently EOF on remote AWS) is broken server-side.
+// bootstraps via Login with a trusted CA and API key, then dials with mTLS.
+// The read-only availability probe exercises the connect verification path.
 func TestTLSGatewayLoop(t *testing.T) {
 	certDir := t.TempDir()
 	o := newTestOrchestrator()
@@ -90,18 +89,16 @@ func TestTLSGatewayLoop(t *testing.T) {
 
 	// Client bootstrap into an isolated cert dir (never touch ~/.k8e/sandbox).
 	t.Setenv("K8E_SANDBOX_CERT_DIR", filepath.Join(certDir, "client"))
-	c, err := client.NewClientWithEndpoint(fmt.Sprintf("127.0.0.1:%d", port), "tls-test-key")
+	c, err := client.NewClientWithOptions(fmt.Sprintf("127.0.0.1:%d", port), "tls-test-key", client.ConnectOptions{CAFile: filepath.Join(certDir, "ca.crt")})
 	if err != nil {
 		t.Fatalf("client bootstrap: %v", err)
 	}
 	defer c.Close()
 
-	// Availability probe — the exact shape `k8e sandbox status` uses: the
-	// gateway answers (handshake + auth complete) and the noop destroy fails
-	// only because the session does not exist. The CLI treats the
-	// "not found" text as a healthy gateway (errSessionNotFound).
-	_, err = c.SandboxServiceClient.DestroySession(ctx, &pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
-	if err == nil || !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("status probe: expected session-not-found response, got %v — gateway TLS handshake broken", err)
+	probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer probeCancel()
+	_, err = c.SandboxServiceClient.GetSession(probeCtx, &pb.GetSessionRequest{SessionId: "healthcheck-probe-noop"})
+	if status.Code(err) != codes.NotFound {
+		t.Fatalf("probe: expected NotFound, got %v", err)
 	}
 }
