@@ -56,6 +56,7 @@ type testBackend struct {
 	pb.SandboxServiceClient
 	sync.Mutex
 	creates, execs, polls int
+	lastTimeout           int32
 	lostReply             bool
 }
 
@@ -69,6 +70,7 @@ func (backend *testBackend) Exec(_ context.Context, request *pb.ExecRequest, _ .
 	backend.Lock()
 	defer backend.Unlock()
 	backend.execs++
+	backend.lastTimeout = request.Timeout
 	if !request.Background {
 		return nil, errors.New("expected background execution")
 	}
@@ -248,5 +250,31 @@ func TestRejectForgedAndOutOfRangeArguments(t *testing.T) {
 	}
 	if backend.execs != 0 {
 		t.Fatal("invalid args executed")
+	}
+}
+
+// TestBackgroundExecTimeoutIsOptIn pins that omitting timeout leaves the run
+// uncapped (0 = no cap) while an explicit value is forwarded as a lifetime cap.
+// sandboxd SIGKILLs a background run once its cap expires, so a defensive 30s
+// default here killed every exposed service 30 seconds after submission.
+func TestBackgroundExecTimeoutIsOptIn(t *testing.T) {
+	service, _, backend, sessionID := serviceFixture(t)
+
+	if _, err := invoke(t, service, "alice", "sandbox_exec", map[string]any{
+		"session_id": sessionID, "operation_id": "exec-uncapped", "command": "python3 -m http.server 8080",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if backend.lastTimeout != 0 {
+		t.Fatalf("omitted timeout must leave the run uncapped, got %d", backend.lastTimeout)
+	}
+
+	if _, err := invoke(t, service, "alice", "sandbox_exec", map[string]any{
+		"session_id": sessionID, "operation_id": "exec-capped", "command": "sleep 1", "timeout": 120,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if backend.lastTimeout != 120 {
+		t.Fatalf("explicit timeout must be forwarded, got %d", backend.lastTimeout)
 	}
 }

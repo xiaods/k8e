@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -24,9 +25,30 @@ var (
 	defaultToken    = "abcdef.0123456789abcdef"
 )
 
+// usesSSLCertFileForSystemRoots reports whether the Go runtime builds the system
+// certificate pool from the SSL_CERT_FILE environment variable on this platform.
+//
+// crypto/x509 only consults SSL_CERT_FILE on the platforms covered by
+// crypto/x509/root_unix.go (aix, dragonfly, freebsd, linux, netbsd, openbsd and
+// solaris). On darwin and windows the system pool is backed by the OS trust
+// store instead, and is cached for the lifetime of the process, so a test
+// cannot simulate a trusted CA by pointing SSL_CERT_FILE at its own certificate.
+func usesSSLCertFileForSystemRoots() bool {
+	switch runtime.GOOS {
+	case "aix", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "solaris":
+		return true
+	default:
+		return false
+	}
+}
+
 // Test_UnitTrustedCA confirms that tokens are validated when the server uses a cert (self-signed or otherwise)
 // that is trusted by the OS CA bundle. This test must be run first, since it mucks with the system root certs.
 func Test_UnitTrustedCA(t *testing.T) {
+	if !usesSSLCertFileForSystemRoots() {
+		t.Skipf("crypto/x509 does not load the system root pool from SSL_CERT_FILE on %s; "+
+			"cannot simulate an OS-trusted CA here", runtime.GOOS)
+	}
 	assert := assert.New(t)
 	server := newTLSServer(t, defaultUsername, defaultPassword, false)
 	defer server.Close()

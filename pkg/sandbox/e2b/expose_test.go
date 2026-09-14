@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
@@ -94,5 +95,35 @@ func TestExposeProxy_BadRequest(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Fatalf("path %s: expected 400, got %d", path, resp.StatusCode)
 		}
+	}
+}
+
+// TestExposeProxy_BackendDownIsDiagnosable covers the failure mode that made an
+// exposed-but-dead service so hard to debug: the pod exists and the port is
+// registered, but nothing is listening in it. The proxy must answer 502 with a
+// body that names the unreachable backend instead of an empty response.
+func TestExposeProxy_BackendDownIsDiagnosable(t *testing.T) {
+	// Reserve a port and release it so the dial is refused.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	podPort := ln.Addr().(*net.TCPAddr).Port
+	if err := ln.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	base := serveE2BWithExposed(t, "127.0.0.1", []int32{int32(podPort)})
+	resp, err := http.Get(base + fmt.Sprintf("/k8e/expose/sess-1/%d/", podPort))
+	if err != nil {
+		t.Fatalf("proxy request: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d (%s)", resp.StatusCode, body)
+	}
+	if backend := fmt.Sprintf("127.0.0.1:%d", podPort); !strings.Contains(string(body), backend) {
+		t.Fatalf("502 body must name the unreachable backend %s, got %q", backend, string(body))
 	}
 }
