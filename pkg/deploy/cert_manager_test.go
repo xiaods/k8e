@@ -18,15 +18,30 @@ func TestCertManagerBundle(t *testing.T) {
 	content := certManagerEmbedded(t)
 	parsed := parseCertManagerManifest(t, content)
 
-	t.Run("deployments", func(t *testing.T) {
+	t.Run("deployments", assertCertManagerDeployments(parsed))
+	t.Run("crds", assertCertManagerCRDs(parsed))
+	t.Run("runtime images", assertCertManagerRuntimeImages(parsed))
+	t.Run("airgap coverage", assertCertManagerAirgapCoverage(parsed))
+}
+
+// assertCertManagerDeployments returns the sub-test that checks every
+// cert-manager controller Deployment is present in the bundle.
+func assertCertManagerDeployments(parsed certManagerManifest) func(*testing.T) {
+	return func(t *testing.T) {
+		t.Helper()
 		for _, name := range []string{"cert-manager", "cert-manager-cainjector", "cert-manager-webhook"} {
 			if !parsed.deployments[name] {
 				t.Errorf("missing deployment %s", name)
 			}
 		}
-	})
+	}
+}
 
-	t.Run("crds", func(t *testing.T) {
+// assertCertManagerCRDs returns the sub-test that checks the cert-manager API
+// is registered through CustomResourceDefinitions.
+func assertCertManagerCRDs(parsed certManagerManifest) func(*testing.T) {
+	return func(t *testing.T) {
+		t.Helper()
 		for _, name := range []string{
 			"certificates.cert-manager.io",
 			"certificaterequests.cert-manager.io",
@@ -39,18 +54,29 @@ func TestCertManagerBundle(t *testing.T) {
 				t.Errorf("missing CRD %s", name)
 			}
 		}
-	})
+	}
+}
 
-	t.Run("runtime images", func(t *testing.T) {
+// assertCertManagerRuntimeImages returns the sub-test that checks the bundled
+// runtime images, including the ACME HTTP-01 solver.
+func assertCertManagerRuntimeImages(parsed certManagerManifest) func(*testing.T) {
+	return func(t *testing.T) {
+		t.Helper()
 		for _, component := range []string{"controller", "cainjector", "webhook", "acmesolver"} {
 			image := "quay.io/jetstack/cert-manager-" + component + ":v1.21.2"
 			if !parsed.images[image] {
 				t.Errorf("missing runtime image %s", image)
 			}
 		}
-	})
+	}
+}
 
-	t.Run("airgap coverage", func(t *testing.T) {
+// assertCertManagerAirgapCoverage returns the sub-test that checks every image
+// referenced by the bundle is shipped by the offline archive, at the expected
+// version.
+func assertCertManagerAirgapCoverage(parsed certManagerManifest) func(*testing.T) {
+	return func(t *testing.T) {
+		t.Helper()
 		packaged := airgapImageSet(t)
 		for image := range parsed.images {
 			if !packaged[image] {
@@ -60,7 +86,7 @@ func TestCertManagerBundle(t *testing.T) {
 				t.Errorf("unexpected cert-manager version: %s", image)
 			}
 		}
-	})
+	}
 }
 
 // certManagerEmbedded returns the embedded manifest after asserting it still
