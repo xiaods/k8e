@@ -14,9 +14,9 @@ func LoginCommand() cli.Command {
 	return cli.Command{
 		Name:  "login",
 		Usage: "Authenticate to a K8E sandbox gateway and obtain an mTLS client certificate",
-		Flags: []cli.Flag{
+		Flags: append(authFlags(), []cli.Flag{
 			cli.StringFlag{Name: "device-name", Usage: "Device name for audit logging (default: hostname)"},
-		},
+		}...),
 		Action: func(ctx *cli.Context) error {
 			deviceFlag := strings.TrimSpace(ctx.String("device-name"))
 			resolved, err := ResolveConn(ctx.GlobalString("endpoint"), ctx.GlobalString("apikey"), ctx.GlobalString("profile"), deviceFlag)
@@ -34,7 +34,9 @@ func LoginCommand() cli.Command {
 				return printErrorExit("--apikey is required for login (or K8E_SANDBOX_APIKEY)", 1)
 			}
 
-			c, err := client.NewClientWithEndpoint(endpoint, apikey)
+			opts := authOptions(ctx)
+			opts.ForceLogin = true
+			c, err := client.NewClientWithOptions(endpoint, apikey, opts)
 			if err != nil {
 				return printErrorExit("login failed: "+err.Error(), 1)
 			}

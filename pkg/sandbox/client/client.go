@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofrs/flock"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"github.com/xiaods/k8e/pkg/version"
 	"google.golang.org/grpc"
@@ -117,145 +118,266 @@ const (
 //
 // When apiKey is empty, K8E_SANDBOX_APIKEY is used if set (agent/CI convenience).
 func NewClientWithEndpoint(endpoint, apiKey string) (*Client, error) {
+	return NewClientWithOptions(endpoint, apiKey, ConnectOptions{})
+}
+
+// ConnectOptions controls explicit authentication. InsecureBootstrap only applies
+// when no CA is available; it never bypasses verification of a cached CA.
+type ConnectOptions struct {
+	CAFile            string
+	InsecureBootstrap bool
+	ForceLogin        bool
+	ResetCerts        bool
+}
+
+// NewClientWithOptions serializes credential inspection and mutation across CLI
+// processes sharing a cache directory. Ordinary calls reuse valid credentials;
+// ForceLogin always authenticates the supplied API key with the server.
+func NewClientWithOptions(endpoint, apiKey string, opts ConnectOptions) (*Client, error) {
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(os.Getenv("K8E_SANDBOX_APIKEY"))
 	}
-	if apiKey == "" {
+	if err := validateConnectOptions(endpoint, apiKey, opts); err != nil {
+		return nil, err
+	}
+	if apiKey == "" && (endpoint == "" || isLoopback(endpoint)) {
 		if endpoint == "" {
 			return NewClient()
 		}
-		if isLoopback(endpoint) {
-			return newLocalClient(endpoint)
-		}
-		return newClientWithCachedCerts(endpoint)
+		return newLocalClient(endpoint)
 	}
-	cacheDir, err := sandboxCacheDir()
-	if err != nil {
-		return nil, fmt.Errorf("sandbox client: resolve cache dir: %w", err)
-	}
-	caFile := filepath.Join(cacheDir, "ca.crt")
-	certFile := filepath.Join(cacheDir, "client.crt")
-	keyFile := filepath.Join(cacheDir, "client.key")
-
-	// Path 1: have CA + valid client cert for this endpoint → direct mTLS
-	if _, caErr := os.Stat(caFile); caErr == nil {
-		if err := checkEndpointStamp(cacheDir, endpoint); err != nil {
-			// Wrong endpoint's material: re-bootstrap with the provided API key.
-			return bootstrapInsecure(endpoint, caFile, certFile, keyFile, apiKey)
-		}
-		st := inspectClientCert(certFile)
-		if st.valid {
-			// Lazy renewal: single cert parse already decided expiringSoon.
-			if st.expiringSoon {
-				renewClientCert(endpoint, caFile, certFile, keyFile)
-			}
-			conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
-			if err != nil {
-				return nil, dialErr(endpoint, err)
-			}
-			return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
-		}
-
-		// Path 2: have CA but cert expired/missing → TLS + Login with API key
-		return bootstrapWithCA(endpoint, caFile, certFile, keyFile, apiKey)
-	}
-
-	// Path 3: no CA → insecure bootstrap, get both CA and client cert
-	return bootstrapInsecure(endpoint, caFile, certFile, keyFile, apiKey)
+	return newRemoteClient(endpoint, apiKey, opts)
 }
 
-// newClientWithCachedCerts reuses the mTLS certificate material stored by a
-// previous login/connect for the same remote endpoint.
-func newClientWithCachedCerts(endpoint string) (*Client, error) {
-	cacheDir, err := sandboxCacheDir()
-	if err != nil {
-		return nil, fmt.Errorf("sandbox client: resolve cache dir: %w", err)
+// validateConnectOptions rejects requests that cannot be satisfied: an explicit
+// login or reset needs both an endpoint and an API key.
+func validateConnectOptions(endpoint, apiKey string, opts ConnectOptions) error {
+	if (opts.ForceLogin || opts.ResetCerts) && (apiKey == "" || endpoint == "") {
+		return fmt.Errorf("sandbox client: explicit login/reset requires endpoint and API key")
 	}
-	caFile := filepath.Join(cacheDir, "ca.crt")
-	certFile := filepath.Join(cacheDir, "client.crt")
-	keyFile := filepath.Join(cacheDir, "client.key")
+	return nil
+}
 
-	if _, err := os.Stat(caFile); err != nil {
-		return nil, fmt.Errorf("sandbox client: no cached CA for %s; run connect or login with --apikey", endpoint)
-	}
-	if err := checkEndpointStamp(cacheDir, endpoint); err != nil {
+// credentialFiles is the mTLS material owned by one credential cache directory.
+type credentialFiles struct {
+	ca   string
+	cert string
+	key  string
+}
+
+// File names of the mTLS material inside a credential cache directory. They
+// are shared by the bootstrap path and every caller that reads the cache, so
+// the names are defined once here.
+const (
+	caFileName     = "ca.crt"
+	clientCertFile = "client.crt"
+	clientKeyFile  = "client.key"
+)
+
+// cacheState is the offline inspection result of the cached credentials: it is
+// gathered before any network call is made.
+type cacheState struct {
+	caMissing bool
+	stampErr  error
+}
+
+// reusable reports whether cached material may serve this dial as-is, without
+// contacting the gateway for a fresh certificate.
+func (s cacheState) reusable(opts ConnectOptions) bool {
+	return !s.caMissing && s.stampErr == nil && !opts.ForceLogin && !opts.ResetCerts
+}
+
+// newRemoteClient resolves credentials for a remote gateway while holding the
+// shared credentials lock, reusing valid material or authenticating anew.
+func newRemoteClient(endpoint, apiKey string, opts ConnectOptions) (*Client, error) {
+	cacheDir, unlock, err := lockCredentialCache()
+	if err != nil {
 		return nil, err
 	}
-	st := inspectClientCert(certFile)
-	if !st.valid {
+	defer unlock()
+
+	files := credentialFiles{
+		ca:   filepath.Join(cacheDir, caFileName),
+		cert: filepath.Join(cacheDir, clientCertFile),
+		key:  filepath.Join(cacheDir, clientKeyFile),
+	}
+	state, err := inspectCredentialCache(cacheDir, endpoint, files)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey == "" {
+		if err := requireCachedCredentials(endpoint, state); err != nil {
+			return nil, err
+		}
+	}
+	if c, reused, err := dialWithCachedCerts(endpoint, files, state, opts); reused {
+		return c, err
+	}
+	if apiKey == "" {
 		return nil, fmt.Errorf("sandbox client: cached client certificate for %s is missing or expired; reconnect with --apikey", endpoint)
 	}
-	if st.expiringSoon {
-		renewClientCert(endpoint, caFile, certFile, keyFile)
-	}
+	return authenticate(endpoint, cacheDir, resolveTrustFile(opts, state, files.ca), apiKey, opts)
+}
 
-	conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
+// lockCredentialCache serializes credential inspection and mutation across
+// concurrent CLI processes sharing a cache directory.
+func lockCredentialCache() (string, func(), error) {
+	cacheDir, err := sandboxCacheDir()
 	if err != nil {
-		return nil, dialErr(endpoint, err)
+		return "", nil, err
 	}
-	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
+	ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
+	defer cancel()
+	unlock, err := lockCredentials(ctx, cacheDir)
+	if err != nil {
+		return "", nil, err
+	}
+	return cacheDir, unlock, nil
+}
+
+// inspectCredentialCache records whether the cached CA exists and whether the
+// cached material was issued for the requested endpoint.
+func inspectCredentialCache(cacheDir, endpoint string, files credentialFiles) (cacheState, error) {
+	state := cacheState{stampErr: checkEndpointStamp(cacheDir, endpoint)}
+	_, err := os.Stat(files.ca)
+	if err != nil && !os.IsNotExist(err) {
+		return cacheState{}, err
+	}
+	state.caMissing = err != nil
+	return state, nil
+}
+
+// requireCachedCredentials rejects a keyless dial that the cache cannot serve.
+func requireCachedCredentials(endpoint string, state cacheState) error {
+	if state.caMissing {
+		return fmt.Errorf("sandbox client: no cached CA for %s; run connect or login with --apikey", endpoint)
+	}
+	if state.stampErr != nil {
+		return state.stampErr
+	}
+	return nil
+}
+
+// dialWithCachedCerts serves the dial from valid cached material, renewing the
+// certificate lazily when it nears expiry. The second result reports whether
+// the cached path applied; when it does not, the caller authenticates anew.
+func dialWithCachedCerts(endpoint string, files credentialFiles, state cacheState, opts ConnectOptions) (*Client, bool, error) {
+	if !state.reusable(opts) {
+		return nil, false, nil
+	}
+	st := inspectClientCert(files.cert)
+	if !st.valid {
+		return nil, false, nil
+	}
+	if st.expiringSoon {
+		renewClientCert(endpoint, files.ca, files.cert, files.key)
+	}
+	conn, err := dialMTLS(endpoint, files.ca, files.cert, files.key)
+	if err != nil {
+		return nil, true, dialErr(endpoint, err)
+	}
+	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, true, nil
+}
+
+// resolveTrustFile picks the CA that verifies the gateway during bootstrap: an
+// explicit --ca-file always wins, otherwise the cached CA is reused unless it
+// belongs to another endpoint or the caller asked to reset credentials.
+func resolveTrustFile(opts ConnectOptions, state cacheState, caFile string) string {
+	if opts.CAFile != "" || opts.ResetCerts || state.caMissing || state.stampErr != nil {
+		return opts.CAFile
+	}
+	return caFile
+}
+
+func lockCredentials(ctx context.Context, dir string) (func(), error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, err
+	}
+	lock := flock.New(filepath.Join(dir, "credentials.lock"))
+	locked, err := lock.TryLockContext(ctx, 25*time.Millisecond)
+	if err != nil || !locked {
+		_ = lock.Close()
+		if err == nil {
+			err = ctx.Err()
+		}
+		return nil, fmt.Errorf("sandbox client: wait for credentials lock: %w", err)
+	}
+	return func() { _ = lock.Close() }, nil
 }
 
 func (c *Client) Close() error { return c.conn.Close() }
 
 // ── mTLS bootstrap helpers ────────────────────────────────────────────────────
 
-func bootstrapWithCA(endpoint, caFile, certFile, keyFile, apiKey string) (*Client, error) {
-	key, err := loadOrGenerateKey(keyFile)
-	if err != nil {
-		return nil, err
+// authenticate prepares and validates the complete response before replacing any
+// credentials. The caller holds credentials.lock through publication and loading.
+func authenticate(endpoint, cacheDir, trustFile, apiKey string, opts ConnectOptions) (*Client, error) {
+	keyFile := filepath.Join(cacheDir, clientKeyFile)
+	key, err := loadClientKey(keyFile)
+	if err != nil || opts.ResetCerts {
+		if err != nil && !os.IsNotExist(err) && !opts.ResetCerts {
+			return nil, fmt.Errorf("sandbox client: read private key: %w", err)
+		}
+		key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		if err != nil {
+			return nil, err
+		}
 	}
 	csr, err := createCSR(key)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := callLogin(endpoint, caFile, apiKey, csr)
+	resp, err := callLogin(endpoint, trustFile, apiKey, csr, opts.InsecureBootstrap)
 	if err != nil {
-		return nil, fmt.Errorf("sandbox client: login: %w", err)
+		return nil, fmt.Errorf("sandbox client: login (verify server trust with --ca-file): %w", err)
 	}
-	if err := atomicWriteFile(certFile, []byte(resp.Cert), 0644); err != nil {
-		return nil, fmt.Errorf("sandbox client: save cert: %w", err)
+	der, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return nil, err
 	}
-	if err := writeEndpointStamp(filepath.Dir(caFile), endpoint); err != nil {
-		return nil, fmt.Errorf("sandbox client: save endpoint stamp: %w", err)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+	if err := validateIssuedCertificate(resp, keyPEM); err != nil {
+		return nil, err
+	}
+	if err := publishCredentials(cacheDir, []credentialFile{
+		{clientKeyFile, keyPEM, 0600},
+		{caFileName, []byte(resp.CaCert), 0644},
+		{clientCertFile, []byte(resp.Cert), 0644},
+		{endpointStampFile, []byte(endpoint + "\n"), 0644},
+	}, os.Rename); err != nil {
+		return nil, err
 	}
 
-	conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
+	conn, err := dialMTLS(endpoint, filepath.Join(cacheDir, caFileName), filepath.Join(cacheDir, clientCertFile), keyFile)
 	if err != nil {
 		return nil, dialErr(endpoint, err)
 	}
 	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
 }
 
-func bootstrapInsecure(endpoint, caFile, certFile, keyFile, apiKey string) (*Client, error) {
-	key, err := loadOrGenerateKey(keyFile)
+func validateIssuedCertificate(resp *pb.LoginResponse, keyPEM []byte) error {
+	pair, err := tls.X509KeyPair([]byte(resp.GetCert()), keyPEM)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("sandbox client: invalid issued certificate: %w", err)
 	}
-	csr, err := createCSR(key)
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(resp.GetCaCert())) {
+		return fmt.Errorf("sandbox client: invalid issued CA")
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return nil, err
+		return err
 	}
-	// empty caFile → InsecureSkipVerify for bootstrap
-	resp, err := callLogin(endpoint, "", apiKey, csr)
-	if err != nil {
-		return nil, fmt.Errorf("sandbox client: bootstrap login: %w", err)
+	intermediates := x509.NewCertPool()
+	for _, der := range pair.Certificate[1:] {
+		cert, err := x509.ParseCertificate(der)
+		if err != nil {
+			return err
+		}
+		intermediates.AddCert(cert)
 	}
-	if err := atomicWriteFile(caFile, []byte(resp.CaCert), 0644); err != nil {
-		return nil, fmt.Errorf("sandbox client: save CA: %w", err)
-	}
-	if err := atomicWriteFile(certFile, []byte(resp.Cert), 0644); err != nil {
-		return nil, fmt.Errorf("sandbox client: save cert: %w", err)
-	}
-	if err := writeEndpointStamp(filepath.Dir(caFile), endpoint); err != nil {
-		return nil, fmt.Errorf("sandbox client: save endpoint stamp: %w", err)
-	}
-
-	conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
-	if err != nil {
-		return nil, dialErr(endpoint, err)
-	}
-	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
+	_, err = leaf.Verify(x509.VerifyOptions{Roots: pool, Intermediates: intermediates, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
+	return err
 }
 
 // renewClientCert attempts to renew the client certificate via mTLS.
@@ -273,6 +395,10 @@ func renewClientCert(endpoint, caFile, certFile, keyFile string) {
 	if err != nil {
 		return
 	}
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil || validateIssuedCertificate(resp, keyPEM) != nil {
+		return
+	}
 	if err := atomicWriteFile(certFile, []byte(resp.Cert), 0644); err != nil {
 		return
 	}
@@ -281,35 +407,6 @@ func renewClientCert(endpoint, caFile, certFile, keyFile string) {
 }
 
 // ── Key & CSR generation ──────────────────────────────────────────────────────
-
-// loadOrGenerateKey reuses an existing client key when present so re-login after
-// cert expiry does not pay for a new ECDSA keygen or invalidate other cached material.
-func loadOrGenerateKey(keyFile string) (*ecdsa.PrivateKey, error) {
-	if key, err := loadClientKey(keyFile); err == nil {
-		return key, nil
-	}
-	return generateAndSaveKey(keyFile)
-}
-
-func generateAndSaveKey(keyFile string) (*ecdsa.PrivateKey, error) {
-	if err := os.MkdirAll(filepath.Dir(keyFile), 0700); err != nil {
-		return nil, fmt.Errorf("sandbox client: create cache dir: %w", err)
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("sandbox client: generate key: %w", err)
-	}
-	der, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("sandbox client: marshal key: %w", err)
-	}
-	if err := atomicWriteFile(keyFile, pem.EncodeToMemory(&pem.Block{
-		Type: "EC PRIVATE KEY", Bytes: der,
-	}), 0600); err != nil {
-		return nil, fmt.Errorf("sandbox client: save key: %w", err)
-	}
-	return key, nil
-}
 
 // atomicWriteFile writes data via temp file + rename so concurrent CLI processes
 // never observe a half-written cert/key (issue #538).
@@ -491,31 +588,35 @@ func loopbackTLSConfig(pool *x509.CertPool, clientCerts ...tls.Certificate) *tls
 	return cfg
 }
 
-func callLogin(endpoint, caFile, apiKey, csr string) (*pb.LoginResponse, error) {
-	var creds credentials.TransportCredentials
+func loginTLSConfig(endpoint, caFile string, insecure bool) (*tls.Config, error) {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
 	if caFile == "" {
-		// Bootstrap: no cached CA, server verification is impossible. The
-		// connection is authenticated by the API key in gRPC metadata. A MITM
-		// that intercepts this single Login call gains only a short-lived client
-		// certificate, useless for future mTLS connections that verify the CA.
-		//nolint:gosec
-		creds = credentials.NewTLS(&tls.Config{ // NOSONAR
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: true, // NOSONAR: ssl:S4830 — bootstrap secured by API key auth
-		})
-	} else {
-		caPEM, err := os.ReadFile(caFile)
-		if err != nil {
-			return nil, fmt.Errorf("read CA: %w", err)
-		}
-		pool := x509.NewCertPool()
-		pool.AppendCertsFromPEM(caPEM)
-		creds = credentials.NewTLS(&tls.Config{
-			RootCAs:            pool,
-			MinVersion:         tls.VersionTLS12,
-			InsecureSkipVerify: isLoopback(endpoint),
-		})
+		// System roots are the default. An explicit opt-in is required to send
+		// the API key without authenticating the server during initial bootstrap.
+		cfg.InsecureSkipVerify = insecure //nolint:gosec // explicit bootstrap opt-in
+		return cfg, nil
 	}
+	caPEM, err := os.ReadFile(caFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil, fmt.Errorf("parse CA certificate: %s", caFile)
+	}
+	if isLoopback(endpoint) {
+		return loopbackTLSConfig(pool), nil
+	}
+	cfg.RootCAs = pool
+	return cfg, nil
+}
+
+func callLogin(endpoint, caFile, apiKey, csr string, insecure bool) (*pb.LoginResponse, error) {
+	cfg, err := loginTLSConfig(endpoint, caFile, insecure)
+	if err != nil {
+		return nil, err
+	}
+	creds := credentials.NewTLS(cfg)
 
 	conn, err := grpc.NewClient(endpoint, append(dialOpts(), grpc.WithTransportCredentials(creds))...)
 	if err != nil {
@@ -604,7 +705,7 @@ func ConnErrorHint(err error) string {
 		strings.Contains(msg, "ECDSA verification failure"),
 		strings.Contains(msg, "x509: certificate"),
 		strings.Contains(msg, "certificate is not standards compliant"):
-		return fmt.Sprintf("the cached CA (%s/ca.crt) does not match this gateway — the server was reinstalled or its CA rotated. Re-run connect with --reset-certs, or manually: rm -rf %s", cacheHint, cacheHint)
+		return fmt.Sprintf("TLS verification failed using %s/ca.crt; verify the endpoint and obtain the correct CA through a trusted channel, then run connect --reset-certs --apikey <key> --ca-file <trusted-ca>", cacheHint)
 	case strings.Contains(msg, "certificate required"), strings.Contains(msg, "bad certificate"):
 		return "client certificate rejected — re-run login/connect with --apikey"
 	default:
@@ -623,7 +724,7 @@ func dialErr(endpoint string, err error) error {
 		if cacheHint == "" {
 			cacheHint = "~/.k8e/sandbox"
 		}
-		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: TLS trust failed — remove %s/ca.crt and re-run login/connect with --apikey", endpoint, err, cacheHint)
+		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: TLS trust failed — verify %s/ca.crt and reconnect with --reset-certs --apikey <key> --ca-file <trusted-ca>", endpoint, err, cacheHint)
 	case strings.Contains(msg, "certificate required"),
 		strings.Contains(msg, "bad certificate"):
 		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: client cert rejected — re-run login/connect with --apikey", endpoint, err)
@@ -636,7 +737,7 @@ func dialErr(endpoint string, err error) error {
 		if cacheHint == "" {
 			cacheHint = "~/.k8e/sandbox"
 		}
-		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: gateway closed the TLS handshake (EOF) — verify the gateway is running and reachable, then re-run connect/login with --apikey (remove %s/ca.crt if the server CA rotated)", endpoint, err, cacheHint)
+		return fmt.Errorf("sandbox client: dial %s: %w\n  hint: gateway closed the TLS handshake (EOF) — verify the gateway is running and reachable, then verify %s/ca.crt; if the CA rotated, use connect --reset-certs --apikey <key> --ca-file <trusted-ca>", endpoint, err, cacheHint)
 	default:
 		return fmt.Errorf("sandbox client: dial %s: %w", endpoint, err)
 	}

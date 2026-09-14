@@ -3,9 +3,11 @@ package sandboxcli
 import (
 	"context"
 	"fmt"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/sandbox/client"
@@ -52,7 +54,7 @@ func ConnectCommand() cli.Command {
 	return cli.Command{
 		Name:  "connect",
 		Usage: "Connect to local or remote K8E sandbox and install /k8e-sandbox agent skills",
-		Flags: []cli.Flag{
+		Flags: append(authFlags(), []cli.Flag{
 			cli.StringFlag{
 				Name:   flagEndpoint,
 				EnvVar: "K8E_SANDBOX_ENDPOINT",
@@ -91,9 +93,9 @@ func ConnectCommand() cli.Command {
 			},
 			cli.BoolFlag{
 				Name:  flagResetCerts,
-				Usage: "Delete cached CA/client certs for this connection first — use after a server reinstall or CA rotation (trust is re-established from the --apikey bootstrap)",
+				Usage: "Replace cached credentials after authenticating with --apikey and fresh server trust (use --ca-file)",
 			},
-		},
+		}...),
 		Action: connectAction,
 	}
 }
@@ -116,16 +118,14 @@ func connectAction(ctx *cli.Context) error {
 	endpoint := resolved.Endpoint
 	apikey := resolved.APIKey
 
-	if ctx.Bool(flagResetCerts) {
-		resetCerts(resolved)
-	}
-
 	mode, cfgEndpoint, err := resolveConnectMode(endpoint, apikey)
 	if err != nil {
 		return printErrorExit(err.Error(), 1)
 	}
 
-	c, dialErr := dialForConnect(mode, cfgEndpoint, apikey)
+	opts := authOptions(ctx)
+	opts.ResetCerts = ctx.Bool(flagResetCerts)
+	c, dialErr := dialForConnect(mode, cfgEndpoint, apikey, opts)
 	if dialErr != nil {
 		return printErrorExit("connect failed: "+dialErr.Error(), 2)
 	}
@@ -164,24 +164,6 @@ func connectAction(ctx *cli.Context) error {
 
 	printConnectSuccess(mode, cfgEndpoint, cliPath, installedAgents, installResults)
 	return nil
-}
-
-// resetCerts deletes cached trust material (CA, client cert/key, endpoint
-// stamp) for this connection so the next dial re-bootstraps from the API key.
-// When no explicit cert_dir was configured it falls back to the default cache
-// dir (~/.k8e/sandbox) — otherwise --reset-certs would silently no-op on
-// default installs while the dial keeps trusting the stale CA there.
-func resetCerts(resolved *ResolvedConn) {
-	dir := resolved.CertDir
-	if dir == "" {
-		dir, _ = dataDir()
-	}
-	if dir == "" {
-		return
-	}
-	for _, f := range []string{"ca.crt", "client.crt", "client.key", "endpoint"} {
-		_ = os.Remove(filepath.Join(dir, f))
-	}
 }
 
 func connectSkillOnly(ctx *cli.Context) error {
@@ -292,9 +274,9 @@ func endpointHost(endpoint string) string {
 	return endpoint
 }
 
-func dialForConnect(mode, endpoint, apikey string) (*client.Client, error) {
-	if mode == "remote" {
-		return client.NewClientWithEndpoint(endpoint, apikey)
+func dialForConnect(mode, endpoint, apikey string, opts client.ConnectOptions) (*client.Client, error) {
+	if mode == "remote" || opts.ResetCerts {
+		return client.NewClientWithOptions(endpoint, apikey, opts)
 	}
 	if endpoint != "" {
 		_ = os.Setenv("K8E_SANDBOX_ENDPOINT", endpoint)
@@ -302,20 +284,33 @@ func dialForConnect(mode, endpoint, apikey string) (*client.Client, error) {
 	return client.NewClient()
 }
 
+const gatewayVerifyTimeout = 15 * time.Second
+
 func verifyGateway(c *client.Client) error {
-	_, err := c.SandboxServiceClient.DestroySession(context.Background(),
-		&pb.DestroySessionRequest{SessionId: "healthcheck-probe-noop"})
-	if err == nil {
-		return nil
-	}
-	msg := err.Error()
-	if strings.Contains(msg, errSessionNotFound) {
-		return nil
-	}
-	if strings.Contains(strings.ToLower(msg), "not found") {
+	ctx, cancel := context.WithTimeout(context.Background(), gatewayVerifyTimeout)
+	defer cancel()
+	return probeGateway(ctx, c.SandboxServiceClient)
+}
+
+func probeGateway(ctx context.Context, c pb.SandboxServiceClient) error {
+	_, err := c.GetSession(ctx, &pb.GetSessionRequest{SessionId: "healthcheck-probe-noop"})
+	if status.Code(err) == codes.NotFound {
 		return nil
 	}
 	return err
+}
+
+// authFlags are deliberately command-local: bypassing initial trust is an
+// explicit login/connect action, never a persisted setting for ordinary RPCs.
+func authFlags() []cli.Flag {
+	return []cli.Flag{
+		cli.StringFlag{Name: "ca-file", Usage: "Trusted gateway CA PEM file for authentication"},
+		cli.BoolFlag{Name: "insecure-bootstrap", Usage: "Allow initial authentication without server verification (exposes API key to impersonation; prefer --ca-file)"},
+	}
+}
+
+func authOptions(ctx *cli.Context) client.ConnectOptions {
+	return client.ConnectOptions{CAFile: ctx.String("ca-file"), InsecureBootstrap: ctx.Bool("insecure-bootstrap")}
 }
 
 func printConnectSuccess(mode, endpoint, cliPath string, agents []string, results []InstallResult) {

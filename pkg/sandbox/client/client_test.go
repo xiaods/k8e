@@ -76,7 +76,7 @@ func TestSandboxCacheDirPriority(t *testing.T) {
 
 func TestInspectClientCertSinglePass(t *testing.T) {
 	dir := t.TempDir()
-	certFile := filepath.Join(dir, "client.crt")
+	certFile := filepath.Join(dir, clientCertFile)
 
 	// missing
 	st := inspectClientCert(certFile)
@@ -109,24 +109,11 @@ func TestInspectClientCertSinglePass(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteFileAndLoadOrGenerateKey(t *testing.T) {
+func TestAtomicWriteFile(t *testing.T) {
 	dir := t.TempDir()
-	keyFile := filepath.Join(dir, "client.key")
-
-	k1, err := loadOrGenerateKey(keyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	k2, err := loadOrGenerateKey(keyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if k1.D.Cmp(k2.D) != 0 {
-		t.Fatal("loadOrGenerateKey should reuse existing key")
-	}
 
 	// atomicWriteFile should produce the exact payload after rename
-	path := filepath.Join(dir, "ca.crt")
+	path := filepath.Join(dir, caFileName)
 	payload := []byte("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n")
 	if err := atomicWriteFile(path, payload, 0644); err != nil {
 		t.Fatal(err)
@@ -191,9 +178,9 @@ func TestLoginRequestAuditFields(t *testing.T) {
 
 func TestLoadMTLSMaterial(t *testing.T) {
 	dir := t.TempDir()
-	caFile := filepath.Join(dir, "ca.crt")
-	certFile := filepath.Join(dir, "client.crt")
-	keyFile := filepath.Join(dir, "client.key")
+	caFile := filepath.Join(dir, caFileName)
+	certFile := filepath.Join(dir, clientCertFile)
+	keyFile := filepath.Join(dir, clientKeyFile)
 
 	// Generate a mini CA + leaf so LoadX509KeyPair succeeds.
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

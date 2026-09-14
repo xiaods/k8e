@@ -131,13 +131,37 @@ jobs:
       # pkg/data, so no code generation or containerd/runc sources are required
       # for the control-plane profile.
       - name: Build k8e (linux/amd64)
-        run: make k8e
+        # Module downloads from proxy.golang.org occasionally abort mid-stream
+        # with transient HTTP/2 errors ("stream error: ... INTERNAL_ERROR"),
+        # which fails the build before any code is compiled. Retry the whole
+        # target: downloaded modules and build artifacts stay cached between
+        # attempts, so a retry only pays for the missing pieces.
+        run: |
+          for attempt in 1 2 3; do
+            if make k8e; then
+              exit 0
+            fi
+            echo "::warning::make k8e failed on attempt ${attempt}/3; retrying in 20s"
+            sleep 20
+          done
+          exit 1
       - name: Verify binary
         run: |
           test -x bin/k8e
           file bin/k8e
       - name: Build E2E image
-        run: docker build -f hack/e2e/Dockerfile -t k8e-e2e:local hack/e2e
+        # Same reasoning as the k8e build above: the image pulls containerd and
+        # runc from GitHub releases, which sporadically answers with 504.
+        # Docker reuses the layers that already succeeded, so a retry is cheap.
+        run: |
+          for attempt in 1 2 3; do
+            if docker build -f hack/e2e/Dockerfile -t k8e-e2e:local hack/e2e; then
+              exit 0
+            fi
+            echo "::warning::E2E image build failed on attempt ${attempt}/3; retrying in 20s"
+            sleep 20
+          done
+          exit 1
       - name: Run E2E profile l1
         env:
           E2E_SKIP_IMAGE_BUILD: '1'
@@ -179,13 +203,34 @@ jobs:
       # ships in the E2E image rather than in the k8e binary, so no code
       # generation or pkg/data sources are involved here either.
       - name: Build k8e (linux/amd64)
-        run: make k8e
+        # See the identical step in e2e-l1: retry so a transient module
+        # download failure does not fail the pipeline.
+        run: |
+          for attempt in 1 2 3; do
+            if make k8e; then
+              exit 0
+            fi
+            echo "::warning::make k8e failed on attempt ${attempt}/3; retrying in 20s"
+            sleep 20
+          done
+          exit 1
       - name: Verify binary
         run: |
           test -x bin/k8e
           file bin/k8e
       - name: Build E2E image
-        run: docker build -f hack/e2e/Dockerfile -t k8e-e2e:local hack/e2e
+        # Same reasoning as the k8e build above: the image pulls containerd and
+        # runc from GitHub releases, which sporadically answers with 504.
+        # Docker reuses the layers that already succeeded, so a retry is cheap.
+        run: |
+          for attempt in 1 2 3; do
+            if docker build -f hack/e2e/Dockerfile -t k8e-e2e:local hack/e2e; then
+              exit 0
+            fi
+            echo "::warning::E2E image build failed on attempt ${attempt}/3; retrying in 20s"
+            sleep 20
+          done
+          exit 1
       # The node has no registry access, so the suite's images are pulled here on
       # the runner and imported into containerd by up.sh. The list is read from
       # the harness so it cannot drift; pulling it up front turns registry
