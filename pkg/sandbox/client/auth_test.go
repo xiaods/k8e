@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -148,7 +149,7 @@ func TestExplicitLoginAndFailedResetPreserveCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Close()
-	old, err := os.ReadFile(filepath.Join(dir, "client.crt"))
+	old, err := os.ReadFile(filepath.Join(dir, clientCertFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,11 +173,11 @@ func TestExplicitLoginAndFailedResetPreserveCredentials(t *testing.T) {
 	if err == nil {
 		t.Fatal("invalid response accepted")
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "client.crt"))
+	got, err := os.ReadFile(filepath.Join(dir, clientCertFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(old) {
+	if !bytes.Equal(got, old) {
 		t.Fatal("failed authentication replaced old credentials")
 	}
 	s.malformed.Store(false)
@@ -185,11 +186,11 @@ func TestExplicitLoginAndFailedResetPreserveCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Close()
-	got, err = os.ReadFile(filepath.Join(dir, "client.crt"))
+	got, err = os.ReadFile(filepath.Join(dir, clientCertFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) == string(old) {
+	if bytes.Equal(got, old) {
 		t.Fatal("explicit login did not refresh certificate")
 	}
 }
@@ -222,7 +223,7 @@ func TestConcurrentCredentialBootstrap(t *testing.T) {
 	if s.calls.Load() != 1 {
 		t.Fatalf("expected one bootstrap, got %d", s.calls.Load())
 	}
-	if _, err := loadMTLSMaterial(filepath.Join(dir, "ca.crt"), filepath.Join(dir, "client.crt"), filepath.Join(dir, "client.key")); err != nil {
+	if _, err := loadMTLSMaterial(filepath.Join(dir, caFileName), filepath.Join(dir, clientCertFile), filepath.Join(dir, clientKeyFile)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -251,7 +252,7 @@ func TestResetCredentialsReplacesCAAndCorruptKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Close()
-	if err := os.WriteFile(filepath.Join(dir, "client.key"), []byte("broken key"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, clientKeyFile), []byte("broken key"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	next, nextEndpoint, nextCA := startAuthGateway(t)
@@ -260,14 +261,14 @@ func TestResetCredentialsReplacesCAAndCorruptKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Close()
-	mat, err := loadMTLSMaterial(filepath.Join(dir, "ca.crt"), filepath.Join(dir, "client.crt"), filepath.Join(dir, "client.key"))
+	mat, err := loadMTLSMaterial(filepath.Join(dir, caFileName), filepath.Join(dir, clientCertFile), filepath.Join(dir, clientKeyFile))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(mat.clientCert.Certificate) == 0 {
 		t.Fatal("missing client certificate")
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "ca.crt"))
+	got, err := os.ReadFile(filepath.Join(dir, caFileName))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,35 +284,68 @@ func TestCredentialPublicationRollsBack(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		t.Run(fmt.Sprint(existing), func(t *testing.T) {
 			dir := t.TempDir()
-			files := []credentialFile{{"client.key", []byte("new-key"), 0600}, {"ca.crt", []byte("new-ca"), 0644}, {"client.crt", []byte("new-cert"), 0644}, {"endpoint", []byte("new-endpoint"), 0644}}
-			if existing {
-				for _, f := range files {
-					if err := os.WriteFile(filepath.Join(dir, f.name), []byte("old-"+f.name), f.mode); err != nil {
-						t.Fatal(err)
-					}
-				}
-			}
-			calls := 0
-			err := publishCredentials(dir, files, func(from, to string) error {
-				calls++
-				if calls == 3 {
-					return errors.New("injected disk failure")
-				}
-				return os.Rename(from, to)
-			})
-			if err == nil {
+			files := newCredentialFiles()
+			seedCredentials(t, dir, files, existing)
+			if err := publishCredentials(dir, files, renameAndFailOnThird()); err == nil {
 				t.Fatal("expected publication failure")
 			}
-			for _, f := range files {
-				data, err := os.ReadFile(filepath.Join(dir, f.name))
-				if existing {
-					if err != nil || string(data) != "old-"+f.name {
-						t.Fatalf("%s not restored: %q %v", f.name, data, err)
-					}
-				} else if !os.IsNotExist(err) {
-					t.Fatalf("partial bootstrap file %s remained: %v", f.name, err)
-				}
-			}
+			assertCredentialsRolledBack(t, dir, files, existing)
 		})
+	}
+}
+
+// newCredentialFiles is a full credential set whose publication can be made to
+// fail partway through, exercising the rollback path.
+func newCredentialFiles() []credentialFile {
+	return []credentialFile{
+		{clientKeyFile, []byte("new-key"), 0600},
+		{caFileName, []byte("new-ca"), 0644},
+		{clientCertFile, []byte("new-cert"), 0644},
+		{endpointStampFile, []byte("new-endpoint"), 0644},
+	}
+}
+
+// seedCredentials pre-creates every credential file when existing is true, so
+// the rollback has something to restore; otherwise the directory stays empty.
+func seedCredentials(t *testing.T, dir string, files []credentialFile, existing bool) {
+	t.Helper()
+	if !existing {
+		return
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f.name), []byte("old-"+f.name), f.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// renameAndFailOnThird renames credential files until the third one, which
+// fails with an injected disk error.
+func renameAndFailOnThird() func(from, to string) error {
+	calls := 0
+	return func(from, to string) error {
+		calls++
+		if calls == 3 {
+			return errors.New("injected disk failure")
+		}
+		return os.Rename(from, to)
+	}
+}
+
+// assertCredentialsRolledBack verifies the directory still holds the previous
+// credentials, or nothing at all when the bootstrap had not published before.
+func assertCredentialsRolledBack(t *testing.T, dir string, files []credentialFile, existing bool) {
+	t.Helper()
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(dir, f.name))
+		if !existing {
+			if !os.IsNotExist(err) {
+				t.Fatalf("partial bootstrap file %s remained: %v", f.name, err)
+			}
+			continue
+		}
+		if err != nil || string(data) != "old-"+f.name {
+			t.Fatalf("%s not restored: %q %v", f.name, data, err)
+		}
 	}
 }

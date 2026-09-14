@@ -137,8 +137,8 @@ func NewClientWithOptions(endpoint, apiKey string, opts ConnectOptions) (*Client
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(os.Getenv("K8E_SANDBOX_APIKEY"))
 	}
-	if (opts.ForceLogin || opts.ResetCerts) && (apiKey == "" || endpoint == "") {
-		return nil, fmt.Errorf("sandbox client: explicit login/reset requires endpoint and API key")
+	if err := validateConnectOptions(endpoint, apiKey, opts); err != nil {
+		return nil, err
 	}
 	if apiKey == "" && (endpoint == "" || isLoopback(endpoint)) {
 		if endpoint == "" {
@@ -146,54 +146,147 @@ func NewClientWithOptions(endpoint, apiKey string, opts ConnectOptions) (*Client
 		}
 		return newLocalClient(endpoint)
 	}
-	cacheDir, err := sandboxCacheDir()
+	return newRemoteClient(endpoint, apiKey, opts)
+}
+
+// validateConnectOptions rejects requests that cannot be satisfied: an explicit
+// login or reset needs both an endpoint and an API key.
+func validateConnectOptions(endpoint, apiKey string, opts ConnectOptions) error {
+	if (opts.ForceLogin || opts.ResetCerts) && (apiKey == "" || endpoint == "") {
+		return fmt.Errorf("sandbox client: explicit login/reset requires endpoint and API key")
+	}
+	return nil
+}
+
+// credentialFiles is the mTLS material owned by one credential cache directory.
+type credentialFiles struct {
+	ca   string
+	cert string
+	key  string
+}
+
+// File names of the mTLS material inside a credential cache directory. They
+// are shared by the bootstrap path and every caller that reads the cache, so
+// the names are defined once here.
+const (
+	caFileName     = "ca.crt"
+	clientCertFile = "client.crt"
+	clientKeyFile  = "client.key"
+)
+
+// cacheState is the offline inspection result of the cached credentials: it is
+// gathered before any network call is made.
+type cacheState struct {
+	caMissing bool
+	stampErr  error
+}
+
+// reusable reports whether cached material may serve this dial as-is, without
+// contacting the gateway for a fresh certificate.
+func (s cacheState) reusable(opts ConnectOptions) bool {
+	return !s.caMissing && s.stampErr == nil && !opts.ForceLogin && !opts.ResetCerts
+}
+
+// newRemoteClient resolves credentials for a remote gateway while holding the
+// shared credentials lock, reusing valid material or authenticating anew.
+func newRemoteClient(endpoint, apiKey string, opts ConnectOptions) (*Client, error) {
+	cacheDir, unlock, err := lockCredentialCache()
 	if err != nil {
 		return nil, err
+	}
+	defer unlock()
+
+	files := credentialFiles{
+		ca:   filepath.Join(cacheDir, caFileName),
+		cert: filepath.Join(cacheDir, clientCertFile),
+		key:  filepath.Join(cacheDir, clientKeyFile),
+	}
+	state, err := inspectCredentialCache(cacheDir, endpoint, files)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey == "" {
+		if err := requireCachedCredentials(endpoint, state); err != nil {
+			return nil, err
+		}
+	}
+	if c, reused, err := dialWithCachedCerts(endpoint, files, state, opts); reused {
+		return c, err
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("sandbox client: cached client certificate for %s is missing or expired; reconnect with --apikey", endpoint)
+	}
+	return authenticate(endpoint, cacheDir, resolveTrustFile(opts, state, files.ca), apiKey, opts)
+}
+
+// lockCredentialCache serializes credential inspection and mutation across
+// concurrent CLI processes sharing a cache directory.
+func lockCredentialCache() (string, func(), error) {
+	cacheDir, err := sandboxCacheDir()
+	if err != nil {
+		return "", nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
 	defer cancel()
 	unlock, err := lockCredentials(ctx, cacheDir)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
-	defer unlock()
-	caFile := filepath.Join(cacheDir, "ca.crt")
-	certFile := filepath.Join(cacheDir, "client.crt")
-	keyFile := filepath.Join(cacheDir, "client.key")
-	stampErr := checkEndpointStamp(cacheDir, endpoint)
-	_, caErr := os.Stat(caFile)
-	if caErr != nil && !os.IsNotExist(caErr) {
-		return nil, caErr
+	return cacheDir, unlock, nil
+}
+
+// inspectCredentialCache records whether the cached CA exists and whether the
+// cached material was issued for the requested endpoint.
+func inspectCredentialCache(cacheDir, endpoint string, files credentialFiles) (cacheState, error) {
+	state := cacheState{stampErr: checkEndpointStamp(cacheDir, endpoint)}
+	_, err := os.Stat(files.ca)
+	if err != nil && !os.IsNotExist(err) {
+		return cacheState{}, err
 	}
-	if apiKey == "" {
-		if caErr != nil {
-			return nil, fmt.Errorf("sandbox client: no cached CA for %s; run connect or login with --apikey", endpoint)
-		}
-		if stampErr != nil {
-			return nil, stampErr
-		}
+	state.caMissing = err != nil
+	return state, nil
+}
+
+// requireCachedCredentials rejects a keyless dial that the cache cannot serve.
+func requireCachedCredentials(endpoint string, state cacheState) error {
+	if state.caMissing {
+		return fmt.Errorf("sandbox client: no cached CA for %s; run connect or login with --apikey", endpoint)
 	}
-	if caErr == nil && stampErr == nil && !opts.ForceLogin && !opts.ResetCerts {
-		st := inspectClientCert(certFile)
-		if st.valid {
-			if st.expiringSoon {
-				renewClientCert(endpoint, caFile, certFile, keyFile)
-			}
-			conn, err := dialMTLS(endpoint, caFile, certFile, keyFile)
-			if err != nil {
-				return nil, dialErr(endpoint, err)
-			}
-			return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, nil
-		}
+	if state.stampErr != nil {
+		return state.stampErr
 	}
-	if apiKey == "" {
-		return nil, fmt.Errorf("sandbox client: cached client certificate for %s is missing or expired; reconnect with --apikey", endpoint)
+	return nil
+}
+
+// dialWithCachedCerts serves the dial from valid cached material, renewing the
+// certificate lazily when it nears expiry. The second result reports whether
+// the cached path applied; when it does not, the caller authenticates anew.
+func dialWithCachedCerts(endpoint string, files credentialFiles, state cacheState, opts ConnectOptions) (*Client, bool, error) {
+	if !state.reusable(opts) {
+		return nil, false, nil
 	}
-	trustFile := opts.CAFile
-	if trustFile == "" && caErr == nil && stampErr == nil && !opts.ResetCerts {
-		trustFile = caFile
+	st := inspectClientCert(files.cert)
+	if !st.valid {
+		return nil, false, nil
 	}
-	return authenticate(endpoint, cacheDir, trustFile, apiKey, opts)
+	if st.expiringSoon {
+		renewClientCert(endpoint, files.ca, files.cert, files.key)
+	}
+	conn, err := dialMTLS(endpoint, files.ca, files.cert, files.key)
+	if err != nil {
+		return nil, true, dialErr(endpoint, err)
+	}
+	return &Client{SandboxServiceClient: pb.NewSandboxServiceClient(conn), conn: conn}, true, nil
+}
+
+// resolveTrustFile picks the CA that verifies the gateway during bootstrap: an
+// explicit --ca-file always wins, otherwise the cached CA is reused unless it
+// belongs to another endpoint or the caller asked to reset credentials.
+func resolveTrustFile(opts ConnectOptions, state cacheState, caFile string) string {
+	if opts.CAFile != "" || opts.ResetCerts || state.caMissing || state.stampErr != nil {
+		return opts.CAFile
+	}
+	return caFile
 }
 
 func lockCredentials(ctx context.Context, dir string) (func(), error) {
@@ -219,7 +312,7 @@ func (c *Client) Close() error { return c.conn.Close() }
 // authenticate prepares and validates the complete response before replacing any
 // credentials. The caller holds credentials.lock through publication and loading.
 func authenticate(endpoint, cacheDir, trustFile, apiKey string, opts ConnectOptions) (*Client, error) {
-	keyFile := filepath.Join(cacheDir, "client.key")
+	keyFile := filepath.Join(cacheDir, clientKeyFile)
 	key, err := loadClientKey(keyFile)
 	if err != nil || opts.ResetCerts {
 		if err != nil && !os.IsNotExist(err) && !opts.ResetCerts {
@@ -247,15 +340,15 @@ func authenticate(endpoint, cacheDir, trustFile, apiKey string, opts ConnectOpti
 		return nil, err
 	}
 	if err := publishCredentials(cacheDir, []credentialFile{
-		{"client.key", keyPEM, 0600},
-		{"ca.crt", []byte(resp.CaCert), 0644},
-		{"client.crt", []byte(resp.Cert), 0644},
+		{clientKeyFile, keyPEM, 0600},
+		{caFileName, []byte(resp.CaCert), 0644},
+		{clientCertFile, []byte(resp.Cert), 0644},
 		{endpointStampFile, []byte(endpoint + "\n"), 0644},
 	}, os.Rename); err != nil {
 		return nil, err
 	}
 
-	conn, err := dialMTLS(endpoint, filepath.Join(cacheDir, "ca.crt"), filepath.Join(cacheDir, "client.crt"), keyFile)
+	conn, err := dialMTLS(endpoint, filepath.Join(cacheDir, caFileName), filepath.Join(cacheDir, clientCertFile), keyFile)
 	if err != nil {
 		return nil, dialErr(endpoint, err)
 	}
