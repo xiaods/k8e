@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-24 | Implemented — `Exec(background=true)` + `PollRun` + CLI `--background` / `poll` shipped. **Errata:** background tasks run **in the session's existing pod** (not a dedicated background pool as sketched below). [KIP-16](./kip-16-sandbox-architecture-lessons-ephemeral.md) M12 caps concurrent runs per session (`maxBackgroundRuns`, default 5). |
+| @xiaods | 2026-08-24 | Implemented — `Exec(background=true)` + `PollRun` + CLI `--background` / `poll` shipped. **Errata:** background tasks run **in the session's existing pod** (not a dedicated background pool as sketched below). [KIP-16](./kip-16-sandbox-architecture-lessons-ephemeral.md) M12 caps concurrent runs per session (`maxBackgroundRuns`, default 5). **Errata 2:** `ExecRequest.timeout` is an **opt-in** lifetime cap — `0`, which is what the CLI and MCP send when the caller does not pass `--timeout`/`timeout`, means *uncapped*, so an exposed service keeps running instead of being SIGKILLed 30 seconds after submission. `backgroundMaxTimeout` (Decision 10) is not implemented, and the killer signals the run's whole process group. |
 
 ## Summary
 
@@ -206,7 +206,7 @@ When agent calls `k8e sandbox destroy`:
 | Background pod crashes during execution | sandboxd restarts, `.k8e_bg/<run_id>/exit_code` may not exist → poll returns `failed` |
 | Multiple background tasks on same session | `run_id` includes sequence: `sess-xxx-bg-1`, `sess-xxx-bg-2` |
 | Concurrent background tasks | Separate runs; each has its own `run_id`, shared workspace |
-| Timeout expired during background execution | sandboxd kills child process (SIGKILL), writes exit_code, poll returns `timed_out` |
+| Timeout expired during background execution | sandboxd SIGKILLs the run's entire process group, writes exit_code=-1, poll returns `timed_out` |
 | Background task exceeds `backgroundMaxTimeout` | Submit rejected by gateway with `InvalidArgument` |
 | Background pod disk full | Exec writes to stderr, poll returns `failed` |
 
@@ -234,6 +234,6 @@ When agent calls `k8e sandbox destroy`:
 | 7 | Background pool | Separate pool via `SandboxMatrix.spec.backgroundPoolSize`, independent reconciler |
 | 8 | Pod auto-destroy | No — agent must call `k8e sandbox destroy` |
 | 9 | PVC size | `backgroundPVCSize` default 5Gi |
-| 10 | Task timeout | `backgroundMaxTimeout` default 1h (3600s). Submit rejects longer. sandboxd SIGKILL on expiry. |
+| 10 | Task timeout | `timeout` is an opt-in cap: `0`/absent = uncapped (the run lives until the process exits or the session is destroyed). `backgroundMaxTimeout` was never implemented. sandboxd SIGKILLs the run's process group on expiry. |
 | 11 | run_registry recovery | Gateway restart scans Session CRDs with `phase=BackgroundRunning/Completed` |
 | 12 | run_id format | `{session_id}-bg-{sequence}` (e.g. `sess-123-bg-1`) |

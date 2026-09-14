@@ -16,6 +16,12 @@ const BG_WRAPPER = "trap 'rc=$?; printf %s \"$rc\" > \"$K8E_BG_DIR/exit_code\"' 
 /// handleBgSubmit forks a child that runs the command in the background.
 /// POST /exec/background
 /// Body: {"command": "...", "run_id": "...", "timeout": 300, "workdir": "/workspace"}
+///
+/// `timeout` is the run's lifetime cap in seconds; 0 means "no cap", which is
+/// what a long-running service (the `run --background` + `expose` flow) needs.
+/// The submitter must not send a short default blindly: sandboxd SIGKILLs the
+/// run once the cap expires, so a 30s default killed every exposed server
+/// thirty seconds after it started.
 pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []const u8) !void {
     const parsed = std.json.parseFromSlice(BgSubmitRequest, allocator, body, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch {
         try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"invalid json\"}");
@@ -61,6 +67,13 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
 
     const pid = std.os.linux.fork();
     if (pid == 0) {
+        // Child: lead a new process group (pgid == pid) so the timeout killer
+        // can signal the whole tree. The wrapper `eval`s the user command, so
+        // the command — and anything it forks, e.g. an exposed HTTP server — is
+        // a grandchild of sandboxd; killing only the wrapper pid left it
+        // running as an orphan while poll already reported "timed_out".
+        _ = std.os.linux.syscall2(.setpgid, 0, 0);
+
         // Child: redirect stdout/stderr to files, then exec the wrapper.
         var stdout_path: [600]u8 = undefined;
         const sp = std.fmt.bufPrintZ(&stdout_path, "{s}/stdout", .{run_dir}) catch std.os.linux.exit(1);
@@ -174,6 +187,53 @@ const BgSubmitRequest = struct {
     env: std.json.Value = .{ .null = {} },
 };
 
+/// killAllRuns SIGKILLs every still-running background run recorded under
+/// BG_DIR, then leaves the run directories for /workspace/reset to delete.
+///
+/// Called from /workspace/reset because a pod handed back to the warm pool must
+/// not carry the previous tenant's processes: an orphaned server keeps its port
+/// bound, so the next tenant's service — and any `expose` of that port — fails
+/// to start. Runs that already recorded an exit code are skipped, since their
+/// pid may have been recycled by an unrelated process.
+pub fn killAllRuns(allocator: std.mem.Allocator) void {
+    const dir_z: [*:0]const u8 = BG_DIR;
+    const fd = std.os.linux.open(dir_z, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    if (@as(isize, @bitCast(fd)) < 0) return;
+    defer _ = std.os.linux.close(@intCast(fd));
+
+    var buf: [4096]u8 align(@alignOf(std.os.linux.dirent64)) = undefined;
+    while (true) {
+        const n = std.os.linux.getdents64(@intCast(fd), @ptrCast(&buf), buf.len);
+        if (n <= 0) break;
+        const total: usize = @intCast(n);
+        var pos: usize = 0;
+        while (pos < total) {
+            const dent = @as(*align(1) std.os.linux.dirent64, @ptrCast(&buf[pos]));
+            pos += dent.reclen;
+            const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&dent.name)), 0);
+            if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
+
+            var exit_path_buf: [600]u8 = undefined;
+            const exit_path = std.fmt.bufPrintZ(&exit_path_buf, "{s}/{s}/exit_code", .{ BG_DIR, name }) catch continue;
+            if (readFileZ(allocator, exit_path.ptr, 32)) |recorded| {
+                allocator.free(recorded);
+                continue; // already finished on its own
+            }
+
+            var pid_path_buf: [600]u8 = undefined;
+            const pid_path = std.fmt.bufPrintZ(&pid_path_buf, "{s}/{s}/pid", .{ BG_DIR, name }) catch continue;
+            const raw = readFileZ(allocator, pid_path.ptr, 32) orelse continue;
+            defer allocator.free(raw);
+            const pid = std.fmt.parseInt(i32, std.mem.trim(u8, raw, " \n\r\t"), 10) catch continue;
+            if (pid <= 1) continue;
+
+            // Group first (the run's child called setpgid), pid as a fallback.
+            _ = std.os.linux.kill(-pid, std.os.linux.SIG.KILL);
+            _ = std.os.linux.kill(pid, std.os.linux.SIG.KILL);
+        }
+    }
+}
+
 // readFileZ reads up to max bytes from a null-terminated path via raw syscalls,
 // returning null if the file cannot be opened.
 fn readFileZ(allocator: std.mem.Allocator, path: [*:0]const u8, max: usize) ?[]u8 {
@@ -191,7 +251,10 @@ fn unixSeconds() i64 {
 }
 
 // spawnTimeoutKiller kills the run after timeout_sec if it has not already
-// completed, recording exit_code=-1 so poll reports "timed_out".
+// completed, recording exit_code=-1 so poll reports "timed_out". It signals the
+// run's entire process group (the child called setpgid, so pgid == pid), so a
+// service started by the wrapper dies with it instead of surviving the kill as
+// an orphan holding its port.
 fn spawnTimeoutKiller(pid: i32, timeout_sec: u32, run_dir: [:0]u8, allocator: std.mem.Allocator) void {
     defer allocator.free(run_dir);
     const ts = std.os.linux.timespec{ .sec = @as(isize, @intCast(timeout_sec)), .nsec = 0 };
@@ -207,6 +270,9 @@ fn spawnTimeoutKiller(pid: i32, timeout_sec: u32, run_dir: [:0]u8, allocator: st
         return;
     }
 
+    _ = std.os.linux.kill(-pid, std.os.linux.SIG.KILL);
+    // Fallback for the case where the group signal could not be delivered
+    // (setpgid not applied): a no-op once the group kill reaped this pid.
     _ = std.os.linux.kill(@as(std.os.linux.pid_t, @intCast(pid)), std.os.linux.SIG.KILL);
     const fd = std.os.linux.open(exit_path.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
     if (fd >= 0) {

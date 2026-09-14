@@ -91,8 +91,17 @@ func (s *Server) handleExposeProxy(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("X-K8E-Expose-Session", sessionID)
 	}
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
-		logrus.Debugf("k8e expose proxy %s/%d: %v", sessionID, port, proxyErr)
+		// A 502 here means the reverse proxy could not reach the in-pod
+		// service — in practice almost always "nothing is listening on <port>"
+		// because the exposed process died or was never started. Name the
+		// backend in the body and log it at a visible level: the previous
+		// bodyless 502 at debug level made an exposed-but-dead service
+		// indistinguishable from a gateway fault.
+		logrus.Warnf("k8e expose proxy %s/%d: backend %s unreachable: %v", sessionID, port, target.Host, proxyErr)
+		rw.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		rw.WriteHeader(http.StatusBadGateway)
+		fmt.Fprintf(rw, "k8e expose proxy: cannot reach %s in session %s — is a process listening on port %d inside the sandbox? (%v)\n",
+			target.Host, sessionID, port, proxyErr)
 	}
 	proxy.ServeHTTP(w, r)
 }

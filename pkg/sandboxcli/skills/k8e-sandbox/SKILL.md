@@ -76,7 +76,7 @@ Tool reference (exact argument shapes — do not guess):
 |---|---|---|
 | `k8e_sandbox_session_status` | `{}` | `available`, `sessionId`, `tenantId`, `error` |
 | `k8e_sandbox_session_destroy` | `{}` — releases the pod (idempotent) | `destroyed` |
-| `k8e_sandbox_exec` | `{code: string (required), lang?: "bash"\|"python"\|"node"\|"ts", timeout?: number}` | `stdout`, `stderr`, `exitCode`, `durationMs`, `truncated` |
+| `k8e_sandbox_exec` | `{code: string (required), lang?: "bash"\|"python"\|"node"\|"ts", timeout?: number}` — omit `timeout` to leave a background run uncapped | `stdout`, `stderr`, `exitCode`, `durationMs`, `truncated` |
 | `k8e_sandbox_run_background` | `{code: string (required), lang?: …}` | `runId`, `sessionId`, `status` |
 | `k8e_sandbox_poll` | `{runId: string (required)}` | `runId`, `status`, `stdout`, `stderr`, `exitCode`, `durationMs` |
 | `k8e_sandbox_expose` | `{port: number (required), host?: string}` | `url`, `port` |
@@ -86,7 +86,8 @@ Tool reference (exact argument shapes — do not guess):
 **Service exposure in dsh**: after starting a long-running service with
 `k8e_sandbox_run_background`, call `k8e_sandbox_expose {port: 8080}` and hand
 the returned URL to the user — same gateway-proxied URL the CLI's `expose`
-prints. Teardown with `k8e_sandbox_unexpose {port: 8080}`.
+prints. Teardown with `k8e_sandbox_unexpose {port: 8080}`. These runs are not
+time-capped, so the service stays reachable until the session is destroyed.
 
 Session, connection, and mTLS are owned by the plugin: it resolves the
 gateway from config → env → `~/.k8e/sandbox/profiles.yaml` (KIP-17) and
@@ -227,7 +228,10 @@ k8e-sandbox-cli run 'pip install pandas' --lang bash
 # k8e-sandbox-cli push <session_id> ./analysis.py /workspace/analysis.py
 # k8e-sandbox-cli pull <session_id> /workspace/results.csv ./results.csv
 
-# Background exec (returns run_id immediately)
+# Background exec (returns run_id immediately).
+# A background run has NO lifetime cap by default. `--timeout N` caps it and
+# the daemon SIGKILLs the run (whole process group) when N expires — only pass
+# it for work you want bounded.
 k8e-sandbox-cli run 'sleep 30; echo done' --background
 k8e-sandbox-cli poll <run-id>            # wait + stream output
 
@@ -237,7 +241,8 @@ k8e-sandbox-cli run 'echo hi' --tenant my-project
 # Sub-agent: child session sharing parent pod + workspace (no new pod)
 k8e-sandbox-cli subagent <parent-sid>
 
-# Expose a long-running service through the k8e API Gateway (KIP-24)
+# Expose a long-running service through the k8e API Gateway (KIP-24).
+# No --timeout here: a cap would kill the server while you are still testing it.
 k8e-sandbox-cli run "python3 -m http.server 8080 --bind 127.0.0.1" --background
 k8e-sandbox-cli expose 8080     # -> {"url":"http://<gateway>/k8e/expose/<sid>/8080/",...}
 ```
@@ -326,6 +331,17 @@ server -> reverse proxy to `http://<podIP>:<port>`. The gateway base is
 configured server-side (`--sandbox-expose-base-url`, default
 `http://<advertise-hostname>`). The CNP is re-applied automatically so only
 the gateway/e2b-server can reach the exposed port.
+
+**Keep the service alive.** Start it with `run --background` and *no*
+`--timeout`: the run then lives until the process exits or the session is
+destroyed. Passing `--timeout N` makes sandboxd SIGKILL the run's whole process
+group after N seconds — the URL keeps working until then and returns 502
+afterwards with nothing listening on the port.
+
+**A 502 on an exposed URL means nothing is listening on that port inside the
+sandbox** (the service died, never started, or crashed). The 502 body names the
+unreachable `<podIP>:<port>`. Diagnose with `ps <session_id>` (is the process
+still there?) and `poll <run_id>` (`timed_out` = the lifetime cap expired).
 
 **Egress allowlist is freely configurable** — when the sandbox needs outbound
 access to domains (package registries, tunnel endpoints), update it live:

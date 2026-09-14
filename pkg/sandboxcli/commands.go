@@ -170,7 +170,7 @@ func RunCommand() cli.Command {
 		ArgsUsage: "<code>",
 		Flags: []cli.Flag{
 			cli.StringFlag{Name: "lang", Value: "bash", Usage: "Language hint: python, bash (default), node, ts"},
-			cli.IntFlag{Name: "timeout", Value: 30, Usage: "Timeout in seconds"},
+			cli.IntFlag{Name: "timeout", Value: 30, Usage: "Timeout in seconds. With --background it caps how long the run may live; omit it to leave a background run uncapped"},
 			cli.StringFlag{Name: "session-id", EnvVar: "K8E_SANDBOX_SESSION_ID", Usage: "Explicit session ID"},
 			cli.StringFlag{Name: "tenant", EnvVar: "K8E_SANDBOX_TENANT", Usage: "Tenant for cross-process session reuse"},
 			cli.BoolFlag{Name: "background", Usage: "Submit asynchronously, return run_id immediately"},
@@ -185,21 +185,43 @@ func RunCommand() cli.Command {
 	}
 }
 
+// resolveRunTimeout returns the effective exec timeout for `run`.
+//
+// A foreground exec keeps the 30s default (the server applies the same default
+// when it receives 0). A background run is a *detached* process — the documented
+// `run --background` + `expose` flow starts web servers — so it is uncapped
+// unless --timeout was passed explicitly: sandboxd SIGKILLs a background run
+// once its timeout expires, and inheriting the foreground default used to kill
+// every exposed service thirty seconds after submission.
+func resolveRunTimeout(ctx *cli.Context, background bool) int32 {
+	timeout := int32(ctx.Int("timeout"))
+	if timeout < 0 {
+		// sandboxd parses timeout as an unsigned integer; a negative value would
+		// make the request body unparseable (HTTP 400) instead of meaningful.
+		timeout = 0
+	}
+	if background && !ctx.IsSet("timeout") {
+		return 0
+	}
+	return timeout
+}
+
 func runBackground(cli *client.Client, ctx *cli.Context, code, lang string) error {
 	sid, _, err := ensureSession(cli, ctx)
 	if err != nil {
 		return printErrorExit(err.Error(), 2)
 	}
 	cmd := buildCommand(lang, code)
-	rctx, cancel := rpcCtx(int32(ctx.Int("timeout")))
+	timeout := resolveRunTimeout(ctx, true)
+	rctx, cancel := rpcCtx(timeout)
 	defer cancel()
 	resp, err := cli.SandboxServiceClient.Exec(rctx, &pb.ExecRequest{
-		SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace", Background: true,
+		SessionId: sid, Command: cmd, Timeout: timeout, Workdir: "/workspace", Background: true,
 	})
 	if err != nil {
 		return printErrorExit("background submit: "+err.Error(), 2)
 	}
-	printJSON(map[string]any{"run_id": resp.RunId, "status": resp.Status, "session_id": sid})
+	printJSON(map[string]any{"run_id": resp.RunId, "status": resp.Status, "session_id": sid, "timeout": timeout})
 	return nil
 }
 
@@ -270,7 +292,7 @@ func runAction(ctx *cli.Context) error {
 
 	cmd := buildCommand(lang, code)
 	req := &pb.ExecRequest{
-		SessionId: sid, Command: cmd, Timeout: int32(ctx.Int("timeout")), Workdir: "/workspace", Language: lang,
+		SessionId: sid, Command: cmd, Timeout: resolveRunTimeout(ctx, false), Workdir: "/workspace", Language: lang,
 	}
 	return runExec(cli, ctx, req, sid, needsFinalize, raw)
 }

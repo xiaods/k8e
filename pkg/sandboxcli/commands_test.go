@@ -117,3 +117,48 @@ func TestCatalogCommand_ListsSurface(t *testing.T) {
 	}
 	_ = cmd.Action
 }
+
+// TestResolveRunTimeout pins the two-mode timeout contract.
+//
+// A foreground `run` keeps the 30s default, while a background run — a detached
+// service, i.e. the documented `run --background` + `expose` flow — is uncapped
+// unless --timeout is passed explicitly. Inheriting the foreground default used
+// to SIGKILL every backgrounded service 30 seconds after submission, which made
+// the exposed URL return 502 a few seconds later.
+func TestResolveRunTimeout(t *testing.T) {
+	resolve := func(t *testing.T, args []string, background bool) int32 {
+		t.Helper()
+		var got int32
+		command := RunCommand()
+		command.Action = func(ctx *cli.Context) error {
+			got = resolveRunTimeout(ctx, background)
+			return nil
+		}
+		app := cli.NewApp()
+		app.HideVersion = true
+		app.Commands = []cli.Command{command}
+		if err := app.Run(args); err != nil {
+			t.Fatalf("app.Run(%v): %v", args, err)
+		}
+		return got
+	}
+
+	for _, entry := range []struct {
+		name       string
+		args       []string
+		background bool
+		want       int32
+	}{
+		{"foreground default", []string{"k8e-sandbox-cli", "run", "echo hi"}, false, 30},
+		{"foreground explicit", []string{"k8e-sandbox-cli", "run", "--timeout", "120", "echo hi"}, false, 120},
+		{"background default is uncapped", []string{"k8e-sandbox-cli", "run", "--background", "echo hi"}, true, 0},
+		{"background explicit cap", []string{"k8e-sandbox-cli", "run", "--background", "--timeout", "120", "echo hi"}, true, 120},
+		{"negative value clamped", []string{"k8e-sandbox-cli", "run", "--timeout", "-5", "echo hi"}, false, 0},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			if got := resolve(t, entry.args, entry.background); got != entry.want {
+				t.Fatalf("timeout = %d, want %d", got, entry.want)
+			}
+		})
+	}
+}

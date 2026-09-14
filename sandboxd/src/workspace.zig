@@ -1,10 +1,17 @@
 const std = @import("std");
 const main = @import("main.zig");
+const background = @import("background.zig");
 
 /// handleReset removes all files/dirs under /workspace using raw syscalls,
 /// then recreates the directory. POST /workspace/reset
+///
+/// Processes are reset too: the pod goes back to the warm pool after this, so a
+/// leftover background run — e.g. a server still holding its port — would leak
+/// into the next tenant's session. Kill them before deleting their state files.
 pub fn handleReset(allocator: std.mem.Allocator, client_fd: i32) !void {
     const workspace_path = "/workspace";
+
+    background.killAllRuns(allocator);
 
     // Collect all paths to delete by walking the directory
     var paths = std.array_list.Managed([]const u8).init(allocator);

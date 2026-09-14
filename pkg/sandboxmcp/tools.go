@@ -51,7 +51,7 @@ func (service *Service) Tools() []Tool {
 		{"sandbox_create", "Create a gVisor sandbox; reuse operation_id on retries.", []string{"operation_id"}, []string{"operation_id"}},
 		{"sandbox_get", "Get an owned sandbox.", []string{"session_id"}, []string{"session_id"}},
 		{"sandbox_destroy", "Destroy an owned sandbox.", []string{"session_id", "operation_id"}, []string{"session_id", "operation_id"}},
-		{"sandbox_exec", "Submit a background shell command. Poll run_id; reuse operation_id on retries.", []string{"session_id", "operation_id", "command", "timeout"}, []string{"session_id", "operation_id", "command"}},
+		{"sandbox_exec", "Submit a background shell command and poll its run_id. It runs until it finishes unless timeout caps it, so long-running services (e.g. one you expose) must omit timeout. Reuse operation_id on retries.", []string{"session_id", "operation_id", "command", "timeout"}, []string{"session_id", "operation_id", "command"}},
 		{"sandbox_poll", "Poll an owned background run.", []string{"run_id"}, []string{"run_id"}},
 		{"sandbox_read", "Read at most 256 KiB of an owned sandbox file as base64.", []string{"session_id", "path"}, []string{"session_id", "path"}},
 		{"sandbox_write", "Write UTF-8 text to an owned sandbox file.", []string{"session_id", "operation_id", "path", "content"}, []string{"session_id", "operation_id", "path", "content"}},
@@ -72,7 +72,13 @@ func (service *Service) Tools() []Tool {
 			}
 			properties[field] = map[string]any{"type": "string", "minLength": minimum, "maxLength": limit}
 			if field == "timeout" {
-				properties[field] = map[string]any{"type": "integer", "minimum": 1, "maximum": 3600, "default": 30}
+				// Optional lifetime cap. There is deliberately no default: the
+				// server SIGKILLs a background run once its timeout expires, so
+				// defaulting to 30 killed exposed services 30s after start.
+				properties[field] = map[string]any{
+					"type": "integer", "minimum": 1, "maximum": 3600,
+					"description": "Optional lifetime cap in seconds (1-3600). Omit to keep the run alive until it finishes or is killed.",
+				}
 			}
 		}
 		schema, _ := json.Marshal(map[string]any{"type": "object", "properties": properties, "required": definition.required, "additionalProperties": false})
@@ -111,9 +117,9 @@ func parseArguments(raw json.RawMessage, fields, required []string) (arguments, 
 	if _, ok := values["timeout"]; ok && (parsed.Timeout < 1 || parsed.Timeout > 3600) {
 		return parsed, &InvalidParams{Message: "timeout must be between 1 and 3600"}
 	}
-	if parsed.Timeout == 0 {
-		parsed.Timeout = 30
-	}
+	// No timeout key (or the zero value) leaves the run uncapped (0 = no cap),
+	// which is what a long-running exposed service needs. A defensive 30s
+	// default here used to SIGKILL every sandbox_exec service after 30 seconds.
 	return parsed, nil
 }
 
