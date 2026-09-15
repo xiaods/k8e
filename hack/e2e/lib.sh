@@ -83,11 +83,11 @@ e2e_set_profile() {
         # No CNI, so kubelet stays NetworkReady=false and the node never turns
         # Ready; registration is the strongest signal this profile can give.
         : "${E2E_EXPECT_NODE_READY:=0}"
-        : "${E2E_PRELOAD_IMAGES:=rancher/mirrored-pause:3.6 ${E2E_TEST_IMAGE}}"
+        : "${E2E_PRELOAD_IMAGES:=rancher/mirrored-pause:3.10.2 ${E2E_TEST_IMAGE}}"
         ;;
     l3)
         : "${E2E_EXPECT_NODE_READY:=1}"
-        : "${E2E_PRELOAD_IMAGES:=rancher/mirrored-pause:3.6 ${E2E_TEST_IMAGE}}"
+        : "${E2E_PRELOAD_IMAGES:=rancher/mirrored-pause:3.10.2 ${E2E_TEST_IMAGE}}"
         ;;
     *)
         e2e_die "unknown E2E profile '${E2E_PROFILE}' (expected l1, l2 or l3)"
