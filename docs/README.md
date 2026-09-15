@@ -43,6 +43,7 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 | [KIP-13](kip-13-immutable-root-package-isolation.md) | Immutable root: pip/npm isolation into `/workspace` | Partially implemented — Python lazy venv shipped; `npm_config_*` redirect **not** shipped |
 | [KIP-14](kip-14-mtls-dynamic-cert-issuance.md) | mTLS dynamic client certs (Login RPC) | Implemented |
 | [KIP-17](kip-17-sandbox-cli-profiles-and-apikey-ttl.md) | CLI multi-profile + API key TTL | Implemented |
+| [KIP-28](kip-28-sandbox-gateway-trust-bootstrap.md) | Trust anchor bootstrap for the remote gRPC gateway | Proposed — M1 client trust chain + `--reset-trust`; M2 `/.well-known` CA distribution; M3 publicly-trusted gateway cert |
 
 ### Completeness / architecture reviews
 
@@ -81,7 +82,10 @@ Agent-facing repo conventions live under [`docs/agents/`](agents/). Those files 
   SKILL.md already called it KIP-24; the filename now matches.
 - **KIP-25** was the unnumbered `sandbox-warm-pool.md` operator how-to. Default install now stages `manifests/sandbox-matrix/default-warm-pool.yaml` (`size: 1`).
 - **KIP-26** advances the dependency baseline set by KIP-2 from Kubernetes `v1.35.5-k3s1`
-  to `v1.37.0-k3s1`. The next free integer is **KIP-27**.
+  to `v1.37.0-k3s1`.
+- **KIP-28** closes the remote-trust gap left by KIP-22 (correct SAN, untrusted issuer) and
+  by KIP-27 (cert-manager present, but only wired to the `:443` listener). The next free
+  integer is **KIP-29**.
 
 ## How to add a KIP
 
