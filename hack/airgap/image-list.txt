@@ -1,8 +1,8 @@
 docker.io/rancher/klipper-helm:v0.9.14-build20260210
-docker.io/rancher/local-path-provisioner:v0.0.34
-docker.io/rancher/mirrored-coredns-coredns:1.14.1
+docker.io/rancher/local-path-provisioner:v0.0.37
+docker.io/rancher/mirrored-coredns-coredns:1.14.7
 docker.io/rancher/mirrored-library-busybox:1.37.0
-docker.io/rancher/mirrored-metrics-server:v0.8.1
+docker.io/rancher/mirrored-metrics-server:v0.9.0
 docker.io/rancher/mirrored-pause:3.10.2
 quay.io/jetstack/cert-manager-controller:v1.21.2
 quay.io/jetstack/cert-manager-cainjector:v1.21.2
