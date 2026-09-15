@@ -101,7 +101,7 @@ func idleSince(pod *corev1.Pod, d time.Duration) *corev1.Pod {
 }
 
 // seedPods creates the pods in the fake cluster.
-func seedPods(t *testing.T, ctx context.Context, k8s kubernetes.Interface, pods ...*corev1.Pod) {
+func seedPods(ctx context.Context, t *testing.T, k8s kubernetes.Interface, pods ...*corev1.Pod) {
 	t.Helper()
 	for _, p := range pods {
 		if _, err := k8s.CoreV1().Pods(p.Namespace).Create(ctx, p, metav1.CreateOptions{}); err != nil {
@@ -139,7 +139,7 @@ func TestRecycleUnhealthyWarmPods(t *testing.T) {
 	// Healthy warm pod — keep.
 	healthy := warmTestPod("warm-healthy", corev1.PodRunning, condReady)
 
-	seedPods(t, ctx, k8s, failed, stale, fresh, healthy)
+	seedPods(ctx, t, k8s, failed, stale, fresh, healthy)
 
 	recycleUnhealthyWarmPods(ctx, k8s, testNS)
 
@@ -266,7 +266,7 @@ func computeCapacity(t *testing.T, mem, cpu string, pods ...*corev1.Pod) int64 {
 	ctx := context.Background()
 	k8s := kubefake.NewSimpleClientset()
 	newTestNode(t, k8s, "node-a", mem, cpu)
-	seedPods(t, ctx, k8s, pods...)
+	seedPods(ctx, t, k8s, pods...)
 	return computeMaxPods(ctx, k8s, defaultCfg())
 }
 
@@ -336,7 +336,7 @@ func TestRecycleUnhealthyWarmPods_UnschedulablePending(t *testing.T) {
 	// Pending for a long time but already bound: it is pulling the image.
 	pulling := aged(warmTestPod("warm-pulling", corev1.PodPending, condScheduled), 10*time.Minute)
 
-	seedPods(t, ctx, k8s, stuck, recent, pulling)
+	seedPods(ctx, t, k8s, stuck, recent, pulling)
 
 	recycleUnhealthyWarmPods(ctx, k8s, testNS)
 
@@ -363,7 +363,7 @@ func TestReconcileSinglePool_TrimsSurplusWarmPods(t *testing.T) {
 	k8s := kubefake.NewSimpleClientset()
 	ready := warmTestPod("warm-ready", corev1.PodRunning, condReady)
 	stuck := warmTestPod("warm-stuck", corev1.PodPending, condUnschedulable)
-	seedPods(t, ctx, k8s, ready, stuck)
+	seedPods(ctx, t, k8s, ready, stuck)
 
 	reconcileSinglePool(ctx, k8s, newWarmPoolCR(1), podCapacityUnknown, defaultCfg(), 0)
 
@@ -378,7 +378,7 @@ func TestReconcileSinglePool_TrimPrefersLongestIdle(t *testing.T) {
 
 	older := idleSince(warmTestPod("warm-old", corev1.PodRunning, condReady), 90*time.Minute)
 	newer := idleSince(warmTestPod("warm-new", corev1.PodRunning, condReady), 5*time.Minute)
-	seedPods(t, ctx, k8s, older, newer)
+	seedPods(ctx, t, k8s, older, newer)
 
 	reconcileSinglePool(ctx, k8s, newWarmPoolCR(1), podCapacityUnknown, defaultCfg(), 0)
 
@@ -393,7 +393,7 @@ func TestReconcileSinglePool_RespectsCapacity(t *testing.T) {
 	ctx := context.Background()
 	k8s := kubefake.NewSimpleClientset()
 	active := sandboxTestPod("sandbox-warm-active", sandboxgrpc.StateActive, corev1.PodRunning)
-	seedPods(t, ctx, k8s, active)
+	seedPods(ctx, t, k8s, active)
 
 	reconcileSinglePool(ctx, k8s, newWarmPoolCR(2), 1, defaultCfg(), 0)
 
@@ -413,7 +413,7 @@ func TestDeleteSurplusWarmPod_SkipsClaimed(t *testing.T) {
 	ctx := context.Background()
 	k8s := kubefake.NewSimpleClientset()
 	pod := sandboxTestPod("warm-claimed", sandboxgrpc.StateActive, corev1.PodRunning)
-	seedPods(t, ctx, k8s, pod)
+	seedPods(ctx, t, k8s, pod)
 
 	if deleteSurplusWarmPod(ctx, k8s, testNS, pod) {
 		t.Fatal("claimed pod must not count against the trim budget")
@@ -448,7 +448,7 @@ func TestReapIfIdle_UsesPodTTLOverride(t *testing.T) {
 
 	pod := idleSince(sandboxTestPod("warm-ttl", "", corev1.PodRunning), 2*time.Second)
 	pod.Annotations[podIdleTTLAnnotation] = "1"
-	seedPods(t, ctx, k8s, pod)
+	seedPods(ctx, t, k8s, pod)
 
 	// default TTL is long (3600s), but the pod annotation overrides it to 1s
 	reapIfIdle(ctx, k8s, testNS, pod, 3600, time.Now())
