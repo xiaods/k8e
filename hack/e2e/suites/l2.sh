@@ -99,6 +99,46 @@ else
     e2e_bad "kubelet answers /healthz through the API server proxy"
 fi
 
+# --- kubelet is configured through a drop-in file, not CLI flags ----------
+#
+# k8e renders its kubelet settings into a KubeletConfiguration drop-in instead
+# of piling them onto the kubelet command line. The two are not equivalent: a
+# flag upstream deletes makes kubelet exit with "unknown flag" before it reads
+# any configuration (--containerd in 1.37, the KubeletCredentialProviders and
+# DevicePlugins gates in the same release), while a field a drop-in file sets
+# that this build no longer knows is simply ignored. These checks keep the
+# contract from rotting back into flags.
+drop_in="${E2E_IN_CONTAINER_KUBELET_CONF_D}/10-k8e.conf"
+drop_in_body="$(e2e_in_container cat "${drop_in}" 2>/dev/null || true)"
+
+if printf '%s' "${drop_in_body}" | grep -q '^kind: KubeletConfiguration'; then
+    e2e_ok "kubelet drop-in ${drop_in} declares a KubeletConfiguration"
+else
+    e2e_bad "kubelet drop-in ${drop_in} declares a KubeletConfiguration"
+fi
+
+if printf '%s' "${drop_in_body}" | grep -q '^clusterDomain:'; then
+    e2e_ok "kubelet drop-in carries k8e's settings"
+else
+    e2e_bad "kubelet drop-in carries k8e's settings"
+fi
+
+kubelet_cmdline="$(docker logs "${E2E_CONTAINER}" 2>&1 | grep 'Running kubelet' | tail -1 || true)"
+
+if printf '%s' "${kubelet_cmdline}" | grep -q -- '--config-dir='; then
+    e2e_ok "kubelet is started with --config-dir"
+else
+    e2e_bad "kubelet is started with --config-dir"
+fi
+
+# Gates are the one setting that still fails hard when unknown, so they must be
+# filtered out before they reach kubelet rather than passed as a flag.
+if printf '%s' "${kubelet_cmdline}" | grep -q -- '--feature-gates'; then
+    e2e_bad "kubelet command line carries no --feature-gates"
+else
+    e2e_ok "kubelet command line carries no --feature-gates"
+fi
+
 # --- container runtime stack ---------------------------------------------
 
 if e2e_in_container /usr/local/bin/runc --version >/dev/null 2>&1; then

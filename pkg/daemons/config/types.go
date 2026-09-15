@@ -134,6 +134,7 @@ type Agent struct {
 	ClusterDomain           string
 	ResolvConf              string
 	RootDir                 string
+	KubeletConfigDir        string // KubeletConfiguration drop-in dir; see pkg/daemons/agent
 	KubeConfigKubelet       string
 	KubeConfigKubeProxy     string
 	KubeConfigK8eController string

@@ -7,10 +7,8 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 )
 
-func kubeletArgs(cfg *config.Agent) map[string]string {
-	argsMap := commonKubeletArgs(cfg)
+func applyPlatformKubeletSettings(s *kubeletSettings, cfg *config.Agent) {
 	if cfg.NodeIP != "" {
-		argsMap["node-ip"] = cfg.NodeIP
+		s.setFlag("node-ip", cfg.NodeIP)
 	}
-	return argsMap
 }
