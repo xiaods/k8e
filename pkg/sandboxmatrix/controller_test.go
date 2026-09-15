@@ -194,8 +194,336 @@ func TestComputeMaxPods_MultiNodeAndCPU(t *testing.T) {
 func TestComputeMaxPods_NoNodes(t *testing.T) {
 	ctx := context.Background()
 	k8s := kubefake.NewSimpleClientset()
+	if got := computeMaxPods(ctx, k8s, defaultCfg()); got != podCapacityUnknown {
+		t.Fatalf("expected podCapacityUnknown without nodes, got %d", got)
+	}
+}
+
+// newTestNode registers a node with the given allocatable memory/CPU.
+func newTestNode(t *testing.T, k8s kubernetes.Interface, name, mem, cpu string) {
+	t.Helper()
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse(mem),
+			corev1.ResourceCPU:    resource.MustParse(cpu),
+		}},
+	}
+	if _, err := k8s.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create node %s: %v", name, err)
+	}
+}
+
+// newRequestingPod registers a pod whose single container requests mem.
+func newRequestingPod(t *testing.T, k8s kubernetes.Interface, ns, name, mem string) {
+	t.Helper()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name:      "c",
+			Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(mem)}},
+		}}},
+	}
+	if _, err := k8s.CoreV1().Pods(ns).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create pod %s: %v", name, err)
+	}
+}
+
+// TestComputeMaxPods_SubtractsSystemWorkloads reproduces the t3.small incident:
+// raw node math says three sandbox pods fit, but once the control-plane
+// workloads holding their requests forever are subtracted only one fits. The
+// old model ignored them and kept creating refills the scheduler could never
+// place.
+func TestComputeMaxPods_SubtractsSystemWorkloads(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	newTestNode(t, k8s, "node-a", "1950944Ki", "2") // ~1.9Gi allocatable
+
+	// 3 × cert-manager (128Mi) + coredns (70Mi) + metrics-server (200Mi) +
+	// cilium (256Mi) = 910Mi held for the lifetime of the cluster.
+	for name, mem := range map[string]string{
+		"cert-manager":            "128Mi",
+		"cert-manager-cainjector": "128Mi",
+		"cert-manager-webhook":    "128Mi",
+		"coredns":                 "70Mi",
+		"metrics-server":          "200Mi",
+		"cilium":                  "256Mi",
+	} {
+		newRequestingPod(t, k8s, "kube-system", name, mem)
+	}
+
+	if got := computeMaxPods(ctx, k8s, defaultCfg()); got != 1 {
+		t.Fatalf("expected capacity 1 after subtracting system workloads, got %d", got)
+	}
+}
+
+func TestComputeMaxPods_NoRoomLeft(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	newTestNode(t, k8s, "node-a", "1Gi", "1")
+	newRequestingPod(t, k8s, "kube-system", "metrics-server", "900Mi")
+
 	if got := computeMaxPods(ctx, k8s, defaultCfg()); got != 0 {
-		t.Fatalf("expected 0 (no limit) without nodes, got %d", got)
+		t.Fatalf("expected capacity 0 when system workloads fill the node, got %d", got)
+	}
+}
+
+// TestComputeMaxPods_IgnoresSandboxPods guards against double counting: sandbox
+// pods are charged against maxPods by count, not by request.
+func TestComputeMaxPods_IgnoresSandboxPods(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	newTestNode(t, k8s, "node-a", "4Gi", "2")
+
+	sandbox := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sandbox-warm-x",
+			Namespace: "sandbox-matrix",
+			Labels:    map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name:      "sandbox",
+			Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("512Mi")}},
+		}}},
+	}
+	if _, err := k8s.CoreV1().Pods("sandbox-matrix").Create(ctx, sandbox, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create sandbox pod: %v", err)
+	}
+
+	// memCap = 7, cpuCap = 3 → 3, identical to an empty cluster.
+	if got := computeMaxPods(ctx, k8s, defaultCfg()); got != 3 {
+		t.Fatalf("expected sandbox pods excluded from capacity math, got %d", got)
+	}
+}
+
+func TestComputeMaxPods_IgnoresCompletedPods(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	newTestNode(t, k8s, "node-a", "4Gi", "2")
+
+	done := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "helm-install", Namespace: "kube-system"},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name:      "helm",
+			Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")}},
+		}}},
+		Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+	}
+	if _, err := k8s.CoreV1().Pods("kube-system").Create(ctx, done, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create completed pod: %v", err)
+	}
+
+	if got := computeMaxPods(ctx, k8s, defaultCfg()); got != 3 {
+		t.Fatalf("expected completed pods to release their requests, got %d", got)
+	}
+}
+
+func TestRecycleUnhealthyWarmPods_UnschedulablePending(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	warmPod := func(name string, age time.Duration, conditions []corev1.PodCondition) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              name,
+				Namespace:         ns,
+				Labels:            map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
+				CreationTimestamp: metav1.NewTime(time.Now().Add(-age)),
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodPending, Conditions: conditions},
+		}
+	}
+	unschedulable := []corev1.PodCondition{{
+		Type: corev1.PodScheduled, Status: corev1.ConditionFalse,
+		Reason: corev1.PodReasonUnschedulable, Message: "0/1 nodes are available: 1 Insufficient memory.",
+	}}
+
+	// Stuck unschedulable past the grace period — must be recycled so the next
+	// refill can retry instead of waiting for the 2h idle reaper.
+	stuck := warmPod("warm-stuck", 10*time.Minute, unschedulable)
+	// Unschedulable, but only just: give the scheduler a chance to place it.
+	recent := warmPod("warm-recent", 10*time.Second, unschedulable)
+	// Pending for a long time but already bound: it is pulling the image.
+	pulling := warmPod("warm-pulling", 10*time.Minute, []corev1.PodCondition{{
+		Type: corev1.PodScheduled, Status: corev1.ConditionTrue,
+	}})
+
+	for _, p := range []*corev1.Pod{stuck, recent, pulling} {
+		if _, err := k8s.CoreV1().Pods(ns).Create(ctx, p, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seed pod %s: %v", p.Name, err)
+		}
+	}
+
+	recycleUnhealthyWarmPods(ctx, k8s, ns)
+
+	if _, err := k8s.CoreV1().Pods(ns).Get(ctx, "warm-stuck", metav1.GetOptions{}); err == nil {
+		t.Error("expected unschedulable warm pod to be recycled")
+	}
+	for _, name := range []string{"warm-recent", "warm-pulling"} {
+		if _, err := k8s.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{}); err != nil {
+			t.Errorf("expected %s to survive: %v", name, err)
+		}
+	}
+}
+
+// newWarmPoolCR builds a SandboxWarmPool CR with the given spec.
+func newWarmPoolCR(size int64) unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": sandboxgrpc.SandboxAPIGroup + "/v1alpha1",
+		"kind":       "SandboxWarmPool",
+		"metadata":   map[string]interface{}{"name": "default", "namespace": "sandbox-matrix"},
+		"spec":       map[string]interface{}{"size": size, "runtimeClass": "gvisor"},
+	}}
+}
+
+// TestReconcileSinglePool_TrimsSurplusWarmPods covers scale-down: the pool asks
+// for one pod but holds two (a session pod returning from resetting, or a
+// lowered target). Surplus must go now, not at the next idle reaper sweep.
+func TestReconcileSinglePool_TrimsSurplusWarmPods(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	ready := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "warm-ready", Namespace: ns, Labels: map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm}},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	stuck := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "warm-stuck", Namespace: ns, Labels: map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm}},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodPending,
+			Conditions: []corev1.PodCondition{{
+				Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable,
+			}},
+		},
+	}
+	for _, p := range []*corev1.Pod{ready, stuck} {
+		if _, err := k8s.CoreV1().Pods(ns).Create(ctx, p, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seed pod %s: %v", p.Name, err)
+		}
+	}
+
+	reconcileSinglePool(ctx, k8s, newWarmPoolCR(1), podCapacityUnknown, defaultCfg(), 0)
+
+	// The unschedulable pod is worthless; the claimable one must stay.
+	if _, err := k8s.CoreV1().Pods(ns).Get(ctx, "warm-stuck", metav1.GetOptions{}); err == nil {
+		t.Error("expected surplus unschedulable pod to be trimmed")
+	}
+	if _, err := k8s.CoreV1().Pods(ns).Get(ctx, "warm-ready", metav1.GetOptions{}); err != nil {
+		t.Errorf("expected claimable warm pod to survive: %v", err)
+	}
+}
+
+func TestReconcileSinglePool_TrimPrefersLongestIdle(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	warmReady := func(name string, idleFor time.Duration) *corev1.Pod {
+		return &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: ns,
+				Labels:    map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
+				Annotations: map[string]string{
+					podReleasedAtAnnotation: time.Now().Add(-idleFor).UTC().Format(time.RFC3339),
+				},
+			},
+			Status: corev1.PodStatus{
+				Phase:      corev1.PodRunning,
+				Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+			},
+		}
+	}
+	for _, p := range []*corev1.Pod{warmReady("warm-old", 90*time.Minute), warmReady("warm-new", 5*time.Minute)} {
+		if _, err := k8s.CoreV1().Pods(ns).Create(ctx, p, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("seed pod %s: %v", p.Name, err)
+		}
+	}
+
+	reconcileSinglePool(ctx, k8s, newWarmPoolCR(1), podCapacityUnknown, defaultCfg(), 0)
+
+	if _, err := k8s.CoreV1().Pods(ns).Get(ctx, "warm-old", metav1.GetOptions{}); err == nil {
+		t.Error("expected the longest-idle warm pod to be trimmed first")
+	}
+	if _, err := k8s.CoreV1().Pods(ns).Get(ctx, "warm-new", metav1.GetOptions{}); err != nil {
+		t.Errorf("expected the freshest warm pod to survive: %v", err)
+	}
+}
+
+// TestReconcileSinglePool_RespectsCapacity is the incident fix: with one
+// session already holding the only slot that fits, the reconciler must not
+// create a refill the scheduler can never place.
+func TestReconcileSinglePool_RespectsCapacity(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	active := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "sandbox-warm-active", Namespace: ns, Labels: map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateActive}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	if _, err := k8s.CoreV1().Pods(ns).Create(ctx, active, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seed pod: %v", err)
+	}
+
+	reconcileSinglePool(ctx, k8s, newWarmPoolCR(2), 1, defaultCfg(), 0)
+
+	pods, err := k8s.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatalf("list pods: %v", err)
+	}
+	if len(pods.Items) != 1 {
+		t.Fatalf("expected no refill once capacity is exhausted, got %d pods", len(pods.Items))
+	}
+}
+
+// TestDeleteSurplusWarmPod_SkipsClaimed guards the trim/claim race: a session
+// claiming a pod flips its label to active, and trimming it anyway would leave
+// that session pointing at a dead sandbox.
+func TestDeleteSurplusWarmPod_SkipsClaimed(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	ns := "sandbox-matrix"
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "warm-claimed", Namespace: ns, Labels: map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateActive}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	if _, err := k8s.CoreV1().Pods(ns).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create pod: %v", err)
+	}
+
+	if deleteSurplusWarmPod(ctx, k8s, ns, pod) {
+		t.Fatal("claimed pod must not count against the trim budget")
+	}
+	if _, err := k8s.CoreV1().Pods(ns).Get(ctx, "warm-claimed", metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected claimed pod to survive: %v", err)
+	}
+}
+
+func TestCapacityCache_ReusesValue(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+	newTestNode(t, k8s, "node-a", "4Gi", "2")
+
+	caps := &capacityCache{}
+	if got := caps.get(ctx, k8s, defaultCfg()); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+	// Grow the cluster behind the cache's back: the cached value must hold
+	// until the TTL expires.
+	newTestNode(t, k8s, "node-b", "4Gi", "2")
+	if got := caps.get(ctx, k8s, defaultCfg()); got != 3 {
+		t.Fatalf("expected cached 3, got %d", got)
+	}
+	// A nil cache bypasses memoization entirely.
+	if got := (*capacityCache)(nil).get(ctx, k8s, defaultCfg()); got != 7 {
+		t.Fatalf("expected nil cache to recompute (7), got %d", got)
 	}
 }
 
@@ -229,7 +557,7 @@ func TestReconcileWarmPools_NoPoolCR_CreatesNoPods(t *testing.T) {
 	// Without a SandboxWarmPool CR the reconciler is a no-op (KIP-25).
 	ctx := context.Background()
 	dyn, k8s := fakeSandboxClients()
-	reconcileWarmPools(ctx, k8s, dyn, defaultCfg(), nil, nil)
+	reconcileWarmPools(ctx, k8s, dyn, defaultCfg(), nil, nil, nil)
 
 	pods, err := k8s.CoreV1().Pods("sandbox-matrix").List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -261,7 +589,7 @@ func TestWarmPoolReconciler_RefillTrigger(t *testing.T) {
 	refill <- struct{}{}
 	done := make(chan struct{})
 	go func() {
-		runWarmPoolReconciler(ctx, k8s, dyn, defaultCfg(), refill, nil)
+		runWarmPoolReconciler(ctx, k8s, dyn, defaultCfg(), refill, nil, nil)
 		close(done)
 	}()
 
@@ -302,7 +630,7 @@ func TestUpdateSandboxMatrixStatus_WritesMetrics(t *testing.T) {
 	}
 
 	orch := sandboxgrpc.NewOrchestrator(k8s, dyn, ns)
-	updateSandboxMatrixStatus(ctx, k8s, dyn, defaultCfg(), orch)
+	updateSandboxMatrixStatus(ctx, k8s, dyn, defaultCfg(), orch, podCapacityUnknown)
 
 	got, err := dyn.Resource(localMatrixGVR).Namespace(ns).Get(ctx, "default", metav1.GetOptions{})
 	if err != nil {
