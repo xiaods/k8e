@@ -1,13 +1,18 @@
 name: Build Test
 on:
+  # Pull requests are tested against every base branch — feature, fix, docs
+  # and release branches alike — so '**' also matches names containing '/'.
   pull_request:
     branches:
-      - main
-      - dev
+      - '**'
+  # Pushes only run on the long-lived branches: PRs already cover scratch
+  # branches, and the full matrix (including two 40-minute E2E profiles) on
+  # every push would multiply CI time without adding signal.
   push:
     branches:
       - main
       - dev
+      - 'release-**'
 
 permissions:
   checks: write
