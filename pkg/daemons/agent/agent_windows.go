@@ -13,25 +13,23 @@ import (
 
 const socketPrefix = "npipe://"
 
-func kubeletArgs(cfg *config.Agent) map[string]string {
-	argsMap := commonKubeletArgs(cfg)
+func applyPlatformKubeletSettings(s *kubeletSettings, cfg *config.Agent) {
 	bindAddress := "127.0.0.1"
 	_, IPv6only, _ := util.GetFirstString([]string{cfg.NodeIP})
 	if IPv6only {
 		bindAddress = "::1"
 	}
-	argsMap["healthz-bind-address"] = bindAddress
+	s.config.HealthzBindAddress = bindAddress
 	if cfg.RuntimeSocket != "" {
-		argsMap["serialize-image-pulls"] = "false"
+		s.config.SerializeImagePulls = boolPtr(false)
 		if strings.HasPrefix(cfg.RuntimeSocket, socketPrefix) {
-			argsMap["container-runtime-endpoint"] = cfg.RuntimeSocket
+			s.config.ContainerRuntimeEndpoint = cfg.RuntimeSocket
 		} else {
-			argsMap["container-runtime-endpoint"] = socketPrefix + cfg.RuntimeSocket
+			s.config.ContainerRuntimeEndpoint = socketPrefix + cfg.RuntimeSocket
 		}
 	}
 	defaultIP, err := net.ChooseHostInterface()
 	if err != nil || defaultIP.String() != cfg.NodeIP {
-		argsMap["node-ip"] = cfg.NodeIP
+		s.setFlag("node-ip", cfg.NodeIP)
 	}
-	return argsMap
 }

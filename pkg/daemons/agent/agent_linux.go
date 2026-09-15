@@ -13,13 +13,16 @@ import (
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/util"
 	"golang.org/x/sys/unix"
+	"k8s.io/kubernetes/pkg/features"
 	utilsnet "k8s.io/utils/net"
 )
 
 const socketPrefix = "unix://"
 
-func createRootlessConfig(argsMap map[string]string, controllers map[string]bool) {
-	argsMap["feature-gates=KubeletInUserNamespace"] = "true"
+func createRootlessConfig(s *kubeletSettings, controllers map[string]bool) {
+	// Referenced through the typed gate constant: if upstream removes the gate
+	// the build breaks here, instead of the node going down at startup.
+	s.addFeatureGate(string(features.KubeletInUserNamespace), true)
 	// "/sys/fs/cgroup" is namespaced
 	cgroupfsWritable := unix.Access("/sys/fs/cgroup", unix.W_OK) == nil
 	if controllers["cpu"] && controllers["pids"] && cgroupfsWritable {
@@ -31,11 +34,11 @@ func createRootlessConfig(argsMap map[string]string, controllers map[string]bool
 
 // applyRuntimeSocketArgs points kubelet and cadvisor at the container runtime and
 // image service sockets.
-func applyRuntimeSocketArgs(argsMap map[string]string, cfg *config.Agent) {
+func applyRuntimeSocketArgs(s *kubeletSettings, cfg *config.Agent) {
 	if cfg.RuntimeSocket == "" {
 		return
 	}
-	argsMap["serialize-image-pulls"] = "false"
+	s.config.SerializeImagePulls = boolPtr(false)
 	if strings.Contains(cfg.RuntimeSocket, "containerd") {
 		// cadvisor needs the containerd endpoint to collect container stats. The
 		// kubelet used to expose this as a --containerd flag, but stopped
@@ -46,32 +49,33 @@ func applyRuntimeSocketArgs(argsMap map[string]string, cfg *config.Agent) {
 	}
 	// cadvisor wants the containerd CRI socket without the prefix, but kubelet wants it with the prefix
 	if strings.HasPrefix(cfg.RuntimeSocket, socketPrefix) {
-		argsMap["container-runtime-endpoint"] = cfg.RuntimeSocket
+		s.config.ContainerRuntimeEndpoint = cfg.RuntimeSocket
 	} else {
-		argsMap["container-runtime-endpoint"] = socketPrefix + cfg.RuntimeSocket
+		s.config.ContainerRuntimeEndpoint = socketPrefix + cfg.RuntimeSocket
 	}
 	if cfg.ImageServiceSocket != "" {
 		if strings.HasPrefix(cfg.ImageServiceSocket, socketPrefix) {
-			argsMap["image-service-endpoint"] = cfg.ImageServiceSocket
+			s.config.ImageServiceEndpoint = cfg.ImageServiceSocket
 		} else {
-			argsMap["image-service-endpoint"] = socketPrefix + cfg.ImageServiceSocket
+			s.config.ImageServiceEndpoint = socketPrefix + cfg.ImageServiceSocket
 		}
 	}
 }
 
-func applyCgroupArgs(argsMap map[string]string, cfg *config.Agent, controllers map[string]bool, kubeletRoot, runtimeRoot string) {
+func applyCgroupArgs(s *kubeletSettings, controllers map[string]bool, kubeletRoot, runtimeRoot string) {
 	if !controllers["cpu"] {
 		logrus.Warn("Disabling CPU quotas due to missing cpu controller or cpu.cfs_period_us")
-		argsMap["cpu-cfs-quota"] = "false"
+		s.config.CPUCFSQuota = boolPtr(false)
 	}
 	if !controllers["pids"] {
 		logrus.Fatal("pids cgroup controller not found")
 	}
 	if kubeletRoot != "" {
-		argsMap["kubelet-cgroups"] = kubeletRoot
+		s.config.KubeletCgroups = kubeletRoot
 	}
 	if runtimeRoot != "" {
-		argsMap["runtime-cgroups"] = runtimeRoot
+		// runtime-cgroups has no KubeletConfiguration field.
+		s.setFlag("runtime-cgroups", runtimeRoot)
 	}
 }
 
@@ -82,24 +86,22 @@ func computeBindAddress(cfg *config.Agent) string {
 	return "127.0.0.1"
 }
 
-func kubeletArgs(cfg *config.Agent) map[string]string {
-	argsMap := commonKubeletArgs(cfg)
-	argsMap["healthz-bind-address"] = computeBindAddress(cfg)
-	argsMap["cgroup-driver"] = "cgroupfs"
-	applyRuntimeSocketArgs(argsMap, cfg)
+func applyPlatformKubeletSettings(s *kubeletSettings, cfg *config.Agent) {
+	s.config.HealthzBindAddress = computeBindAddress(cfg)
+	s.config.CgroupDriver = "cgroupfs"
+	applyRuntimeSocketArgs(s, cfg)
 	if util.JoinIPs(cfg.NodeIPs) != "" {
 		dualStack, err := utilsnet.IsDualStackIPs(cfg.NodeIPs)
 		if err == nil && !dualStack {
-			argsMap["node-ip"] = cfg.NodeIP
+			s.setFlag("node-ip", cfg.NodeIP)
 		}
 	}
 	kubeletRoot, runtimeRoot, controllers := cgroups.CheckCgroups()
-	applyCgroupArgs(argsMap, cfg, controllers, kubeletRoot, runtimeRoot)
+	applyCgroupArgs(s, controllers, kubeletRoot, runtimeRoot)
 	if cfg.Rootless {
-		createRootlessConfig(argsMap, controllers)
+		createRootlessConfig(s, controllers)
 	}
 	if cfg.Systemd {
-		argsMap["cgroup-driver"] = "systemd"
+		s.config.CgroupDriver = "systemd"
 	}
-	return argsMap
 }

@@ -12,14 +12,13 @@ import (
 	"github.com/xiaods/k8e/pkg/agent/proxy"
 	daemonconfig "github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/daemons/executor"
-	"github.com/xiaods/k8e/pkg/util"
 	"k8s.io/component-base/logs"
 	_ "k8s.io/component-base/metrics/prometheus/restclient" // for client metric registration
 	_ "k8s.io/component-base/metrics/prometheus/version"    // for version metric registration
+	kubeletconfigv1beta1 "k8s.io/kubelet/config/v1beta1"
 	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
+	"k8s.io/kubernetes/pkg/util/taints"
 )
-
-const podManifestPathKey = "pod-manifest-path"
 
 func Agent(ctx context.Context, nodeConfig *daemonconfig.Node, proxy proxy.Proxy) error {
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -34,9 +33,19 @@ func Agent(ctx context.Context, nodeConfig *daemonconfig.Node, proxy proxy.Proxy
 }
 
 func startKubelet(ctx context.Context, cfg *daemonconfig.Agent) error {
-	argsMap := kubeletArgs(cfg)
+	settings := newKubeletSettings()
+	commonKubeletSettings(settings, cfg)
+	applyPlatformKubeletSettings(settings, cfg)
 
-	args := daemonconfig.GetArgs(argsMap, cfg.ExtraKubeletArgs)
+	dir, err := kubeletConfigDir(cfg)
+	if err != nil {
+		return err
+	}
+	if err := settings.writeDropIn(dir); err != nil {
+		return err
+	}
+
+	args := settings.args(cfg.ExtraKubeletArgs)
 	logrus.Infof("Running kubelet %s", daemonconfig.ArgString(args))
 
 	return executor.Kubelet(ctx, args)
@@ -56,76 +65,89 @@ func ImageCredProvAvailable(cfg *daemonconfig.Agent) bool {
 	return true
 }
 
-func commonKubeletArgs(cfg *daemonconfig.Agent) map[string]string {
-	argsMap := map[string]string{
-		"healthz-bind-address":         "127.0.0.1",
-		"read-only-port":               "0",
-		"cluster-domain":               cfg.ClusterDomain,
-		"kubeconfig":                   cfg.KubeConfigKubelet,
-		"eviction-hard":                "imagefs.available<5%,nodefs.available<5%",
-		"eviction-minimum-reclaim":     "imagefs.available=10%,nodefs.available=10%",
-		"fail-swap-on":                 "false",
-		"authentication-token-webhook": "true",
-		"anonymous-auth":               "false",
-		"authorization-mode":           modes.ModeWebhook,
+func commonKubeletSettings(s *kubeletSettings, cfg *daemonconfig.Agent) {
+	kc := s.config
+	kc.HealthzBindAddress = "127.0.0.1"
+	kc.ReadOnlyPort = 0
+	kc.ClusterDomain = cfg.ClusterDomain
+	kc.EvictionHard = map[string]string{
+		"imagefs.available": "5%",
+		"nodefs.available":  "5%",
 	}
-	applyCommonPathArgs(argsMap, cfg)
-	applyCommonConnectivityArgs(argsMap, cfg)
+	kc.EvictionMinimumReclaim = map[string]string{
+		"imagefs.available": "10%",
+		"nodefs.available":  "10%",
+	}
+	kc.FailSwapOn = boolPtr(false)
+	kc.Authentication.Webhook.Enabled = boolPtr(true)
+	kc.Authentication.Anonymous.Enabled = boolPtr(false)
+	kc.Authorization.Mode = kubeletconfigv1beta1.KubeletAuthorizationMode(modes.ModeWebhook)
+
+	// kubeconfig is a KubeletFlags field with no KubeletConfiguration
+	// equivalent, so it has to stay on the command line.
+	s.setFlag("kubeconfig", cfg.KubeConfigKubelet)
+
+	applyCommonPathSettings(s, cfg)
+	applyCommonConnectivitySettings(s, cfg)
 	if cfg.NodeName != "" {
-		argsMap["hostname-override"] = cfg.NodeName
+		s.setFlag("hostname-override", cfg.NodeName)
 	}
-	argsMap["node-labels"] = strings.Join(cfg.NodeLabels, ",")
+	s.setFlag("node-labels", strings.Join(cfg.NodeLabels, ","))
 	if len(cfg.NodeTaints) > 0 {
-		argsMap["register-with-taints"] = strings.Join(cfg.NodeTaints, ",")
+		taints, _, err := taints.ParseTaints(cfg.NodeTaints)
+		if err != nil {
+			logrus.Fatalf("Failed to parse node taints %v: %v", cfg.NodeTaints, err)
+		}
+		kc.RegisterWithTaints = taints
 	}
 	if !cfg.DisableCCM {
-		argsMap["cloud-provider"] = "external"
+		s.setFlag("cloud-provider", "external")
 	}
-	applyImageCredentialArgs(argsMap, cfg)
+	applyImageCredentialSettings(s, cfg)
 	if cfg.ProtectKernelDefaults {
-		argsMap["protect-kernel-defaults"] = "true"
+		kc.ProtectKernelDefaults = true
 	}
-	return argsMap
 }
 
-func applyCommonPathArgs(argsMap map[string]string, cfg *daemonconfig.Agent) {
-	if cfg.PodManifests != "" && argsMap[podManifestPathKey] == "" {
-		argsMap[podManifestPathKey] = cfg.PodManifests
+func applyCommonPathSettings(s *kubeletSettings, cfg *daemonconfig.Agent) {
+	if cfg.PodManifests != "" && s.config.StaticPodPath == "" {
+		s.config.StaticPodPath = cfg.PodManifests
 	}
-	if err := os.MkdirAll(argsMap[podManifestPathKey], 0755); err != nil {
-		logrus.Errorf("Failed to mkdir %s: %v", argsMap[podManifestPathKey], err)
+	if err := os.MkdirAll(s.config.StaticPodPath, 0755); err != nil {
+		logrus.Errorf("Failed to mkdir %s: %v", s.config.StaticPodPath, err)
 	}
 	if cfg.RootDir != "" {
-		argsMap["root-dir"] = cfg.RootDir
-		argsMap["cert-dir"] = filepath.Join(cfg.RootDir, "pki")
+		s.setFlag("root-dir", cfg.RootDir)
+		s.setFlag("cert-dir", filepath.Join(cfg.RootDir, "pki"))
 	}
 }
 
-func applyCommonConnectivityArgs(argsMap map[string]string, cfg *daemonconfig.Agent) {
+func applyCommonConnectivitySettings(s *kubeletSettings, cfg *daemonconfig.Agent) {
 	if len(cfg.ClusterDNS) > 0 {
-		argsMap["cluster-dns"] = util.JoinIPs(cfg.ClusterDNSs)
+		s.config.ClusterDNS = ipStrings(cfg.ClusterDNSs)
 	}
 	if cfg.ResolvConf != "" {
-		argsMap["resolv-conf"] = cfg.ResolvConf
+		s.config.ResolverConfig = stringPtr(cfg.ResolvConf)
 	}
 	if cfg.ListenAddress != "" {
-		argsMap["address"] = cfg.ListenAddress
+		s.config.Address = cfg.ListenAddress
 	}
 	if cfg.ClientCA != "" {
-		argsMap["anonymous-auth"] = "false"
-		argsMap["client-ca-file"] = cfg.ClientCA
+		s.config.Authentication.Anonymous.Enabled = boolPtr(false)
+		s.config.Authentication.X509.ClientCAFile = cfg.ClientCA
 	}
 	if cfg.ServingKubeletCert != "" && cfg.ServingKubeletKey != "" {
-		argsMap["tls-cert-file"] = cfg.ServingKubeletCert
-		argsMap["tls-private-key-file"] = cfg.ServingKubeletKey
+		s.config.TLSCertFile = cfg.ServingKubeletCert
+		s.config.TLSPrivateKeyFile = cfg.ServingKubeletKey
 	}
 }
 
-func applyImageCredentialArgs(argsMap map[string]string, cfg *daemonconfig.Agent) {
+func applyImageCredentialSettings(s *kubeletSettings, cfg *daemonconfig.Agent) {
 	if !ImageCredProvAvailable(cfg) {
 		return
 	}
 	logrus.Infof("Kubelet image credential provider bin dir and configuration file found.")
-	argsMap["image-credential-provider-bin-dir"] = cfg.ImageCredProvBinDir
-	argsMap["image-credential-provider-config"] = cfg.ImageCredProvConfig
+	// Both paths are KubeletFlags, not KubeletConfiguration fields.
+	s.setFlag("image-credential-provider-bin-dir", cfg.ImageCredProvBinDir)
+	s.setFlag("image-credential-provider-config", cfg.ImageCredProvConfig)
 }

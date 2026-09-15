@@ -47,6 +47,10 @@ e2e_set_profile() {
     # manifest check failed against a cluster that had staged them correctly.
     # Reads therefore go into the container through `e2e_in_container`.
     : "${E2E_IN_CONTAINER_MANIFESTS_DIR:=${E2E_IN_CONTAINER_DATA_DIR}/data/server/manifests}"
+    # The agent renders its kubelet settings into a KubeletConfiguration drop-in
+    # under <data-dir>/agent/etc/kubelet.conf.d and points kubelet at it with
+    # --config-dir (see pkg/daemons/agent/kubeletconfig.go).
+    : "${E2E_IN_CONTAINER_KUBELET_CONF_D:=${E2E_IN_CONTAINER_DATA_DIR}/data/agent/etc/kubelet.conf.d}"
     # Each profile publishes its API on its own host port so that clusters kept
     # alive with E2E_KEEP=1 do not fight over a single port. An unknown profile is
     # rejected by the case further down, so no port default is needed here.
@@ -97,6 +101,7 @@ e2e_set_profile() {
     export E2E_PROFILE E2E_CONTAINER E2E_STATE_DIR E2E_DATA_DIR E2E_DIAG_DIR
     export E2E_BINARY E2E_KUBECONFIG E2E_IMAGE E2E_API_PORT
     export E2E_IN_CONTAINER_MANIFESTS_DIR E2E_CONTAINERD_SOCKET E2E_TEST_IMAGE
+    export E2E_IN_CONTAINER_KUBELET_CONF_D
     export E2E_CONTAINERD_ROOT E2E_CONTAINERD_ROOT_VOLUME E2E_CONTAINERD_VOLUME_PATH
     export E2E_EXPECT_NODE_READY E2E_PRELOAD_IMAGES
     export E2E_API_TIMEOUT E2E_NODE_TIMEOUT E2E_STAGING_TIMEOUT E2E_KEEP E2E_PURGE
