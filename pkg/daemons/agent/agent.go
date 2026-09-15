@@ -126,7 +126,6 @@ func applyImageCredentialArgs(argsMap map[string]string, cfg *daemonconfig.Agent
 		return
 	}
 	logrus.Infof("Kubelet image credential provider bin dir and configuration file found.")
-	argsMap["feature-gates"] = util.AddFeatureGate(argsMap["feature-gates"], "KubeletCredentialProviders=true")
 	argsMap["image-credential-provider-bin-dir"] = cfg.ImageCredProvBinDir
 	argsMap["image-credential-provider-config"] = cfg.ImageCredProvConfig
 }

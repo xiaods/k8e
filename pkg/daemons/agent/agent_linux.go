@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	cadvisorcontainerd "github.com/google/cadvisor/lib/container/containerd"
-	"github.com/moby/sys/userns"
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/cgroups"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -73,9 +72,6 @@ func applyCgroupArgs(argsMap map[string]string, cfg *config.Agent, controllers m
 	}
 	if runtimeRoot != "" {
 		argsMap["runtime-cgroups"] = runtimeRoot
-	}
-	if userns.RunningInUserNS() {
-		argsMap["feature-gates"] = util.AddFeatureGate(argsMap["feature-gates"], "DevicePlugins=false")
 	}
 }
 
