@@ -10,7 +10,7 @@ metadata:
   name: local-path-provisioner-role
 rules:
 - apiGroups: [""]
-  resources: ["nodes", "persistentvolumeclaims", "configmaps"]
+  resources: ["nodes", "persistentvolumeclaims", "configmaps", "pods/log"]
   verbs: ["get", "list", "watch"]
 - apiGroups: [""]
   resources: ["endpoints", "persistentvolumes", "pods"]
@@ -62,12 +62,11 @@ spec:
           - key: "node-role.kubernetes.io/control-plane"
             operator: "Exists"
             effect: "NoSchedule"
-          - key: "node-role.kubernetes.io/master"
-            operator: "Exists"
-            effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/os: linux
       containers:
       - name: local-path-provisioner
-        image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/local-path-provisioner:v0.0.30
+        image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/local-path-provisioner:v0.0.37
         imagePullPolicy: IfNotPresent
         command:
         - local-path-provisioner
@@ -92,6 +91,7 @@ kind: StorageClass
 metadata:
   name: local-path
   annotations:
+    defaultVolumeType: "local"
     storageclass.kubernetes.io/is-default-class: "true"
 provisioner: rancher.io/local-path
 volumeBindingMode: WaitForFirstConsumer
@@ -114,39 +114,13 @@ data:
     }
   setup: |-
     #!/bin/sh
-    while getopts "m:s:p:" opt
-    do
-        case $opt in
-            p)
-            absolutePath=$OPTARG
-            ;;
-            s)
-            sizeInBytes=$OPTARG
-            ;;
-            m)
-            volMode=$OPTARG
-            ;;
-        esac
-    done
-    mkdir -m 0777 -p ${absolutePath}
-    chmod 700 ${absolutePath}/..
+    set -eu
+    mkdir -m 0777 -p "${VOL_DIR}"
+    chmod 700 "${VOL_DIR}/.."
   teardown: |-
     #!/bin/sh
-    while getopts "m:s:p:" opt
-    do
-        case $opt in
-            p)
-            absolutePath=$OPTARG
-            ;;
-            s)
-            sizeInBytes=$OPTARG
-            ;;
-            m)
-            volMode=$OPTARG
-            ;;
-        esac
-    done
-    rm -rf ${absolutePath}
+    set -eu
+    rm -rf "${VOL_DIR}"
   helperPod.yaml: |-
     apiVersion: v1
     kind: Pod
@@ -155,5 +129,5 @@ data:
     spec:
       containers:
       - name: helper-pod
-        image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/mirrored-library-busybox:1.36.1
+        image: %{SYSTEM_DEFAULT_REGISTRY}%rancher/mirrored-library-busybox:1.37.0
         imagePullPolicy: IfNotPresent

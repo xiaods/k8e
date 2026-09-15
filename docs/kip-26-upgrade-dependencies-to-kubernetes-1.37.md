@@ -276,15 +276,11 @@ automatically.
 
 ## Deliberate non-changes
 
-These were audited and intentionally left alone:
+These were audited and intentionally left alone at KIP-26 land; the addon
+image tags and CNI plugin pin were later aligned to k3s `release-1.37`
+(`coredns 1.14.7`, `metrics-server v0.9.0`, `local-path-provisioner v0.0.37`,
+`VERSION_CNIPLUGINS=v1.9.1-k3s1`).
 
-- **`manifests/` image tags** (`metrics-server v0.8.1`, `coredns 1.10.1`,
-  `local-path-provisioner v0.0.30`, …). k8e pins these independently of the Go module graph:
-  k3s `release-1.35` **and** `release-1.37` both ship `metrics-server v0.9.0` / `coredns 1.14.7`,
-  so the divergence predates this upgrade and is not caused by it. Changing them would be a
-  separate, runtime-affecting decision.
-- **`hack/version.sh` `VERSION_CNIPLUGINS`** stays at `v1.6.0-k3s1` while k3s uses
-  `v1.9.1-k3s1`. Also pre-existing and orthogonal to the Go dependency graph.
 - **k3s-only replacements** are intentionally absent, because k8e has no consumer for them:
   `cloudnativelabs/kube-router/v2`, `spegel-org/spegel`, `spf13/cobra`, `spf13/pflag`,
   `spf13/viper`. (k8e's `go.mod` replace block is otherwise a subset of k3s `release-1.37`.)
