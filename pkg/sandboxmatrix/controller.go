@@ -217,37 +217,45 @@ func recycleUnhealthyWarmPods(ctx context.Context, k8s kubernetes.Interface, nam
 	now := time.Now()
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if pod.Status.Phase == corev1.PodFailed {
-			logrus.Infof("sandbox-matrix: recycle failed warm pod %s", pod.Name)
-			deleteWarmPod(ctx, k8s, namespace, pod.Name)
+		reason, age := warmPodRecycleReason(pod, now)
+		if reason == "" {
 			continue
 		}
+		logrus.Infof("sandbox-matrix: recycle warm pod %s (%s for %v)", pod.Name, reason, age.Round(time.Second))
+		deleteWarmPod(ctx, k8s, namespace, pod.Name)
+	}
+}
+
+// warmPodRecycleReason reports why a warm pod will never serve a session, or ""
+// when it is still worth keeping. age is how long that reason has held.
+func warmPodRecycleReason(pod *corev1.Pod, now time.Time) (string, time.Duration) {
+	age := now.Sub(pod.CreationTimestamp.Time)
+	switch pod.Status.Phase {
+	case corev1.PodFailed:
+		// RestartPolicy Never: the container exited and nothing will restart it.
+		return "container exited", age
+	case corev1.PodPending:
 		// A pod the scheduler cannot place never becomes claimable and never
 		// fails on its own. Left alone it would sit in the pool until the idle
 		// reaper's sessionTTL×2 sweep, blocking the slot a refill needs and
 		// turning into a delete/recreate cycle every two hours.
-		if pod.Status.Phase == corev1.PodPending {
-			if !podUnschedulable(pod) {
-				continue // still waiting on image pull or an in-flight binding
-			}
-			if now.Sub(pod.CreationTimestamp.Time) < recycleUnschedulableWarmPodAfter {
-				continue // give the scheduler a grace period to place it
-			}
-			logrus.Infof("sandbox-matrix: recycle unschedulable warm pod %s (pending %v)",
-				pod.Name, now.Sub(pod.CreationTimestamp.Time).Round(time.Second))
-			deleteWarmPod(ctx, k8s, namespace, pod.Name)
-			continue
+		if !podUnschedulable(pod) {
+			return "", 0 // still waiting on image pull or an in-flight binding
 		}
-		if pod.Status.Phase != corev1.PodRunning || sandboxgrpc.PodReadyCondition(pod) {
-			continue
+		if age < recycleUnschedulableWarmPodAfter {
+			return "", 0 // give the scheduler a grace period to place it
 		}
-		if now.Sub(pod.CreationTimestamp.Time) < recycleUnhealthyWarmPodAfter {
-			continue // still within the boot budget (image pull + sandboxd start)
+		return "unschedulable", age
+	case corev1.PodRunning:
+		if sandboxgrpc.PodReadyCondition(pod) {
+			return "", 0
 		}
-		logrus.Infof("sandbox-matrix: recycle warm pod %s (sandboxd not ready for %v)",
-			pod.Name, now.Sub(pod.CreationTimestamp.Time).Round(time.Second))
-		deleteWarmPod(ctx, k8s, namespace, pod.Name)
+		if age < recycleUnhealthyWarmPodAfter {
+			return "", 0 // still within the boot budget (image pull + sandboxd start)
+		}
+		return "sandboxd not ready", age
 	}
+	return "", 0 // Succeeded, Unknown, …
 }
 
 // podUnschedulable reports whether the scheduler has given up on placing the
@@ -529,22 +537,38 @@ func foreignPodRequests(ctx context.Context, k8s kubernetes.Interface, sandboxNa
 	}
 	for i := range pods.Items {
 		pod := &pods.Items[i]
-		if pod.Namespace == sandboxNamespace {
-			if _, managed := pod.Labels[sandboxgrpc.LabelState]; managed {
-				continue
-			}
-		}
-		// Completed and failed pods no longer hold a scheduler reservation.
-		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		if !podHoldsReservation(pod, sandboxNamespace) {
 			continue
 		}
-		for _, c := range pod.Spec.Containers {
-			if m, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
-				mem += m.Value()
-			}
-			if q, ok := c.Resources.Requests[corev1.ResourceCPU]; ok {
-				cpu += q.MilliValue()
-			}
+		reqMem, reqCPU := podRequests(pod)
+		mem += reqMem
+		cpu += reqCPU
+	}
+	return mem, cpu
+}
+
+// podHoldsReservation reports whether a pod still occupies scheduler capacity.
+// Sandbox pods are excluded because they are accounted for separately, by
+// counting them against maxPods, and so are pods that already ran to
+// completion or failed outright.
+func podHoldsReservation(pod *corev1.Pod, sandboxNamespace string) bool {
+	if pod.Namespace == sandboxNamespace {
+		if _, managed := pod.Labels[sandboxgrpc.LabelState]; managed {
+			return false
+		}
+	}
+	return pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed
+}
+
+// podRequests sums the memory (bytes) and CPU (millicores) a pod's containers
+// ask the scheduler to reserve for them.
+func podRequests(pod *corev1.Pod) (mem, cpu int64) {
+	for _, c := range pod.Spec.Containers {
+		if m, ok := c.Resources.Requests[corev1.ResourceMemory]; ok {
+			mem += m.Value()
+		}
+		if q, ok := c.Resources.Requests[corev1.ResourceCPU]; ok {
+			cpu += q.MilliValue()
 		}
 	}
 	return mem, cpu
