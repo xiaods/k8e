@@ -37,7 +37,7 @@ func TestIntegrationRealNetsyDatastore(t *testing.T) {
 
 	// Fake S3 backed by a temp dir; netsy persists everything here.
 	const bucket = "netsy-integration"
-	t.Setenv("AWS_ENDPOINT_URL", "http://"+startDevS3(t, ctx, devS3Binary, bucket))
+	t.Setenv("AWS_ENDPOINT_URL", "http://"+startDevS3(ctx, t, devS3Binary, bucket))
 	setS3Credentials(t)
 
 	process, err := Start(ctx, integrationConfig(t, netsyBinary, bucket))
@@ -53,31 +53,31 @@ func TestIntegrationRealNetsyDatastore(t *testing.T) {
 	const key = "/registry/namespaces/default"
 
 	// store.Create: OptimisticPut guarded on ModRevision == 0.
-	mustPut(t, ctx, client, process, "create", key, "payload", 0)
+	mustPut(ctx, t, client, process, "create", key, "payload", 0)
 
 	// Read it back, then watch for the update — the watch cache path.
 	watch := client.Watch(ctx, key)
-	rev := mustGetValue(t, ctx, client, process, key, "payload")
+	rev := mustGetValue(ctx, t, client, process, key, "payload")
 
 	// store.GuaranteedUpdate: OptimisticPut guarded on the observed revision,
 	// with GetOnFailure so a conflict returns the winning value.
-	mustPut(t, ctx, client, process, "update", key, "updated", rev)
+	mustPut(ctx, t, client, process, "update", key, "updated", rev)
 	assertWatchEvent(t, watch, process)
 
 	// A stale write must fail and report the winner, which is how the api server
 	// turns an OptimisticPut failure into a 409 Conflict.
-	currentRev := assertStalePutConflicts(t, ctx, client, process, key, rev)
+	currentRev := assertStalePutConflicts(ctx, t, client, process, key, rev)
 
 	// List and Count over a prefix, as the listers and the watch cache do.
-	assertListAndCount(t, ctx, client, process)
+	assertListAndCount(ctx, t, client, process)
 
 	// store.Delete: OptimisticDelete guarded on the observed revision.
-	mustDelete(t, ctx, client, process, key, currentRev)
-	assertKeyGone(t, ctx, client, process, key)
+	mustDelete(ctx, t, client, process, key, currentRev)
+	assertKeyGone(ctx, t, client, process, key)
 }
 
 // startDevS3 starts the fake S3 server netsy persists to and returns its address.
-func startDevS3(t *testing.T, ctx context.Context, binary, bucket string) string {
+func startDevS3(ctx context.Context, t *testing.T, binary, bucket string) string {
 	t.Helper()
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(freePort(t)))
 	s3 := exec.CommandContext(ctx, binary, "-addr", addr, "-bucket", bucket, "-dir", t.TempDir())
@@ -139,7 +139,7 @@ func newIntegrationClient(t *testing.T, process *Process) *kubernetes.Client {
 
 // mustPut performs a revision-guarded OptimisticPut and reports the short step
 // name on failure, so a violated contract names the store operation it broke.
-func mustPut(t *testing.T, ctx context.Context, client *kubernetes.Client, process *Process, step, key, value string, revision int64) {
+func mustPut(ctx context.Context, t *testing.T, client *kubernetes.Client, process *Process, step, key, value string, revision int64) {
 	t.Helper()
 	resp, err := client.Kubernetes.OptimisticPut(ctx, key, []byte(value), revision, kubernetes.PutOptions{GetOnFailure: true})
 	if err != nil {
@@ -151,7 +151,7 @@ func mustPut(t *testing.T, ctx context.Context, client *kubernetes.Client, proce
 }
 
 // mustGetValue asserts the value stored at key and returns its ModRevision.
-func mustGetValue(t *testing.T, ctx context.Context, client *kubernetes.Client, process *Process, key, want string) int64 {
+func mustGetValue(ctx context.Context, t *testing.T, client *kubernetes.Client, process *Process, key, want string) int64 {
 	t.Helper()
 	got, err := client.Kubernetes.Get(ctx, key, kubernetes.GetOptions{})
 	if err != nil {
@@ -180,7 +180,7 @@ func assertWatchEvent(t *testing.T, watch clientv3.WatchChan, process *Process) 
 
 // assertStalePutConflicts overwrites a stale revision and returns the revision of
 // the winning value the conflict reported.
-func assertStalePutConflicts(t *testing.T, ctx context.Context, client *kubernetes.Client, process *Process, key string, revision int64) int64 {
+func assertStalePutConflicts(ctx context.Context, t *testing.T, client *kubernetes.Client, process *Process, key string, revision int64) int64 {
 	t.Helper()
 	stale, err := client.Kubernetes.OptimisticPut(ctx, key, []byte("stale"), revision, kubernetes.PutOptions{GetOnFailure: true})
 	if err != nil {
@@ -195,7 +195,7 @@ func assertStalePutConflicts(t *testing.T, ctx context.Context, client *kubernet
 	return stale.KV.ModRevision
 }
 
-func assertListAndCount(t *testing.T, ctx context.Context, client *kubernetes.Client, process *Process) {
+func assertListAndCount(ctx context.Context, t *testing.T, client *kubernetes.Client, process *Process) {
 	t.Helper()
 	listed, err := client.Kubernetes.List(ctx, "/registry/namespaces/", kubernetes.ListOptions{})
 	if err != nil {
@@ -213,7 +213,7 @@ func assertListAndCount(t *testing.T, ctx context.Context, client *kubernetes.Cl
 	}
 }
 
-func mustDelete(t *testing.T, ctx context.Context, client *kubernetes.Client, process *Process, key string, revision int64) {
+func mustDelete(ctx context.Context, t *testing.T, client *kubernetes.Client, process *Process, key string, revision int64) {
 	t.Helper()
 	deleted, err := client.Kubernetes.OptimisticDelete(ctx, key, revision, kubernetes.DeleteOptions{GetOnFailure: true})
 	if err != nil {
@@ -224,7 +224,7 @@ func mustDelete(t *testing.T, ctx context.Context, client *kubernetes.Client, pr
 	}
 }
 
-func assertKeyGone(t *testing.T, ctx context.Context, client *kubernetes.Client, process *Process, key string) {
+func assertKeyGone(ctx context.Context, t *testing.T, client *kubernetes.Client, process *Process, key string) {
 	t.Helper()
 	gone, err := client.Kubernetes.Get(ctx, key, kubernetes.GetOptions{})
 	if err != nil {
