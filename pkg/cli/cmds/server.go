@@ -7,6 +7,7 @@ import (
 
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	"github.com/xiaods/k8e/pkg/netsy"
 	"github.com/xiaods/k8e/pkg/version"
 )
 
@@ -108,6 +109,18 @@ type Server struct {
 	EtcdS3Insecure           bool
 	DisableSandboxMatrix     bool
 	DisableE2B               bool
+	Netsy                    bool
+	NetsyBinary              string
+	NetsyClusterID           string
+	NetsyNodeID              string
+	NetsyDataDir             string
+	NetsyBucket              string
+	NetsyKeyPrefix           string
+	NetsyStorageProvider     string
+	NetsyClientPort          int
+	NetsyPeerPort            int
+	NetsyElectionPort        int
+	NetsyHealthPort          int
 	E2BListen                string
 	E2BAPIKey                string
 	SandboxDefaultRuntime    string
@@ -326,6 +339,86 @@ var ServerFlags = []cli.Flag{
 		Usage:       "(db) TLS key file used to secure datastore backend communication",
 		Destination: &ServerConfig.DatastoreKeyFile,
 		EnvVar:      version.ProgramUpper + "_DATASTORE_KEYFILE",
+	},
+	&cli.BoolFlag{
+		Name:        "netsy",
+		Usage:       "(db) Run a local Netsy datastore instead of embedded etcd and use it as the Kubernetes datastore",
+		Destination: &ServerConfig.Netsy,
+		EnvVar:      version.ProgramUpper + "_NETSY",
+	},
+	&cli.StringFlag{
+		Name:        "netsy-binary",
+		Usage:       "(db) Path to the netsy executable",
+		Value:       netsy.DefaultBinary,
+		Destination: &ServerConfig.NetsyBinary,
+		EnvVar:      version.ProgramUpper + "_NETSY_BINARY",
+	},
+	&cli.StringFlag{
+		Name:        "netsy-cluster-id",
+		Usage:       "(db) Netsy cluster identifier embedded in the datastore TLS certificates",
+		Value:       netsy.DefaultClusterID,
+		Destination: &ServerConfig.NetsyClusterID,
+		EnvVar:      version.ProgramUpper + "_NETSY_CLUSTER_ID",
+	},
+	&cli.StringFlag{
+		Name:        "netsy-node-id",
+		Usage:       "(db) Netsy node identifier for this server",
+		Value:       netsy.DefaultNodeID,
+		Destination: &ServerConfig.NetsyNodeID,
+		EnvVar:      version.ProgramUpper + "_NETSY_NODE_ID",
+	},
+	&cli.StringFlag{
+		Name:        "netsy-data-dir",
+		Usage:       "(db) Directory for the Netsy config, database and certificates",
+		Destination: &ServerConfig.NetsyDataDir,
+		EnvVar:      version.ProgramUpper + "_NETSY_DATA_DIR",
+	},
+	&cli.StringFlag{
+		Name:        "netsy-bucket",
+		Usage:       "(db) Object storage bucket Netsy persists to (required with --netsy)",
+		Destination: &ServerConfig.NetsyBucket,
+		EnvVar:      version.ProgramUpper + "_NETSY_BUCKET",
+	},
+	&cli.StringFlag{
+		Name:        "netsy-key-prefix",
+		Usage:       "(db) Object storage key prefix for the Netsy data",
+		Destination: &ServerConfig.NetsyKeyPrefix,
+		EnvVar:      version.ProgramUpper + "_NETSY_KEY_PREFIX",
+	},
+	&cli.StringFlag{
+		Name:        "netsy-storage-provider",
+		Usage:       "(db) Object storage provider for Netsy: s3 or gcs",
+		Value:       "s3",
+		Destination: &ServerConfig.NetsyStorageProvider,
+		EnvVar:      version.ProgramUpper + "_NETSY_STORAGE_PROVIDER",
+	},
+	&cli.IntFlag{
+		Name:        "netsy-client-port",
+		Usage:       "(db) Port for the Netsy etcd-compatible client API",
+		Value:       netsy.DefaultClientPort,
+		Destination: &ServerConfig.NetsyClientPort,
+		EnvVar:      version.ProgramUpper + "_NETSY_CLIENT_PORT",
+	},
+	&cli.IntFlag{
+		Name:        "netsy-peer-port",
+		Usage:       "(db) Port for the Netsy peer/replication API",
+		Value:       netsy.DefaultPeerPort,
+		Destination: &ServerConfig.NetsyPeerPort,
+		EnvVar:      version.ProgramUpper + "_NETSY_PEER_PORT",
+	},
+	&cli.IntFlag{
+		Name:        "netsy-election-port",
+		Usage:       "(db) Port for the Netsy election health API",
+		Value:       netsy.DefaultElectionPort,
+		Destination: &ServerConfig.NetsyElectionPort,
+		EnvVar:      version.ProgramUpper + "_NETSY_ELECTION_PORT",
+	},
+	&cli.IntFlag{
+		Name:        "netsy-health-port",
+		Usage:       "(db) Port for the Netsy HTTP health endpoint",
+		Value:       netsy.DefaultHealthPort,
+		Destination: &ServerConfig.NetsyHealthPort,
+		EnvVar:      version.ProgramUpper + "_NETSY_HEALTH_PORT",
 	},
 	&cli.BoolFlag{
 		Name:        "etcd-expose-metrics",

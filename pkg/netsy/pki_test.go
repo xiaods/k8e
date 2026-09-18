@@ -1,0 +1,275 @@
+package netsy
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"net/url"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestEnsurePKI(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	hosts := []string{"127.0.0.1", "::1", "localhost", "k8e-node"}
+
+	paths, err := EnsurePKI(dir, "k8e", "k8e-node", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() error = %v", err)
+	}
+
+	for _, f := range []string{paths.CA, paths.ServerCert, paths.ServerKey,
+		paths.PeerClientCert, paths.PeerClientKey, paths.DatastoreCert, paths.DatastoreKey} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("expected %s to exist: %v", f, err)
+		}
+	}
+
+	pool := x509.NewCertPool()
+	caPEM, err := os.ReadFile(paths.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pool.AppendCertsFromPEM(caPEM) {
+		t.Fatal("failed to add CA to pool")
+	}
+
+	// Every leaf must chain to the CA; the k8e datastore client must carry the
+	// `client` role and be usable for a TLS handshake.
+	for _, pair := range [][2]string{
+		{paths.ServerCert, paths.ServerKey},
+		{paths.PeerClientCert, paths.PeerClientKey},
+		{paths.DatastoreCert, paths.DatastoreKey},
+	} {
+		if _, err := tls.LoadX509KeyPair(pair[0], pair[1]); err != nil {
+			t.Errorf("LoadX509KeyPair(%s) error = %v", pair[0], err)
+		}
+	}
+
+	leaf, err := loadLeaf(paths.DatastoreCert, paths.DatastoreKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkLeaf(leaf, "k8e", roleClient, DefaultClientName); err != nil {
+		t.Errorf("datastore client cert invalid: %v", err)
+	}
+	if leaf.Subject.CommonName != DefaultClientName {
+		t.Errorf("datastore client CN = %q, want %q", leaf.Subject.CommonName, DefaultClientName)
+	}
+	if len(leaf.ExtKeyUsage) == 0 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
+		t.Errorf("datastore client ExtKeyUsage = %v, want ClientAuth", leaf.ExtKeyUsage)
+	}
+
+	server, err := loadLeaf(paths.ServerCert, paths.ServerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range hosts {
+		if err := server.VerifyHostname(host); err != nil {
+			t.Errorf("server cert does not cover %q: %v", host, err)
+		}
+	}
+	if err := checkLeaf(server, "k8e", rolePeer, "k8e-node"); err != nil {
+		t.Errorf("server cert invalid: %v", err)
+	}
+
+	// Key files must not be world readable.
+	info, err := os.Stat(paths.ServerKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("server key mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestEnsurePKIReusesExisting(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	hosts := []string{"127.0.0.1", "localhost"}
+
+	first, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() error = %v", err)
+	}
+	caBefore, err := os.ReadFile(first.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() second call error = %v", err)
+	}
+	caAfter, err := os.ReadFile(second.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(caBefore) != string(caAfter) {
+		t.Error("EnsurePKI() regenerated a valid PKI instead of reusing it")
+	}
+}
+
+func TestEnsurePKIRegeneratesOnMismatch(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	hosts := []string{"127.0.0.1"}
+
+	first, err := EnsurePKI(dir, "cluster-a", "node-a", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() error = %v", err)
+	}
+	caBefore, err := os.ReadFile(first.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A different cluster/node must not silently reuse the old certificates.
+	second, err := EnsurePKI(dir, "cluster-b", "node-b", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() error = %v", err)
+	}
+	caAfter, err := os.ReadFile(second.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(caBefore) == string(caAfter) {
+		t.Error("EnsurePKI() reused a PKI issued for a different cluster")
+	}
+	leaf, err := loadLeaf(second.DatastoreCert, second.DatastoreKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkLeaf(leaf, "cluster-b", roleClient, DefaultClientName); err != nil {
+		t.Errorf("regenerated datastore cert invalid: %v", err)
+	}
+}
+
+func TestEnsurePKIFailsOnUnwritableDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root ignores directory permissions")
+	}
+	parent := filepath.Join(t.TempDir(), "readonly")
+	if err := os.Mkdir(parent, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+
+	dir := filepath.Join(parent, "tls")
+	if _, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, []string{"127.0.0.1"}); err == nil {
+		t.Fatal("EnsurePKI() error = nil, want permission error")
+	}
+}
+
+func TestValidPKIRejectsCorruptCA(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	paths, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, []string{"127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.CA, []byte("not a certificate"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if validPKI(paths, "k8e", "k8e", []string{"127.0.0.1"}) {
+		t.Error("validPKI() = true, want false for a corrupt CA")
+	}
+	if _, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, []string{"127.0.0.1"}); err != nil {
+		t.Fatalf("EnsurePKI() failed to recover from corrupt CA: %v", err)
+	}
+}
+
+func TestCheckLeafRejectsWrongRoleAndCluster(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	paths, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, []string{"127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := loadLeaf(paths.DatastoreCert, paths.DatastoreKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkLeaf(client, "k8e", rolePeer, DefaultClientName); err == nil {
+		t.Error("checkLeaf() accepted a client cert in the peer role")
+	}
+	if err := checkLeaf(client, "other", roleClient, DefaultClientName); err == nil {
+		t.Error("checkLeaf() accepted a cert from another cluster")
+	}
+	if err := checkLeaf(client, "k8e", roleClient, "other"); err == nil {
+		t.Error("checkLeaf() accepted a cert for another identity")
+	}
+}
+
+func TestValidPKIRejectsIncompleteOrWrongPKI(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(t *testing.T, p CertPaths)
+	}{
+		{name: "missing files", mutate: func(_ *testing.T, p CertPaths) { _ = os.Remove(p.CA) }},
+		{name: "server cert missing", mutate: func(_ *testing.T, p CertPaths) { _ = os.Remove(p.ServerCert) }},
+		{name: "server key missing", mutate: func(_ *testing.T, p CertPaths) { _ = os.Remove(p.ServerKey) }},
+		{name: "peer cert missing", mutate: func(_ *testing.T, p CertPaths) { _ = os.Remove(p.PeerClientCert) }},
+		{name: "datastore cert missing", mutate: func(_ *testing.T, p CertPaths) { _ = os.Remove(p.DatastoreCert) }},
+		{name: "server cert does not cover host", mutate: func(t *testing.T, p CertPaths) {
+			newPaths, err := EnsurePKI(filepath.Join(t.TempDir(), "tls"), "k8e", "k8e", DefaultClientName, []string{"10.0.0.9"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			copyFile(t, newPaths.ServerCert, p.ServerCert)
+			copyFile(t, newPaths.ServerKey, p.ServerKey)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, err := EnsurePKI(filepath.Join(t.TempDir(), "tls"), "k8e", "k8e", DefaultClientName, []string{"127.0.0.1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.mutate(t, p)
+			if validPKI(p, "k8e", "k8e", []string{"127.0.0.1"}) {
+				t.Errorf("validPKI() = true for %s, want false", tt.name)
+			}
+		})
+	}
+}
+
+func copyFile(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadLeafErrors(t *testing.T) {
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "bad.crt")
+	keyFile := filepath.Join(dir, "bad.key")
+	if err := os.WriteFile(certFile, []byte("not a cert"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, []byte("not a key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadLeaf(certFile, keyFile); err == nil {
+		t.Error("loadLeaf() = nil, want parse error")
+	}
+}
+
+func TestCheckLeafURIFiltering(t *testing.T) {
+	other := &x509.Certificate{
+		Subject: pkix.Name{Organization: []string{"k8e"}},
+		URIs: []*url.URL{
+			{Scheme: "spiffe", Host: "k8e", Path: "/client/k8e"},
+			{Scheme: "netsy", Host: "other", Path: "/client/k8e"},
+		},
+	}
+	if err := checkLeaf(other, "k8e", roleClient, DefaultClientName); err == nil {
+		t.Error("checkLeaf() accepted a cert with only foreign URI SANs")
+	}
+	noOrg := &x509.Certificate{URIs: []*url.URL{{Scheme: "netsy", Host: "k8e", Path: "/client/k8e"}}}
+	if err := checkLeaf(noOrg, "k8e", roleClient, DefaultClientName); err == nil {
+		t.Error("checkLeaf() accepted a cert with no organization")
+	}
+}
