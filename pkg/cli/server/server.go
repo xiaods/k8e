@@ -65,8 +65,10 @@ func validateSandboxFlags(cfg *cmds.Server) error {
 // setupNetsy starts the local Netsy datastore (--netsy) and points the control
 // plane datastore at it: Datastore.Endpoint becomes the Netsy client API and the
 // generated PKI becomes the backend TLS config kube-apiserver and etcdstorage
-// use. Because Datastore.Endpoint is set, cluster.assignManagedDriver never
-// assigns the embedded-etcd driver, so no embedded etcd is started.
+// use. Because Datastore.Endpoint is set, cluster.assignManagedDriver does not
+// fall back to the default embedded-etcd driver, so no embedded etcd is started
+// -- unless this node already ran embedded etcd, which hasEmbeddedEtcdData
+// rejects before any process is started.
 func setupNetsy(ctx context.Context, serverConfig *server.Config, cfg *cmds.Server) (*netsy.Process, error) {
 	if serverConfig.ControlConfig.DisableAPIServer {
 		return nil, errors.New("invalid flag use; cannot use --disable-apiserver with --netsy")
@@ -75,12 +77,17 @@ func setupNetsy(ctx context.Context, serverConfig *server.Config, cfg *cmds.Serv
 		return nil, errors.New("invalid flag use; cannot use --disable-etcd with --netsy")
 	}
 
+	serverDataDir, err := server.ResolveDataDir(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	if hasEmbeddedEtcdData(serverDataDir) {
+		return nil, fmt.Errorf("invalid flag use; %s already holds an embedded etcd datastore (%s); --netsy would run Netsy but the control plane would stay on that embedded etcd. Point --data-dir at an empty directory to store the Kubernetes data in Netsy, or keep running embedded etcd",
+			serverDataDir, filepath.Join(serverDataDir, "db", "etcd", "member", "wal"))
+	}
+
 	dataDir := cfg.NetsyDataDir
 	if dataDir == "" {
-		serverDataDir, err := server.ResolveDataDir(cfg.DataDir)
-		if err != nil {
-			return nil, err
-		}
 		dataDir = filepath.Join(serverDataDir, "netsy")
 	}
 
@@ -117,6 +124,19 @@ func setupNetsy(ctx context.Context, serverConfig *server.Config, cfg *cmds.Serv
 
 	logrus.Infof("Netsy datastore is ready at %s", process.Endpoint())
 	return process, nil
+}
+
+// hasEmbeddedEtcdData reports whether an earlier run of this server initialized
+// the embedded etcd datastore. The path mirrors pkg/etcd's ETCD.IsInitialized
+// (its walDir is <data-dir>/db/etcd/member/wal), the signal
+// cluster.assignManagedDriver uses to keep the embedded-etcd driver: it looks
+// for an initialized driver on disk *before* it checks Datastore.Endpoint, and
+// that driver then rewrites Datastore.Endpoint and Datastore.BackendTLSConfig
+// back to its own client URL and certificates
+// (pkg/etcd.ETCD.startClient), silently replacing whatever --netsy configured.
+func hasEmbeddedEtcdData(serverDataDir string) bool {
+	info, err := os.Stat(filepath.Join(serverDataDir, "db", "etcd", "member", "wal"))
+	return err == nil && info.IsDir()
 }
 
 // flag -- rather than by --disable=<name> -- as both skipped and disabled, so

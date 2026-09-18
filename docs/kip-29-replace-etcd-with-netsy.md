@@ -120,9 +120,15 @@ Datastore.BackendTLSConfig.KeyFile       = certs.DatastoreKey
 
 Everything downstream (apiserver flags, `pkg/etcdstorage` bootstrap) uses these
 exactly as it does for `--datastore-endpoint`, and because the endpoint is set
-`cluster.assignManagedDriver` leaves `managedDB == nil`, so no embedded etcd is
-started and `Runtime.ETCDReady` is closed immediately. The process is stopped
-with the server context.
+`cluster.assignManagedDriver` does not fall back to the default embedded-etcd
+driver, so no embedded etcd is started and `Runtime.ETCDReady` is closed
+immediately. This assumes the data directory has never run embedded etcd:
+`assignManagedDriver` prefers an initialized driver found on disk *before* it
+looks at the endpoint, and that driver rewrites the endpoint back to its own
+client URL (`pkg/etcd.ETCD.startClient`). A node whose data directory already
+holds an embedded etcd datastore is therefore refused up front, rather than
+running Netsy unused behind the embedded etcd (see Failure path). The process is
+stopped with the server context.
 
 ### Flags
 
@@ -145,7 +151,8 @@ Object storage credentials come from the provider SDK environment
 (`AWS_*`, `GOOGLE_APPLICATION_CREDENTIALS`), which the Netsy child inherits.
 
 `--netsy` is mutually exclusive with `--datastore-endpoint`, `--disable-etcd`
-and `--disable-apiserver`; k8e fails fast with a clear error.
+and `--disable-apiserver`, and is refused when the data directory already
+contains an embedded etcd datastore; k8e fails fast with a clear error.
 
 ### Readiness and the write path
 
@@ -178,6 +185,13 @@ failed to start netsy datastore: timed out after 1m30s waiting for a writable ne
 
 The repair is to check `--netsy-binary`, `--netsy-bucket` and the provider
 credentials, then restart. With the flag absent, k8e behaves exactly as before.
+
+A server that already ran embedded etcd fails before the Netsy process is
+started, because that embedded datastore would win over `--netsy`:
+
+```
+invalid flag use; /var/lib/k8e/server already holds an embedded etcd datastore (/var/lib/k8e/server/db/etcd/member/wal); --netsy would run Netsy but the control plane would stay on that embedded etcd. Point --data-dir at an empty directory to store the Kubernetes data in Netsy, or keep running embedded etcd
+```
 
 ## Milestones
 

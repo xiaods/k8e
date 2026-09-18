@@ -20,24 +20,41 @@ func TestEnsurePKI(t *testing.T) {
 		t.Fatalf("EnsurePKI() error = %v", err)
 	}
 
+	assertPKIFilesExist(t, paths)
+	assertCAUsable(t, paths.CA)
+	// Every leaf must chain to the CA; the k8e datastore client must carry the
+	// `client` role and be usable for a TLS handshake.
+	assertKeyPairsLoad(t, paths)
+	assertDatastoreClientCert(t, paths)
+	assertServerCert(t, paths, hosts)
+	// Key files must not be world readable.
+	assertFileMode(t, paths.ServerKey, 0600)
+}
+
+func assertPKIFilesExist(t *testing.T, paths CertPaths) {
+	t.Helper()
 	for _, f := range []string{paths.CA, paths.ServerCert, paths.ServerKey,
 		paths.PeerClientCert, paths.PeerClientKey, paths.DatastoreCert, paths.DatastoreKey} {
 		if _, err := os.Stat(f); err != nil {
 			t.Errorf("expected %s to exist: %v", f, err)
 		}
 	}
+}
 
-	pool := x509.NewCertPool()
-	caPEM, err := os.ReadFile(paths.CA)
+func assertCAUsable(t *testing.T, caFile string) {
+	t.Helper()
+	caPEM, err := os.ReadFile(caFile)
 	if err != nil {
 		t.Fatal(err)
 	}
+	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caPEM) {
-		t.Fatal("failed to add CA to pool")
+		t.Fatalf("failed to add CA %s to pool", caFile)
 	}
+}
 
-	// Every leaf must chain to the CA; the k8e datastore client must carry the
-	// `client` role and be usable for a TLS handshake.
+func assertKeyPairsLoad(t *testing.T, paths CertPaths) {
+	t.Helper()
 	for _, pair := range [][2]string{
 		{paths.ServerCert, paths.ServerKey},
 		{paths.PeerClientCert, paths.PeerClientKey},
@@ -47,7 +64,10 @@ func TestEnsurePKI(t *testing.T) {
 			t.Errorf("LoadX509KeyPair(%s) error = %v", pair[0], err)
 		}
 	}
+}
 
+func assertDatastoreClientCert(t *testing.T, paths CertPaths) {
+	t.Helper()
 	leaf, err := loadLeaf(paths.DatastoreCert, paths.DatastoreKey)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +81,10 @@ func TestEnsurePKI(t *testing.T) {
 	if len(leaf.ExtKeyUsage) == 0 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
 		t.Errorf("datastore client ExtKeyUsage = %v, want ClientAuth", leaf.ExtKeyUsage)
 	}
+}
 
+func assertServerCert(t *testing.T, paths CertPaths, hosts []string) {
+	t.Helper()
 	server, err := loadLeaf(paths.ServerCert, paths.ServerKey)
 	if err != nil {
 		t.Fatal(err)
@@ -74,14 +97,16 @@ func TestEnsurePKI(t *testing.T) {
 	if err := checkLeaf(server, "k8e", rolePeer, "k8e-node"); err != nil {
 		t.Errorf("server cert invalid: %v", err)
 	}
+}
 
-	// Key files must not be world readable.
-	info, err := os.Stat(paths.ServerKey)
+func assertFileMode(t *testing.T, file string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(file)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
-		t.Errorf("server key mode = %v, want 0600", info.Mode().Perm())
+	if info.Mode().Perm() != want {
+		t.Errorf("%s mode = %v, want %v", file, info.Mode().Perm(), want)
 	}
 }
 
