@@ -24,6 +24,7 @@ import (
 	"github.com/xiaods/k8e/pkg/datadir"
 	"github.com/xiaods/k8e/pkg/etcd"
 	k8emetrics "github.com/xiaods/k8e/pkg/metrics"
+	"github.com/xiaods/k8e/pkg/netsy"
 	"github.com/xiaods/k8e/pkg/proctitle"
 	"github.com/xiaods/k8e/pkg/profile"
 	"github.com/xiaods/k8e/pkg/rootless"
@@ -61,7 +62,83 @@ func validateSandboxFlags(cfg *cmds.Server) error {
 	return nil
 }
 
-// applyBundleDisables marks the components that are switched off by a dedicated
+// setupNetsy starts the local Netsy datastore (--netsy) and points the control
+// plane datastore at it: Datastore.Endpoint becomes the Netsy client API and the
+// generated PKI becomes the backend TLS config kube-apiserver and etcdstorage
+// use. Because Datastore.Endpoint is set, cluster.assignManagedDriver does not
+// fall back to the default embedded-etcd driver, so no embedded etcd is started
+// -- unless this node already ran embedded etcd, which hasEmbeddedEtcdData
+// rejects before any process is started.
+func setupNetsy(ctx context.Context, serverConfig *server.Config, cfg *cmds.Server) (*netsy.Process, error) {
+	if serverConfig.ControlConfig.DisableAPIServer {
+		return nil, errors.New("invalid flag use; cannot use --disable-apiserver with --netsy")
+	}
+	if serverConfig.ControlConfig.DisableETCD {
+		return nil, errors.New("invalid flag use; cannot use --disable-etcd with --netsy")
+	}
+
+	serverDataDir, err := server.ResolveDataDir(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	if hasEmbeddedEtcdData(serverDataDir) {
+		return nil, fmt.Errorf("invalid flag use; %s already holds an embedded etcd datastore (%s); --netsy would run Netsy but the control plane would stay on that embedded etcd. Point --data-dir at an empty directory to store the Kubernetes data in Netsy, or keep running embedded etcd",
+			serverDataDir, filepath.Join(serverDataDir, "db", "etcd", "member", "wal"))
+	}
+
+	dataDir := cfg.NetsyDataDir
+	if dataDir == "" {
+		dataDir = filepath.Join(serverDataDir, "netsy")
+	}
+
+	opts := netsy.Config{
+		Binary:       cfg.NetsyBinary,
+		ClusterID:    cfg.NetsyClusterID,
+		NodeID:       cfg.NetsyNodeID,
+		DataDir:      dataDir,
+		CertDir:      filepath.Join(dataDir, "tls"),
+		ClientPort:   cfg.NetsyClientPort,
+		PeerPort:     cfg.NetsyPeerPort,
+		ElectionPort: cfg.NetsyElectionPort,
+		HealthPort:   cfg.NetsyHealthPort,
+		Storage: netsy.Storage{
+			Provider:  cfg.NetsyStorageProvider,
+			Bucket:    cfg.NetsyBucket,
+			KeyPrefix: cfg.NetsyKeyPrefix,
+		},
+	}
+
+	logrus.Infof("Starting local Netsy datastore (cluster=%s node=%s provider=%s bucket=%s data-dir=%s)",
+		opts.ClusterID, opts.NodeID, opts.Storage.Provider, opts.Storage.Bucket, opts.DataDir)
+
+	process, err := netsy.Start(ctx, opts)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to start netsy datastore")
+	}
+
+	certs := process.CertPaths()
+	serverConfig.ControlConfig.Datastore.Endpoint = process.Endpoint()
+	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CAFile = certs.CA
+	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CertFile = certs.DatastoreCert
+	serverConfig.ControlConfig.Datastore.BackendTLSConfig.KeyFile = certs.DatastoreKey
+
+	logrus.Infof("Netsy datastore is ready at %s", process.Endpoint())
+	return process, nil
+}
+
+// hasEmbeddedEtcdData reports whether an earlier run of this server initialized
+// the embedded etcd datastore. The path mirrors pkg/etcd's ETCD.IsInitialized
+// (its walDir is <data-dir>/db/etcd/member/wal), the signal
+// cluster.assignManagedDriver uses to keep the embedded-etcd driver: it looks
+// for an initialized driver on disk *before* it checks Datastore.Endpoint, and
+// that driver then rewrites Datastore.Endpoint and Datastore.BackendTLSConfig
+// back to its own client URL and certificates
+// (pkg/etcd.ETCD.startClient), silently replacing whatever --netsy configured.
+func hasEmbeddedEtcdData(serverDataDir string) bool {
+	info, err := os.Stat(filepath.Join(serverDataDir, "db", "etcd", "member", "wal"))
+	return err == nil && info.IsDir()
+}
+
 // flag -- rather than by --disable=<name> -- as both skipped and disabled, so
 // that the manifests they bundle are neither staged nor applied:
 //
@@ -475,6 +552,23 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 	ctx := signals.SetupSignalContext()
 
+	// An explicitly configured datastore endpoint wins; otherwise --netsy runs a
+	// local Netsy datastore and points the control plane at it.
+	if cfg.Netsy && serverConfig.ControlConfig.Datastore.Endpoint != "" {
+		return errors.New("invalid flag use; cannot use --datastore-endpoint with --netsy")
+	}
+	if cfg.Netsy {
+		netsyProcess, err := setupNetsy(ctx, &serverConfig, cfg)
+		if err != nil {
+			return err
+		}
+		defer netsyProcess.Stop()
+		go func() {
+			<-ctx.Done()
+			netsyProcess.Stop()
+		}()
+	}
+
 	if err := server.StartServer(ctx, &serverConfig, cfg); err != nil {
 		return err
 	}
@@ -535,7 +629,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 		// initialize the apiAddress Channel for receiving the api address from etcd
 		agentConfig.APIAddressCh = make(chan []string)
-		go getAPIAddressFromEtcd(ctx, serverConfig, agentConfig)
+		go watchAPIAddressFromEtcd(ctx, serverConfig, agentConfig)
 	}
 
 	// Embedded P2P registry (spegel) removed. Direct image pull from registries.
@@ -615,7 +709,7 @@ func getArgValueFromList(searchArg string, argList []string) string {
 	return value
 }
 
-func getAPIAddressFromEtcd(ctx context.Context, serverConfig server.Config, agentConfig cmds.Agent) {
+func watchAPIAddressFromEtcd(ctx context.Context, serverConfig server.Config, agentConfig cmds.Agent) {
 	defer close(agentConfig.APIAddressCh)
 	for {
 		toCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
