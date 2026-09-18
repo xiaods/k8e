@@ -250,7 +250,8 @@ func TestStartFailsWhenDataDirUnusable(t *testing.T) {
 	if err := os.Mkdir(parent, 0500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+	// Restore owner write so t.TempDir cleanup can remove the read-only dir.
+	t.Cleanup(func() { _ = os.Chmod(parent, 0600) })
 	cfg.DataDir = filepath.Join(parent, "data")
 
 	if _, err := Start(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "data dir") {
@@ -267,7 +268,8 @@ func TestStartFailsWhenConfigUnwritable(t *testing.T) {
 	if err := os.MkdirAll(cfg.DataDir, 0500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(cfg.DataDir, 0700) })
+	// Restore owner write so t.TempDir cleanup can remove the read-only dir.
+	t.Cleanup(func() { _ = os.Chmod(cfg.DataDir, 0600) })
 
 	if _, err := Start(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "failed to write netsy config") {
 		t.Fatalf("Start() error = %v, want config write error", err)

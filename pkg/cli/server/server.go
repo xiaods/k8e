@@ -609,7 +609,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 		// initialize the apiAddress Channel for receiving the api address from etcd
 		agentConfig.APIAddressCh = make(chan []string)
-		go getAPIAddressFromEtcd(ctx, serverConfig, agentConfig)
+		go watchAPIAddressFromEtcd(ctx, serverConfig, agentConfig)
 	}
 
 	// Embedded P2P registry (spegel) removed. Direct image pull from registries.
@@ -689,7 +689,7 @@ func getArgValueFromList(searchArg string, argList []string) string {
 	return value
 }
 
-func getAPIAddressFromEtcd(ctx context.Context, serverConfig server.Config, agentConfig cmds.Agent) {
+func watchAPIAddressFromEtcd(ctx context.Context, serverConfig server.Config, agentConfig cmds.Agent) {
 	defer close(agentConfig.APIAddressCh)
 	for {
 		toCtx, cancel := context.WithTimeout(ctx, 5*time.Second)

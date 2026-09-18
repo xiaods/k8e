@@ -65,44 +65,46 @@ type Config struct {
 }
 
 // WithDefaults fills in the Netsy defaults for any unset field.
+// The defaults are applied to a copy so the receiver stays untouched.
 func (c Config) WithDefaults() Config {
-	if c.Binary == "" {
-		c.Binary = DefaultBinary
+	d := c
+	if d.Binary == "" {
+		d.Binary = DefaultBinary
 	}
-	if c.ClusterID == "" {
-		c.ClusterID = DefaultClusterID
+	if d.ClusterID == "" {
+		d.ClusterID = DefaultClusterID
 	}
-	if c.NodeID == "" {
-		c.NodeID = DefaultNodeID
+	if d.NodeID == "" {
+		d.NodeID = DefaultNodeID
 	}
-	if c.ClientPort == 0 {
-		c.ClientPort = DefaultClientPort
+	if d.ClientPort == 0 {
+		d.ClientPort = DefaultClientPort
 	}
-	if c.PeerPort == 0 {
-		c.PeerPort = DefaultPeerPort
+	if d.PeerPort == 0 {
+		d.PeerPort = DefaultPeerPort
 	}
-	if c.ElectionPort == 0 {
-		c.ElectionPort = DefaultElectionPort
+	if d.ElectionPort == 0 {
+		d.ElectionPort = DefaultElectionPort
 	}
-	if c.HealthPort == 0 {
-		c.HealthPort = DefaultHealthPort
+	if d.HealthPort == 0 {
+		d.HealthPort = DefaultHealthPort
 	}
-	if c.Storage.Provider == "" {
-		c.Storage.Provider = "s3"
+	if d.Storage.Provider == "" {
+		d.Storage.Provider = "s3"
 	}
-	if c.Storage.Class == "" {
-		c.Storage.Class = "STANDARD"
+	if d.Storage.Class == "" {
+		d.Storage.Class = "STANDARD"
 	}
-	if c.Storage.Encryption == "" {
-		c.Storage.Encryption = "provider-managed"
+	if d.Storage.Encryption == "" {
+		d.Storage.Encryption = "provider-managed"
 	}
-	if c.ReadyTimeout <= 0 {
-		c.ReadyTimeout = defaultReadyTimeout
+	if d.ReadyTimeout <= 0 {
+		d.ReadyTimeout = defaultReadyTimeout
 	}
-	if c.HealthPollInterval <= 0 {
-		c.HealthPollInterval = defaultPollInterval
+	if d.HealthPollInterval <= 0 {
+		d.HealthPollInterval = defaultPollInterval
 	}
-	return c
+	return d
 }
 
 // Validate checks the settings Netsy requires before the process is started.

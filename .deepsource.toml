@@ -17,12 +17,19 @@ enabled = true
   dependencies_vendored = false
 
 # `run` in pkg/cli/server/server.go is a long-standing server-setup function
-# with cyclomatic complexity 76 that predates this PR; the sandbox-advertise-
-# hostname wiring only adds a config field and a startup validation call. Keep
-# the complexity metric green by scoping the GO-R1005 exclusion to that file
-# rather than refactoring an unrelated ~400-line setup function in a feature PR.
+# with cyclomatic complexity 76 that predates the Netsy PR; the sandbox-advertise-
+# hostname wiring only adds a config field and a startup validation call. The
+# datastore entry points are excluded for the same reason: the Netsy E2E test
+# drives the write/watch/delete path step by step and the flag/PKI tests assert
+# an exhaustive table of names, defaults and SANs, so their branch count is the
+# contract they pin, not accidental complexity. Keep the metric green by scoping
+# the GO-R1005 exclusion to these files rather than refactoring an unrelated
+# ~400-line setup function in a feature PR.
 [[analyzers.ignore]]
 name = "GO-R1005"
 paths = [
   "pkg/cli/server/server.go",
+  "pkg/cli/cmds/server_flags_test.go",
+  "pkg/netsy/integration_test.go",
+  "pkg/netsy/pki_test.go",
 ]

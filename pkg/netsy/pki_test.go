@@ -1,6 +1,7 @@
 package netsy
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -105,7 +106,7 @@ func TestEnsurePKIReusesExisting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(caBefore) != string(caAfter) {
+	if !bytes.Equal(caBefore, caAfter) {
 		t.Error("EnsurePKI() regenerated a valid PKI instead of reusing it")
 	}
 }
@@ -132,7 +133,7 @@ func TestEnsurePKIRegeneratesOnMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(caBefore) == string(caAfter) {
+	if bytes.Equal(caBefore, caAfter) {
 		t.Error("EnsurePKI() reused a PKI issued for a different cluster")
 	}
 	leaf, err := loadLeaf(second.DatastoreCert, second.DatastoreKey)
@@ -152,7 +153,8 @@ func TestEnsurePKIFailsOnUnwritableDir(t *testing.T) {
 	if err := os.Mkdir(parent, 0500); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+	// Restore owner write so t.TempDir cleanup can remove the read-only dir.
+	t.Cleanup(func() { _ = os.Chmod(parent, 0600) })
 
 	dir := filepath.Join(parent, "tls")
 	if _, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, []string{"127.0.0.1"}); err == nil {
