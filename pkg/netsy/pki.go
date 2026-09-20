@@ -62,20 +62,15 @@ const certRenewBefore = 30 * 24 * time.Hour
 // still valid for the given cluster, node and server hosts and are not yet
 // inside the renewal window.
 func validPKI(paths CertPaths, clusterID, nodeID string, hosts []string) bool {
-	caPEM, err := os.ReadFile(paths.CA)
+	ca, err := loadCA(paths.CA)
 	if err != nil {
-		return false
-	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(caPEM) {
 		return false
 	}
 
 	// Leaf and CA must be one generation: an interrupted regeneration leaves a
 	// new CA next to old leaves, which load and parse fine and only the
 	// signature check catches.
-	server, ok := validLeaf(paths.ServerCert, paths.ServerKey, roots,
-		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, clusterID, rolePeer, nodeID)
+	server, ok := validLeaf(paths.ServerCert, paths.ServerKey, ca, x509.ExtKeyUsageServerAuth, clusterID, rolePeer, nodeID)
 	if !ok {
 		return false
 	}
@@ -85,28 +80,55 @@ func validPKI(paths CertPaths, clusterID, nodeID string, hosts []string) bool {
 		}
 	}
 
-	if _, ok := validLeaf(paths.PeerClientCert, paths.PeerClientKey, roots,
-		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, clusterID, rolePeer, nodeID); !ok {
+	if _, ok := validLeaf(paths.PeerClientCert, paths.PeerClientKey, ca, x509.ExtKeyUsageClientAuth, clusterID, rolePeer, nodeID); !ok {
 		return false
 	}
 
-	if _, ok := validLeaf(paths.DatastoreCert, paths.DatastoreKey, roots,
-		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, clusterID, roleClient, DefaultClientName); !ok {
+	if _, ok := validLeaf(paths.DatastoreCert, paths.DatastoreKey, ca, x509.ExtKeyUsageClientAuth, clusterID, roleClient, DefaultClientName); !ok {
 		return false
 	}
 
 	return true
 }
 
-// validLeaf loads a leaf and reports whether it is signed by the CA in roots,
-// usable for one of the given purposes, carries the expected netsy role and
-// identity and is outside the renewal window.
-func validLeaf(certFile, keyFile string, roots *x509.CertPool, usages []x509.ExtKeyUsage, clusterID, role, identity string) (*x509.Certificate, bool) {
+// loadCA parses the CA certificate the leaves have to be signed by.
+func loadCA(path string) (*x509.Certificate, error) {
+	caPEM, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(caPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("%s holds no PEM certificate", path)
+	}
+	ca, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	if now.Before(ca.NotBefore) || now.After(ca.NotAfter) {
+		return nil, fmt.Errorf("CA certificate %s is not currently valid", path)
+	}
+	return ca, nil
+}
+
+// validLeaf loads a leaf and reports whether ca issued it, whether it is usable
+// for the given purpose, carries the expected netsy role and identity and is
+// outside the renewal window.
+func validLeaf(certFile, keyFile string, ca *x509.Certificate, usage x509.ExtKeyUsage, clusterID, role, identity string) (*x509.Certificate, bool) {
 	leaf, err := loadLeaf(certFile, keyFile)
 	if err != nil {
 		return nil, false
 	}
-	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: usages}); err != nil {
+	// The chain to check is the single-level CA k8e writes itself, so the
+	// signature is the whole link. x509.Certificate.Verify is deliberately not
+	// used: it would rebuild that same one-link chain and still cannot check
+	// revocation, because this CA publishes no CRL or OCSP endpoint (the
+	// GO-S1031 audit).
+	if err := leaf.CheckSignatureFrom(ca); err != nil {
+		return nil, false
+	}
+	if !allowsUsage(leaf, usage) {
 		return nil, false
 	}
 	if err := checkLeaf(leaf, clusterID, role, identity); err != nil {
@@ -116,6 +138,21 @@ func validLeaf(certFile, keyFile string, roots *x509.CertPool, usages []x509.Ext
 		return nil, false
 	}
 	return leaf, true
+}
+
+// allowsUsage mirrors the purpose check of x509.VerifyOptions: a leaf without
+// extended key usages is unrestricted, otherwise it must list the requested
+// purpose or x509.ExtKeyUsageAny.
+func allowsUsage(leaf *x509.Certificate, usage x509.ExtKeyUsage) bool {
+	if len(leaf.ExtKeyUsage) == 0 {
+		return true
+	}
+	for _, u := range leaf.ExtKeyUsage {
+		if u == x509.ExtKeyUsageAny || u == usage {
+			return true
+		}
+	}
+	return false
 }
 
 func loadLeaf(certFile, keyFile string) (*x509.Certificate, error) {

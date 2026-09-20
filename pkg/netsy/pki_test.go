@@ -376,3 +376,21 @@ func TestCheckLeafURIFiltering(t *testing.T) {
 		t.Error("checkLeaf() accepted a cert with no organization")
 	}
 }
+
+func TestAllowsUsage(t *testing.T) {
+	clientOnly := &x509.Certificate{ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	if allowsUsage(clientOnly, x509.ExtKeyUsageServerAuth) {
+		t.Error("allowsUsage() = true for a client-auth leaf used for server auth")
+	}
+	if !allowsUsage(clientOnly, x509.ExtKeyUsageClientAuth) {
+		t.Error("allowsUsage() = false for the usage of the leaf")
+	}
+	// Go treats a leaf without extended key usages as unrestricted.
+	if !allowsUsage(&x509.Certificate{}, x509.ExtKeyUsageServerAuth) {
+		t.Error("allowsUsage() = false for a leaf without extended key usages")
+	}
+	any := &x509.Certificate{ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+	if !allowsUsage(any, x509.ExtKeyUsageServerAuth) {
+		t.Error("allowsUsage() = false for a leaf with the any usage")
+	}
+}
