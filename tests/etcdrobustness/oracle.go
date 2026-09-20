@@ -93,7 +93,11 @@ func verifyKeyStates(ctx context.Context, history []Record, read Reader, report 
 // (an acknowledged mutation overwrote it) or read the newer revision and
 // failed. Allowing its payload anyway would report an impossible winner — an
 // acknowledged CAS and a second CAS of the same expected revision both having
-// committed — as a correct recovery.
+// committed — as a correct recovery. The drop is deliberately one-directional:
+// only a candidate an acknowledged mutation rules out is removed, so the check
+// can never turn a real recovery into a false violation. A candidate no
+// acknowledged mutation rules out stays allowed, an over-approximation that
+// only reduces the oracle's sensitivity and is disclosed in the design.
 func allowedStates(records []Record) map[string]struct{} {
 	allowed := make(map[string]struct{})
 	var baseline *Record
