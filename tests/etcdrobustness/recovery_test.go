@@ -395,10 +395,11 @@ func runSigkillRound(t *testing.T, round int, dwell time.Duration) {
 	t.Helper()
 	dir := workDir(t)
 	clientURL, peerURL := reserveURLs(t)
+	target := sigkillRoundTarget{dir: dir, clientURL: clientURL, peerURL: peerURL}
 	historyPath := filepath.Join(dir, "history.jsonl")
 	logPath := filepath.Join(dir, childLogFileName)
 
-	command := startSigkillChild(t, round, dir, clientURL, peerURL, historyPath, logPath)
+	command := startSigkillChild(t, round, target, historyPath, logPath)
 	waitForFile(t, filepath.Join(dir, readyFileName), 60*time.Second, logPath)
 	// The kill must land while writes are being acknowledged, not while the
 	// member is still coming up.
@@ -411,13 +412,21 @@ func runSigkillRound(t *testing.T, round int, dwell time.Duration) {
 	if acknowledged == 0 {
 		t.Fatalf("no write was acknowledged in %s before the kill; the workload never reached the server", dwell)
 	}
-	verifyKilledRound(t, round, dwell, dir, clientURL, peerURL, history, acknowledged)
+	verifyKilledRound(t, round, dwell, target, history, acknowledged)
+}
+
+// sigkillRoundTarget is where one strong-kill round runs: the data directory
+// and the addresses the killed member is restarted on.
+type sigkillRoundTarget struct {
+	dir       string
+	clientURL string
+	peerURL   string
 }
 
 // startSigkillChild re-executes this test binary as the workload child. The
 // parent kills it, so the fault is a real SIGKILL delivered by another process,
 // and the child is cleaned up if the round fails before the kill.
-func startSigkillChild(t *testing.T, round int, dir, clientURL, peerURL, historyPath, logPath string) *exec.Cmd {
+func startSigkillChild(t *testing.T, round int, target sigkillRoundTarget, historyPath, logPath string) *exec.Cmd {
 	t.Helper()
 	childLog, err := os.Create(logPath)
 	if err != nil {
@@ -427,9 +436,9 @@ func startSigkillChild(t *testing.T, round int, dir, clientURL, peerURL, history
 
 	command := exec.Command(os.Args[0], "-test.run=^TestEmbeddedEtcdRobustnessChild$", "-test.v")
 	command.Env = append(os.Environ(),
-		envChildDir+"="+dir,
-		envChildClient+"="+clientURL,
-		envChildPeer+"="+peerURL,
+		envChildDir+"="+target.dir,
+		envChildClient+"="+target.clientURL,
+		envChildPeer+"="+target.peerURL,
 		envChildHistory+"="+historyPath,
 		envChildRunID+"="+fmt.Sprintf("r%02d", round),
 	)
@@ -462,16 +471,16 @@ func killChild(t *testing.T, command *exec.Cmd) {
 
 // verifyKilledRound restarts the killed member on the same data directory and
 // checks member identity, the acknowledged history and revision continuity.
-func verifyKilledRound(t *testing.T, round int, dwell time.Duration, dir, clientURL, peerURL string, history []Record, acknowledged int) {
+func verifyKilledRound(t *testing.T, round int, dwell time.Duration, target sigkillRoundTarget, history []Record, acknowledged int) {
 	t.Helper()
-	before := readFingerprint(t, filepath.Join(dir, fingerprintFileName))
+	before := readFingerprint(t, filepath.Join(target.dir, fingerprintFileName))
 
-	startNode(t, NodeOptions{Name: "robustness", Dir: dir, ClientURL: clientURL, PeerURL: peerURL})
-	client := mustClient(t, clientURL)
+	startNode(t, NodeOptions{Name: "robustness", Dir: target.dir, ClientURL: target.clientURL, PeerURL: target.peerURL})
+	client := mustClient(t, target.clientURL)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	after, err := client.Status(ctx, clientURL)
+	after, err := client.Status(ctx, target.clientURL)
 	if err != nil {
 		t.Fatal(err)
 	}
