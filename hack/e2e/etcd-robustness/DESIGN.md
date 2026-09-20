@@ -1,0 +1,239 @@
+# Embedded etcd robustness E2E — design and phased rollout
+
+Status: **phase 1 landed** (fault-recovery safety, `tests/etcdrobustness`).
+Phases 2–4 are designed here and **not implemented yet**.
+
+Related: [KIP-6](../../../docs/kip-6-embedded-etcd-design.md) (embedded etcd as
+sole datastore), [KIP-7](../../../docs/kip-7-embedded-etcd-fuse.md)
+(`pkg/embedw` fuse), [hack/e2e](../run.sh) (the container-level E2E harness).
+
+## 1. Goal and user outcome
+
+K8E runs Kubernetes on an embedded etcd (`pkg/embedw` over
+`embed.StartEtcd`). An operator whose node loses power, whose disk fills up or
+whose WAL is damaged must be able to answer one question with evidence:
+
+> after the fault, are the writes Kubernetes acknowledged still there, and is
+> the datastore usable again?
+
+This program makes that question executable. Every phase adds scenarios that
+inject a real fault into a real etcd and then check the recovered state against
+an **external operation history** recorded before the fault, so "it looked fine
+afterwards" is never accepted as evidence.
+
+The user outcome per phase:
+
+| Phase | User-visible promise |
+|-------|----------------------|
+| ① fault-recovery safety | after a restart/kill/disk fault the acknowledged writes survive, the member keeps its identity, and the store is writable again |
+| ② multi-node fault handling | killing or partitioning one member of a 3-member cluster does not lose acknowledged writes, and the cluster converges when it returns |
+| ③ backups actually restorable | a snapshot taken before a fault restores into a working datastore with the acknowledged writes |
+| ④ long-run stability | a long mixed workload (compaction, defrag, restarts) keeps the store healthy: no unbounded growth, no revision rollback, no lost write |
+
+Failure path (same for every phase): the suite fails the specific scenario, and
+the retained work directory (`etcd.log`, `history.jsonl`, data dirs) shows the
+fault, the acknowledged history and the recovered state side by side, so the
+gap is diagnosable without reproducing the fault by hand.
+
+Ordering is deliberate: ① establishes the recording + oracle machinery and the
+single-member recovery baseline; ② reuses both on a cluster; ③ proves the
+snapshot is worth having before ④ runs long enough for snapshotting to matter.
+Doing ③ before ① would test restores of a store whose fault behaviour is
+unknown.
+
+## 2. What already exists
+
+* `pkg/embedw` starts an embedded etcd from a data directory and returns once
+  `ReadyNotify()` fires (60s limit, `pkg/embedw/etcd.go:81`).
+* `pkg/etcd` owns the K8E-level lifecycle: `Start`, `Test` (defragment + clear
+  alarms on startup, `pkg/etcd/etcd.go:211`), snapshots, learners, `Restore`.
+* `hack/e2e` brings up server + agent containers and runs `suites/l1.sh` /
+  `suites/l2.sh`, including one Go test that restarts a container
+  (`pkg/sandboxmcp/cluster_test.go`).
+* There is no etcd fault-injection, no external operation history and no
+  restore verification anywhere in the tree.
+
+## 3. Harness: external operation history + oracle
+
+Two pieces, both in `tests/etcdrobustness`, both phase-independent:
+
+**`history.go` — the operation history.** Every mutating request is written to
+`history.jsonl` *outside* the etcd data directory, with a fsync: first a
+`pending` intent carrying the payload hash (started before the request is
+issued), then one terminal record.
+
+| Outcome | Meaning |
+|---------|---------|
+| `acknowledged` | the server returned a response; the revision is recorded |
+| `rejected` | the server explicitly refused (e.g. quota exceeded) |
+| `unknown` | the client never learned the outcome (timeout, connection break, process death) — a lone `pending` record replays as `unknown` |
+
+`unknown` is not a failure. It is the honest state of a request that may have
+been committed after the client stopped waiting, and the oracle must explain it
+both ways.
+
+**`oracle.go` — the correctness oracle.** Given the history and a reader for the
+recovered state, `Verify` checks:
+
+1. *Every key is explainable.* The allowed state starts from the effect of the
+   highest-revision acknowledged mutation (absent when nothing was acked) and
+   additionally allows the effect of each `unknown` operation on that key, then
+   requires the observed payload hash to be one of them. Anything else is a
+   violation: a value nobody acknowledged, a lost acknowledged write, or a
+   resurrected delete.
+2. *At most one concurrent CAS wins.* Two acknowledged CAS on the same key and
+   expected revision would mean the compare-and-swap was not really applied.
+3. *Revision continuity.* The recovered revision must not be below the highest
+   acknowledged revision (a rollback would prove a lost commit or a silently
+   recreated cluster).
+
+Phase 1 feeds the reader straight from a real client (`ClientReader`); phases
+2–4 add readers for cluster members and for a restored store, and reuse the same
+oracle unchanged.
+
+## 4. Phase 1 — fault-recovery safety (landed)
+
+Package: `tests/etcdrobustness` (test support; no shipped binary imports it).
+
+| Scenario | Test | Fault |
+|----------|------|-------|
+| graceful member restart | `TestEmbeddedEtcdGracefulRestart` | stop and start on the same data dir |
+| strong kill while writing | `TestEmbeddedEtcdSigkillDuringWrites` | repeated SIGKILL of a child member under continuous acknowledged writes (fixed seed, default 10 rounds; the child is `TestEmbeddedEtcdRobustnessChild`) |
+| disk pressure | `TestEmbeddedEtcdQuotaExhaustionRefusesWrites` | fill the 8MB quota until writes are refused with `mvcc: database space exceeded` |
+| damaged WAL | `TestEmbeddedEtcdWALCorruptionIsRefused` | flip bytes in the written region of a WAL copy at two damage sites |
+| history/oracle contract | `history_test.go`, `oracle_test.go` | unit level: record reduction, `unknown` replay, every oracle rule and its violation |
+
+What each scenario asserts (the real contract, not the implementation's guess):
+
+* graceful restart — member id, cluster id and revision survive, no oracle
+  violation, and CRUD/CAS/Watch still work on the recovered member; eight
+  concurrent CAS on one key produce exactly one winner at every stage.
+* strong kill — no error on the next start beyond the kill itself, member and
+  cluster identity unchanged, every acknowledged record still present, no
+  violation and no revision rollback; rounds where an in-flight request became
+  `unknown` must be explained by the oracle (the rounds log how many).
+* disk pressure — the refusal is `database space exceeded` with an active
+  `NOSPACE` alarm, the acknowledged data is still intact under the oracle, and
+  after delete → compact → defragment → disarm (the same repair
+  `pkg/etcd/etcd.go:211` performs at startup) the alarm is gone and the store
+  accepts a new write.
+* damaged WAL — the node must not come up serving a store; a node that starts
+  is a failure. The two deterministic damage sites fail differently on
+  `etcd 3.7.1-k3s1` (see findings) and both are recorded. The untouched data
+  directory still starts and still holds all 50 records, which proves the test
+  damaged only the copy.
+
+### Running phase 1
+
+```bash
+go test ./tests/etcdrobustness/ -count=1 -v                      # full phase 1 (~30s)
+go test ./tests/etcdrobustness/ -run 'Sigkill' -count=1          # one scenario
+```
+
+Environment knobs (all optional):
+
+| Variable | Meaning |
+|----------|---------|
+| `ETCD_ROBUSTNESS_WORKDIR` | base directory for the per-test data dirs. A member preallocates a 64MB WAL and the disk-fault cases copy it, so point this at a large filesystem when the default temporary one is small. |
+| `ETCD_ROBUSTNESS_KEEP=1` | keep every work directory, not only the ones of failed tests |
+| `ETCD_ROBUSTNESS_ROUNDS=N` | number of strong-kill rounds (default 10) |
+| `ETCD_ROBUSTNESS_SKIP_SIGKILL=1` | skip the strong-kill scenario |
+
+A failing test retains its work directory and logs the path, with
+`etcd.log` (the node's own log, kept outside the data directory),
+`history.jsonl` and `fingerprint.json` inside it.
+
+### Evidence from the landing run
+
+```
+TestEmbeddedEtcdGracefulRestart          PASS
+TestEmbeddedEtcdSigkillDuringWrites      PASS (10 rounds, 1 unknown per round explained by the oracle)
+TestEmbeddedEtcdQuotaExhaustion...       PASS
+TestEmbeddedEtcdWALCorruptionIsRefused   PASS
+TestEmbeddedEtcdRobustnessChild          SKIP (child process only)
+```
+
+### Findings (phase-1 output, not tuned green)
+
+**F1 — a damaged WAL makes `embed.StartEtcd` panic.** Corrupting bytes in the
+first (metadata) record of a WAL makes etcd 3.7.1-k3s1 panic with a nil
+pointer dereference inside `etcdserver.bootstrap` instead of returning an
+error. A K8E server in this state crashes during startup. Reproduced 8/8.
+
+**F2 — the WAL repair path rewrites the damaged segment first.** In the same
+case the 64MB segment is truncated to 16 bytes before the crash, i.e. the
+evidence is destroyed before anyone can inspect it. The test records the size
+change instead of asserting it away.
+
+**F3 — a mid-WAL byte flip is not fail-fast.** Corrupting the middle of the
+written region usually gives a clean `walpb: crc mismatch`, but
+non-deterministically produces a member that starts, elects itself leader and
+then never becomes ready. `pkg/embedw`'s readiness wait then blocks the full
+60s and returns a bare `context.DeadlineExceeded` with no mention of the WAL
+(observed in 2 of 4 mid-WAL corruption runs; the failing byte offset depends on
+the WAL length, and the other two runs refused cleanly). That is the least diagnosable outcome an operator can get, and it
+is why the corruption test only locks the two deterministic damage sites.
+
+**F4 — the reported backend size is not tied to the quota.** With an 8MiB
+`quota-backend-bytes`, the sizes reported at the moment of refusal ranged from
+8,327,168 to 9,338,880 bytes across six runs: etcd refuses the write that would
+cross the quota, so `DbSize` sits either side of it. The test therefore logs the
+size instead of asserting it. Capacity or alarm rules built on `DbSize` versus
+the quota ratio — the numbers `pkg/etcd` logs on startup — would be misleading,
+particularly since the backend can grow past the quota without being exhausted.
+
+## 5. Phase 2 — multi-member fault handling (designed, not landed)
+
+* Harness extension: start N (`NodeOptions.InitialCluster` already takes the
+  member list) members in one process, one recorder per member plus a merged
+  reader so the oracle checks the surviving cluster's state after a member
+  dies.
+* Scenarios: (a) kill one member of three during a mixed workload, restart it,
+  verify no acknowledged write is lost and the member rejoins (identity kept);
+  (b) kill two members, verify the cluster refuses writes rather than
+  acknowledging them (no false ack), then verify recovery after both return;
+  (c) learner promotion / `RemovePeer` interleaved with the workload, since
+  `pkg/etcd` drives both; (d) a member whose data dir is behind (restart with
+  the WAL of an earlier point) must fail to rejoin instead of silently
+  diverging.
+* The oracle is reused unchanged; only how many readers feed it grows.
+* Container-level layer, once the in-process layer is green: reuse
+  `hack/e2e/run.sh` to stop/start the server container (the pattern already in
+  `pkg/sandboxmcp/cluster_test.go`) and rerun the same history/oracle checks
+  against the real `k8e` binary's data dir.
+
+## 6. Phase 3 — backups actually restorable (designed, not landed)
+
+* Harness extension: a store-level scenario that takes a snapshot through
+  `pkg/etcd`'s snapshot path (and `etcdutl` for the restore), then restores
+  into a fresh data directory.
+* Acceptance: the restored store's key state satisfies the oracle for every
+  operation acknowledged **before** the snapshot, the restored revision equals
+  or exceeds the snapshot revision, and the restored member is writable and
+  watchable. A snapshot that restores an empty store must fail the scenario,
+  not pass silently.
+* Failure path: a corrupt/truncated snapshot file must make the restore fail
+  loudly, leaving the target data directory untouched.
+
+## 7. Phase 4 — long-run stability (designed, not landed)
+
+* A long mixed workload (put/delete/CAS/Watch, periodic compact + defragment,
+  restarts) driven by a seeded generator, with sampled checks:
+  `DbSize`/`DbSizeInUse` stay bounded, the revision never rolls back, every
+  sampled acknowledged write is present, and `Watch` from a captured revision
+  still delivers every change.
+* This is the phase where the phase-1 findings matter: a 60s hang (F3) or a
+  panic (F1) found only after hours is far more expensive than one found by a
+  deterministic unit-size scenario.
+
+## 8. Non-goals
+
+* No new daemon, database, queue or scheduler: the scenarios are Go tests, the
+  history is a file.
+* No Kubernetes-level fault injection beyond what phase 2 names.
+* No performance benchmarking (latency/throughput) — this program measures
+  safety and recoverability.
+* No changes to `pkg/embedw`/`pkg/etcd` in phase 1: the phase-1 job is to
+  establish the baseline and the evidence. F1–F3 are inputs for a follow-up
+  decision (for example failing fast with a WAL-specific error instead of the
+  60s readiness wait), not silently patched here.
