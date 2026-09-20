@@ -168,13 +168,13 @@ func VerifyAtMostOneCASWinner(history []Record) []string {
 // MaxAcknowledgedRevision is the highest revision the workload saw acknowledged.
 // The recovered store must not report a revision below it.
 func MaxAcknowledgedRevision(history []Record) int64 {
-	var max int64
+	var highest int64
 	for _, record := range history {
-		if record.Outcome == OutcomeAcknowledged && record.Revision > max {
-			max = record.Revision
+		if record.Outcome == OutcomeAcknowledged && record.Revision > highest {
+			highest = record.Revision
 		}
 	}
-	return max
+	return highest
 }
 
 // VerifyRevisionContinuity checks that the recovered store did not roll back

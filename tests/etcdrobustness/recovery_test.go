@@ -2,10 +2,11 @@ package etcdrobustness
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -37,6 +38,11 @@ const (
 
 	defaultSigkillRounds = 10
 	defaultSigkillSeed   = int64(612)
+
+	// The kill lands between killDwellFloor and killDwellJitter after the first
+	// acknowledged write.
+	killDwellFloor  = 200 * time.Millisecond
+	killDwellJitter = 500 * time.Millisecond
 )
 
 // fingerprint is the cluster identity a node observed before the fault. A
@@ -129,42 +135,118 @@ func TestEmbeddedEtcdGracefulRestart(t *testing.T) {
 	defer cancel()
 
 	historyPath := filepath.Join(dir, "history.jsonl")
-	recorder, err := NewRecorder(historyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	recorder := mustRecorder(t, historyPath, time.Now)
 	defer recorder.Close()
 
 	// Immutable, checksummed records: the oracle can tell a survivor from a
 	// value nobody ever wrote.
-	for i := 0; i < 20; i++ {
-		key := fmt.Sprintf("records/%03d", i)
-		value := fmt.Sprintf("record-%03d-%s", i, strings.Repeat("x", 32))
-		attempt, err := recorder.Begin(Operation{Kind: KindPut, Key: key, Value: value, Endpoint: clientURL})
-		if err != nil {
+	writeRecords(t, ctx, client, recorder, clientURL, 20)
+	// Concurrent CAS: exactly one writer may win the same expected revision.
+	writeCASRace(t, ctx, client, recorder, clientURL)
+
+	// Watch must deliver the mutation and the delete, from a revision that
+	// cannot miss either.
+	watchMutation(t, ctx, client, "watch/", 2, func() {
+		if _, err := client.Put(ctx, "watch/entry", "value"); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := client.Delete(ctx, "watch/entry"); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	before, err := client.Status(ctx, clientURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recorder.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	node.Close()
+
+	// Restart against the same data directory: StartNode sees member/snap and
+	// asks for cluster state "existing" instead of bootstrapping a new cluster.
+	startNode(t, opts)
+	recovered := mustClient(t, clientURL)
+	after, err := recovered.Status(ctx, clientURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	history := mustLoadHistory(t, historyPath)
+	report, err := Verify(ctx, history, ClientReader(recovered))
+	if err != nil {
+		t.Fatal(err)
+	}
+	violations := identityViolations(before.Header.MemberId, before.Header.ClusterId, after, "restart")
+	violations = append(violations, report.Violations...)
+	violations = append(violations, VerifyRevisionContinuity(after.Header.Revision, MaxAcknowledgedRevision(history))...)
+	if len(violations) > 0 {
+		t.Fatalf("graceful restart oracle violations:\n%s", strings.Join(violations, "\n"))
+	}
+
+	// The recovered cluster must still serve CRUD and Watch.
+	assertServingAfterRecovery(t, ctx, recovered)
+}
+
+// assertServingAfterRecovery proves the recovered member is a working store and
+// not only a readable one.
+func assertServingAfterRecovery(t *testing.T, ctx context.Context, client *clientv3.Client) {
+	t.Helper()
+	if _, err := client.Put(ctx, "after/restart", "ok"); err != nil {
+		t.Fatalf("write after restart: %v", err)
+	}
+	got, err := client.Get(ctx, "after/restart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Kvs) != 1 || string(got.Kvs[0].Value) != "ok" {
+		t.Fatalf("read after restart = %+v", got.Kvs)
+	}
+	watchMutation(t, ctx, client, "watch/", 1, func() {
+		if _, err := client.Put(ctx, "watch/after-restart", "ok"); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// writeRecords issues count acknowledged puts through the recorder.
+func writeRecords(t *testing.T, ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint string, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		key := fmt.Sprintf("records/%03d", i)
+		value := fmt.Sprintf("record-%03d-%s", i, strings.Repeat("x", 32))
+		attempt := mustBegin(t, recorder, Operation{Kind: KindPut, Key: key, Value: value, Endpoint: endpoint})
 		response, err := client.Put(ctx, key, value)
 		if err != nil {
 			_ = attempt.Unknown(err)
 			t.Fatal(err)
 		}
-		if err := attempt.Acknowledge(response.Header.Revision); err != nil {
-			t.Fatal(err)
-		}
+		must(t, attempt.Acknowledge(response.Header.Revision))
 	}
+}
 
-	// Concurrent CAS: exactly one writer may win the same expected revision.
-	raceKey := "cas/race"
+// writeCASRace races concurrent compare-and-swaps on one key and requires
+// exactly one winner: a second winner for the same expected revision would mean
+// the CAS was not really applied.
+func writeCASRace(t *testing.T, ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint string) {
+	t.Helper()
+	const (
+		raceKey = "cas/race"
+		racers  = 8
+	)
 	if _, err := client.Put(ctx, raceKey, "seed"); err != nil {
 		t.Fatal(err)
 	}
-	seedGet, err := client.Get(ctx, raceKey)
+	seed, err := client.Get(ctx, raceKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedRevision := seedGet.Kvs[0].ModRevision
-	const racers = 8
+	seedRevision := seed.Kvs[0].ModRevision
+
 	start := make(chan struct{})
 	results := make(chan error, racers)
 	var winners int32
@@ -180,7 +262,7 @@ func TestEmbeddedEtcdGracefulRestart(t *testing.T) {
 				Value:          value,
 				ExpectValue:    "seed",
 				ExpectRevision: seedRevision,
-				Endpoint:       clientURL,
+				Endpoint:       endpoint,
 			})
 			if err != nil {
 				results <- err
@@ -214,91 +296,36 @@ func TestEmbeddedEtcdGracefulRestart(t *testing.T) {
 	if winners != 1 {
 		t.Fatalf("concurrent CAS winners = %d, want exactly 1", winners)
 	}
+}
 
-	// Watch must deliver the mutation and the delete, from a revision that
-	// cannot miss either.
-	watchCount, err := client.Get(ctx, "watch/", clientv3.WithPrefix(), clientv3.WithCountOnly())
+// watchMutation watches prefix from the revision before the mutation and fails
+// unless mutate delivered want events.
+func watchMutation(t *testing.T, ctx context.Context, client *clientv3.Client, prefix string, want int, mutate func()) {
+	t.Helper()
+	count, err := client.Get(ctx, prefix, clientv3.WithPrefix(), clientv3.WithCountOnly())
 	if err != nil {
 		t.Fatal(err)
 	}
 	watchCtx, watchCancel := context.WithCancel(ctx)
-	watch := client.Watch(watchCtx, "watch/", clientv3.WithPrefix(), clientv3.WithRev(watchCount.Header.Revision+1))
-	if _, err := client.Put(ctx, "watch/entry", "value"); err != nil {
+	defer watchCancel()
+	watch := client.Watch(watchCtx, prefix, clientv3.WithPrefix(), clientv3.WithRev(count.Header.Revision+1))
+	mutate()
+	if err := collectEvents(watch, want); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Delete(ctx, "watch/entry"); err != nil {
-		t.Fatal(err)
-	}
-	if err := collectEvents(watch, 2); err != nil {
-		t.Fatal(err)
-	}
-	watchCancel()
+}
 
-	before, err := client.Status(ctx, clientURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := recorder.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.Close(); err != nil {
-		t.Fatal(err)
-	}
-	node.Close()
-
-	// Restart against the same data directory: StartNode sees member/snap and
-	// asks for cluster state "existing" instead of bootstrapping a new cluster.
-	startNode(t, opts)
-	recoveredClient := mustClient(t, clientURL)
-	after, err := recoveredClient.Status(ctx, clientURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-
+// identityViolations reports a changed member or cluster id, which would mean
+// the member was not recovered but recreated.
+func identityViolations(memberID, clusterID uint64, after *clientv3.StatusResponse, phase string) []string {
 	var violations []string
-	if after.Header.MemberId != before.Header.MemberId {
-		violations = append(violations, fmt.Sprintf("member id changed across restart: %x -> %x", before.Header.MemberId, after.Header.MemberId))
+	if after.Header.MemberId != memberID {
+		violations = append(violations, fmt.Sprintf("member id changed across %s: %x -> %x", phase, memberID, after.Header.MemberId))
 	}
-	if after.Header.ClusterId != before.Header.ClusterId {
-		violations = append(violations, fmt.Sprintf("cluster id changed across restart: %x -> %x", before.Header.ClusterId, after.Header.ClusterId))
+	if after.Header.ClusterId != clusterID {
+		violations = append(violations, fmt.Sprintf("cluster id changed across %s: %x -> %x", phase, clusterID, after.Header.ClusterId))
 	}
-
-	history, err := LoadHistory(historyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	report, err := Verify(ctx, history, ClientReader(recoveredClient))
-	if err != nil {
-		t.Fatal(err)
-	}
-	violations = append(violations, report.Violations...)
-	violations = append(violations, VerifyRevisionContinuity(after.Header.Revision, MaxAcknowledgedRevision(history))...)
-	if len(violations) > 0 {
-		t.Fatalf("graceful restart oracle violations:\n%s", strings.Join(violations, "\n"))
-	}
-
-	// The recovered cluster must still serve CRUD and Watch.
-	if _, err := recoveredClient.Put(ctx, "after/restart", "ok"); err != nil {
-		t.Fatalf("write after restart: %v", err)
-	}
-	if got, err := recoveredClient.Get(ctx, "after/restart"); err != nil {
-		t.Fatal(err)
-	} else if len(got.Kvs) != 1 || string(got.Kvs[0].Value) != "ok" {
-		t.Fatalf("read after restart = %+v", got.Kvs)
-	}
-	watchCount, err = recoveredClient.Get(ctx, "watch/", clientv3.WithPrefix(), clientv3.WithCountOnly())
-	if err != nil {
-		t.Fatal(err)
-	}
-	watchCtx, watchCancel = context.WithCancel(ctx)
-	watch = recoveredClient.Watch(watchCtx, "watch/", clientv3.WithPrefix(), clientv3.WithRev(watchCount.Header.Revision+1))
-	if _, err := recoveredClient.Put(ctx, "watch/after-restart", "ok"); err != nil {
-		t.Fatal(err)
-	}
-	if err := collectEvents(watch, 1); err != nil {
-		t.Fatal(err)
-	}
-	watchCancel()
+	return violations
 }
 
 // collectEvents waits until the watch delivered want events.
@@ -329,113 +356,159 @@ func TestEmbeddedEtcdSigkillDuringWrites(t *testing.T) {
 	if os.Getenv("ETCD_ROBUSTNESS_SKIP_SIGKILL") == "1" {
 		t.Skip("ETCD_ROBUSTNESS_SKIP_SIGKILL=1")
 	}
-	rounds := defaultSigkillRounds
-	if raw := os.Getenv("ETCD_ROBUSTNESS_ROUNDS"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 {
-			t.Fatalf("ETCD_ROBUSTNESS_ROUNDS=%q is not a positive integer", raw)
-		}
-		rounds = parsed
-	}
-	random := rand.New(rand.NewSource(defaultSigkillSeed))
-
+	rounds := sigkillRounds(t)
 	for round := 0; round < rounds; round++ {
 		round := round
 		t.Run(fmt.Sprintf("round-%02d", round), func(t *testing.T) {
-			dir := workDir(t)
-			clientURL, peerURL := reserveURLs(t)
-			historyPath := filepath.Join(dir, "history.jsonl")
-			readyPath := filepath.Join(dir, readyFileName)
-			logPath := filepath.Join(dir, childLogFileName)
-
-			childLog, err := os.Create(logPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = childLog.Close() })
-
-			command := exec.Command(os.Args[0], "-test.run=^TestEmbeddedEtcdRobustnessChild$", "-test.v")
-			command.Env = append(os.Environ(),
-				envChildDir+"="+dir,
-				envChildClient+"="+clientURL,
-				envChildPeer+"="+peerURL,
-				envChildHistory+"="+historyPath,
-				envChildRunID+"="+fmt.Sprintf("r%02d", round),
-			)
-			command.Stdout = childLog
-			command.Stderr = childLog
-			if err := command.Start(); err != nil {
-				t.Fatal(err)
-			}
-			killed := false
-			t.Cleanup(func() {
-				if killed {
-					return
-				}
-				_ = command.Process.Kill()
-				_, _ = command.Process.Wait()
-			})
-
-			waitForFile(t, readyPath, 60*time.Second, logPath)
-			// The kill must land while writes are being acknowledged, not while the
-			// member is still coming up.
-			waitForAcknowledged(t, historyPath, 60*time.Second)
-
-			dwell := 200*time.Millisecond + time.Duration(random.Int63n(int64(500*time.Millisecond)))
-			time.Sleep(dwell)
-			if err := command.Process.Kill(); err != nil {
-				t.Fatalf("SIGKILL the child: %v", err)
-			}
-			killed = true
-			if err := command.Wait(); err != nil && !strings.Contains(err.Error(), "killed") {
-				t.Fatalf("child failed before the kill: %v", err)
-			}
-
-			history, err := LoadHistory(historyPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			acknowledged := 0
-			for _, record := range history {
-				if record.Outcome == OutcomeAcknowledged {
-					acknowledged++
-				}
-			}
-			if acknowledged == 0 {
-				t.Fatalf("no write was acknowledged in %s before the kill; the workload never reached the server", dwell)
-			}
-			before := readFingerprint(t, filepath.Join(dir, fingerprintFileName))
-
-			startNode(t, NodeOptions{Name: "robustness", Dir: dir, ClientURL: clientURL, PeerURL: peerURL})
-			client := mustClient(t, clientURL)
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-
-			after, err := client.Status(ctx, clientURL)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var violations []string
-			if after.Header.MemberId != before.MemberID {
-				violations = append(violations, fmt.Sprintf("member id changed across the kill: %x -> %x", before.MemberID, after.Header.MemberId))
-			}
-			if after.Header.ClusterId != before.ClusterID {
-				violations = append(violations, fmt.Sprintf("cluster id changed across the kill: %x -> %x", before.ClusterID, after.Header.ClusterId))
-			}
-			report, err := Verify(ctx, history, ClientReader(client))
-			if err != nil {
-				t.Fatal(err)
-			}
-			violations = append(violations, report.Violations...)
-			violations = append(violations, VerifyRevisionContinuity(after.Header.Revision, MaxAcknowledgedRevision(history))...)
-			if len(violations) > 0 {
-				t.Fatalf("round %02d after %s: %d acknowledged, %d unknown, violations:\n%s",
-					round, dwell, acknowledged, len(report.UnknownIntents), strings.Join(violations, "\n"))
-			}
-			t.Logf("round %02d: killed after %s, %d acknowledged, %d unknown, revision %d recovered",
-				round, dwell, acknowledged, len(report.UnknownIntents), after.Header.Revision)
+			runSigkillRound(t, round, sigkillDwell(defaultSigkillSeed, round))
 		})
 	}
+}
+
+// sigkillRounds reads the configured round count, default 10.
+func sigkillRounds(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv("ETCD_ROBUSTNESS_ROUNDS")
+	if raw == "" {
+		return defaultSigkillRounds
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 {
+		t.Fatalf("ETCD_ROBUSTNESS_ROUNDS=%q is not a positive integer", raw)
+	}
+	return parsed
+}
+
+// sigkillDwell is the seeded dwell between the first acknowledged write and the
+// kill. It is derived from the run seed and the round with a hash rather than a
+// PRNG, so the sequence is reproducible and every round kills at a different
+// moment.
+func sigkillDwell(seed int64, round int) time.Duration {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%d:%d", seed, round)))
+	jitter := binary.BigEndian.Uint64(digest[:8]) % uint64(killDwellJitter)
+	return killDwellFloor + time.Duration(jitter)
+}
+
+// runSigkillRound starts a child member under a continuous write workload,
+// SIGKILLs it at the seeded moment and checks the recovered data directory.
+func runSigkillRound(t *testing.T, round int, dwell time.Duration) {
+	t.Helper()
+	dir := workDir(t)
+	clientURL, peerURL := reserveURLs(t)
+	historyPath := filepath.Join(dir, "history.jsonl")
+	logPath := filepath.Join(dir, childLogFileName)
+
+	command := startSigkillChild(t, round, dir, clientURL, peerURL, historyPath, logPath)
+	waitForFile(t, filepath.Join(dir, readyFileName), 60*time.Second, logPath)
+	// The kill must land while writes are being acknowledged, not while the
+	// member is still coming up.
+	waitForAcknowledged(t, historyPath, 60*time.Second)
+	time.Sleep(dwell)
+	killChild(t, command)
+
+	history := mustLoadHistory(t, historyPath)
+	acknowledged := countOutcome(history, OutcomeAcknowledged)
+	if acknowledged == 0 {
+		t.Fatalf("no write was acknowledged in %s before the kill; the workload never reached the server", dwell)
+	}
+	verifyKilledRound(t, round, dwell, dir, clientURL, peerURL, history, acknowledged)
+}
+
+// startSigkillChild re-executes this test binary as the workload child. The
+// parent kills it, so the fault is a real SIGKILL delivered by another process,
+// and the child is cleaned up if the round fails before the kill.
+func startSigkillChild(t *testing.T, round int, dir, clientURL, peerURL, historyPath, logPath string) *exec.Cmd {
+	t.Helper()
+	childLog, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = childLog.Close() })
+
+	command := exec.Command(os.Args[0], "-test.run=^TestEmbeddedEtcdRobustnessChild$", "-test.v")
+	command.Env = append(os.Environ(),
+		envChildDir+"="+dir,
+		envChildClient+"="+clientURL,
+		envChildPeer+"="+peerURL,
+		envChildHistory+"="+historyPath,
+		envChildRunID+"="+fmt.Sprintf("r%02d", round),
+	)
+	command.Stdout = childLog
+	command.Stderr = childLog
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if command.ProcessState != nil {
+			return // the round already waited for the killed child
+		}
+		_ = command.Process.Kill()
+		_, _ = command.Process.Wait()
+	})
+	return command
+}
+
+// killChild SIGKILLs the child and waits for it, so the fault under test is the
+// kill and not a leaked process.
+func killChild(t *testing.T, command *exec.Cmd) {
+	t.Helper()
+	if err := command.Process.Kill(); err != nil {
+		t.Fatalf("SIGKILL the child: %v", err)
+	}
+	if err := command.Wait(); err != nil && !strings.Contains(err.Error(), "killed") {
+		t.Fatalf("child failed before the kill: %v", err)
+	}
+}
+
+// verifyKilledRound restarts the killed member on the same data directory and
+// checks member identity, the acknowledged history and revision continuity.
+func verifyKilledRound(t *testing.T, round int, dwell time.Duration, dir, clientURL, peerURL string, history []Record, acknowledged int) {
+	t.Helper()
+	before := readFingerprint(t, filepath.Join(dir, fingerprintFileName))
+
+	startNode(t, NodeOptions{Name: "robustness", Dir: dir, ClientURL: clientURL, PeerURL: peerURL})
+	client := mustClient(t, clientURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	after, err := client.Status(ctx, clientURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	violations := identityViolations(before.MemberID, before.ClusterID, after, "the kill")
+	report, err := Verify(ctx, history, ClientReader(client))
+	if err != nil {
+		t.Fatal(err)
+	}
+	violations = append(violations, report.Violations...)
+	violations = append(violations, VerifyRevisionContinuity(after.Header.Revision, MaxAcknowledgedRevision(history))...)
+	if len(violations) > 0 {
+		t.Fatalf("round %02d after %s: %d acknowledged, %d unknown, violations:\n%s",
+			round, dwell, acknowledged, len(report.UnknownIntents), strings.Join(violations, "\n"))
+	}
+	t.Logf("round %02d: killed after %s, %d acknowledged, %d unknown, revision %d recovered",
+		round, dwell, acknowledged, len(report.UnknownIntents), after.Header.Revision)
+}
+
+// mustLoadHistory loads the recorded operation history or fails the test.
+func mustLoadHistory(t *testing.T, path string) []Record {
+	t.Helper()
+	history, err := LoadHistory(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return history
+}
+
+// countOutcome counts the records with the given terminal outcome.
+func countOutcome(history []Record, outcome Outcome) int {
+	count := 0
+	for _, record := range history {
+		if record.Outcome == outcome {
+			count++
+		}
+	}
+	return count
 }
 
 // TestEmbeddedEtcdRobustnessChild is the child process of the strong-kill

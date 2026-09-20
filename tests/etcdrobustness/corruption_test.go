@@ -58,47 +58,9 @@ func TestEmbeddedEtcdWALCorruptionIsRefused(t *testing.T) {
 		{name: "written-tail", offsetOf: func(written int64) int64 { return written - 17 }},
 	}
 	for i, site := range damageSites {
-		site := site
+		i, site := i, site
 		t.Run(site.name, func(t *testing.T) {
-			corruptDir := filepath.Join(dir, fmt.Sprintf("corrupt-%d", i))
-			if err := copyTree(opts.DataDir(), filepath.Join(corruptDir, "data")); err != nil {
-				t.Fatalf("copy data directory: %v", err)
-			}
-			walPath := newestWAL(t, filepath.Join(corruptDir, "data"))
-			corruptWAL(t, walPath, site.offsetOf)
-			damagedSize := fileSize(t, walPath)
-
-			// The damaged copy uses its own ports so the failure cannot
-			// interfere with the healthy original.
-			corruptClientURL, corruptPeerURL := reserveURLs(t)
-			corruptNode, corruptErr, panicValue := startCorruptedNode(NodeOptions{
-				Name:         "robustness",
-				Dir:          corruptDir,
-				ClientURL:    corruptClientURL,
-				PeerURL:      corruptPeerURL,
-				CorruptCheck: true,
-			})
-			if corruptNode != nil {
-				corruptNode.Close()
-				t.Fatal("a node with a damaged WAL started serving; the damage was ignored or the store was reset")
-			}
-			switch {
-			case panicValue != nil:
-				t.Logf("damaged WAL refused by crash while loading it: %v", panicValue)
-			case corruptErr == nil:
-				t.Fatal("the damaged node neither returned an error nor panicked")
-			case !isWALDamage(corruptErr):
-				t.Fatalf("damaged WAL start error = %v; want a checksum or record decode failure. "+
-					"A readiness timeout here means the member started but never became ready: it must fail fast instead", corruptErr)
-			default:
-				t.Logf("damaged WAL refused with a clean startup error: %v", corruptErr)
-			}
-			if size := fileSize(t, walPath); size != damagedSize {
-				// Observed on etcd 3.7.1-k3s1: the WAL repair path rewrites the
-				// segment before the node fails. Recorded, because a repair that
-				// destroys evidence is itself a robustness result.
-				t.Logf("the failed start rewrote the damaged WAL: %d -> %d bytes", damagedSize, size)
-			}
+			runDamageSite(t, dir, i, site.offsetOf, opts)
 		})
 	}
 
@@ -113,6 +75,51 @@ func TestEmbeddedEtcdWALCorruptionIsRefused(t *testing.T) {
 	}
 	if count.Count != records {
 		t.Fatalf("the untouched data directory returned %d keys, want %d", count.Count, records)
+	}
+}
+
+// runDamageSite copies the data directory, damages one site of its WAL and
+// checks that the node refuses to come up serving a store.
+func runDamageSite(t *testing.T, dir string, index int, offsetOf func(int64) int64, original NodeOptions) {
+	t.Helper()
+	corruptDir := filepath.Join(dir, fmt.Sprintf("corrupt-%d", index))
+	if err := copyTree(original.DataDir(), filepath.Join(corruptDir, "data")); err != nil {
+		t.Fatalf("copy data directory: %v", err)
+	}
+	walPath := newestWAL(t, filepath.Join(corruptDir, "data"))
+	corruptWAL(t, walPath, offsetOf)
+	damagedSize := fileSize(t, walPath)
+
+	// The damaged copy uses its own ports so the failure cannot interfere with
+	// the healthy original.
+	corruptClientURL, corruptPeerURL := reserveURLs(t)
+	corruptNode, corruptErr, panicValue := startCorruptedNode(NodeOptions{
+		Name:         "robustness",
+		Dir:          corruptDir,
+		ClientURL:    corruptClientURL,
+		PeerURL:      corruptPeerURL,
+		CorruptCheck: true,
+	})
+	if corruptNode != nil {
+		corruptNode.Close()
+		t.Fatal("a node with a damaged WAL started serving; the damage was ignored or the store was reset")
+	}
+	switch {
+	case panicValue != nil:
+		t.Logf("damaged WAL refused by crash while loading it: %v", panicValue)
+	case corruptErr == nil:
+		t.Fatal("the damaged node neither returned an error nor panicked")
+	case !isWALDamage(corruptErr):
+		t.Fatalf("damaged WAL start error = %v; want a checksum or record decode failure. "+
+			"A readiness timeout here means the member started but never became ready: it must fail fast instead", corruptErr)
+	default:
+		t.Logf("damaged WAL refused with a clean startup error: %v", corruptErr)
+	}
+	if size := fileSize(t, walPath); size != damagedSize {
+		// Observed on etcd 3.7.1-k3s1: the WAL repair path rewrites the segment
+		// before the node fails. Recorded, because a repair that destroys the
+		// evidence is itself a robustness result.
+		t.Logf("the failed start rewrote the damaged WAL: %d -> %d bytes", damagedSize, size)
 	}
 }
 

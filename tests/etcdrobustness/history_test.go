@@ -16,8 +16,12 @@ func fixedNow(t *testing.T) func() time.Time {
 }
 
 func TestHashValueIsStableAndDistinct(t *testing.T) {
-	if HashValue("a") != HashValue("a") {
-		t.Fatal("HashValue is not deterministic")
+	// The pinned digest is the contract: the fingerprint is the hex SHA-256 of
+	// the value, so it is both reproducible and comparable to a state read back
+	// from the store.
+	const sha256OfA = "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"
+	if got := HashValue("a"); got != sha256OfA {
+		t.Fatalf("HashValue(\"a\") = %s, want %s", got, sha256OfA)
 	}
 	if HashValue("a") == HashValue("b") {
 		t.Fatal("HashValue collides on distinct values")
@@ -29,39 +33,8 @@ func TestHashValueIsStableAndDistinct(t *testing.T) {
 
 func TestRecorderRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "history.jsonl")
-	recorder, err := newRecorder(path, fixedNow(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	put, err := recorder.Begin(Operation{Kind: KindPut, Key: "k", Value: "v", Endpoint: "http://127.0.0.1:1"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := put.Acknowledge(7); err != nil {
-		t.Fatal(err)
-	}
-
-	deleteAttempt, err := recorder.Begin(Operation{Kind: KindDelete, Key: "k"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := deleteAttempt.Reject(errors.New("boom")); err != nil {
-		t.Fatal(err)
-	}
-
-	cas, err := recorder.Begin(Operation{Kind: KindCAS, Key: "k", Value: "w", ExpectValue: "v", ExpectRevision: 7})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cas.Unknown(errors.New("timeout")); err != nil {
-		t.Fatal(err)
-	}
-
-	// A pending intent without a terminal record is what a strong kill leaves.
-	if _, err := recorder.Begin(Operation{Kind: KindPut, Key: "k", Value: "z"}); err != nil {
-		t.Fatal(err)
-	}
+	recorder := mustRecorder(t, path, fixedNow(t))
+	recordEveryOutcome(t, recorder)
 
 	if err := recorder.Close(); err != nil {
 		t.Fatal(err)
@@ -70,12 +43,40 @@ func TestRecorderRoundTrip(t *testing.T) {
 		t.Fatalf("Close must be idempotent: %v", err)
 	}
 
-	history, err := LoadHistory(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	history := mustLoadHistory(t, path)
 	if len(history) != 4 {
 		t.Fatalf("want 4 operations, got %d", len(history))
+	}
+	assertRoundTripRecords(t, history)
+}
+
+// recordEveryOutcome writes one operation per terminal outcome plus a pending
+// intent, which is the history a strong kill leaves behind.
+func recordEveryOutcome(t *testing.T, recorder *Recorder) {
+	t.Helper()
+	put := mustBegin(t, recorder, Operation{Kind: KindPut, Key: "k", Value: "v", Endpoint: "http://127.0.0.1:1"})
+	must(t, put.Acknowledge(7))
+
+	deleteAttempt := mustBegin(t, recorder, Operation{Kind: KindDelete, Key: "k"})
+	must(t, deleteAttempt.Reject(errors.New("boom")))
+
+	cas := mustBegin(t, recorder, Operation{Kind: KindCAS, Key: "k", Value: "w", ExpectValue: "v", ExpectRevision: 7})
+	must(t, cas.Unknown(errors.New("timeout")))
+
+	// A pending intent without a terminal record is what a strong kill leaves.
+	mustBegin(t, recorder, Operation{Kind: KindPut, Key: "k", Value: "z"})
+}
+
+// assertRoundTripRecords checks the loaded history against what was recorded.
+func assertRoundTripRecords(t *testing.T, history []Record) {
+	t.Helper()
+	for _, record := range history {
+		if record.OperationID == "" {
+			t.Fatal("record without operation id")
+		}
+		if record.StartedAt.IsZero() {
+			t.Fatal("record without start time")
+		}
 	}
 	if history[0].Outcome != OutcomeAcknowledged || history[0].Revision != 7 {
 		t.Fatalf("put record = %+v", history[0])
@@ -95,13 +96,33 @@ func TestRecorderRoundTrip(t *testing.T) {
 	if history[3].Outcome != OutcomeUnknown {
 		t.Fatalf("pending record must replay as unknown, got %+v", history[3])
 	}
-	for _, record := range history {
-		if record.OperationID == "" {
-			t.Fatal("record without operation id")
-		}
-		if record.StartedAt.IsZero() {
-			t.Fatal("record without start time")
-		}
+}
+
+// mustRecorder opens an operation history or fails the test.
+func mustRecorder(t *testing.T, path string, now func() time.Time) *Recorder {
+	t.Helper()
+	recorder, err := newRecorder(path, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return recorder
+}
+
+// mustBegin starts one recorded operation or fails the test.
+func mustBegin(t *testing.T, recorder *Recorder, op Operation) *Attempt {
+	t.Helper()
+	attempt, err := recorder.Begin(op)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return attempt
+}
+
+// must fails the test when a recorded history operation did not succeed.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

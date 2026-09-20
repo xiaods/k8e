@@ -53,6 +53,51 @@ unknown.
 * There is no etcd fault-injection, no external operation history and no
   restore verification anywhere in the tree.
 
+### 2.1 Topology, runner capability, budgets and CI layering
+
+Three runner layers exist, and a result is only evidence for the layer it ran
+on:
+
+| Layer | Faults it can inject | Scenarios |
+|-------|----------------------|-----------|
+| in-process (`go test`, this package) | process kill, restart on the same data dir, WAL damage, quota exhaustion | phase 1 (landed) |
+| container (`hack/e2e/run.sh`) | K8E server stop/kill, network partitions, a size-limited dedicated volume | phase 2+, plus the container layer of phase 1's strong-kill row |
+| dedicated VM | host reboot, hard power-off, block-device EIO | phase 1's power-loss row — **not executed** |
+
+* **Topology.** Each member owns its own data directory, client and peer
+  address; restarting against the same data directory must recover that member
+  and never bootstrap a second cluster (`StartNode` asks for `existing` when
+  `member/snap` exists). Phase 2 grows the same `NodeOptions` to the member
+  list. A container restart or a SIGKILL is *not* power-loss durability and is
+  never reported as one; the power-loss row stays unexecuted until a VM runner
+  exists.
+* **Runner capability.** The in-process layer runs the repository's own
+  `pkg/embedw` at the commit under test, so the artifact under test is pinned by
+  the commit and `go.sum`; the workload seed is fixed (`defaultSigkillSeed`) and
+  the strong-kill dwell is derived from it, so a run is reproducible. The
+  container and VM layers must additionally pin the K8E binary SHA, the image
+  digest and a binary matching the Docker daemon
+  (`hack/e2e/build-linux.sh`) before their results count.
+* **Disk faults never touch the host.** ENOSPC and EIO are injected on a
+  dedicated size-limited filesystem (or an explicitly labelled equivalent) and
+  never by filling the machine's disk. Phase 1 writes every work directory under
+  `ETCD_ROBUSTNESS_WORKDIR` and damages a *copy* of the data directory.
+* **Budgets are test ceilings, not production SLAs**, and are never relaxed
+  after a failure to make it green: 90s for the graceful-restart scenario
+  (including the recovered member's CRUD/Watch check), 60s per strong-kill round
+  (default 10 rounds), 180s for the quota scenario, 60s for a damaged-WAL
+  start. Every wait is a condition poll with a total deadline (`waitForFile`,
+  `waitForAcknowledged`, `collectEvents`, the per-test context), never a fixed
+  sleep that decides recovery, so a hung member or a lost quorum fails inside
+  the budget instead of hanging the job.
+* **CI layering.** Today the PR job is the only layer: `go vet ./...` plus
+  `go test ./...` (`.github/workflows/testing.yml`) runs the deterministic
+  phase-1 subset below on every PR. The later layers are designed but not wired:
+  a nightly job for repeated multi-member and restore scenarios, and a dedicated
+  VM job for power-loss, EIO and the 24h soak. Each must gate on its own
+  prerequisites and fail when they are missing, never silently skip, so a green
+  PR is not read as a robustness pass.
+
 ## 3. Harness: external operation history + oracle
 
 Two pieces, both in `tests/etcdrobustness`, both phase-independent:
@@ -123,6 +168,36 @@ What each scenario asserts (the real contract, not the implementation's guess):
   directory still starts and still holds all 50 records, which proves the test
   damaged only the copy.
 
+### 4.1 Phase-1 coverage: executed, not executed, unsupported
+
+The order-of-work table in the Issue names six phase-1 scenarios; this landing
+reports the status of each one instead of implying the whole phase is done:
+
+| Issue scenario | Status | Evidence / missing prerequisite |
+|----------------|--------|---------------------------------|
+| graceful restart | **executed** | `TestEmbeddedEtcdGracefulRestart` |
+| SIGKILL during acknowledged writes, 10 fixed-seed rounds | **executed at the embedded-etcd layer** | `TestEmbeddedEtcdSigkillDuringWrites` (child member killed mid-write) |
+| SIGKILL of the K8E server, recovery measured to API readiness | **not executed** — needs the container layer | phase-2 harness extension (§5); the in-process run does not exercise kube-apiserver, `pkg/etcd`'s startup repair or a recovery budget for the control plane |
+| host reboot / hard power-off | **not executed** — needs the dedicated VM runner | declared here, no result claimed |
+| backend quota exhausted | **executed** | `TestEmbeddedEtcdQuotaExhaustionRefusesWrites` |
+| filesystem full / EIO | **not executed** — needs a size-limited dedicated volume | declared here, no result claimed; quota exhaustion is *not* a substitute |
+| WAL/snapshot damage (negative case) | **executed for the WAL** | `TestEmbeddedEtcdWALCorruptionIsRefused`; snapshot damage lands with phase 3 |
+
+What that means for reading the result: the in-process strong-kill round proves
+WAL recovery, cluster-identity retention and the oracle on an acknowledged
+history. It does **not** prove that the whole control plane returns within a
+recovery budget, and nothing here is power-loss evidence. The scenario keeps
+`unknown` outcomes honest (each round logs how many requests were in flight),
+and the oracle's failure paths have their own controlled examples:
+`TestVerifyDetectsLostAcknowledgedWrite`, `TestVerifyRejectsUnexplainedState` and
+`TestVerifyDeleteIsNotResurrected` each make `Verify` fail on a seeded history,
+so a violated oracle is a diagnosis and not a surprise.
+
+Still open from the Definition of Done: the defects below (F1–F3) are recorded
+disclosures, not fixes — they have no tracking issue and no regression case yet,
+so the phase-1 checklist item "defects found by the tests have an explicit
+issue/fix and a regression case" stays open.
+
 ### Running phase 1
 
 ```bash
@@ -147,7 +222,7 @@ A failing test retains its work directory and logs the path, with
 
 ```
 TestEmbeddedEtcdGracefulRestart          PASS
-TestEmbeddedEtcdSigkillDuringWrites      PASS (10 rounds, 1 unknown per round explained by the oracle)
+TestEmbeddedEtcdSigkillDuringWrites      PASS (10 rounds; one in-flight request per round became unknown and the oracle explained it)
 TestEmbeddedEtcdQuotaExhaustion...       PASS
 TestEmbeddedEtcdWALCorruptionIsRefused   PASS
 TestEmbeddedEtcdRobustnessChild          SKIP (child process only)
@@ -200,7 +275,11 @@ particularly since the backend can grow past the quota without being exhausted.
 * Container-level layer, once the in-process layer is green: reuse
   `hack/e2e/run.sh` to stop/start the server container (the pattern already in
   `pkg/sandboxmcp/cluster_test.go`) and rerun the same history/oracle checks
-  against the real `k8e` binary's data dir.
+  against the real `k8e` binary's data dir. This layer owns the phase-1 row
+  "SIGKILL of the K8E server measured to API readiness": the fault is a real
+  `SIGKILL` (not a graceful stop), the history is written outside the container,
+  and recovery is measured by an API call succeeding within the budget, not by
+  the process being present.
 
 ## 6. Phase 3 — backups actually restorable (designed, not landed)
 
@@ -237,3 +316,8 @@ particularly since the backend can grow past the quota without being exhausted.
   establish the baseline and the evidence. F1–F3 are inputs for a follow-up
   decision (for example failing fast with a WAL-specific error instead of the
   60s readiness wait), not silently patched here.
+
+F1–F3 share one actionable follow-up: `pkg/embedw` should distinguish "the
+store is damaged" from "the member never became ready" and surface the WAL
+error instead of a bare `context.DeadlineExceeded`, with a regression case
+reusing `TestEmbeddedEtcdWALCorruptionIsRefused`'s damage sites.

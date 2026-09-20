@@ -15,6 +15,9 @@ import (
 // quotaTestSize is small enough to fill in a few hundred writes.
 const quotaTestSize = 8 << 20
 
+// quotaKeys is how many distinct keys the fill loop rotates through.
+const quotaKeys = 8
+
 // TestEmbeddedEtcdQuotaExhaustionRefusesWrites walks the disk-pressure
 // scenario: the store hits its quota, writes are refused with NOSPACE,
 // acknowledged data is still readable and intact, and the store becomes
@@ -39,36 +42,10 @@ func TestEmbeddedEtcdQuotaExhaustionRefusesWrites(t *testing.T) {
 	defer cancel()
 
 	historyPath := filepath.Join(dir, "history.jsonl")
-	recorder, err := NewRecorder(historyPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	recorder := mustRecorder(t, historyPath, time.Now)
 	defer recorder.Close()
 
-	value := strings.Repeat("q", 64*1024)
-	const keys = 8
-	var quotaErr error
-	acknowledged := 0
-	for i := 0; i < 500; i++ {
-		key := fmt.Sprintf("quota/%06d", i%keys)
-		attempt, err := recorder.Begin(Operation{Kind: KindPut, Key: key, Value: value, Endpoint: clientURL})
-		if err != nil {
-			t.Fatal(err)
-		}
-		response, err := client.Put(ctx, key, value)
-		if err != nil {
-			if err := attempt.Reject(err); err != nil {
-				t.Fatal(err)
-			}
-			quotaErr = err
-			break
-		}
-		if err := attempt.Acknowledge(response.Header.Revision); err != nil {
-			t.Fatal(err)
-		}
-		acknowledged++
-	}
-
+	acknowledged, quotaErr := fillQuota(t, ctx, client, recorder, clientURL)
 	if quotaErr == nil {
 		t.Fatalf("the %d byte quota never refused a write after %d acknowledged writes", quotaTestSize, acknowledged)
 	}
@@ -82,24 +59,52 @@ func TestEmbeddedEtcdQuotaExhaustionRefusesWrites(t *testing.T) {
 	// The refusal plus the alarm are the contract. etcd refuses the write that
 	// would cross the quota, and the backend size it reports is not tied to the
 	// quota (it can sit either side of it), so the size is logged, not asserted.
-	status, err := client.Status(ctx, clientURL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	status := mustStatus(t, ctx, client, clientURL)
 	t.Logf("quota %d bytes, db size %d bytes, in use %d bytes: %v", quotaTestSize, status.DbSize, status.DbSizeInUse, quotaErr)
-	alarms, err := client.AlarmList(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	alarms := mustAlarms(t, ctx, client)
 	if !hasNoSpaceAlarm(alarms) {
 		t.Fatalf("expected an active NOSPACE alarm, got %+v", alarms.Alarms)
 	}
 
 	// A full store must not have lost anything it already acknowledged.
-	history, err := LoadHistory(historyPath)
-	if err != nil {
-		t.Fatal(err)
+	verifyAcknowledgedIntact(t, ctx, client, historyPath)
+
+	// The documented repair: delete, compact, defragment, then disarm NOSPACE.
+	repairFullStore(t, ctx, client, clientURL, status)
+
+	writeAfterMaintenance(t, ctx, client, recorder, clientURL)
+	after := mustStatus(t, ctx, client, clientURL)
+	t.Logf("after maintenance: db size %d bytes, in use %d bytes", after.DbSize, after.DbSizeInUse)
+	if hasNoSpaceAlarm(mustAlarms(t, ctx, client)) {
+		t.Fatal("the NOSPACE alarm is still active after disarm")
 	}
+}
+
+// fillQuota writes fixed-size values until the store refuses one, and returns
+// how many writes were acknowledged together with the refusal.
+func fillQuota(t *testing.T, ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint string) (int, error) {
+	t.Helper()
+	value := strings.Repeat("q", 64*1024)
+	acknowledged := 0
+	for i := 0; i < 500; i++ {
+		key := fmt.Sprintf("quota/%06d", i%quotaKeys)
+		attempt := mustBegin(t, recorder, Operation{Kind: KindPut, Key: key, Value: value, Endpoint: endpoint})
+		response, err := client.Put(ctx, key, value)
+		if err != nil {
+			must(t, attempt.Reject(err))
+			return acknowledged, err
+		}
+		must(t, attempt.Acknowledge(response.Header.Revision))
+		acknowledged++
+	}
+	return acknowledged, nil
+}
+
+// verifyAcknowledgedIntact checks that the full store still holds everything
+// the history acknowledged and that the oracle saw enough data to be meaningful.
+func verifyAcknowledgedIntact(t *testing.T, ctx context.Context, client *clientv3.Client, historyPath string) {
+	t.Helper()
+	history := mustLoadHistory(t, historyPath)
 	report, err := Verify(ctx, history, ClientReader(client))
 	if err != nil {
 		t.Fatal(err)
@@ -110,19 +115,23 @@ func TestEmbeddedEtcdQuotaExhaustionRefusesWrites(t *testing.T) {
 	if report.Checked < 2 {
 		t.Fatalf("oracle checked only %d keys; the pressure scenario did not exercise enough data", report.Checked)
 	}
+}
 
-	// The documented repair: delete, compact, defragment, then disarm NOSPACE.
+// repairFullStore runs the maintenance sequence for a store that hit its quota:
+// delete the data, compact, defragment and disarm the NOSPACE alarm.
+func repairFullStore(t *testing.T, ctx context.Context, client *clientv3.Client, endpoint string, status *clientv3.StatusResponse) {
+	t.Helper()
 	if _, err := client.Delete(ctx, "quota/", clientv3.WithPrefix()); err != nil {
 		t.Fatalf("delete on a full store: %v", err)
 	}
-	status, err = client.Status(ctx, clientURL)
+	after, err := client.Status(ctx, endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Compact(ctx, status.Header.Revision); err != nil {
+	if _, err := client.Compact(ctx, after.Header.Revision); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
-	if _, err := client.Defragment(ctx, clientURL); err != nil {
+	if _, err := client.Defragment(ctx, endpoint); err != nil {
 		t.Fatalf("defragment: %v", err)
 	}
 	if _, err := client.AlarmDisarm(ctx, &clientv3.AlarmMember{
@@ -131,32 +140,36 @@ func TestEmbeddedEtcdQuotaExhaustionRefusesWrites(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("disarm NOSPACE: %v", err)
 	}
+}
 
-	attempt, err := recorder.Begin(Operation{Kind: KindPut, Key: "after/maintenance", Value: "writable", Endpoint: clientURL})
-	if err != nil {
-		t.Fatal(err)
-	}
+// writeAfterMaintenance proves the repaired store accepts a new write.
+func writeAfterMaintenance(t *testing.T, ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint string) {
+	t.Helper()
+	attempt := mustBegin(t, recorder, Operation{Kind: KindPut, Key: "after/maintenance", Value: "writable", Endpoint: endpoint})
 	response, err := client.Put(ctx, "after/maintenance", "writable")
 	if err != nil {
 		_ = attempt.Unknown(err)
 		t.Fatalf("write after maintenance: %v", err)
 	}
-	if err := attempt.Acknowledge(response.Header.Revision); err != nil {
-		t.Fatal(err)
-	}
+	must(t, attempt.Acknowledge(response.Header.Revision))
+}
 
-	after, err := client.Status(ctx, clientURL)
+func mustStatus(t *testing.T, ctx context.Context, client *clientv3.Client, endpoint string) *clientv3.StatusResponse {
+	t.Helper()
+	status, err := client.Status(ctx, endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("after maintenance: db size %d bytes, in use %d bytes", after.DbSize, after.DbSizeInUse)
-	alarms, err = client.AlarmList(ctx)
+	return status
+}
+
+func mustAlarms(t *testing.T, ctx context.Context, client *clientv3.Client) *clientv3.AlarmResponse {
+	t.Helper()
+	alarms, err := client.AlarmList(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasNoSpaceAlarm(alarms) {
-		t.Fatalf("the NOSPACE alarm is still active after disarm: %+v", alarms.Alarms)
-	}
+	return alarms
 }
 
 func hasNoSpaceAlarm(list *clientv3.AlarmResponse) bool {
