@@ -89,7 +89,9 @@ on:
   start. Every wait is a condition poll with a total deadline (`waitForFile`,
   `waitForAcknowledged`, `collectEvents`, the per-test context), never a fixed
   sleep that decides recovery, so a hung member or a lost quorum fails inside
-  the budget instead of hanging the job.
+  the budget instead of hanging the job. These are the in-process ceilings; the
+  K8E-server API-readiness budget in the container layer starts from the Issue's
+  300s and is tightened only with measurements.
 * **CI layering.** Today the PR job is the only layer: `go vet ./...` plus
   `go test ./...` (`.github/workflows/testing.yml`) runs the deterministic
   phase-1 subset below on every PR. The later layers are designed but not wired:
@@ -170,8 +172,11 @@ What each scenario asserts (the real contract, not the implementation's guess):
 
 ### 4.1 Phase-1 coverage: executed, not executed, unsupported
 
-The order-of-work table in the Issue names six phase-1 scenarios; this landing
-reports the status of each one instead of implying the whole phase is done:
+The phase-1 table in the Issue names six scenarios. The strong-kill row is
+split here into its embedded-etcd and K8E-server layers, because the Issue's
+note requires the K8E recovery budget to measure bootstrap and API readiness
+and the in-process layer cannot, so this landing reports seven statuses instead
+of implying the whole phase is done:
 
 | Issue scenario | Status | Evidence / missing prerequisite |
 |----------------|--------|---------------------------------|
