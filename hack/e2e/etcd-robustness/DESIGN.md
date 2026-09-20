@@ -158,7 +158,9 @@ What each scenario asserts (the real contract, not the implementation's guess):
 
 * graceful restart — member id, cluster id and revision survive, no oracle
   violation, and CRUD/CAS/Watch still work on the recovered member; eight
-  concurrent CAS on one key produce exactly one winner at every stage.
+  concurrent CAS on one key produce exactly one winner before the restart, and
+  after it a CAS with a stale expected revision is refused while the one with
+  the current revision wins.
 * strong kill — no error on the next start beyond the kill itself, member and
   cluster identity unchanged, every acknowledged record still present, no
   violation and no revision rollback; rounds where an in-flight request became
