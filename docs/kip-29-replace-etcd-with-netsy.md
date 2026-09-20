@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-09-18 | Partially implemented — M1 (single-node datastore) shipped; multi-node HA still uses external `--datastore-endpoint` |
+| @xiaods | 2026-09-20 | Partially implemented (experimental, opt-in) — M1 single-node datastore shipped behind `--netsy`; multi-node HA still uses external `--datastore-endpoint` |
 
 ## Summary
 
@@ -127,8 +127,18 @@ immediately. This assumes the data directory has never run embedded etcd:
 looks at the endpoint, and that driver rewrites the endpoint back to its own
 client URL (`pkg/etcd.ETCD.startClient`). A node whose data directory already
 holds an embedded etcd datastore is therefore refused up front, rather than
-running Netsy unused behind the embedded etcd (see Failure path). The process is
-stopped with the server context.
+running Netsy unused behind the embedded etcd (see Failure path).
+
+The datastore a node runs on is recorded once Netsy became ready: the first
+successful `--netsy` start writes a marker file
+(`<data-dir>/server/db/netsy-backend`, and a failure to write it is logged), and
+a later start *without* `--netsy` on that node is refused, so a flag dropped from
+a service unit can never silently move the control plane back to embedded etcd
+while the Kubernetes objects stay in the bucket. The Netsy process is supervised
+for the whole server lifetime: if it dies after startup, `k8e server` exits
+(naming the failed datastore) so the service manager restarts the control plane,
+and a cancelled server context terminates the process with `SIGTERM` before the
+`SIGKILL` fallback.
 
 ### Flags
 
@@ -184,7 +194,24 @@ failed to start netsy datastore: timed out after 1m30s waiting for a writable ne
 ```
 
 The repair is to check `--netsy-binary`, `--netsy-bucket` and the provider
-credentials, then restart. With the flag absent, k8e behaves exactly as before.
+credentials, then restart. A datastore that dies *after* startup is reported the
+same way instead of leaving the control plane serving without a datastore:
+
+```
+Netsy datastore exited unexpectedly (error: exit status 1):
+<last netsy log lines>
+```
+
+A node that already ran Netsy also refuses to start without `--netsy`, so a flag
+dropped by mistake names the datastore it would silently switch away from
+instead of starting a second, empty one:
+
+```
+invalid flag use; /var/lib/k8e/server records that this node's Kubernetes data is stored in Netsy, so starting embedded etcd would silently reopen a different datastore. Keep running with --netsy (or point --datastore-endpoint at the datastore holding the data); after migrating the data back, remove /var/lib/k8e/server/db/netsy-backend
+```
+
+On a node that never ran Netsy, k8e behaves exactly as before when the flag is
+absent.
 
 A server that already ran embedded etcd fails before the Netsy process is
 started, because that embedded datastore would win over `--netsy`:
@@ -204,10 +231,15 @@ invalid flag use; /var/lib/k8e/server already holds an embedded etcd datastore (
 
 ## Risks and limitations
 
-- Netsy's `LeaseGrant`/`LeaseKeepAlive` RPCs are stubs. Kubernetes stores the
-  `Lease` object as an ordinary key and the api server does not use the etcd
-  lease API, so this does not affect the datastore path; a client that does use
-  it will get an error.
+- Netsy's `LeaseGrant`/`LeaseKeepAlive` RPCs are stubs. Only the
+  `coordination.k8s.io/v1` `Lease` *objects* (node heartbeats) are ordinary keys
+  and therefore unaffected: the etcd3 storage backend in `k8s.io/apiserver`
+  grants an etcd lease for every object written with a TTL, and the Events
+  registry does exactly that (`--event-ttl`, 1h by default). Event expiry on
+  Netsy is therefore **unverified** — the stub lease must be replaced upstream
+  and checked with an Events create → expire → restart run against a real
+  `kube-apiserver` before this backend is used for a cluster whose events
+  matter.
 - The single-node default disables quorum replication (`replication.quorum: 0`),
   so durability depends on the object storage provider. Multi-node HA is M2.
 - Only the etcd operations the Kubernetes data path uses are served: writes go
@@ -215,12 +247,22 @@ invalid flag use; /var/lib/k8e/server already holds an embedded etcd datastore (
   datastore consumer that bypasses `k8s.io/apiserver/pkg/storage/etcd3` —
   including `kubectl`-style direct etcd clients — will not work.
 - k8e does not vendor the `netsy` binary; operators install it or pass
-  `--netsy-binary`.
+  `--netsy-binary`. The config template, certificate layout and readiness probe
+  in `pkg/netsy` were written and validated against `netsy-dev/netsy` commit
+  [`f1697fe`](https://github.com/netsy-dev/netsy/commit/f1697fe75331dbbed7313dcef25cf80068d46dcb),
+  so pin that build (or a reviewed successor) per node: another build may render
+  an incompatible `netsy.jsonc` or expect a different certificate layout.
 
 ## Verification
 
-- `pkg/netsy` unit tests cover config validation/rendering, PKI roles, SANs and
-  reuse, readiness timeouts, early exit, mTLS client construction and shutdown.
+- `pkg/netsy` unit tests cover config validation/rendering, PKI roles, SANs,
+  reuse and the renewal window (an expiring or corrupted chain is reissued),
+  readiness timeouts, early exit, mTLS client construction, shutdown, the
+  supervision contract (`SIGTERM` on context cancel, a crash distinguishable
+  from a requested stop) and bounded log capture.
+- `pkg/cli/server` unit tests pin the two guard rails: `--netsy` is refused on a
+  node that holds embedded etcd data, and a node marked as running Netsy refuses
+  to start without the flag.
 - `TestIntegrationRealNetsyDatastore` (opt-in, `NETSY_BINARY` + `NETSY_DEV_S3`)
   starts a real `netsy` against a fake S3 server, generates the PKI, waits for
   the write-ready client API and drives the Kubernetes write path with
@@ -230,5 +272,18 @@ invalid flag use; /var/lib/k8e/server already holds an embedded etcd datastore (
 
 ## Rollback
 
-`--netsy` is off by default and changes no existing code path. Removing the
-flag (or the flag plus a restart) restores embedded etcd.
+`--netsy` is off by default and changes no existing code path. The two rollbacks
+below need nothing but the flag:
+
+- A node that already holds embedded etcd data is refused `--netsy` before
+  anything is started, so its datastore stays where it is.
+- A node whose data must not move back keeps its embedded etcd as long as the
+  flag stays off — and the marker refuses the switch if it is dropped.
+
+Switching a node *back* from Netsy is a deliberate step, because the Kubernetes
+objects live in the bucket while the embedded etcd directory still holds whatever
+it held before the switch. Either point `--datastore-endpoint` at that Netsy
+client API (the supported cluster datastore path, which reads the same data), or
+delete `<data-dir>/server/db/netsy-backend` and accept embedded etcd again: a
+fresh datastore if `<data-dir>/server/db/etcd` is empty, otherwise the data that
+was left there when the node moved to Netsy.

@@ -26,7 +26,7 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 | [KIP-2](kip-2-upgrade-dependencies-to-kubernetes-1.35.md) | Kubernetes 1.35 dependency upgrade | Implemented — baseline superseded by [KIP-26](kip-26-upgrade-dependencies-to-kubernetes-1.37.md) |
 | [KIP-26](kip-26-upgrade-dependencies-to-kubernetes-1.37.md) | Kubernetes 1.37 dependency upgrade | Implemented (tree now tracks **v1.37.0-k3s1**) |
 | [KIP-6](kip-6-embedded-etcd-design.md) | Embedded etcd as sole datastore | Implemented |
-| [KIP-29](kip-29-replace-etcd-with-netsy.md) | Replace etcd with Netsy (object-storage-backed etcd API) | Partially implemented — M1 single-node `--netsy` datastore; multi-node HA still via `--datastore-endpoint` |
+| [KIP-29](kip-29-replace-etcd-with-netsy.md) | Replace etcd with Netsy (object-storage-backed etcd API) | Partially implemented — experimental, opt-in `--netsy` single-node datastore; multi-node HA still via `--datastore-endpoint` |
 | [KIP-7](kip-7-embedded-etcd-fuse.md) | Fuse official `embed.StartEtcd` (`pkg/embedw`) | Implemented |
 | [KIP-27](kip-27-bundled-cert-manager.md) | Default cert-manager v1.21.2 bundle and airgap images | Implemented |
 

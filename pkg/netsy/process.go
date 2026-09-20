@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -30,6 +31,7 @@ type Process struct {
 	logs       *tailBuffer
 	done       chan struct{}
 	waitErr    error
+	stopping   atomic.Bool
 }
 
 // Start renders the Netsy config, ensures the mTLS PKI exists, launches the
@@ -61,6 +63,11 @@ func Start(ctx context.Context, cfg Config) (*Process, error) {
 
 	logs := &tailBuffer{max: logTailBytes}
 	cmd := exec.CommandContext(ctx, cfg.Binary, "--config", configPath)
+	// CommandContext would SIGKILL the child the instant the server context is
+	// canceled, racing Stop's SIGTERM grace period. Route both cancellation
+	// paths through SIGTERM and let exec escalate to SIGKILL after WaitDelay.
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = stopTimeout
 	cmd.Env = mergeEnv(os.Environ(), cfg.Environ(configPath, certs))
 	cmd.Stdout = logs
 	cmd.Stderr = logs
@@ -99,6 +106,10 @@ func (p *Process) CertPaths() CertPaths { return p.certs }
 // Logs returns the captured Netsy output.
 func (p *Process) Logs() string { return p.logs.String() }
 
+// Stopping reports whether Stop has been called, so a caller watching for a
+// datastore exit can tell a requested shutdown from a crash.
+func (p *Process) Stopping() bool { return p.stopping.Load() }
+
 // Wait blocks until the Netsy process exits and returns its error, if any.
 func (p *Process) Wait() error {
 	<-p.done
@@ -110,6 +121,7 @@ func (p *Process) Stop() {
 	if p.cmd == nil || p.cmd.Process == nil {
 		return
 	}
+	p.stopping.Store(true)
 	select {
 	case <-p.done:
 		return

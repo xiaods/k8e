@@ -184,6 +184,9 @@ func TestStartReadyAndStop(t *testing.T) {
 	// The process was terminated, so Wait reports the signal; what matters is
 	// that it returned rather than hanging.
 	_ = p.Wait()
+	if !p.Stopping() {
+		t.Error("Stopping() = false after Stop(), want the requested shutdown to be visible")
+	}
 
 	// Stopping an already stopped process is a no-op.
 	p.Stop()
@@ -352,5 +355,67 @@ func TestWaitReadyTimesOutWhenNoDatastoreListens(t *testing.T) {
 	}
 	if err := p.waitReady(context.Background(), certs); err == nil || !strings.Contains(err.Error(), "timed out after 200ms") {
 		t.Fatalf("waitReady() error = %v, want timeout", err)
+	}
+}
+
+// TestProcessCrashIsObservable pins the supervision contract the server relies
+// on: a Netsy process that dies after it became ready is reported by Wait and
+// is not marked as a requested stop, so the control plane can restart instead
+// of serving without a datastore.
+func TestProcessCrashIsObservable(t *testing.T) {
+	binary := writeScript(t, `echo "netsy starting"; sleep 1; exit 3`)
+	cfg := testConfig(t, binary)
+	fakeEtcd(t, cfg, 1)
+
+	p, err := Start(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- p.Wait() }()
+	select {
+	case err := <-exited:
+		if err == nil {
+			t.Error("Wait() = nil, want the exit error of the crashed netsy process")
+		}
+		if p.Stopping() {
+			t.Error("Stopping() = true, want a crash to be distinguishable from a requested stop")
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the netsy exit was never observed")
+	}
+	if !strings.Contains(p.Logs(), "netsy starting") {
+		t.Errorf("Logs() = %q, want the captured output of the crashed process", p.Logs())
+	}
+}
+
+// TestContextCancelSignalsTermNotKill pins finding 4: canceling the server
+// context must terminate Netsy with SIGTERM (giving it the same grace period as
+// Stop) instead of the immediate SIGKILL of exec.CommandContext.
+func TestContextCancelSignalsTermNotKill(t *testing.T) {
+	binary := writeScript(t, `trap 'echo "got term"; exit 42' TERM
+echo "netsy starting"
+while true; do sleep 1; done`)
+	cfg := testConfig(t, binary)
+	fakeEtcd(t, cfg, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	p, err := Start(ctx, cfg)
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	t.Cleanup(p.Stop)
+
+	cancel()
+	exited := make(chan error, 1)
+	go func() { exited <- p.Wait() }()
+	select {
+	case <-exited:
+	case <-time.After(15 * time.Second):
+		t.Fatal("canceling the context did not terminate the netsy process")
+	}
+	if !strings.Contains(p.Logs(), "got term") {
+		t.Fatalf("Logs() = %q, want the SIGTERM handler to have run; the child was killed instead of signaled", p.Logs())
 	}
 }

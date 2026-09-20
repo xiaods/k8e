@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestEnsurePKI(t *testing.T) {
@@ -266,6 +267,81 @@ func copyFile(t *testing.T, src, dst string) {
 	}
 	if err := os.WriteFile(dst, data, 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEnsurePKIRecoversFromMixedCAGeneration(t *testing.T) {
+	hosts := []string{"127.0.0.1"}
+	dir := filepath.Join(t.TempDir(), "tls")
+	first, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() error = %v", err)
+	}
+	caBefore, err := os.ReadFile(first.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A regeneration interrupted after the new CA was published leaves a new CA
+	// next to the previous leaves. They still parse, still cover the hosts and
+	// still carry the right roles, so only the signature check can reject them.
+	other, err := EnsurePKI(filepath.Join(t.TempDir(), "tls"), "k8e", "k8e", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copyFile(t, other.CA, first.CA)
+	if validPKI(first, "k8e", "k8e", hosts) {
+		t.Error("validPKI() = true for a new CA with the previous leaves")
+	}
+
+	// EnsurePKI must publish a consistent generation instead of reusing it.
+	second, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() failed to recover from a mixed generation: %v", err)
+	}
+	caAfter, err := os.ReadFile(second.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(caBefore, caAfter) {
+		t.Error("EnsurePKI() reused the mixed CA/leaf generation")
+	}
+	if !validPKI(second, "k8e", "k8e", hosts) {
+		t.Error("EnsurePKI() did not publish a consistent PKI after the interrupted generation")
+	}
+}
+
+func TestEnsurePKIRenewsInsideRenewalWindow(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tls")
+	hosts := []string{"127.0.0.1"}
+	old := leafValidity
+	t.Cleanup(func() { leafValidity = old })
+	// Leaves that expire inside the renewal window are complete and consistent,
+	// so only the window can reject them.
+	leafValidity = certRenewBefore - 24*time.Hour
+
+	first, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() error = %v", err)
+	}
+	caBefore, err := os.ReadFile(first.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validPKI(first, "k8e", "k8e", hosts) {
+		t.Error("validPKI() = true for certificates inside the renewal window")
+	}
+
+	second, err := EnsurePKI(dir, "k8e", "k8e", DefaultClientName, hosts)
+	if err != nil {
+		t.Fatalf("EnsurePKI() error = %v", err)
+	}
+	caAfter, err := os.ReadFile(second.CA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(caBefore, caAfter) {
+		t.Error("EnsurePKI() reused certificates that expire inside the renewal window")
 	}
 }
 

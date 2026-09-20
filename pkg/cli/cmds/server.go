@@ -342,7 +342,7 @@ var ServerFlags = []cli.Flag{
 	},
 	&cli.BoolFlag{
 		Name:        "netsy",
-		Usage:       "(db) Run a local Netsy datastore instead of embedded etcd and use it as the Kubernetes datastore",
+		Usage:       "(db, experimental) Run a local Netsy datastore instead of embedded etcd and use it as the Kubernetes datastore",
 		Destination: &ServerConfig.Netsy,
 		EnvVar:      version.ProgramUpper + "_NETSY",
 	},

@@ -48,23 +48,35 @@ const (
 	datastoreKeyFile = "datastore-client.key"
 )
 
-// validPKI reports whether the PKI files already exist and are still valid for
-// the given cluster, node and server hosts.
+// leafValidity is how long the generated leaf certificates are valid. It is a
+// variable so tests can drive the renewal window.
+var leafValidity = 365 * 24 * time.Hour
+
+// certRenewBefore is the window before a leaf expires in which EnsurePKI
+// regenerates the whole PKI. The datastore clients load their certificates at
+// startup only, so a node that restarts inside this window renews them instead
+// of later serving a certificate that expires while it is running.
+const certRenewBefore = 30 * 24 * time.Hour
+
+// validPKI reports whether the PKI files already exist, chain to the CA, are
+// still valid for the given cluster, node and server hosts and are not yet
+// inside the renewal window.
 func validPKI(paths CertPaths, clusterID, nodeID string, hosts []string) bool {
 	caPEM, err := os.ReadFile(paths.CA)
 	if err != nil {
 		return false
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
 		return false
 	}
 
-	server, err := loadLeaf(paths.ServerCert, paths.ServerKey)
-	if err != nil {
-		return false
-	}
-	if err := checkLeaf(server, clusterID, rolePeer, nodeID); err != nil {
+	// Leaf and CA must be one generation: an interrupted regeneration leaves a
+	// new CA next to old leaves, which load and parse fine and only the
+	// signature check catches.
+	server, ok := validLeaf(paths.ServerCert, paths.ServerKey, roots,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, clusterID, rolePeer, nodeID)
+	if !ok {
 		return false
 	}
 	for _, host := range hosts {
@@ -73,23 +85,37 @@ func validPKI(paths CertPaths, clusterID, nodeID string, hosts []string) bool {
 		}
 	}
 
-	peer, err := loadLeaf(paths.PeerClientCert, paths.PeerClientKey)
-	if err != nil {
-		return false
-	}
-	if err := checkLeaf(peer, clusterID, rolePeer, nodeID); err != nil {
+	if _, ok := validLeaf(paths.PeerClientCert, paths.PeerClientKey, roots,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, clusterID, rolePeer, nodeID); !ok {
 		return false
 	}
 
-	client, err := loadLeaf(paths.DatastoreCert, paths.DatastoreKey)
-	if err != nil {
-		return false
-	}
-	if err := checkLeaf(client, clusterID, roleClient, DefaultClientName); err != nil {
+	if _, ok := validLeaf(paths.DatastoreCert, paths.DatastoreKey, roots,
+		[]x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, clusterID, roleClient, DefaultClientName); !ok {
 		return false
 	}
 
 	return true
+}
+
+// validLeaf loads a leaf and reports whether it is signed by the CA in roots,
+// usable for one of the given purposes, carries the expected netsy role and
+// identity and is outside the renewal window.
+func validLeaf(certFile, keyFile string, roots *x509.CertPool, usages []x509.ExtKeyUsage, clusterID, role, identity string) (*x509.Certificate, bool) {
+	leaf, err := loadLeaf(certFile, keyFile)
+	if err != nil {
+		return nil, false
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: usages}); err != nil {
+		return nil, false
+	}
+	if err := checkLeaf(leaf, clusterID, role, identity); err != nil {
+		return nil, false
+	}
+	if time.Until(leaf.NotAfter) <= certRenewBefore {
+		return nil, false
+	}
+	return leaf, true
 }
 
 func loadLeaf(certFile, keyFile string) (*x509.Certificate, error) {
@@ -270,7 +296,7 @@ func newLeaf(caCert *x509.Certificate, caKey *ecdsa.PrivateKey, spec leafSpec) (
 			OrganizationalUnit: []string{spec.role},
 		},
 		NotBefore:             now.Add(-time.Hour),
-		NotAfter:              now.Add(365 * 24 * time.Hour),
+		NotAfter:              now.Add(leafValidity),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           spec.usages,
 		BasicConstraintsValid: true,

@@ -123,6 +123,14 @@ func setupNetsy(ctx context.Context, serverConfig *server.Config, cfg *cmds.Serv
 	serverConfig.ControlConfig.Datastore.BackendTLSConfig.KeyFile = certs.DatastoreKey
 
 	logrus.Infof("Netsy datastore is ready at %s", process.Endpoint())
+
+	// Record that this node's Kubernetes data now lives in Netsy, so a later run
+	// without --netsy and without an explicit --datastore-endpoint is refused
+	// instead of silently reopening a stale local datastore. Failing to write
+	// the marker must not take the running datastore down.
+	if err := markNetsyBackend(serverDataDir); err != nil {
+		logrus.Warnf("Failed to record the Netsy backend marker %s: %v", netsyBackendMarker(serverDataDir), err)
+	}
 	return process, nil
 }
 
@@ -137,6 +145,42 @@ func setupNetsy(ctx context.Context, serverConfig *server.Config, cfg *cmds.Serv
 func hasEmbeddedEtcdData(serverDataDir string) bool {
 	info, err := os.Stat(filepath.Join(serverDataDir, "db", "etcd", "member", "wal"))
 	return err == nil && info.IsDir()
+}
+
+// netsyBackendMarker is the file that records that this node's Kubernetes data
+// lives in Netsy.
+func netsyBackendMarker(serverDataDir string) string {
+	return filepath.Join(serverDataDir, "db", "netsy-backend")
+}
+
+// markNetsyBackend persists the Netsy backend marker.
+func markNetsyBackend(serverDataDir string) error {
+	marker := netsyBackendMarker(serverDataDir)
+	if err := os.MkdirAll(filepath.Dir(marker), 0700); err != nil {
+		return err
+	}
+	return os.WriteFile(marker, []byte("netsy\n"), 0600)
+}
+
+// refuseSilentBackendSwitch fails when this node last stored its data in Netsy
+// but the current flags would start embedded etcd. Removing --netsy is not a
+// rollback: the objects written to Netsy are not in the local etcd datastore,
+// so silently reopening it would serve a stale (or empty) cluster. An explicit
+// --datastore-endpoint is a deliberate migration and stays allowed.
+func refuseSilentBackendSwitch(cfg *cmds.Server, serverConfig *server.Config) error {
+	if cfg.Netsy || serverConfig.ControlConfig.Datastore.Endpoint != "" {
+		return nil
+	}
+	serverDataDir, err := server.ResolveDataDir(cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	marker := netsyBackendMarker(serverDataDir)
+	if _, err := os.Stat(marker); err != nil {
+		return nil
+	}
+	return fmt.Errorf("invalid flag use; %s records that this node's Kubernetes data is stored in Netsy, so starting embedded etcd would silently reopen a different datastore. Keep running with --netsy (or point --datastore-endpoint at the datastore holding the data); after migrating the data back, remove %s",
+		serverDataDir, marker)
 }
 
 // flag -- rather than by --disable=<name> -- as both skipped and disabled, so
@@ -557,6 +601,9 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	if cfg.Netsy && serverConfig.ControlConfig.Datastore.Endpoint != "" {
 		return errors.New("invalid flag use; cannot use --datastore-endpoint with --netsy")
 	}
+	if err := refuseSilentBackendSwitch(cfg, &serverConfig); err != nil {
+		return err
+	}
 	if cfg.Netsy {
 		netsyProcess, err := setupNetsy(ctx, &serverConfig, cfg)
 		if err != nil {
@@ -566,6 +613,16 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		go func() {
 			<-ctx.Done()
 			netsyProcess.Stop()
+		}()
+		// The datastore is a child process: if it dies after startup the
+		// control plane keeps running without one and the service manager
+		// never learns about it. Exit so the node is restarted.
+		go func() {
+			err := netsyProcess.Wait()
+			if ctx.Err() != nil || netsyProcess.Stopping() {
+				return
+			}
+			logrus.Fatalf("Netsy datastore exited unexpectedly (error: %v):\n%s", err, netsyProcess.Logs())
 		}()
 	}
 
