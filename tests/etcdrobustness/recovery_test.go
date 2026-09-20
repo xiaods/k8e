@@ -140,13 +140,13 @@ func TestEmbeddedEtcdGracefulRestart(t *testing.T) {
 
 	// Immutable, checksummed records: the oracle can tell a survivor from a
 	// value nobody ever wrote.
-	writeRecords(t, ctx, client, recorder, clientURL, 20)
+	writeRecords(ctx, t, client, recorder, clientURL, 20)
 	// Concurrent CAS: exactly one writer may win the same expected revision.
-	writeCASRace(t, ctx, client, recorder, clientURL)
+	writeCASRace(ctx, t, client, recorder, clientURL)
 
 	// Watch must deliver the mutation and the delete, from a revision that
 	// cannot miss either.
-	watchMutation(t, ctx, client, "watch/", 2, func() {
+	watchMutation(ctx, t, client, "watch/", 2, func() {
 		if _, err := client.Put(ctx, "watch/entry", "value"); err != nil {
 			t.Fatal(err)
 		}
@@ -189,12 +189,12 @@ func TestEmbeddedEtcdGracefulRestart(t *testing.T) {
 	}
 
 	// The recovered cluster must still serve CRUD and Watch.
-	assertServingAfterRecovery(t, ctx, recovered)
+	assertServingAfterRecovery(ctx, t, recovered)
 }
 
 // assertServingAfterRecovery proves the recovered member is a working store and
 // not only a readable one.
-func assertServingAfterRecovery(t *testing.T, ctx context.Context, client *clientv3.Client) {
+func assertServingAfterRecovery(ctx context.Context, t *testing.T, client *clientv3.Client) {
 	t.Helper()
 	if _, err := client.Put(ctx, "after/restart", "ok"); err != nil {
 		t.Fatalf("write after restart: %v", err)
@@ -206,7 +206,7 @@ func assertServingAfterRecovery(t *testing.T, ctx context.Context, client *clien
 	if len(got.Kvs) != 1 || string(got.Kvs[0].Value) != "ok" {
 		t.Fatalf("read after restart = %+v", got.Kvs)
 	}
-	watchMutation(t, ctx, client, "watch/", 1, func() {
+	watchMutation(ctx, t, client, "watch/", 1, func() {
 		if _, err := client.Put(ctx, "watch/after-restart", "ok"); err != nil {
 			t.Fatal(err)
 		}
@@ -214,7 +214,7 @@ func assertServingAfterRecovery(t *testing.T, ctx context.Context, client *clien
 }
 
 // writeRecords issues count acknowledged puts through the recorder.
-func writeRecords(t *testing.T, ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint string, count int) {
+func writeRecords(ctx context.Context, t *testing.T, client *clientv3.Client, recorder *Recorder, endpoint string, count int) {
 	t.Helper()
 	for i := 0; i < count; i++ {
 		key := fmt.Sprintf("records/%03d", i)
@@ -232,7 +232,7 @@ func writeRecords(t *testing.T, ctx context.Context, client *clientv3.Client, re
 // writeCASRace races concurrent compare-and-swaps on one key and requires
 // exactly one winner: a second winner for the same expected revision would mean
 // the CAS was not really applied.
-func writeCASRace(t *testing.T, ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint string) {
+func writeCASRace(ctx context.Context, t *testing.T, client *clientv3.Client, recorder *Recorder, endpoint string) {
 	t.Helper()
 	const (
 		raceKey = "cas/race"
@@ -300,7 +300,7 @@ func writeCASRace(t *testing.T, ctx context.Context, client *clientv3.Client, re
 
 // watchMutation watches prefix from the revision before the mutation and fails
 // unless mutate delivered want events.
-func watchMutation(t *testing.T, ctx context.Context, client *clientv3.Client, prefix string, want int, mutate func()) {
+func watchMutation(ctx context.Context, t *testing.T, client *clientv3.Client, prefix string, want int, mutate func()) {
 	t.Helper()
 	count, err := client.Get(ctx, prefix, clientv3.WithPrefix(), clientv3.WithCountOnly())
 	if err != nil {

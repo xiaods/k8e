@@ -45,7 +45,7 @@ func TestEmbeddedEtcdQuotaExhaustionRefusesWrites(t *testing.T) {
 	recorder := mustRecorder(t, historyPath, time.Now)
 	defer recorder.Close()
 
-	acknowledged, quotaErr := fillQuota(t, ctx, client, recorder, clientURL)
+	acknowledged, quotaErr := fillQuota(ctx, t, client, recorder, clientURL)
 	if quotaErr == nil {
 		t.Fatalf("the %d byte quota never refused a write after %d acknowledged writes", quotaTestSize, acknowledged)
 	}
@@ -59,30 +59,30 @@ func TestEmbeddedEtcdQuotaExhaustionRefusesWrites(t *testing.T) {
 	// The refusal plus the alarm are the contract. etcd refuses the write that
 	// would cross the quota, and the backend size it reports is not tied to the
 	// quota (it can sit either side of it), so the size is logged, not asserted.
-	status := mustStatus(t, ctx, client, clientURL)
+	status := mustStatus(ctx, t, client, clientURL)
 	t.Logf("quota %d bytes, db size %d bytes, in use %d bytes: %v", quotaTestSize, status.DbSize, status.DbSizeInUse, quotaErr)
-	alarms := mustAlarms(t, ctx, client)
+	alarms := mustAlarms(ctx, t, client)
 	if !hasNoSpaceAlarm(alarms) {
 		t.Fatalf("expected an active NOSPACE alarm, got %+v", alarms.Alarms)
 	}
 
 	// A full store must not have lost anything it already acknowledged.
-	verifyAcknowledgedIntact(t, ctx, client, historyPath)
+	verifyAcknowledgedIntact(ctx, t, client, historyPath)
 
 	// The documented repair: delete, compact, defragment, then disarm NOSPACE.
-	repairFullStore(t, ctx, client, clientURL, status)
+	repairFullStore(ctx, t, client, clientURL, status)
 
-	writeAfterMaintenance(t, ctx, client, recorder, clientURL)
-	after := mustStatus(t, ctx, client, clientURL)
+	writeAfterMaintenance(ctx, t, client, recorder, clientURL)
+	after := mustStatus(ctx, t, client, clientURL)
 	t.Logf("after maintenance: db size %d bytes, in use %d bytes", after.DbSize, after.DbSizeInUse)
-	if hasNoSpaceAlarm(mustAlarms(t, ctx, client)) {
+	if hasNoSpaceAlarm(mustAlarms(ctx, t, client)) {
 		t.Fatal("the NOSPACE alarm is still active after disarm")
 	}
 }
 
 // fillQuota writes fixed-size values until the store refuses one, and returns
 // how many writes were acknowledged together with the refusal.
-func fillQuota(t *testing.T, ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint string) (int, error) {
+func fillQuota(ctx context.Context, t *testing.T, client *clientv3.Client, recorder *Recorder, endpoint string) (int, error) {
 	t.Helper()
 	value := strings.Repeat("q", 64*1024)
 	acknowledged := 0
@@ -102,7 +102,7 @@ func fillQuota(t *testing.T, ctx context.Context, client *clientv3.Client, recor
 
 // verifyAcknowledgedIntact checks that the full store still holds everything
 // the history acknowledged and that the oracle saw enough data to be meaningful.
-func verifyAcknowledgedIntact(t *testing.T, ctx context.Context, client *clientv3.Client, historyPath string) {
+func verifyAcknowledgedIntact(ctx context.Context, t *testing.T, client *clientv3.Client, historyPath string) {
 	t.Helper()
 	history := mustLoadHistory(t, historyPath)
 	report, err := Verify(ctx, history, ClientReader(client))
@@ -119,7 +119,7 @@ func verifyAcknowledgedIntact(t *testing.T, ctx context.Context, client *clientv
 
 // repairFullStore runs the maintenance sequence for a store that hit its quota:
 // delete the data, compact, defragment and disarm the NOSPACE alarm.
-func repairFullStore(t *testing.T, ctx context.Context, client *clientv3.Client, endpoint string, status *clientv3.StatusResponse) {
+func repairFullStore(ctx context.Context, t *testing.T, client *clientv3.Client, endpoint string, status *clientv3.StatusResponse) {
 	t.Helper()
 	if _, err := client.Delete(ctx, "quota/", clientv3.WithPrefix()); err != nil {
 		t.Fatalf("delete on a full store: %v", err)
@@ -143,7 +143,7 @@ func repairFullStore(t *testing.T, ctx context.Context, client *clientv3.Client,
 }
 
 // writeAfterMaintenance proves the repaired store accepts a new write.
-func writeAfterMaintenance(t *testing.T, ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint string) {
+func writeAfterMaintenance(ctx context.Context, t *testing.T, client *clientv3.Client, recorder *Recorder, endpoint string) {
 	t.Helper()
 	attempt := mustBegin(t, recorder, Operation{Kind: KindPut, Key: "after/maintenance", Value: "writable", Endpoint: endpoint})
 	response, err := client.Put(ctx, "after/maintenance", "writable")
@@ -154,7 +154,7 @@ func writeAfterMaintenance(t *testing.T, ctx context.Context, client *clientv3.C
 	must(t, attempt.Acknowledge(response.Header.Revision))
 }
 
-func mustStatus(t *testing.T, ctx context.Context, client *clientv3.Client, endpoint string) *clientv3.StatusResponse {
+func mustStatus(ctx context.Context, t *testing.T, client *clientv3.Client, endpoint string) *clientv3.StatusResponse {
 	t.Helper()
 	status, err := client.Status(ctx, endpoint)
 	if err != nil {
@@ -163,7 +163,7 @@ func mustStatus(t *testing.T, ctx context.Context, client *clientv3.Client, endp
 	return status
 }
 
-func mustAlarms(t *testing.T, ctx context.Context, client *clientv3.Client) *clientv3.AlarmResponse {
+func mustAlarms(ctx context.Context, t *testing.T, client *clientv3.Client) *clientv3.AlarmResponse {
 	t.Helper()
 	alarms, err := client.AlarmList(ctx)
 	if err != nil {
