@@ -389,8 +389,8 @@ func TestAllowsUsage(t *testing.T) {
 	if !allowsUsage(&x509.Certificate{}, x509.ExtKeyUsageServerAuth) {
 		t.Error("allowsUsage() = false for a leaf without extended key usages")
 	}
-	any := &x509.Certificate{ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
-	if !allowsUsage(any, x509.ExtKeyUsageServerAuth) {
+	anyUsage := &x509.Certificate{ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}}
+	if !allowsUsage(anyUsage, x509.ExtKeyUsageServerAuth) {
 		t.Error("allowsUsage() = false for a leaf with the any usage")
 	}
 }
