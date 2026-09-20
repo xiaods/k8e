@@ -155,9 +155,15 @@ func (r *Recorder) Begin(op Operation) (*Attempt, error) {
 		StartedAt:      r.now().UTC(),
 		Outcome:        OutcomePending,
 	}
-	if op.Value != "" {
+	// A put or CAS payload is hashed even when it is the empty string: the
+	// empty hash is the "absent" sentinel, so an unhashed empty payload would be
+	// indistinguishable from a missing key. Only a delete carries no payload.
+	if op.Kind != KindDelete {
 		record.ValueSHA256 = HashValue(op.Value)
 	}
+	// ExpectValueSHA256 is diagnostic: it records the value the CAS compared
+	// against, and stays empty when the caller recorded no value expectation
+	// (the oracle gates a CAS on ExpectRevision, which is what etcd compares).
 	if op.ExpectValue != "" {
 		record.ExpectValueSHA256 = HashValue(op.ExpectValue)
 	}

@@ -84,10 +84,13 @@ func TestEmbeddedEtcdQuotaExhaustionRefusesWrites(t *testing.T) {
 // how many writes were acknowledged together with the refusal.
 func fillQuota(ctx context.Context, t *testing.T, client *clientv3.Client, recorder *Recorder, endpoint string) (int, error) {
 	t.Helper()
-	value := strings.Repeat("q", 64*1024)
 	acknowledged := 0
 	for i := 0; i < 500; i++ {
 		key := fmt.Sprintf("quota/%06d", i%quotaKeys)
+		// Every write stays 64KiB but carries a unique payload: the oracle
+		// compares hashes, so a stale version of an overwritten key must not
+		// look like the latest one.
+		value := fmt.Sprintf("%s-%06d", strings.Repeat("q", 64*1024-7), i)
 		attempt := mustBegin(t, recorder, Operation{Kind: KindPut, Key: key, Value: value, Endpoint: endpoint})
 		response, err := client.Put(ctx, key, value)
 		if err != nil {

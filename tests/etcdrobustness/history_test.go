@@ -1,6 +1,7 @@
 package etcdrobustness
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -28,6 +29,84 @@ func TestHashValueIsStableAndDistinct(t *testing.T) {
 	}
 	if HashValue("") == "" {
 		t.Fatal("HashValue of the empty string must not be the absent sentinel")
+	}
+}
+
+// TestRecorderAcknowledgesAfterTheNodeDied pins the window the strong-kill
+// harness must keep observable: the response arrived before the kill, the
+// recorder lives outside the killed process so the ACK still lands afterwards,
+// and a recovered store that lost that write must be a violation — not an
+// `unknown` the oracle is allowed to excuse with "the key may be absent".
+func TestRecorderAcknowledgesAfterTheNodeDied(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	recorder := mustRecorder(t, path, fixedNow(t))
+	// The intent is fsynced before the request is issued.
+	attempt := mustBegin(t, recorder, Operation{Kind: KindPut, Key: "k", Value: "acked"})
+
+	// The member is SIGKILLed here, after the response was received. The
+	// recorder is not the process that died, so the ACK is still written.
+	must(t, attempt.Acknowledge(7))
+	must(t, recorder.Close())
+
+	history := mustLoadHistory(t, path)
+	if len(history) != 1 || history[0].Outcome != OutcomeAcknowledged {
+		t.Fatalf("history = %+v", history)
+	}
+
+	lost, err := Verify(context.Background(), history, fakeReader(map[string]State{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lost.OK() {
+		t.Fatal("an acknowledged write the killed member lost must violate the oracle")
+	}
+
+	kept, err := Verify(context.Background(), history, fakeReader(map[string]State{
+		"k": {Exists: true, ValueSHA256: HashValue("acked"), Revision: 7},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !kept.OK() {
+		t.Fatalf("the acknowledged write that survived must pass: %v", kept.Violations)
+	}
+}
+
+// TestRecorderHashesEmptyPayload covers the whole path from Begin to the
+// oracle: an acknowledged put of the empty string must stay distinguishable
+// from a key that was never written, so a lost empty value cannot pass as
+// "absent".
+func TestRecorderHashesEmptyPayload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	recorder := mustRecorder(t, path, fixedNow(t))
+	attempt := mustBegin(t, recorder, Operation{Kind: KindPut, Key: "k", Value: ""})
+	must(t, attempt.Acknowledge(3))
+	must(t, recorder.Close())
+
+	history := mustLoadHistory(t, path)
+	if len(history) != 1 {
+		t.Fatalf("history = %+v", history)
+	}
+	if history[0].ValueSHA256 != HashValue("") {
+		t.Fatalf("empty payload hash = %q, want %q", history[0].ValueSHA256, HashValue(""))
+	}
+
+	report, err := Verify(context.Background(), history, fakeReader(map[string]State{
+		"k": {Exists: true, ValueSHA256: HashValue(""), Revision: 3},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.OK() {
+		t.Fatalf("an acknowledged empty value that survived must pass: %v", report.Violations)
+	}
+
+	lost, err := Verify(context.Background(), history, fakeReader(map[string]State{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lost.OK() {
+		t.Fatal("a lost acknowledged empty value must violate the oracle")
 	}
 }
 

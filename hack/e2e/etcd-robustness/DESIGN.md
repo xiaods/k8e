@@ -44,7 +44,7 @@ unknown.
 ## 2. What already exists
 
 * `pkg/embedw` starts an embedded etcd from a data directory and returns once
-  `ReadyNotify()` fires (60s limit, `pkg/embedw/etcd.go:81`).
+  `ReadyNotify()` fires (60s limit, `pkg/embedw/etcd.go:93`).
 * `pkg/etcd` owns the K8E-level lifecycle: `Start`, `Test` (defragment + clear
   alarms on startup, `pkg/etcd/etcd.go:211`), snapshots, learners, `Restore`.
 * `hack/e2e` brings up server + agent containers and runs `suites/l1.sh` /
@@ -107,7 +107,11 @@ Two pieces, both in `tests/etcdrobustness`, both phase-independent:
 **`history.go` — the operation history.** Every mutating request is written to
 `history.jsonl` *outside* the etcd data directory, with a fsync: first a
 `pending` intent carrying the payload hash (started before the request is
-issued), then one terminal record.
+issued), then one terminal record. The recorder runs in the process that drives
+the workload, which is not the process hosting the member under test, so the
+fault cannot take the record of an acknowledged response with it: a response
+that arrived before the kill stays `acknowledged` instead of degrading into an
+`unknown` the oracle would excuse.
 
 | Outcome | Meaning |
 |---------|---------|
@@ -145,7 +149,7 @@ Package: `tests/etcdrobustness` (test support; no shipped binary imports it).
 | Scenario | Test | Fault |
 |----------|------|-------|
 | graceful member restart | `TestEmbeddedEtcdGracefulRestart` | stop and start on the same data dir |
-| strong kill while writing | `TestEmbeddedEtcdSigkillDuringWrites` | repeated SIGKILL of a child member under continuous acknowledged writes (fixed seed, default 10 rounds; the child is `TestEmbeddedEtcdRobustnessChild`) |
+| strong kill while writing | `TestEmbeddedEtcdSigkillDuringWrites` | repeated SIGKILL of a child member under continuous acknowledged writes (fixed seed, default 10 rounds; `TestEmbeddedEtcdRobustnessChild` hosts only the member, while the workload and the recorder stay in the parent) |
 | disk pressure | `TestEmbeddedEtcdQuotaExhaustionRefusesWrites` | fill the 8MB quota until writes are refused with `mvcc: database space exceeded` |
 | damaged WAL | `TestEmbeddedEtcdWALCorruptionIsRefused` | flip bytes in the written region of a WAL copy at two damage sites |
 | history/oracle contract | `history_test.go`, `oracle_test.go` | unit level: record reduction, `unknown` replay, every oracle rule and its violation |
@@ -158,7 +162,10 @@ What each scenario asserts (the real contract, not the implementation's guess):
 * strong kill — no error on the next start beyond the kill itself, member and
   cluster identity unchanged, every acknowledged record still present, no
   violation and no revision rollback; rounds where an in-flight request became
-  `unknown` must be explained by the oracle (the rounds log how many).
+  `unknown` must be explained by the oracle (the rounds log how many). The
+  recorder lives in the parent process, so a write the member acknowledged
+  before the kill is in the history as `acknowledged` and a lost one cannot hide
+  as an explainable `unknown`.
 * disk pressure — the refusal is `database space exceeded` with an active
   `NOSPACE` alarm, the acknowledged data is still intact under the oracle, and
   after delete → compact → defragment → disarm (the same repair
@@ -198,10 +205,17 @@ and the oracle's failure paths have their own controlled examples:
 `TestVerifyDeleteIsNotResurrected` each make `Verify` fail on a seeded history,
 so a violated oracle is a diagnosis and not a surprise.
 
-Still open from the Definition of Done: the defects below (F1–F3) are recorded
+Still open from the Definition of Done: the defects below (F1–F4) are recorded
 disclosures, not fixes — they have no tracking issue and no regression case yet,
 so the phase-1 checklist item "defects found by the tests have an explicit
 issue/fix and a regression case" stays open.
+
+Known coverage gaps of the landed scenarios (disclosed, not claimed covered):
+the oracle compares a key's payload hash, not its per-key revision, so the
+scenarios write a unique payload per request to keep versions distinguishable;
+the post-restart check exercises Put/Get/CAS/Delete/Watch, but Watch is only
+counted, not reconnected after a compaction; and every landed scenario proves
+the embedded-etcd layer, never the K8E control plane.
 
 ### Running phase 1
 
@@ -318,7 +332,7 @@ particularly since the backend can grow past the quota without being exhausted.
 * No performance benchmarking (latency/throughput) — this program measures
   safety and recoverability.
 * No changes to `pkg/embedw`/`pkg/etcd` in phase 1: the phase-1 job is to
-  establish the baseline and the evidence. F1–F3 are inputs for a follow-up
+  establish the baseline and the evidence. F1–F4 are inputs for a follow-up
   decision (for example failing fast with a WAL-specific error instead of the
   60s readiness wait), not silently patched here.
 

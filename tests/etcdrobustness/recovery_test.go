@@ -22,12 +22,12 @@ import (
 )
 
 // Environment variables of the child process a strong-kill round re-executes.
+// The child hosts the member under test only; the workload and the operation
+// history run in the parent, which the kill never reaches.
 const (
-	envChildDir     = "ETCD_ROBUSTNESS_CHILD_DIR"
-	envChildClient  = "ETCD_ROBUSTNESS_CHILD_CLIENT_URL"
-	envChildPeer    = "ETCD_ROBUSTNESS_CHILD_PEER_URL"
-	envChildHistory = "ETCD_ROBUSTNESS_CHILD_HISTORY"
-	envChildRunID   = "ETCD_ROBUSTNESS_CHILD_RUN_ID"
+	envChildDir    = "ETCD_ROBUSTNESS_CHILD_DIR"
+	envChildClient = "ETCD_ROBUSTNESS_CHILD_CLIENT_URL"
+	envChildPeer   = "ETCD_ROBUSTNESS_CHILD_PEER_URL"
 
 	// envWorkDir points the per-test data directories at a larger filesystem.
 	envWorkDir = "ETCD_ROBUSTNESS_WORKDIR"
@@ -206,6 +206,37 @@ func assertServingAfterRecovery(ctx context.Context, t *testing.T, client *clien
 	if len(got.Kvs) != 1 || string(got.Kvs[0].Value) != "ok" {
 		t.Fatalf("read after restart = %+v", got.Kvs)
 	}
+
+	// The Issue asks for CRUD/CAS/Watch on the recovered member, so exercise
+	// the rest of it: a stale CAS must lose, the current one must win, and a
+	// delete must remove the key.
+	opCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	revision := got.Kvs[0].ModRevision
+	stale, err := client.Txn(opCtx).
+		If(clientv3.Compare(clientv3.ModRevision("after/restart"), "=", revision-1)).
+		Then(clientv3.OpPut("after/restart", "stale")).
+		Commit()
+	if err != nil {
+		t.Fatalf("stale CAS after restart: %v", err)
+	}
+	if stale.Succeeded {
+		t.Fatal("a CAS with a stale expected revision won on the recovered member")
+	}
+	won, err := client.Txn(opCtx).
+		If(clientv3.Compare(clientv3.ModRevision("after/restart"), "=", revision)).
+		Then(clientv3.OpPut("after/restart", "cas-ok")).
+		Commit()
+	if err != nil {
+		t.Fatalf("CAS after restart: %v", err)
+	}
+	if !won.Succeeded {
+		t.Fatal("a CAS with the current expected revision lost on the recovered member")
+	}
+	if _, err := client.Delete(opCtx, "after/restart"); err != nil {
+		t.Fatalf("delete after restart: %v", err)
+	}
+
 	watchMutation(ctx, t, client, "watch/", 1, func() {
 		if _, err := client.Put(ctx, "watch/after-restart", "ok"); err != nil {
 			t.Fatal(err)
@@ -389,8 +420,13 @@ func sigkillDwell(seed int64, round int) time.Duration {
 	return killDwellFloor + time.Duration(jitter)
 }
 
-// runSigkillRound starts a child member under a continuous write workload,
-// SIGKILLs it at the seeded moment and checks the recovered data directory.
+// runSigkillRound starts a child member, drives the acknowledged workload from
+// this process — outside the member under test — SIGKILLs the child at the
+// seeded moment and checks the recovered data directory.
+//
+// The workload and the recorder stay in the parent, so the SIGKILL cannot take
+// the record of a response that already arrived: an acknowledged write that the
+// recovered store lost stays visible instead of hiding as an unknown outcome.
 func runSigkillRound(t *testing.T, round int, dwell time.Duration) {
 	t.Helper()
 	dir := workDir(t)
@@ -399,13 +435,37 @@ func runSigkillRound(t *testing.T, round int, dwell time.Duration) {
 	historyPath := filepath.Join(dir, "history.jsonl")
 	logPath := filepath.Join(dir, childLogFileName)
 
-	command := startSigkillChild(t, round, target, historyPath, logPath)
+	command := startSigkillChild(t, target, logPath)
 	waitForFile(t, filepath.Join(dir, readyFileName), 60*time.Second, logPath)
+
+	client := mustClient(t, clientURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	writeFingerprint(ctx, t, target, client)
+
+	recorder := mustRecorder(t, historyPath, time.Now)
+	defer recorder.Close()
+
+	firstAck := make(chan struct{})
+	workloadDone := make(chan error, 1)
+	go func() {
+		workloadDone <- runSigkillWorkload(ctx, client, recorder, clientURL, fmt.Sprintf("r%02d", round), firstAck)
+	}()
+
 	// The kill must land while writes are being acknowledged, not while the
 	// member is still coming up.
-	waitForAcknowledged(t, historyPath, 60*time.Second)
+	select {
+	case <-firstAck:
+	case err := <-workloadDone:
+		t.Fatalf("the workload stopped before acknowledging a write: %v", err)
+	case <-time.After(60 * time.Second):
+		t.Fatal("no write was acknowledged within 60s; the workload never reached the server")
+	}
 	time.Sleep(dwell)
 	killChild(t, command)
+	if err := <-workloadDone; err != nil {
+		t.Fatalf("the workload failed while the member was killed: %v", err)
+	}
 
 	history := mustLoadHistory(t, historyPath)
 	acknowledged := countOutcome(history, OutcomeAcknowledged)
@@ -413,6 +473,67 @@ func runSigkillRound(t *testing.T, round int, dwell time.Duration) {
 		t.Fatalf("no write was acknowledged in %s before the kill; the workload never reached the server", dwell)
 	}
 	verifyKilledRound(t, round, dwell, target, history, acknowledged)
+}
+
+// writeFingerprint records the member identity before the fault from the
+// parent, so the identity check does not depend on the process being killed.
+func writeFingerprint(ctx context.Context, t *testing.T, target sigkillRoundTarget, client *clientv3.Client) {
+	t.Helper()
+	status, err := client.Status(ctx, target.clientURL)
+	if err != nil {
+		t.Fatalf("status before the kill: %v", err)
+	}
+	writeJSON(t, filepath.Join(target.dir, fingerprintFileName), fingerprint{
+		MemberID:  status.Header.MemberId,
+		ClusterID: status.Header.ClusterId,
+		Revision:  status.Header.Revision,
+	})
+}
+
+// runSigkillWorkload issues acknowledged puts — and a delete every five puts —
+// until the member under test is killed under a request. firstAck is closed
+// after the first acknowledged write so the caller can time the kill.
+//
+// The terminal request is recorded as unknown: the member died while the client
+// was waiting, so the outcome was never learned. A response that did arrive is
+// already fsynced as acknowledged before the kill can land, because this
+// recorder is not the process that dies.
+func runSigkillWorkload(ctx context.Context, client *clientv3.Client, recorder *Recorder, endpoint, runID string, firstAck chan<- struct{}) error {
+	keys := make([]string, 0, 1024)
+	for seq := 0; ; seq++ {
+		key := fmt.Sprintf("workload/%s/%06d", runID, seq)
+		value := fmt.Sprintf("%s:%06d:%s", runID, seq, strings.Repeat("v", 32))
+		attempt, err := recorder.Begin(Operation{Kind: KindPut, Key: key, Value: value, Endpoint: endpoint})
+		if err != nil {
+			return err
+		}
+		response, putErr := timedPut(ctx, client, key, value)
+		if putErr != nil {
+			return attempt.Unknown(putErr)
+		}
+		if err := attempt.Acknowledge(response); err != nil {
+			return err
+		}
+		if seq == 0 {
+			close(firstAck)
+		}
+		keys = append(keys, key)
+
+		if seq%5 == 4 {
+			deleted := keys[seq-4]
+			deleteAttempt, err := recorder.Begin(Operation{Kind: KindDelete, Key: deleted, Endpoint: endpoint})
+			if err != nil {
+				return err
+			}
+			revision, deleteErr := timedDelete(ctx, client, deleted)
+			if deleteErr != nil {
+				return deleteAttempt.Unknown(deleteErr)
+			}
+			if err := deleteAttempt.Acknowledge(revision); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // sigkillRoundTarget is where one strong-kill round runs: the data directory
@@ -423,10 +544,10 @@ type sigkillRoundTarget struct {
 	peerURL   string
 }
 
-// startSigkillChild re-executes this test binary as the workload child. The
+// startSigkillChild re-executes this test binary as the member child. The
 // parent kills it, so the fault is a real SIGKILL delivered by another process,
 // and the child is cleaned up if the round fails before the kill.
-func startSigkillChild(t *testing.T, round int, target sigkillRoundTarget, historyPath, logPath string) *exec.Cmd {
+func startSigkillChild(t *testing.T, target sigkillRoundTarget, logPath string) *exec.Cmd {
 	t.Helper()
 	childLog, err := os.Create(logPath)
 	if err != nil {
@@ -439,8 +560,6 @@ func startSigkillChild(t *testing.T, round int, target sigkillRoundTarget, histo
 		envChildDir+"="+target.dir,
 		envChildClient+"="+target.clientURL,
 		envChildPeer+"="+target.peerURL,
-		envChildHistory+"="+historyPath,
-		envChildRunID+"="+fmt.Sprintf("r%02d", round),
 	)
 	command.Stdout = childLog
 	command.Stderr = childLog
@@ -521,79 +640,29 @@ func countOutcome(history []Record, outcome Outcome) int {
 }
 
 // TestEmbeddedEtcdRobustnessChild is the child process of the strong-kill
-// rounds: it starts one member and writes until the parent kills it.
+// rounds: it hosts the member under test and nothing else. The workload and the
+// operation history stay in the parent process, so the SIGKILL cannot take the
+// record of an acknowledged response with it.
 func TestEmbeddedEtcdRobustnessChild(t *testing.T) {
 	dir := os.Getenv(envChildDir)
 	if dir == "" {
 		t.Skip("not a robustness child process")
 	}
-	clientURL := os.Getenv(envChildClient)
-	peerURL := os.Getenv(envChildPeer)
-
-	node, err := StartNode(NodeOptions{Name: "robustness", Dir: dir, ClientURL: clientURL, PeerURL: peerURL})
+	node, err := StartNode(NodeOptions{
+		Name:      "robustness",
+		Dir:       dir,
+		ClientURL: os.Getenv(envChildClient),
+		PeerURL:   os.Getenv(envChildPeer),
+	})
 	if err != nil {
 		t.Fatalf("child: start node: %v", err)
 	}
 	defer node.Close()
-	client, err := NewClient(clientURL)
-	if err != nil {
-		t.Fatalf("child: client: %v", err)
-	}
-	defer client.Close()
-
-	ctx := context.Background()
-	status, err := client.Status(ctx, clientURL)
-	if err != nil {
-		t.Fatalf("child: status: %v", err)
-	}
-	writeJSON(t, filepath.Join(dir, fingerprintFileName), fingerprint{
-		MemberID:  status.Header.MemberId,
-		ClusterID: status.Header.ClusterId,
-		Revision:  status.Header.Revision,
-	})
 	if err := os.WriteFile(filepath.Join(dir, readyFileName), []byte("ready\n"), 0600); err != nil {
 		t.Fatalf("child: ready marker: %v", err)
 	}
-
-	recorder, err := NewRecorder(os.Getenv(envChildHistory))
-	if err != nil {
-		t.Fatalf("child: history: %v", err)
-	}
-	defer recorder.Close()
-
-	runID := os.Getenv(envChildRunID)
-	keys := make([]string, 0, 1024)
-	for seq := 0; ; seq++ {
-		key := fmt.Sprintf("workload/%s/%06d", runID, seq)
-		value := fmt.Sprintf("%s:%06d:%s", runID, seq, strings.Repeat("v", 32))
-		attempt, err := recorder.Begin(Operation{Kind: KindPut, Key: key, Value: value, Endpoint: clientURL})
-		if err != nil {
-			t.Fatalf("child: begin put: %v", err)
-		}
-		response, putErr := timedPut(ctx, client, key, value)
-		if putErr != nil {
-			t.Fatalf("child: put %s: %v (history: %v)", key, putErr, finishFailedAttempt(attempt, putErr))
-		}
-		if err := attempt.Acknowledge(response); err != nil {
-			t.Fatalf("child: acknowledge put: %v", err)
-		}
-		keys = append(keys, key)
-
-		if seq%5 == 4 {
-			deleted := keys[seq-4]
-			deleteAttempt, err := recorder.Begin(Operation{Kind: KindDelete, Key: deleted, Endpoint: clientURL})
-			if err != nil {
-				t.Fatalf("child: begin delete: %v", err)
-			}
-			revision, deleteErr := timedDelete(ctx, client, deleted)
-			if deleteErr != nil {
-				t.Fatalf("child: delete %s: %v (history: %v)", deleted, deleteErr, finishFailedAttempt(deleteAttempt, deleteErr))
-			}
-			if err := deleteAttempt.Acknowledge(revision); err != nil {
-				t.Fatalf("child: acknowledge delete: %v", err)
-			}
-		}
-	}
+	// The parent SIGKILLs this process when the round ends; block until then.
+	select {}
 }
 
 // timedPut issues a put with its own deadline so a stalled request becomes an
@@ -618,16 +687,6 @@ func timedDelete(ctx context.Context, client *clientv3.Client, key string) (int6
 	return response.Header.Revision, nil
 }
 
-// finishFailedAttempt classifies a failed request: a deadline or a cancelled
-// context means the client never learned the outcome; anything else is an
-// explicit refusal.
-func finishFailedAttempt(attempt *Attempt, err error) error {
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return attempt.Unknown(err)
-	}
-	return attempt.Reject(err)
-}
-
 func waitForFile(t *testing.T, path string, timeout time.Duration, logPath string) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -639,25 +698,6 @@ func waitForFile(t *testing.T, path string, timeout time.Duration, logPath strin
 	}
 	body, _ := os.ReadFile(logPath)
 	t.Fatalf("child did not become ready within %s; %s tail:\n%s", timeout, logPath, tailLines(string(body), 40))
-}
-
-// waitForAcknowledged blocks until the workload has at least one acknowledged
-// write in the history, so the strong-kill window is never wasted on startup.
-func waitForAcknowledged(t *testing.T, historyPath string, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if history, err := LoadHistory(historyPath); err == nil {
-			for _, record := range history {
-				if record.Outcome == OutcomeAcknowledged {
-					return
-				}
-			}
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	body, _ := os.ReadFile(historyPath)
-	t.Fatalf("no acknowledged write within %s; history tail:\n%s", timeout, tailLines(string(body), 20))
 }
 
 func tailLines(body string, lines int) string {

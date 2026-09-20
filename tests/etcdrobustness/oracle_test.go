@@ -195,6 +195,92 @@ func TestVerifyReturnsReaderErrors(t *testing.T) {
 	}
 }
 
+// TestVerifyRejectsUnknownCASWinnerAfterAcknowledgedCAS is the counterexample
+// the phase-1 oracle must not accept: one CAS at expected revision 3 was
+// acknowledged at revision 4, and a second CAS of the same expected revision is
+// unknown. Only one compare can win, so the unknown CAS cannot have committed
+// and its payload must not be reported as a correct recovery.
+func TestVerifyRejectsUnknownCASWinnerAfterAcknowledgedCAS(t *testing.T) {
+	history := []Record{
+		{
+			OperationID:       "acked",
+			Kind:              KindCAS,
+			Key:               "k",
+			ValueSHA256:       HashValue("a"),
+			ExpectValueSHA256: HashValue("seed"),
+			ExpectRevision:    3,
+			Outcome:           OutcomeAcknowledged,
+			Revision:          4,
+		},
+		{
+			OperationID:       "unknown",
+			Kind:              KindCAS,
+			Key:               "k",
+			ValueSHA256:       HashValue("b"),
+			ExpectValueSHA256: HashValue("seed"),
+			ExpectRevision:    3,
+			Outcome:           OutcomeUnknown,
+		},
+	}
+	report, err := Verify(context.Background(), history, fakeReader(map[string]State{
+		"k": {Exists: true, ValueSHA256: HashValue("b"), Revision: 4},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.OK() {
+		t.Fatal("an unknown CAS that lost the race must not be accepted as the recovered state")
+	}
+}
+
+// TestVerifyRejectsUnknownCASBehindLaterAcknowledgedMutation covers the general
+// rule: once an acknowledged mutation has moved the key past the expected
+// revision, the unknown CAS either committed before it (and was overwritten) or
+// read the newer revision and failed, so it can never be the recovered state.
+func TestVerifyRejectsUnknownCASBehindLaterAcknowledgedMutation(t *testing.T) {
+	history := []Record{
+		ackedPut("k", "older", 3),
+		ackedPut("k", "newer", 5),
+		{OperationID: "unknown", Kind: KindCAS, Key: "k", ValueSHA256: HashValue("late"), ExpectRevision: 3, Outcome: OutcomeUnknown},
+	}
+	report, err := Verify(context.Background(), history, fakeReader(map[string]State{
+		"k": {Exists: true, ValueSHA256: HashValue("late"), Revision: 6},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.OK() {
+		t.Fatal("an unknown CAS behind a later acknowledged mutation must not be explainable")
+	}
+}
+
+// TestVerifyExplainsUnknownCASThatCommitted keeps the positive side: an unknown
+// CAS at the key's last acknowledged revision may really have committed, so its
+// effect must stay explainable.
+func TestVerifyExplainsUnknownCASThatCommitted(t *testing.T) {
+	history := []Record{
+		ackedPut("k", "seed", 3),
+		{
+			OperationID:       "unknown",
+			Kind:              KindCAS,
+			Key:               "k",
+			ValueSHA256:       HashValue("winner"),
+			ExpectValueSHA256: HashValue("seed"),
+			ExpectRevision:    3,
+			Outcome:           OutcomeUnknown,
+		},
+	}
+	report, err := Verify(context.Background(), history, fakeReader(map[string]State{
+		"k": {Exists: true, ValueSHA256: HashValue("winner"), Revision: 4},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.OK() {
+		t.Fatalf("an unknown CAS that did commit must be explainable: %v", report.Violations)
+	}
+}
+
 func TestVerifyAtMostOneCASWinner(t *testing.T) {
 	winner := Record{OperationID: "a", Kind: KindCAS, Key: "k", ValueSHA256: HashValue("w"), ExpectRevision: 3, Outcome: OutcomeAcknowledged, Revision: 4}
 	report, err := Verify(context.Background(), []Record{winner}, fakeReader(map[string]State{

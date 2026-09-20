@@ -85,6 +85,15 @@ func verifyKeyStates(ctx context.Context, history []Record, read Reader, report 
 // "absent" when nothing was acknowledged). Every unknown operation on the key
 // adds its own possible effect, because a request that was in flight when the
 // process died may have been committed with a revision after the baseline.
+//
+// An unknown CAS is not an unconditional put. Its effect can only be the
+// recovered state if the compare could still succeed once every acknowledged
+// mutation of the key has been applied: the baseline is the last acknowledged
+// state, so a CAS whose expected revision is older than it either lost the race
+// (an acknowledged mutation overwrote it) or read the newer revision and
+// failed. Allowing its payload anyway would report an impossible winner — an
+// acknowledged CAS and a second CAS of the same expected revision both having
+// committed — as a correct recovery.
 func allowedStates(records []Record) map[string]struct{} {
 	allowed := make(map[string]struct{})
 	var baseline *Record
@@ -105,6 +114,9 @@ func allowedStates(records []Record) map[string]struct{} {
 	for i := range records {
 		record := &records[i]
 		if record.Outcome != OutcomeUnknown {
+			continue
+		}
+		if record.Kind == KindCAS && baseline != nil && baseline.Revision > record.ExpectRevision {
 			continue
 		}
 		allowed[effectHash(*record)] = struct{}{}
