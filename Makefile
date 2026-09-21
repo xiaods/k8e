@@ -4,7 +4,10 @@
 # bin/k8e and a running docker daemon.
 E2E_PROFILE ?= l1
 
-.PHONY: all k8e clean deps format generate package package-cli package-airgap test e2e
+# Extra args for `make test-rqlite-m0`, e.g. RQLITE_M0_TEST_ARGS='-run TestTxn'.
+RQLITE_M0_TEST_ARGS ?=
+
+.PHONY: all k8e clean deps format generate package package-cli package-airgap test test-rqlite-m0 e2e
 
 all:
 	zig build all
@@ -35,6 +38,11 @@ package-airgap:
 
 test:
 	zig build test
+
+# M0 evidence for KIP-29: downloads and sha256-verifies the pinned rqlited,
+# then runs tests/rqlitecompat against it. Skips nothing: RQLITE_BIN is set.
+test-rqlite-m0:
+	hack/rqlite-m0/run.sh $(RQLITE_M0_TEST_ARGS)
 
 e2e:
 	hack/e2e/run.sh $(E2E_PROFILE)
