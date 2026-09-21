@@ -25,9 +25,10 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 | [KIP-1](kip-1-native-etcd-storage-client.md) | Native etcd storage client (replace kine) | Implemented |
 | [KIP-2](kip-2-upgrade-dependencies-to-kubernetes-1.35.md) | Kubernetes 1.35 dependency upgrade | Implemented — baseline superseded by [KIP-26](kip-26-upgrade-dependencies-to-kubernetes-1.37.md) |
 | [KIP-26](kip-26-upgrade-dependencies-to-kubernetes-1.37.md) | Kubernetes 1.37 dependency upgrade | Implemented (tree now tracks **v1.37.0-k3s1**) |
-| [KIP-6](kip-6-embedded-etcd-design.md) | Embedded etcd as sole datastore | Implemented |
+| [KIP-6](kip-6-embedded-etcd-design.md) | Embedded etcd as sole datastore | Implemented — [KIP-29](kip-29-rqlite-etcd-compat-backend.md) proposes replacing the embedded etcd datastore with rqlite + an etcd v3 compatibility layer |
 | [KIP-7](kip-7-embedded-etcd-fuse.md) | Fuse official `embed.StartEtcd` (`pkg/embedw`) | Implemented |
 | [KIP-27](kip-27-bundled-cert-manager.md) | Default cert-manager v1.21.2 bundle and airgap images | Implemented |
+| [KIP-29](kip-29-rqlite-etcd-compat-backend.md) | rqlite + etcd v3 compatibility backend (epic #592) | Proposed — M0 (design + rqlite capability evidence) complete, M1 not started |
 
 ### Sandbox matrix (core)
 
