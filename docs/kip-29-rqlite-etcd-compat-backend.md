@@ -507,6 +507,14 @@ layer is called architecture-complete.
 * **M3** — migration of existing production clusters and the first release
   that may switch the default backend, with migration/rollback rehearsals.
 
+The acceptance state of this whole chain — the exact pinned versions, the
+executed test scope, the scenarios not yet executed and the limitations — is
+kept in the [rqlite backend release
+record](../hack/rqlite-backend/RELEASE-RECORD.md), which satisfies completion
+criterion 5 of epic #592 and is enforced by `go test ./tests/rqlitebackend/`.
+The default backend stays embedded etcd until criteria 1–4 have executed
+evidence there.
+
 ## 11. Non-goals
 
 * No rewrite of rqlite or Raft; no general-purpose distributed SQL product.
