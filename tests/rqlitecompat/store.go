@@ -567,39 +567,58 @@ func decodeValue(kind string, value any) (any, error) {
 	}
 	switch kind {
 	case "integer", "real":
-		n, ok := value.(json.Number)
-		if !ok {
-			return nil, fmt.Errorf("expected number, got %T", value)
-		}
-		return n.Int64()
+		return decodeNumber(value)
 	case "text":
-		s, ok := value.(string)
-		if !ok {
-			return nil, fmt.Errorf("expected text, got %T", value)
-		}
-		return s, nil
+		return decodeText(value)
 	case "blob":
-		items, ok := value.([]any)
-		if !ok {
-			return nil, fmt.Errorf("expected byte array for BLOB, got %T", value)
-		}
-		out := make([]byte, 0, len(items))
-		for _, item := range items {
-			n, ok := item.(json.Number)
-			if !ok {
-				return nil, fmt.Errorf("expected byte value, got %T", item)
-			}
-			b, err := n.Int64()
-			if err != nil || b < 0 || b > 255 {
-				return nil, fmt.Errorf("byte value out of range: %v", item)
-			}
-			out = append(out, byte(b))
-		}
-		return out, nil
-	case "":
-		// NULL or an expression whose type SQLite did not report.
-		return value, nil
+		return decodeBlob(value)
 	default:
+		// NULL, or an expression whose type SQLite did not report (kind is
+		// empty then): passed through as rqlite sent it.
 		return value, nil
 	}
+}
+
+func decodeNumber(value any) (any, error) {
+	n, ok := value.(json.Number)
+	if !ok {
+		return nil, fmt.Errorf("expected number, got %T", value)
+	}
+	return n.Int64()
+}
+
+func decodeText(value any) (any, error) {
+	s, ok := value.(string)
+	if !ok {
+		return nil, fmt.Errorf("expected text, got %T", value)
+	}
+	return s, nil
+}
+
+func decodeBlob(value any) ([]byte, error) {
+	items, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("expected byte array for BLOB, got %T", value)
+	}
+	out := make([]byte, 0, len(items))
+	for _, item := range items {
+		b, err := decodeByte(item)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, nil
+}
+
+func decodeByte(item any) (byte, error) {
+	n, ok := item.(json.Number)
+	if !ok {
+		return 0, fmt.Errorf("expected byte value, got %T", item)
+	}
+	b, err := n.Int64()
+	if err != nil || b < 0 || b > 255 {
+		return 0, fmt.Errorf("byte value out of range: %v", item)
+	}
+	return byte(b), nil
 }

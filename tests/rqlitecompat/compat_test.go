@@ -27,57 +27,52 @@ func TestSchemaBootstrapIsIdempotentAndBlobsRoundTrip(t *testing.T) {
 	_, client, store := bootstrap(t, 1)
 	ctx := context.Background()
 
-	// A second bootstrap must not reset the revision counter or the schema row.
-	if err := Bootstrap(ctx, client); err != nil {
-		t.Fatalf("second bootstrap: %v", err)
-	}
-	if got, err := store.SchemaVersion(ctx); err != nil || got != SchemaVersion {
-		t.Fatalf("schema version = %d (%v), want %d", got, err, SchemaVersion)
-	}
-	if got, err := store.MetaRevision(ctx); err != nil || got != 0 {
-		t.Fatalf("revision after bootstrap = %d (%v), want 0", got, err)
-	}
+	assertBootstrapIsIdempotent(ctx, t, client, store)
+	assertBinaryBlobsRoundTrip(ctx, t, store)
+}
 
-	// Keys and values must round-trip byte for byte, including 0x00, 0xff and
-	// 0x80 — the reason blobs are sent as byte arrays and read with blob_array.
+// assertBootstrapIsIdempotent re-runs the schema bootstrap and checks that a
+// second run resets neither the revision counter nor the schema row.
+func assertBootstrapIsIdempotent(ctx context.Context, t *testing.T, client *Client, store *Store) {
+	t.Helper()
+	requireNoError(t, "second bootstrap", Bootstrap(ctx, client))
+
+	version, err := store.SchemaVersion(ctx)
+	requireNoError(t, "read the schema version", err)
+	requireEqual(t, "schema version", version, int64(SchemaVersion))
+
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision", err)
+	requireEqual(t, "revision after bootstrap", revision, int64(0))
+}
+
+// assertBinaryBlobsRoundTrip writes keys and values containing 0x00, 0xff and
+// 0x80 — the reason blobs are sent as byte arrays and read with blob_array —
+// and reads them back byte for byte.
+func assertBinaryBlobsRoundTrip(ctx context.Context, t *testing.T, store *Store) {
+	t.Helper()
 	key := []byte{0x2f, 0x00, 0xff, 0x80, 0x01}
 	value := []byte{0x00, 0x00, 0xff, 0x80}
+
 	res, err := store.TxnCAS(ctx, CASRequest{RequestID: "binary-1", Key: key, Value: value})
-	if err != nil {
-		t.Fatalf("create binary key: %v", err)
-	}
-	if !res.Succeeded || res.Revision != 1 {
-		t.Fatalf("create binary key: succeeded=%v revision=%d, want true/1", res.Succeeded, res.Revision)
-	}
-	if !bytes.Equal(res.KV.Key, key) || !bytes.Equal(res.KV.Value, value) {
-		t.Fatalf("txn response key/value = %x/%x, want %x/%x", res.KV.Key, res.KV.Value, key, value)
-	}
+	requireNoError(t, "create binary key", err)
+	requireTrue(t, fmt.Sprintf("create binary key = %+v, want it to commit at revision 1", res), res.Succeeded && res.Revision == 1)
+	requireBytes(t, "txn response key", res.KV.Key, key)
+	requireBytes(t, "txn response value", res.KV.Value, value)
 
 	kv, revision, err := store.Range(ctx, key)
-	if err != nil {
-		t.Fatalf("range binary key: %v", err)
-	}
-	if !kv.Exists || !bytes.Equal(kv.Key, key) || !bytes.Equal(kv.Value, value) {
-		t.Fatalf("range key/value = %v %x/%x, want %x/%x", kv.Exists, kv.Key, kv.Value, key, value)
-	}
-	if revision != 1 {
-		t.Fatalf("range header revision = %d, want 1", revision)
-	}
+	requireNoError(t, "range binary key", err)
+	requireTrue(t, fmt.Sprintf("range binary key = %+v, want the entry that was written", kv), kv.Exists)
+	requireBytes(t, "ranged key", kv.Key, key)
+	requireBytes(t, "ranged value", kv.Value, value)
+	requireEqual(t, "range header revision", revision, int64(1))
 
 	missing, revision, err := store.Range(ctx, []byte{0x2f, 0x00, 0xfe})
-	if err != nil {
-		t.Fatalf("range missing key: %v", err)
-	}
-	if missing.Exists {
-		t.Fatalf("range of a missing key reported an entry: %+v", missing)
-	}
-	if revision != 1 {
-		t.Fatalf("range header revision for missing key = %d, want 1", revision)
-	}
+	requireNoError(t, "range missing key", err)
+	requireTrue(t, fmt.Sprintf("range of a missing key reported an entry: %+v", missing), !missing.Exists)
+	requireEqual(t, "range header revision for a missing key", revision, int64(1))
 
-	if err := store.assertOrderedPrefix(ctx, []byte{0x2f}, [][]byte{key}); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, "prefix scan", store.assertOrderedPrefix(ctx, []byte{0x2f}, [][]byte{key}))
 }
 
 func TestTxnCompareBranchesAndRevision(t *testing.T) {
@@ -85,117 +80,102 @@ func TestTxnCompareBranchesAndRevision(t *testing.T) {
 	ctx := context.Background()
 	key := []byte("/registry/sandbox-matrix/token/abc")
 
-	// Create: the compare is `mod_revision == 0` and the key is absent.
+	casCreateThenUpdate(ctx, t, store, key)
+	casFailedComparesKeepRevision(ctx, t, store, key)
+	casDeleteWritesTombstone(ctx, t, store, key)
+	casFailedDeleteKeepsRevision(ctx, t, store, key)
+}
+
+// casCreateThenUpdate checks the two committing compares: the create compares
+// `mod_revision == 0` against an absent key, an update with a matching compare
+// commits at the next revision and bumps only the version.
+func casCreateThenUpdate(ctx context.Context, t *testing.T, store *Store, key []byte) {
+	t.Helper()
 	create, err := store.TxnCAS(ctx, CASRequest{RequestID: "tx-1", Key: key, Value: []byte("v1")})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if !create.Succeeded || create.Revision != 1 {
-		t.Fatalf("create: succeeded=%v revision=%d, want true/1", create.Succeeded, create.Revision)
-	}
-	if create.KV.CreateRevision != 1 || create.KV.ModRevision != 1 || create.KV.Version != 1 {
-		t.Fatalf("create kv = %+v, want create=mod=version=1", create.KV)
-	}
+	requireNoError(t, "create", err)
+	requireTrue(t, fmt.Sprintf("create = %+v, want it to commit at revision 1", create), create.Succeeded && create.Revision == 1)
+	requireEqual(t, "create create_revision", create.KV.CreateRevision, int64(1))
+	requireEqual(t, "create mod_revision", create.KV.ModRevision, int64(1))
+	requireEqual(t, "create version", create.KV.Version, int64(1))
 
-	// Update with a matching compare commits at the next revision and bumps
-	// only the version; create_revision is preserved.
 	update, err := store.TxnCAS(ctx, CASRequest{RequestID: "tx-2", Key: key, ExpectModRevision: 1, Value: []byte("v2")})
-	if err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	if !update.Succeeded || update.Revision != 2 {
-		t.Fatalf("update: succeeded=%v revision=%d, want true/2", update.Succeeded, update.Revision)
-	}
-	if update.KV.CreateRevision != 1 || update.KV.ModRevision != 2 || update.KV.Version != 2 {
-		t.Fatalf("update kv = %+v, want create=1 mod=2 version=2", update.KV)
-	}
+	requireNoError(t, "update", err)
+	requireTrue(t, fmt.Sprintf("update = %+v, want it to commit at revision 2", update), update.Succeeded && update.Revision == 2)
+	requireEqual(t, "update create_revision", update.KV.CreateRevision, int64(1))
+	requireEqual(t, "update mod_revision", update.KV.ModRevision, int64(2))
+	requireEqual(t, "update version", update.KV.Version, int64(2))
+}
 
-	// A stale compare fails, changes nothing and — like etcd's
-	// storeTxnWrite.End — does not advance the revision.
+// casFailedComparesKeepRevision checks that a stale compare and a create
+// against an existing key both fail, change nothing and — like etcd's
+// storeTxnWrite.End — do not advance the revision, so the next write takes the
+// revision the failed compares did not consume.
+func casFailedComparesKeepRevision(ctx context.Context, t *testing.T, store *Store, key []byte) {
+	t.Helper()
 	stale, err := store.TxnCAS(ctx, CASRequest{RequestID: "tx-3", Key: key, ExpectModRevision: 1, Value: []byte("v3")})
-	if err != nil {
-		t.Fatalf("stale compare: %v", err)
-	}
-	if stale.Succeeded {
-		t.Fatal("stale compare reported success")
-	}
-	if stale.Revision != 2 {
-		t.Fatalf("stale compare reported revision %d, want the unchanged revision 2", stale.Revision)
-	}
-	if stale.KV.ModRevision != 2 || string(stale.KV.Value) != "v2" {
-		t.Fatalf("stale compare response kv = %+v, want the current v2@2", stale.KV)
-	}
-	if got, err := store.MetaRevision(ctx); err != nil || got != 2 {
-		t.Fatalf("revision after failed compare = %d (%v), want 2", got, err)
-	}
-	if err := store.assertEqualHistory(ctx, key, []HistoryEntry{
+	requireNoError(t, "stale compare", err)
+	requireTrue(t, fmt.Sprintf("stale compare = %+v, want a failed compare", stale), !stale.Succeeded)
+	requireEqual(t, "stale compare reported revision", stale.Revision, int64(2))
+	requireEqual(t, "stale compare response mod_revision", stale.KV.ModRevision, int64(2))
+	requireBytes(t, "stale compare response value", stale.KV.Value, []byte("v2"))
+
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision after the failed compare", err)
+	requireEqual(t, "revision after the failed compare", revision, int64(2))
+	requireNoError(t, "history after the failed compare", store.assertEqualHistory(ctx, key, []HistoryEntry{
 		{ModRevision: 1, Version: 1, Value: []byte("v1")},
 		{ModRevision: 2, Version: 2, Value: []byte("v2")},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if outcome, revision, exists, err := store.RequestRecord(ctx, "tx-3"); err != nil || !exists || outcome != "cas_failed" || revision != 2 {
-		t.Fatalf("failed compare record = %q rev=%d exists=%v (%v), want cas_failed/2/true", outcome, revision, exists, err)
-	}
+	}))
 
-	// A create against an existing key fails the same way.
+	outcome, recordRevision, exists, err := store.RequestRecord(ctx, "tx-3")
+	requireNoError(t, "read the failed compare record", err)
+	requireTrue(t, "the failed compare is recorded", exists)
+	requireEqual(t, "failed compare outcome", outcome, "cas_failed")
+	requireEqual(t, "failed compare recorded revision", recordRevision, int64(2))
+
 	dup, err := store.TxnCAS(ctx, CASRequest{RequestID: "tx-4", Key: key, Value: []byte("v3")})
-	if err != nil {
-		t.Fatalf("duplicate create: %v", err)
-	}
-	if dup.Succeeded || dup.Revision != 2 {
-		t.Fatalf("duplicate create: succeeded=%v revision=%d, want false/2", dup.Succeeded, dup.Revision)
-	}
+	requireNoError(t, "duplicate create", err)
+	requireTrue(t, fmt.Sprintf("duplicate create = %+v, want a failed compare", dup), !dup.Succeeded)
+	requireEqual(t, "duplicate create reported revision", dup.Revision, int64(2))
 
-	// No revision was consumed by the two failed compares: the next write
-	// takes revision 3 and the history stays gap-free.
 	next, err := store.TxnCAS(ctx, CASRequest{RequestID: "tx-5", Key: key, ExpectModRevision: 2, Value: []byte("v4")})
-	if err != nil {
-		t.Fatalf("update after failed compares: %v", err)
-	}
-	if !next.Succeeded || next.Revision != 3 {
-		t.Fatalf("update after failed compares: succeeded=%v revision=%d, want true/3", next.Succeeded, next.Revision)
-	}
+	requireNoError(t, "update after the failed compares", err)
+	requireTrue(t, fmt.Sprintf("update after the failed compares = %+v, want it to commit at revision 3", next), next.Succeeded && next.Revision == 3)
+}
 
-	// Delete writes a tombstone at the next revision and removes the key.
+// casDeleteWritesTombstone checks that a delete writes a tombstone at the next
+// revision, removes the key from a range and keeps the tombstone in history.
+func casDeleteWritesTombstone(ctx context.Context, t *testing.T, store *Store, key []byte) {
+	t.Helper()
 	del, err := store.TxnCAS(ctx, CASRequest{RequestID: "tx-6", Key: key, ExpectModRevision: 3, Delete: true})
-	if err != nil {
-		t.Fatalf("delete: %v", err)
-	}
-	if !del.Succeeded || del.Revision != 4 {
-		t.Fatalf("delete: succeeded=%v revision=%d, want true/4", del.Succeeded, del.Revision)
-	}
-	if del.KV.Exists {
-		t.Fatalf("delete response still reports the key: %+v", del.KV)
-	}
-	if err := store.assertEqualHistory(ctx, key, []HistoryEntry{
+	requireNoError(t, "delete", err)
+	requireTrue(t, fmt.Sprintf("delete = %+v, want it to commit at revision 4", del), del.Succeeded && del.Revision == 4)
+	requireTrue(t, fmt.Sprintf("delete response still reports the key: %+v", del.KV), !del.KV.Exists)
+	requireNoError(t, "history after the delete", store.assertEqualHistory(ctx, key, []HistoryEntry{
 		{ModRevision: 1, Version: 1, Value: []byte("v1")},
 		{ModRevision: 2, Version: 2, Value: []byte("v2")},
 		{ModRevision: 3, Version: 3, Value: []byte("v4")},
 		{ModRevision: 4, Version: 4, Deleted: true},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	after, revision, err := store.Range(ctx, key)
-	if err != nil {
-		t.Fatalf("range after delete: %v", err)
-	}
-	if after.Exists || revision != 4 {
-		t.Fatalf("range after delete = exists=%v revision=%d, want false/4", after.Exists, revision)
-	}
+	}))
 
-	// Deleting a key that is already gone fails the compare and, again, does
-	// not advance the revision.
+	after, revision, err := store.Range(ctx, key)
+	requireNoError(t, "range after the delete", err)
+	requireTrue(t, fmt.Sprintf("range after the delete = exists=%v revision=%d, want false/4", after.Exists, revision), !after.Exists)
+	requireEqual(t, "range revision after the delete", revision, int64(4))
+}
+
+// casFailedDeleteKeepsRevision checks that deleting a key that is already gone
+// fails the compare and, again, does not advance the revision.
+func casFailedDeleteKeepsRevision(ctx context.Context, t *testing.T, store *Store, key []byte) {
+	t.Helper()
 	gone, err := store.TxnCAS(ctx, CASRequest{RequestID: "tx-7", Key: key, ExpectModRevision: 3, Delete: true})
-	if err != nil {
-		t.Fatalf("delete of a missing key: %v", err)
-	}
-	if gone.Succeeded || gone.Revision != 4 {
-		t.Fatalf("delete of a missing key: succeeded=%v revision=%d, want false/4", gone.Succeeded, gone.Revision)
-	}
-	if got, err := store.MetaRevision(ctx); err != nil || got != 4 {
-		t.Fatalf("revision after failed delete = %d (%v), want 4", got, err)
-	}
+	requireNoError(t, "delete of a missing key", err)
+	requireTrue(t, fmt.Sprintf("delete of a missing key = %+v, want a failed compare", gone), !gone.Succeeded)
+	requireEqual(t, "failed delete reported revision", gone.Revision, int64(4))
+
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision after the failed delete", err)
+	requireEqual(t, "revision after the failed delete", revision, int64(4))
 }
 
 // TestTxnResponseComesFromTheCommittingTransaction proves the response is
@@ -220,65 +200,47 @@ func TestTxnResponseComesFromTheCommittingTransaction(t *testing.T) {
 
 	const iterations = 50
 	for i := 0; i < iterations; i++ {
-		requestID := fmt.Sprintf("atomic-%d", i)
-		value := []byte(fmt.Sprintf("value-%d", i))
-
-		before := store.Client().Requests()
-		kv, revision, err := store.Range(ctx, key)
-		if err != nil {
-			t.Fatalf("iteration %d: read current revision: %v", i, err)
-		}
-		res, err := store.TxnCAS(ctx, CASRequest{
-			RequestID:         requestID,
-			Key:               key,
-			ExpectModRevision: kv.ModRevision,
-			Value:             value,
-		})
-		if err != nil {
-			t.Fatalf("iteration %d: txn: %v", i, err)
-		}
-		if requests := store.Client().Requests() - before; requests != 2 {
-			t.Fatalf("iteration %d: the read+txn used %d HTTP requests, want 2 (one per operation)", i, requests)
-		}
-		if !res.Succeeded {
-			// The racer won the compare; that is fine, the atomicity
-			// assertions below only apply to a committing transaction.
-			continue
-		}
-		if res.KV.ModRevision != res.Revision {
-			t.Fatalf("iteration %d: response carries key@%d but the transaction committed at revision %d",
-				i, res.KV.ModRevision, res.Revision)
-		}
-		if !bytes.Equal(res.KV.Value, value) {
-			t.Fatalf("iteration %d: response value %q, want %q", i, res.KV.Value, value)
-		}
-		if res.Revision <= revision {
-			t.Fatalf("iteration %d: revision %d did not advance past %d", i, res.Revision, revision)
-		}
-		entries, err := store.History(ctx, key)
-		if err != nil {
-			t.Fatalf("iteration %d: history: %v", i, err)
-		}
-		// The racer may have written newer revisions by now, so look for the
-		// revision this transaction committed rather than the tail.
-		found := false
-		for _, entry := range entries {
-			if entry.ModRevision == res.Revision {
-				found = true
-				if !bytes.Equal(entry.Value, value) {
-					t.Fatalf("iteration %d: history for revision %d holds %q, want %q", i, res.Revision, entry.Value, value)
-				}
-			}
-		}
-		if !found {
-			t.Fatalf("iteration %d: no history row for the committed revision %d", i, res.Revision)
-		}
+		assertCommittedResponse(ctx, t, store, key, i)
 	}
 
 	racing.Store(false)
-	if err := <-racerErr; err != nil {
-		t.Fatalf("racer: %v", err)
+	requireNoError(t, "racer", <-racerErr)
+}
+
+// assertCommittedResponse runs one read+compare-and-swap iteration of the
+// atomicity test and checks that a committing transaction reports the revision
+// it committed at, with the value it wrote, in the transaction response
+// itself: the read+txn pair costs two HTTP requests, so nothing is read back
+// afterwards.
+func assertCommittedResponse(ctx context.Context, t *testing.T, store *Store, key []byte, i int) {
+	t.Helper()
+	requestID := fmt.Sprintf("atomic-%d", i)
+	value := []byte(fmt.Sprintf("value-%d", i))
+
+	before := store.Client().Requests()
+	kv, revision, err := store.Range(ctx, key)
+	requireNoError(t, fmt.Sprintf("iteration %d: read the current revision", i), err)
+
+	res, err := store.TxnCAS(ctx, CASRequest{
+		RequestID:         requestID,
+		Key:               key,
+		ExpectModRevision: kv.ModRevision,
+		Value:             value,
+	})
+	requireNoError(t, fmt.Sprintf("iteration %d: txn", i), err)
+	requireEqual(t, fmt.Sprintf("iteration %d: HTTP requests used by the read+txn", i),
+		store.Client().Requests()-before, int64(2))
+
+	if !res.Succeeded {
+		// The racer won the compare; that is fine, the atomicity assertions
+		// below only apply to a committing transaction.
+		return
 	}
+	requireEqual(t, fmt.Sprintf("iteration %d: mod_revision of the response", i), res.KV.ModRevision, res.Revision)
+	requireBytes(t, fmt.Sprintf("iteration %d: response value", i), res.KV.Value, value)
+	requireTrue(t, fmt.Sprintf("iteration %d: revision %d did not advance past %d", i, res.Revision, revision), res.Revision > revision)
+	requireNoError(t, fmt.Sprintf("iteration %d: history of the committed revision", i),
+		store.assertHistoryValue(ctx, key, res.Revision, value))
 }
 
 // raceLoop keeps bumping the key so that a post-commit read would be visible.
@@ -318,105 +280,135 @@ func TestLostResponseReplayIsExactlyOnce(t *testing.T) {
 	client.SetTransport(recorder)
 
 	res, err := store.TxnCAS(ctx, CASRequest{RequestID: "lost-1", Key: key, Value: []byte("v1")})
-	if err != nil {
-		t.Fatalf("txn with a lost response: %v", err)
-	}
-	if !res.Succeeded || res.Revision != 1 {
-		t.Fatalf("txn with a lost response: succeeded=%v revision=%d, want true/1", res.Succeeded, res.Revision)
-	}
-	if !res.Deduped {
-		t.Fatal("the retry was not recognised as a replay of the recorded request id")
-	}
-	if lost := recorder.lostResponses(); lost != 1 {
-		t.Fatalf("dropped %d responses, want exactly 1", lost)
-	}
+	requireNoError(t, "txn with a lost response", err)
+	requireTrue(t, fmt.Sprintf("txn with a lost response = %+v, want it to commit at revision 1", res), res.Succeeded && res.Revision == 1)
+	requireTrue(t, "the retry was not recognised as a replay of the recorded request id", res.Deduped)
+	requireEqual(t, "dropped responses", recorder.lostResponses(), 1)
 
-	// Exactly one write happened: one revision, one history row, one request
-	// record, and the value is the one we sent.
-	if got, err := store.MetaRevision(ctx); err != nil || got != 1 {
-		t.Fatalf("revision = %d (%v), want 1", got, err)
-	}
-	if entries, err := store.History(ctx, key); err != nil || len(entries) != 1 {
-		t.Fatalf("history = %+v (%v), want exactly one entry", entries, err)
-	} else if string(entries[0].Value) != "v1" || entries[0].ModRevision != 1 {
-		t.Fatalf("history entry = %+v, want rev 1 value v1", entries[0])
-	}
-	if count, err := store.CountHistory(ctx, key); err != nil || count != 1 {
-		t.Fatalf("history count = %d (%v), want 1", count, err)
-	}
-	if count, err := store.CountRequests(ctx); err != nil || count != 1 {
-		t.Fatalf("request count = %d (%v), want 1", count, err)
-	}
-	if outcome, revision, exists, err := store.RequestRecord(ctx, "lost-1"); err != nil || !exists || outcome != "committed" || revision != 1 {
-		t.Fatalf("request record = %q rev=%d exists=%v (%v), want committed/1/true", outcome, revision, exists, err)
-	}
+	assertExactlyOneWrite(ctx, t, store, key)
+	assertReplayIsIdempotent(ctx, t, store, key)
+	assertLostWriteIsReadable(ctx, t, store, key)
+}
 
-	// A replayed request id is idempotent even after other writes: it must not
-	// consume a revision or add history.
+// assertExactlyOneWrite checks the write that lost its response happened once:
+// one revision, one history row, one request record, holding what was sent.
+func assertExactlyOneWrite(ctx context.Context, t *testing.T, store *Store, key []byte) {
+	t.Helper()
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision", err)
+	requireEqual(t, "revision after the lost response", revision, int64(1))
+
+	entries, err := store.History(ctx, key)
+	requireNoError(t, "read the history", err)
+	requireEqual(t, fmt.Sprintf("history after the lost response, want exactly one entry, got %+v", entries), len(entries), 1)
+	requireEqual(t, "history entry revision", entries[0].ModRevision, int64(1))
+	requireBytes(t, "history entry value", entries[0].Value, []byte("v1"))
+
+	count, err := store.CountHistory(ctx, key)
+	requireNoError(t, "count the history", err)
+	requireEqual(t, "history count after the lost response", count, int64(1))
+
+	requests, err := store.CountRequests(ctx)
+	requireNoError(t, "count the request records", err)
+	requireEqual(t, "request count after the lost response", requests, int64(1))
+
+	outcome, recordRevision, exists, err := store.RequestRecord(ctx, "lost-1")
+	requireNoError(t, "read the request record", err)
+	requireTrue(t, "the replayed request id is recorded", exists)
+	requireEqual(t, "recorded outcome", outcome, "committed")
+	requireEqual(t, "recorded revision", recordRevision, int64(1))
+}
+
+// assertReplayIsIdempotent checks that a replayed request id does not consume
+// a revision and does not add history.
+func assertReplayIsIdempotent(ctx context.Context, t *testing.T, store *Store, key []byte) {
+	t.Helper()
 	again, err := store.TxnCAS(ctx, CASRequest{RequestID: "lost-1", Key: key, Value: []byte("v1")})
-	if err != nil {
-		t.Fatalf("explicit replay: %v", err)
-	}
-	if !again.Deduped || again.Revision != 1 || len(again.KV.Value) == 0 {
-		t.Fatalf("explicit replay = %+v, want deduped at revision 1", again)
-	}
-	if got, err := store.MetaRevision(ctx); err != nil || got != 1 {
-		t.Fatalf("revision after replay = %d (%v), want 1", got, err)
-	}
-	if count, err := store.CountHistory(ctx, key); err != nil || count != 1 {
-		t.Fatalf("history count after replay = %d (%v), want 1", count, err)
-	}
+	requireNoError(t, "explicit replay", err)
+	requireTrue(t, fmt.Sprintf("explicit replay = %+v, want a de-duplicated result at revision 1", again), again.Deduped && again.Revision == 1)
+	requireTrue(t, "the explicit replay does not report the recorded value", len(again.KV.Value) > 0)
 
-	// The linearizable read sees the committed value.
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision after the replay", err)
+	requireEqual(t, "revision after the replay", revision, int64(1))
+
+	count, err := store.CountHistory(ctx, key)
+	requireNoError(t, "count the history after the replay", err)
+	requireEqual(t, "history count after the replay", count, int64(1))
+}
+
+// assertLostWriteIsReadable checks the linearizable read sees the value whose
+// response was lost.
+func assertLostWriteIsReadable(ctx context.Context, t *testing.T, store *Store, key []byte) {
+	t.Helper()
 	kv, revision, err := store.Range(ctx, key)
-	if err != nil {
-		t.Fatalf("read after lost response: %v", err)
-	}
-	if !kv.Exists || string(kv.Value) != "v1" || revision != 1 {
-		t.Fatalf("read after lost response = exists=%v value=%q revision=%d, want true/v1/1", kv.Exists, kv.Value, revision)
-	}
+	requireNoError(t, "read after the lost response", err)
+	requireTrue(t, fmt.Sprintf("read after the lost response = %+v, want the entry that was written", kv), kv.Exists)
+	requireBytes(t, "value after the lost response", kv.Value, []byte("v1"))
+	requireEqual(t, "revision after the lost response", revision, int64(1))
 }
 
 // TestLinearizableReadFromEveryNode writes once, then reads through each node
 // of a three-node cluster with an explicit linearizable level and checks that
 // every node reports the committed revision, not a stale one.
 func TestLinearizableReadFromEveryNode(t *testing.T) {
-	cluster, client, store := bootstrap(t, 3)
+	cluster, _, store := bootstrap(t, 3)
 	ctx := context.Background()
 	key := []byte("/registry/k8e/linearizable")
 
 	writer, err := store.TxnCAS(ctx, CASRequest{RequestID: "lin-1", Key: key, Value: []byte("value")})
-	if err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if !writer.Succeeded || writer.Revision != 1 {
-		t.Fatalf("write: succeeded=%v revision=%d, want true/1", writer.Succeeded, writer.Revision)
-	}
-
-	if _, withoutLevel := client.Reads(); withoutLevel != 0 {
-		t.Fatalf("%d read requests were sent without an explicit consistency level; rqlite's default is weak", withoutLevel)
-	}
+	requireNoError(t, "write", err)
+	requireTrue(t, fmt.Sprintf("write = %+v, want it to commit at revision 1", writer), writer.Succeeded && writer.Revision == 1)
 
 	recorder := newRecordingTransport()
 	for _, n := range cluster.Nodes() {
 		nodeClient := NewClient(n.Endpoint())
 		nodeClient.SetTransport(recorder)
 		kv, revision, err := NewStore(nodeClient).Range(ctx, key)
-		if err != nil {
-			t.Fatalf("read via %s: %v", n.ID, err)
-		}
-		if !kv.Exists || string(kv.Value) != "value" || revision != 1 {
-			t.Fatalf("read via %s = exists=%v value=%q revision=%d, want true/value/1", n.ID, kv.Exists, kv.Value, revision)
-		}
-		if total, withoutLevel := nodeClient.Reads(); total != 1 || withoutLevel != 0 {
-			t.Fatalf("read via %s used %d read requests (%d without a level), want 1 (0)", n.ID, total, withoutLevel)
-		}
+		requireNoError(t, fmt.Sprintf("read via %s", n.ID), err)
+		requireTrue(t, fmt.Sprintf("read via %s = %+v, want the value written at revision 1", n.ID, kv), kv.Exists && revision == 1)
+		requireBytes(t, fmt.Sprintf("value read via %s", n.ID), kv.Value, []byte("value"))
+		requireEqual(t, fmt.Sprintf("read requests used by the read via %s", n.ID), nodeClient.Reads(), int64(1))
 	}
 	for _, url := range recorder.readURLs() {
-		if !bytes.Contains([]byte(url), []byte("level=linearizable")) {
-			t.Fatalf("read request %s did not ask for a linearizable read", url)
-		}
+		requireTrue(t, fmt.Sprintf("read request %s did not ask for a linearizable read", url),
+			bytes.Contains([]byte(url), []byte("level=linearizable")))
 	}
+}
+
+// ack is the acknowledgement of one worker write: the request id, the key it
+// created and the revision it committed at.
+type ack struct {
+	requestID string
+	key       []byte
+	revision  int64
+}
+
+// ackLog is the shared record of the write acknowledgements, safe for the
+// parallel workers that produce them.
+type ackLog struct {
+	mu    sync.Mutex
+	acks  map[string]ack
+	acked atomic.Int64
+}
+
+func newAckLog() *ackLog { return &ackLog{acks: map[string]ack{}} }
+
+func (l *ackLog) record(a ack) {
+	l.mu.Lock()
+	l.acks[a.requestID] = a
+	l.mu.Unlock()
+	l.acked.Add(1)
+}
+
+func (l *ackLog) snapshot() map[string]ack {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make(map[string]ack, len(l.acks))
+	for id, a := range l.acks {
+		out[id] = a
+	}
+	return out
 }
 
 // TestLeaderSwitchKeepsAcknowledgedWrites kills the Raft leader while several
@@ -429,70 +421,34 @@ func TestLeaderSwitchKeepsAcknowledgedWrites(t *testing.T) {
 	defer cancel()
 
 	leader, err := cluster.Leader(ctx)
-	if err != nil {
-		t.Fatalf("find leader: %v", err)
-	}
+	requireNoError(t, "find the leader", err)
 
 	const workers = 4
 	const perWorker = 20
+	const want = workers * perWorker
 
-	type ack struct {
-		worker    int
-		index     int
-		requestID string
-		key       []byte
-		revision  int64
-		deduped   bool
-	}
-	var (
-		mu    sync.Mutex
-		acks  = map[string]ack{}
-		acked atomic.Int64
-		errs  = make(chan error, workers)
-		wg    sync.WaitGroup
-	)
-
+	acks := newAckLog()
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
-			workerStore := NewStore(NewClient(cluster.Endpoints()...))
-			for i := 0; i < perWorker; i++ {
-				key := []byte(fmt.Sprintf("/registry/k8e/switch/w%d/%03d", w, i))
-				requestID := fmt.Sprintf("switch-%d-%d", w, i)
-				res, err := workerStore.TxnCAS(ctx, CASRequest{RequestID: requestID, Key: key, Value: []byte(requestID)})
-				if err != nil {
-					errs <- fmt.Errorf("worker %d write %d: %w", w, i, err)
-					return
-				}
-				if !res.Succeeded {
-					errs <- fmt.Errorf("worker %d write %d did not commit", w, i)
-					return
-				}
-				mu.Lock()
-				acks[requestID] = ack{worker: w, index: i, requestID: requestID, key: key, revision: res.Revision, deduped: res.Deduped}
-				mu.Unlock()
-				acked.Add(1)
+			if err := writeWorker(ctx, cluster.Endpoints(), w, perWorker, acks); err != nil {
+				errs <- err
 			}
 		}(w)
 	}
 
-	// Kill the leader while the workers are mid-flight; wait until at least a
-	// few writes have been acknowledged so the cluster is demonstrably busy.
-	deadline := time.Now().Add(15 * time.Second)
-	for acked.Load() < 5 && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if acked.Load() < 5 {
-		t.Fatalf("only %d writes were acknowledged before the leader switch", acked.Load())
-	}
+	// Kill the leader while the workers are mid-flight; wait until a few writes
+	// have been acknowledged so the cluster is demonstrably busy.
+	requireTrue(t, "only a few writes were acknowledged before the leader switch",
+		waitForAcks(acks, 5, 15*time.Second))
 	cluster.Kill(leader)
 	t.Logf("killed leader %s", leader.ID)
 
 	newLeader, err := cluster.WaitForNewLeader(ctx, leader.ID)
-	if err != nil {
-		t.Fatalf("no new leader after killing %s: %v", leader.ID, err)
-	}
+	requireNoError(t, fmt.Sprintf("no new leader after killing %s", leader.ID), err)
 	t.Logf("new leader is %s", newLeader.ID)
 
 	wg.Wait()
@@ -502,73 +458,91 @@ func TestLeaderSwitchKeepsAcknowledgedWrites(t *testing.T) {
 	default:
 	}
 
-	mu.Lock()
-	collected := make(map[string]ack, len(acks))
-	for id, a := range acks {
-		collected[id] = a
-	}
-	mu.Unlock()
+	collected := acks.snapshot()
+	requireEqual(t, "acknowledged writes", len(collected), want)
+	assertAcknowledgedRevisions(t, collected, want)
+	assertAcknowledgedWritesReadable(ctx, t, store, collected)
+	assertRestartedNodeCaughtUp(ctx, t, cluster, client, leader, newLeader, collected)
+}
 
-	want := workers * perWorker
-	if len(collected) != want {
-		t.Fatalf("acknowledged %d writes, want %d", len(collected), want)
+// writeWorker writes perWorker distinct keys through its own adapter client and
+// records every acknowledgement.
+func writeWorker(ctx context.Context, endpoints []string, worker, perWorker int, acks *ackLog) error {
+	workerStore := NewStore(NewClient(endpoints...))
+	for i := 0; i < perWorker; i++ {
+		requestID := fmt.Sprintf("switch-%d-%d", worker, i)
+		key := []byte(fmt.Sprintf("/registry/k8e/switch/w%d/%03d", worker, i))
+		res, err := workerStore.TxnCAS(ctx, CASRequest{RequestID: requestID, Key: key, Value: []byte(requestID)})
+		if err != nil {
+			return fmt.Errorf("worker %d write %d: %w", worker, i, err)
+		}
+		if !res.Succeeded {
+			return fmt.Errorf("worker %d write %d did not commit", worker, i)
+		}
+		acks.record(ack{requestID: requestID, key: key, revision: res.Revision})
 	}
+	return nil
+}
 
-	// Every acknowledged write owns a distinct revision and, because all keys
-	// are created exactly once, the acknowledged revisions are exactly
-	// 1..want: no revision was lost, skipped or handed out twice.
+// waitForAcks waits until at least want writes have been acknowledged.
+func waitForAcks(acks *ackLog, want int64, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for acks.acked.Load() < want && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	return acks.acked.Load() >= want
+}
+
+// assertAcknowledgedRevisions checks that every acknowledged write owns a
+// distinct revision and that, because all keys are created exactly once, the
+// acknowledged revisions are exactly 1..want: no revision was lost, skipped or
+// handed out twice.
+func assertAcknowledgedRevisions(t *testing.T, collected map[string]ack, want int) {
+	t.Helper()
 	revisions := map[int64]string{}
 	for id, a := range collected {
-		if other, dup := revisions[a.revision]; dup {
-			t.Fatalf("revision %d was acknowledged for both %s and %s", a.revision, other, id)
-		}
-		if a.revision < 1 || a.revision > int64(want) {
-			t.Fatalf("%s was acknowledged at revision %d, outside 1..%d", id, a.revision, want)
-		}
+		other, dup := revisions[a.revision]
+		requireTrue(t, fmt.Sprintf("revision %d was acknowledged for both %s and %s", a.revision, other, id), !dup)
+		requireTrue(t, fmt.Sprintf("%s was acknowledged at revision %d, outside 1..%d", id, a.revision, want),
+			a.revision >= 1 && a.revision <= int64(want))
 		revisions[a.revision] = id
 	}
 	for rev := int64(1); rev <= int64(want); rev++ {
-		if _, ok := revisions[rev]; !ok {
-			t.Fatalf("revision %d was never acknowledged", rev)
-		}
+		_, ok := revisions[rev]
+		requireTrue(t, fmt.Sprintf("revision %d was never acknowledged", rev), ok)
 	}
+}
 
-	// Every acknowledged write is still readable, at the revision it was
-	// acknowledged with, through a survivor.
+// assertAcknowledgedWritesReadable checks that every acknowledged write is
+// still readable through a survivor, at the revision it was acknowledged with.
+func assertAcknowledgedWritesReadable(ctx context.Context, t *testing.T, store *Store, collected map[string]ack) {
+	t.Helper()
 	for id, a := range collected {
 		kv, revision, err := store.Range(ctx, a.key)
-		if err != nil {
-			t.Fatalf("read back %s: %v", id, err)
-		}
-		if !kv.Exists || string(kv.Value) != a.requestID || kv.ModRevision != a.revision {
-			t.Fatalf("read back %s = exists=%v value=%q mod=%d, want %q@%d",
-				id, kv.Exists, kv.Value, kv.ModRevision, a.requestID, a.revision)
-		}
-		if revision < a.revision {
-			t.Fatalf("read back %s reported revision %d, below the acknowledged %d", id, revision, a.revision)
-		}
+		requireNoError(t, fmt.Sprintf("read back %s", id), err)
+		requireTrue(t, fmt.Sprintf("read back %s = exists=%v value=%q mod=%d, want %q@%d",
+			id, kv.Exists, kv.Value, kv.ModRevision, a.requestID, a.revision),
+			kv.Exists && bytes.Equal(kv.Value, []byte(a.requestID)) && kv.ModRevision == a.revision)
+		requireTrue(t, fmt.Sprintf("read back %s reported revision %d, below the acknowledged %d", id, revision, a.revision),
+			revision >= a.revision)
 	}
+}
 
-	// Restart the killed node and let it catch up from the new leader.
-	cluster.Restart(leader)
+// assertRestartedNodeCaughtUp restarts the killed node, waits for it to apply
+// the new leader's index and reads the first acknowledged write from it.
+func assertRestartedNodeCaughtUp(ctx context.Context, t *testing.T, cluster *Cluster, client *Client, killed, newLeader *Node, collected map[string]ack) {
+	t.Helper()
+	cluster.Restart(killed)
 	status, err := client.Status(ctx, newLeader.Endpoint())
-	if err != nil {
-		t.Fatalf("status of new leader: %v", err)
-	}
-	if err := cluster.waitForNodeCatchUp(ctx, leader, status.Store.DBAppliedIndex); err != nil {
-		t.Fatalf("restarted node: %v", err)
-	}
+	requireNoError(t, "read the status of the new leader", err)
+	requireNoError(t, "the restarted node did not catch up", cluster.waitForNodeCatchUp(ctx, killed, status.Store.DBAppliedIndex))
 
-	// A read from the restarted node returns the acknowledged data.
-	restartedStore := NewStore(NewClient(leader.Endpoint()))
-	kv, revision, err := restartedStore.Range(ctx, collected["switch-0-0"].key)
-	if err != nil {
-		t.Fatalf("read from restarted node: %v", err)
-	}
-	if !kv.Exists || kv.ModRevision != collected["switch-0-0"].revision || revision < kv.ModRevision {
-		t.Fatalf("read from restarted node = exists=%v mod=%d revision=%d, want %d",
-			kv.Exists, kv.ModRevision, revision, collected["switch-0-0"].revision)
-	}
+	first := collected["switch-0-0"]
+	kv, revision, err := NewStore(NewClient(killed.Endpoint())).Range(ctx, first.key)
+	requireNoError(t, "read from the restarted node", err)
+	requireTrue(t, fmt.Sprintf("read from the restarted node = exists=%v mod=%d revision=%d, want the acknowledged %q@%d",
+		kv.Exists, kv.ModRevision, revision, first.requestID, first.revision),
+		kv.Exists && kv.ModRevision == first.revision && revision >= kv.ModRevision)
 }
 
 // recordingTransport counts normal traffic and can drop a received response,
@@ -640,91 +614,102 @@ func (rt *recordingTransport) readURLs() []string {
 func TestNoQuorumFailsFastWithoutPartialWrite(t *testing.T) {
 	cluster, _, store := bootstrap(t, 3)
 	ctx := context.Background()
+	failedKey := []byte("/registry/k8e/quorum/failed")
 
 	committed, err := store.TxnCAS(ctx, CASRequest{RequestID: "quorum-1", Key: []byte("/registry/k8e/quorum/existing"), Value: []byte("before")})
-	if err != nil || !committed.Succeeded || committed.Revision != 1 {
-		t.Fatalf("initial write: %+v (%v)", committed, err)
-	}
+	requireNoError(t, "initial write", err)
+	requireTrue(t, fmt.Sprintf("initial write = %+v, want it to commit at revision 1", committed), committed.Succeeded && committed.Revision == 1)
 
 	leader, err := cluster.Leader(ctx)
-	if err != nil {
-		t.Fatalf("find leader: %v", err)
-	}
+	requireNoError(t, "find the leader", err)
 
-	// Leave exactly one node running: it can neither elect a leader nor reach
-	// one, so every write must fail without committing.
+	surviving := killAllButOne(cluster, leader)
+	t.Logf("killed every node but %s", surviving.ID)
+
+	assertQuorumlessWriteFails(ctx, t, surviving, failedKey)
+
+	restoreCluster(cluster)
+	readyCtx, cancelReady := context.WithTimeout(ctx, 60*time.Second)
+	defer cancelReady()
+	requireNoError(t, "the cluster did not recover", cluster.WaitForReady(readyCtx))
+
+	assertFailedWriteLeftNoTrace(readyCtx, t, store, failedKey)
+
+	after, err := store.TxnCAS(readyCtx, CASRequest{RequestID: "quorum-3", Key: failedKey, Value: []byte("after")})
+	requireNoError(t, "write after recovery", err)
+	requireTrue(t, fmt.Sprintf("write after recovery = %+v, want revision 2", after), after.Succeeded && after.Revision == 2)
+}
+
+// killAllButOne kills every node of the cluster but one and returns the
+// survivor: it can neither elect a leader nor reach one.
+func killAllButOne(cluster *Cluster, leader *Node) *Node {
 	var surviving *Node
 	for _, n := range cluster.Nodes() {
 		if n.ID == leader.ID {
 			continue
 		}
-		if surviving == nil {
-			surviving = n
+		if surviving != nil {
+			cluster.Kill(n)
 			continue
 		}
-		cluster.Kill(n)
+		surviving = n
 	}
 	cluster.Kill(leader)
-	t.Logf("killed every node but %s", surviving.ID)
+	return surviving
+}
 
-	// A quorum-less write fails one of two ways, both bounded and both
-	// observed against v10.3.5: rqlite answers 503 "leader not found" once it
-	// knows there is no leader, or the follower still forwards to the dead
-	// leader and the request ends in the adapter's own context deadline.
-	// Either way the adapter must bound its retries and report, not hang.
+// assertQuorumlessWriteFails checks that a write without quorum fails with a
+// bounded, explicit error instead of hanging. It fails one of two ways, both
+// observed against v10.3.5: rqlite answers 503 "leader not found" once it knows
+// there is no leader, or the follower still forwards to the dead leader and the
+// request ends in the adapter's own context deadline. Either way the adapter
+// must bound its retries and report.
+func assertQuorumlessWriteFails(ctx context.Context, t *testing.T, surviving *Node, failedKey []byte) {
+	t.Helper()
 	shortCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	failedKey := []byte("/registry/k8e/quorum/failed")
+
 	started := time.Now()
-	_, err = NewStore(NewClient(surviving.Endpoint())).TxnCAS(shortCtx, CASRequest{
+	_, err := NewStore(NewClient(surviving.Endpoint())).TxnCAS(shortCtx, CASRequest{
 		RequestID: "quorum-2",
 		Key:       failedKey,
 		Value:     []byte("never"),
 	})
 	elapsed := time.Since(started)
-	if err == nil {
-		t.Fatal("a write without quorum reported success")
-	}
-	if elapsed > 12*time.Second {
-		t.Fatalf("the write without quorum returned after %s, want a bounded failure", elapsed)
-	}
+	requireTrue(t, "a write without quorum reported success", err != nil)
+	requireTrue(t, fmt.Sprintf("the write without quorum returned after %s, want a bounded failure", elapsed),
+		elapsed <= 12*time.Second)
 	msg := err.Error()
-	if !strings.Contains(msg, "leader") && !strings.Contains(msg, "deadline exceeded") {
-		t.Fatalf("the write failed with %v, want a no-leader or bounded-deadline failure", err)
-	}
+	requireTrue(t, fmt.Sprintf("the write failed with %v, want a no-leader or bounded-deadline failure", err),
+		strings.Contains(msg, "leader") || strings.Contains(msg, "deadline exceeded"))
 	t.Logf("write without quorum failed after %s as expected: %v", elapsed.Round(time.Millisecond), err)
+}
 
-	// Restore quorum and confirm nothing from the failed write exists.
+// restoreCluster restarts every node that is not running.
+func restoreCluster(cluster *Cluster) {
 	for _, n := range cluster.Nodes() {
 		if n.cmd == nil {
 			cluster.Restart(n)
 		}
 	}
-	readyCtx, cancelReady := context.WithTimeout(ctx, 60*time.Second)
-	defer cancelReady()
-	if err := cluster.WaitForReady(readyCtx); err != nil {
-		t.Fatalf("cluster did not recover: %v", err)
-	}
+}
 
-	if got, err := store.MetaRevision(readyCtx); err != nil || got != 1 {
-		t.Fatalf("revision after a failed write = %d (%v), want the unchanged 1", got, err)
-	}
-	kv, revision, err := store.Range(readyCtx, failedKey)
-	if err != nil {
-		t.Fatalf("read the failed key: %v", err)
-	}
-	if kv.Exists || revision != 1 {
-		t.Fatalf("failed write left data behind: exists=%v revision=%d", kv.Exists, revision)
-	}
-	if _, _, exists, err := store.RequestRecord(readyCtx, "quorum-2"); err != nil || exists {
-		t.Fatalf("failed write left a request record behind: exists=%v (%v)", exists, err)
-	}
+// assertFailedWriteLeftNoTrace checks that the failed write consumed no
+// revision, left no data and recorded no request id.
+func assertFailedWriteLeftNoTrace(ctx context.Context, t *testing.T, store *Store, failedKey []byte) {
+	t.Helper()
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision after the failed write", err)
+	requireEqual(t, "revision after a failed write", revision, int64(1))
 
-	// The cluster is usable again and continues from the same revision.
-	after, err := store.TxnCAS(readyCtx, CASRequest{RequestID: "quorum-3", Key: failedKey, Value: []byte("after")})
-	if err != nil || !after.Succeeded || after.Revision != 2 {
-		t.Fatalf("write after recovery: %+v (%v), want revision 2", after, err)
-	}
+	kv, rangeRevision, err := store.Range(ctx, failedKey)
+	requireNoError(t, "read the failed key", err)
+	requireTrue(t, fmt.Sprintf("failed write left data behind: exists=%v revision=%d", kv.Exists, rangeRevision),
+		!kv.Exists && rangeRevision == 1)
+
+	_, _, exists, err := store.RequestRecord(ctx, "quorum-2")
+	requireNoError(t, "read the failed write record", err)
+	requireTrue(t, "failed write left a request record behind", !exists)
 }
 
 // TestClusterCrashRestartPreservesCommittedData kills every node with SIGKILL
@@ -735,65 +720,74 @@ func TestClusterCrashRestartPreservesCommittedData(t *testing.T) {
 	cluster, _, store := bootstrap(t, 3)
 	ctx := context.Background()
 
+	keys := writeCrashFixture(ctx, t, store)
+	killAndRestartCluster(t, cluster)
+
+	restartCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	requireNoError(t, "the cluster did not recover from a crash", cluster.WaitForReady(restartCtx))
+
+	assertPostCrashState(restartCtx, t, store, keys)
+}
+
+// writeCrashFixture writes three keys, updates one and deletes another so the
+// history has all three shapes before the cluster is killed.
+func writeCrashFixture(ctx context.Context, t *testing.T, store *Store) map[string][]byte {
+	t.Helper()
 	keys := map[string][]byte{}
 	for i, name := range []string{"a", "b", "c"} {
 		key := []byte("/registry/k8e/crash/" + name)
 		keys[name] = key
-		res, err := store.TxnCAS(ctx, CASRequest{
-			RequestID: fmt.Sprintf("crash-%d", i),
-			Key:       key,
-			Value:     []byte(name),
-		})
-		if err != nil || !res.Succeeded || res.Revision != int64(i+1) {
-			t.Fatalf("write %s: %+v (%v)", name, res, err)
-		}
+		res, err := store.TxnCAS(ctx, CASRequest{RequestID: fmt.Sprintf("crash-%d", i), Key: key, Value: []byte(name)})
+		requireNoError(t, fmt.Sprintf("write %s", name), err)
+		requireTrue(t, fmt.Sprintf("write %s = %+v, want it to commit at revision %d", name, res, i+1),
+			res.Succeeded && res.Revision == int64(i+1))
 	}
-	// Update one key and delete another so the history has all three shapes.
-	if _, err := store.TxnCAS(ctx, CASRequest{RequestID: "crash-update", Key: keys["a"], ExpectModRevision: 1, Value: []byte("a2")}); err != nil {
-		t.Fatalf("update: %v", err)
-	}
-	if _, err := store.TxnCAS(ctx, CASRequest{RequestID: "crash-delete", Key: keys["c"], ExpectModRevision: 3, Delete: true}); err != nil {
-		t.Fatalf("delete: %v", err)
-	}
+	_, err := store.TxnCAS(ctx, CASRequest{RequestID: "crash-update", Key: keys["a"], ExpectModRevision: 1, Value: []byte("a2")})
+	requireNoError(t, "update", err)
+	_, err = store.TxnCAS(ctx, CASRequest{RequestID: "crash-delete", Key: keys["c"], ExpectModRevision: 3, Delete: true})
+	requireNoError(t, "delete", err)
+	return keys
+}
 
+// killAndRestartCluster kills every node and starts them again from disk.
+func killAndRestartCluster(t *testing.T, cluster *Cluster) {
+	t.Helper()
 	for _, n := range cluster.Nodes() {
 		cluster.Kill(n)
 	}
-
-	restartCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
 	for _, n := range cluster.Nodes() {
 		cluster.Restart(n)
 	}
-	if err := cluster.WaitForReady(restartCtx); err != nil {
-		t.Fatalf("cluster did not recover from a crash: %v", err)
-	}
+}
 
-	if got, err := store.MetaRevision(restartCtx); err != nil || got != 5 {
-		t.Fatalf("revision after crash restart = %d (%v), want 5", got, err)
-	}
-	store.assertKV(t, restartCtx, keys["a"], []byte("a2"), 1, 4, 2)
-	store.assertKV(t, restartCtx, keys["b"], []byte("b"), 2, 2, 1)
-	if kv, _, err := store.Range(restartCtx, keys["c"]); err != nil || kv.Exists {
-		t.Fatalf("deleted key %q came back: %+v (%v)", keys["c"], kv, err)
-	}
-	if err := store.assertEqualHistory(restartCtx, keys["a"], []HistoryEntry{
+// assertPostCrashState checks that everything committed before the crash is
+// still readable at the same revision and that the revision counter continues
+// instead of restarting.
+func assertPostCrashState(ctx context.Context, t *testing.T, store *Store, keys map[string][]byte) {
+	t.Helper()
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision after the crash restart", err)
+	requireEqual(t, "revision after the crash restart", revision, int64(5))
+
+	store.assertKV(ctx, t, keys["a"], []byte("a2"), 1, 4, 2)
+	store.assertKV(ctx, t, keys["b"], []byte("b"), 2, 2, 1)
+
+	kv, _, err := store.Range(ctx, keys["c"])
+	requireNoError(t, "read the deleted key", err)
+	requireTrue(t, fmt.Sprintf("deleted key %q came back: %+v", keys["c"], kv), !kv.Exists)
+	requireNoError(t, "history after the crash restart", store.assertEqualHistory(ctx, keys["a"], []HistoryEntry{
 		{ModRevision: 1, Version: 1, Value: []byte("a")},
 		{ModRevision: 4, Version: 2, Value: []byte("a2")},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 
-	res, err := store.TxnCAS(restartCtx, CASRequest{RequestID: "crash-after", Key: []byte("/registry/k8e/crash/d"), Value: []byte("d")})
-	if err != nil || !res.Succeeded || res.Revision != 6 {
-		t.Fatalf("write after crash restart: %+v (%v), want revision 6", res, err)
-	}
+	res, err := store.TxnCAS(ctx, CASRequest{RequestID: "crash-after", Key: []byte("/registry/k8e/crash/d"), Value: []byte("d")})
+	requireNoError(t, "write after the crash restart", err)
+	requireTrue(t, fmt.Sprintf("write after the crash restart = %+v, want revision 6", res), res.Succeeded && res.Revision == 6)
 
-	// A replayed request id from before the crash is still de-duplicated.
-	replay, err := store.TxnCAS(restartCtx, CASRequest{RequestID: "crash-0", Key: keys["a"], Value: []byte("a")})
-	if err != nil || !replay.Deduped {
-		t.Fatalf("replay after crash restart: %+v (%v), want a de-duplicated result", replay, err)
-	}
+	replay, err := store.TxnCAS(ctx, CASRequest{RequestID: "crash-0", Key: keys["a"], Value: []byte("a")})
+	requireNoError(t, "replay after the crash restart", err)
+	requireTrue(t, fmt.Sprintf("replay after the crash restart = %+v, want a de-duplicated result", replay), replay.Deduped)
 }
 
 // TestBinaryKeysRangeInByteOrder checks the two properties etcd range scans
@@ -816,62 +810,49 @@ func TestBinaryKeysRangeInByteOrder(t *testing.T) {
 	// Bytewise: 0x00… < 0x61 ('a') < 0xff…, and never in the order written.
 	wantOrder := [][]byte{keys[0], keys[1], keys[2]}
 
-	for i, key := range keys {
-		res, err := store.TxnCAS(ctx, CASRequest{
-			RequestID: fmt.Sprintf("order-%d", i),
-			Key:       key,
-			Value:     all,
-		})
-		if err != nil || !res.Succeeded {
-			t.Fatalf("write key %x: %+v (%v)", key, res, err)
-		}
-	}
+	writeOrderedKeys(ctx, t, store, keys, all)
 
 	kv, _, err := store.Range(ctx, keys[2])
-	if err != nil {
-		t.Fatalf("range %x: %v", keys[2], err)
-	}
-	if !bytes.Equal(kv.Key, keys[2]) || !bytes.Equal(kv.Value, all) {
-		t.Fatalf("round trip of %x gave key %x and a %d-byte value", keys[2], kv.Key, len(kv.Value))
-	}
+	requireNoError(t, fmt.Sprintf("range %x", keys[2]), err)
+	requireBytes(t, fmt.Sprintf("round trip of %x returned the key", keys[2]), kv.Key, keys[2])
+	requireBytes(t, fmt.Sprintf("round trip of %x returned the value", keys[2]), kv.Value, all)
 
-	// An empty prefix means "every key": unbounded end, ordered by key bytes.
-	entries, _, err := store.RangePrefix(ctx, []byte{}, 10)
-	if err != nil {
-		t.Fatalf("range all: %v", err)
-	}
-	if len(entries) != len(keys) {
-		t.Fatalf("range all returned %d entries, want %d", len(entries), len(keys))
-	}
-	for i, entry := range entries {
-		if !bytes.Equal(entry.Key, wantOrder[i]) {
-			t.Fatalf("entry %d is %x, want %x (bytewise order)", i, entry.Key, wantOrder[i])
-		}
-	}
+	assertBytewiseOrder(ctx, t, store, wantOrder)
 
 	// A prefix of only 0xff cannot be bounded by an end key; the query must
 	// still return exactly the keys with that prefix.
-	entries, _, err = store.RangePrefix(ctx, []byte{0xff}, 10)
-	if err != nil {
-		t.Fatalf("range 0xff prefix: %v", err)
-	}
-	if len(entries) != 1 || !bytes.Equal(entries[0].Key, keys[2]) {
-		t.Fatalf("0xff prefix returned %d entries (%x), want just %x", len(entries), keyList(entries), keys[2])
-	}
+	assertPrefixReturnsOnly(ctx, t, store, []byte{0xff}, keys[2])
+	assertPrefixReturnsOnly(ctx, t, store, []byte{0x00}, keys[0])
+}
 
-	entries, _, err = store.RangePrefix(ctx, []byte{0x00}, 10)
-	if err != nil {
-		t.Fatalf("range 0x00 prefix: %v", err)
-	}
-	if len(entries) != 1 || !bytes.Equal(entries[0].Key, keys[0]) {
-		t.Fatalf("0x00 prefix returned %d entries (%x), want just %x", len(entries), keyList(entries), keys[0])
+// writeOrderedKeys writes every key with the same value.
+func writeOrderedKeys(ctx context.Context, t *testing.T, store *Store, keys [][]byte, value []byte) {
+	t.Helper()
+	for i, key := range keys {
+		res, err := store.TxnCAS(ctx, CASRequest{RequestID: fmt.Sprintf("order-%d", i), Key: key, Value: value})
+		requireNoError(t, fmt.Sprintf("write key %x", key), err)
+		requireTrue(t, fmt.Sprintf("write key %x = %+v, want it to commit", key, res), res.Succeeded)
 	}
 }
 
-func keyList(entries []KV) [][]byte {
-	out := make([][]byte, 0, len(entries))
-	for _, e := range entries {
-		out = append(out, e.Key)
+// assertBytewiseOrder checks that an empty prefix ("every key") returns exactly
+// the expected keys in byte order.
+func assertBytewiseOrder(ctx context.Context, t *testing.T, store *Store, wantOrder [][]byte) {
+	t.Helper()
+	entries, _, err := store.RangePrefix(ctx, []byte{}, 10)
+	requireNoError(t, "range all", err)
+	requireEqual(t, "entries returned by the range over every key", len(entries), len(wantOrder))
+	for i, entry := range entries {
+		requireBytes(t, fmt.Sprintf("entry %d (bytewise order)", i), entry.Key, wantOrder[i])
 	}
-	return out
+}
+
+// assertPrefixReturnsOnly checks that a prefix scan returns exactly one entry,
+// the expected key.
+func assertPrefixReturnsOnly(ctx context.Context, t *testing.T, store *Store, prefix, want []byte) {
+	t.Helper()
+	entries, _, err := store.RangePrefix(ctx, prefix, 10)
+	requireNoError(t, fmt.Sprintf("range %x prefix", prefix), err)
+	requireEqual(t, fmt.Sprintf("entries returned by the %x prefix", prefix), len(entries), 1)
+	requireBytes(t, fmt.Sprintf("the entry returned by the %x prefix", prefix), entries[0].Key, want)
 }

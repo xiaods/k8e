@@ -111,7 +111,7 @@ func runHelperProcesses(t *testing.T, endpoints []string, mode string, procs, co
 			}
 
 			scanner := bufio.NewScanner(stdout)
-			collected := []helperResult{}
+			var collected []helperResult
 			for scanner.Scan() {
 				line := scanner.Text()
 				if !strings.HasPrefix(line, "RESULT ") {
@@ -147,36 +147,39 @@ func TestConcurrentAdapterProcessesAllocateContiguousRevisions(t *testing.T) {
 
 	const procs = 4
 	const each = 25
+	const want = procs * each
 	results := runHelperProcesses(t, cluster.Endpoints(), "create", procs, each, nil)
 
-	want := procs * each
-	if len(results) != want {
-		t.Fatalf("helpers reported %d results, want %d", len(results), want)
-	}
+	requireEqual(t, "results reported by the helper processes", len(results), want)
+	assertDistinctRevisions(t, results, want)
+
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision after the concurrent creates", err)
+	requireEqual(t, "revision after the concurrent creates", revision, int64(want))
+
+	history, err := store.CountAllHistory(ctx)
+	requireNoError(t, "count the history rows", err)
+	requireEqual(t, "history rows, one per create", history, int64(want))
+
+	requests, err := store.CountRequests(ctx)
+	requireNoError(t, "count the request records", err)
+	requireEqual(t, "request records", requests, int64(want))
+}
+
+// assertDistinctRevisions checks that every helper reported an acknowledged
+// write and that the acknowledged revisions are exactly 1..want.
+func assertDistinctRevisions(t *testing.T, results []helperResult, want int) {
+	t.Helper()
 	byRevision := map[int64]string{}
 	for _, r := range results {
-		if r.status != "OK" {
-			t.Fatalf("%s reported %q, want every create to succeed", r.requestID, r.status)
-		}
-		if other, dup := byRevision[r.revision]; dup {
-			t.Fatalf("revision %d was acknowledged for both %s and %s", r.revision, other, r.requestID)
-		}
+		requireTrue(t, fmt.Sprintf("%s reported %q, want every create to succeed", r.requestID, r.status), r.status == "OK")
+		other, dup := byRevision[r.revision]
+		requireTrue(t, fmt.Sprintf("revision %d was acknowledged for both %s and %s", r.revision, other, r.requestID), !dup)
 		byRevision[r.revision] = r.requestID
 	}
 	for rev := int64(1); rev <= int64(want); rev++ {
-		if _, ok := byRevision[rev]; !ok {
-			t.Fatalf("revision %d was never acknowledged; got %d distinct revisions from %d writes", rev, len(byRevision), len(results))
-		}
-	}
-
-	if got, err := store.MetaRevision(ctx); err != nil || got != int64(want) {
-		t.Fatalf("revision after %d concurrent creates = %d (%v), want %d", want, got, err, want)
-	}
-	if count, err := store.CountAllHistory(ctx); err != nil || count != int64(want) {
-		t.Fatalf("history rows = %d (%v), want %d (one per create)", count, err, want)
-	}
-	if count, err := store.CountRequests(ctx); err != nil || count != int64(want) {
-		t.Fatalf("request records = %d (%v), want %d", count, err, want)
+		_, ok := byRevision[rev]
+		requireTrue(t, fmt.Sprintf("revision %d was never acknowledged; got %d distinct revisions from %d writes", rev, len(byRevision), len(results)), ok)
 	}
 }
 
@@ -189,55 +192,53 @@ func TestConcurrentAdapterProcessesRaceOnOneKey(t *testing.T) {
 	key := []byte("/registry/k8e/procs/shared")
 
 	create, err := store.TxnCAS(ctx, CASRequest{RequestID: "shared-0", Key: key, Value: []byte("winner-base")})
-	if err != nil || !create.Succeeded || create.Revision != 1 {
-		t.Fatalf("create: %+v (%v)", create, err)
-	}
+	requireNoError(t, "create", err)
+	requireTrue(t, fmt.Sprintf("create = %+v, want the key created at revision 1", create), create.Succeeded && create.Revision == 1)
 
 	const procs = 4
 	results := runHelperProcesses(t, cluster.Endpoints(), "cas", procs, 1, map[string]string{
 		"RQLITE_M0_KEY":    string(key),
 		"RQLITE_M0_EXPECT": "1",
 	})
-	if len(results) != procs {
-		t.Fatalf("helpers reported %d results, want %d", len(results), procs)
-	}
+	requireEqual(t, "results reported by the racing helper processes", len(results), procs)
 
-	winners, losers := 0, 0
+	winners, losers := countRacers(t, results)
+	requireTrue(t, fmt.Sprintf("the CAS race gave %d winners and %d losers, want 1 and %d", winners, losers, procs-1),
+		winners == 1 && losers == procs-1)
+
+	revision, err := store.MetaRevision(ctx)
+	requireNoError(t, "read the revision after the CAS race", err)
+	requireEqual(t, "revision after the CAS race: failed compares must not consume revisions", revision, int64(2))
+
+	history, err := store.History(ctx, key)
+	requireNoError(t, "read the history after the CAS race", err)
+	requireEqual(t, fmt.Sprintf("history entries after the CAS race, want exactly 2 (create + the single winner), got %+v", history),
+		len(history), 2)
+
+	requests, err := store.CountRequests(ctx)
+	requireNoError(t, "count the request records after the CAS race", err)
+	requireEqual(t, "request records after the CAS race", requests, int64(procs+1))
+}
+
+// countRacers counts the CAS winners and losers of a race on one key. A failed
+// compare reports the revision that is current when it executes. Under a race
+// that can already be the winner's revision; what must never happen is a loser
+// consuming a revision of its own, which the revision and history counts of the
+// caller assert.
+func countRacers(t *testing.T, results []helperResult) (winners, losers int) {
+	t.Helper()
 	for _, r := range results {
 		switch r.status {
 		case "OK":
 			winners++
-			if r.revision != 2 {
-				t.Fatalf("%s won at revision %d, want 2", r.requestID, r.revision)
-			}
+			requireEqual(t, fmt.Sprintf("%s won at revision", r.requestID), r.revision, int64(2))
 		case "FAIL":
 			losers++
-			// A failed compare reports the revision that is current when it
-			// executes. Under a race that can already be the winner's
-			// revision; what must never happen is consuming a revision of its
-			// own (asserted through the revision and history counts below).
-			if r.revision < 1 || r.revision > 2 {
-				t.Fatalf("%s lost the compare and reported revision %d, want 1 or 2", r.requestID, r.revision)
-			}
+			requireTrue(t, fmt.Sprintf("%s lost the compare and reported revision %d, want 1 or 2", r.requestID, r.revision),
+				r.revision >= 1 && r.revision <= 2)
 		default:
 			t.Fatalf("%s reported %q", r.requestID, r.status)
 		}
 	}
-	if winners != 1 || losers != procs-1 {
-		t.Fatalf("CAS race gave %d winners and %d losers, want 1 and %d", winners, losers, procs-1)
-	}
-
-	if got, err := store.MetaRevision(ctx); err != nil || got != 2 {
-		t.Fatalf("revision after the CAS race = %d (%v), want 2: failed compares must not consume revisions", got, err)
-	}
-	history, err := store.History(ctx, key)
-	if err != nil {
-		t.Fatalf("history: %v", err)
-	}
-	if len(history) != 2 {
-		t.Fatalf("history has %d entries (%+v), want exactly 2 (create + the single winner)", len(history), history)
-	}
-	if count, err := store.CountRequests(ctx); err != nil || count != procs+1 {
-		t.Fatalf("request records = %d (%v), want %d", count, err, procs+1)
-	}
+	return winners, losers
 }

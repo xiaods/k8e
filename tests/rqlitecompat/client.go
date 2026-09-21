@@ -142,7 +142,6 @@ type Client struct {
 	next     atomic.Uint64
 	requests atomic.Int64
 	reads    atomic.Int64
-	weakRead atomic.Int64
 }
 
 // NewClient builds a client for the given HTTP endpoints.
@@ -167,12 +166,11 @@ func (c *Client) SetTransport(rt http.RoundTripper) {
 // Requests is the number of HTTP requests this client issued.
 func (c *Client) Requests() int64 { return c.requests.Load() }
 
-// Reads reports the number of read requests and how many of them were sent
-// without an explicit read-consistency level. rqlite's default is `weak`,
-// which is not linearizable, so the adapter must always pass a level.
-func (c *Client) Reads() (total, withoutLevel int64) {
-	return c.reads.Load(), c.weakRead.Load()
-}
+// Reads is the number of read requests this client issued. There is no counter
+// for reads sent without a consistency level, because Client.Read always sends
+// an explicit `level=linearizable`: rqlite's default `weak` level is not
+// linearizable, and the tests check the level on the wire.
+func (c *Client) Reads() int64 { return c.reads.Load() }
 
 // Write POSTs statements to /db/request with `transaction`, so the whole list
 // is applied as one SQLite transaction carried by a single Raft log entry.
@@ -263,25 +261,38 @@ func (c *Client) postOne(ctx context.Context, endpoint, path string, payload []b
 // store.node_id, store.leader.node_id, store.db_applied_index,
 // store.raft.applied_index and build.version.
 type NodeStatus struct {
-	Store struct {
-		NodeID string `json:"node_id"`
-		Leader struct {
-			NodeID string `json:"node_id"`
-			Addr   string `json:"addr"`
-		} `json:"leader"`
-		DBAppliedIndex int64 `json:"db_applied_index"`
-		Raft           struct {
-			AppliedIndex int64 `json:"applied_index"`
-		} `json:"raft"`
-	} `json:"store"`
-	Build struct {
-		Version string `json:"version"`
-	} `json:"build"`
+	Store StoreStatus `json:"store"`
+	Build BuildStatus `json:"build"`
+}
+
+// StoreStatus is the store section of /status: the node identity, the leader
+// it knows and the applied indices the harness waits for after a restart.
+type StoreStatus struct {
+	NodeID         string       `json:"node_id"`
+	Leader         LeaderStatus `json:"leader"`
+	DBAppliedIndex int64        `json:"db_applied_index"`
+	Raft           RaftStatus   `json:"raft"`
+}
+
+// LeaderStatus identifies the leader of a cluster.
+type LeaderStatus struct {
+	NodeID string `json:"node_id"`
+	Addr   string `json:"addr"`
+}
+
+// RaftStatus is the Raft section of /status.
+type RaftStatus struct {
+	AppliedIndex int64 `json:"applied_index"`
+}
+
+// BuildStatus is the build section of /status.
+type BuildStatus struct {
+	Version string `json:"version"`
 }
 
 // Status fetches /status from one node.
 func (c *Client) Status(ctx context.Context, endpoint string) (NodeStatus, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/status", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/status", http.NoBody)
 	if err != nil {
 		return NodeStatus{}, err
 	}
@@ -308,7 +319,7 @@ func (c *Client) Status(ctx context.Context, endpoint string) (NodeStatus, error
 // Ready reports whether a node answers /readyz with 200. rqlite checks node,
 // leader, store and db readiness there.
 func (c *Client) Ready(ctx context.Context, endpoint string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/readyz", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/readyz", http.NoBody)
 	if err != nil {
 		return err
 	}

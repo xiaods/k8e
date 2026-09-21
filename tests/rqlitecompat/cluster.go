@@ -38,7 +38,11 @@ type Node struct {
 }
 
 // Endpoint is the HTTP base URL of the node.
-func (n *Node) Endpoint() string { return "http://" + n.HTTPAddr }
+func (n *Node) Endpoint() string {
+	// The harness starts rqlited bound to a loopback port of the test machine,
+	// so cleartext HTTP never leaves the host.
+	return "http://" + n.HTTPAddr // NOSONAR: go:S5332 — loopback-only test process; rqlite's HTTP API has no TLS listener here
+}
 
 func (c *Cluster) startNode(n *Node, extraArgs ...string) {
 	c.t.Helper()
