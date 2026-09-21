@@ -131,14 +131,8 @@ func checkVersions(doc string) error {
 		if len(row) < 2 || strings.HasPrefix(row[0], "-") || row[0] == "Component" {
 			continue
 		}
-		for _, label := range want {
-			if !strings.Contains(row[0], label) {
-				continue
-			}
-			if strings.TrimSpace(row[1]) == "" {
-				return fmt.Errorf("version row %q has no version", row[0])
-			}
-			found[label] = true
+		if err := matchVersionRow(row, want, found); err != nil {
+			return err
 		}
 		if strings.Contains(row[0], "rqlite") && !sha256Re.MatchString(strings.Join(row[2:], " ")) {
 			return fmt.Errorf("rqlite row has no sha256 digest")
@@ -148,6 +142,21 @@ func checkVersions(doc string) error {
 		if !found[label] {
 			return fmt.Errorf("version table is missing a %q row", label)
 		}
+	}
+	return nil
+}
+
+// matchVersionRow marks every required component this row pins; a row that
+// names a component without a version is rejected.
+func matchVersionRow(row, want []string, found map[string]bool) error {
+	for _, label := range want {
+		if !strings.Contains(row[0], label) {
+			continue
+		}
+		if strings.TrimSpace(row[1]) == "" {
+			return fmt.Errorf("version row %q has no version", row[0])
+		}
+		found[label] = true
 	}
 	return nil
 }
@@ -182,25 +191,15 @@ func checkCriteria(doc string) (allMet bool, err error) {
 	seen := map[string]bool{}
 	allMet = true
 	for _, row := range tableRows(body) {
-		if len(row) < 4 || !criterionID.MatchString(row[0]) {
+		id, met, err := checkCriterionRow(row)
+		if err != nil {
+			return false, err
+		}
+		if id == "" {
 			continue
 		}
-		id, status := row[0], row[2]
-		evidence := strings.Join(row[3:], " ")
-		if !validStatuses[status] {
-			return false, fmt.Errorf("criterion %s has status %q, want met|not-met|not-executed", id, status)
-		}
-		if strings.TrimSpace(row[1]) == "" {
-			return false, fmt.Errorf("criterion %s has no statement", id)
-		}
-		if status == "met" && (strings.TrimSpace(evidence) == "" || evidence == "-") {
-			return false, fmt.Errorf("criterion %s is marked met without an evidence pointer", id)
-		}
-		if strings.TrimSpace(evidence) == "" {
-			return false, fmt.Errorf("criterion %s has no evidence/blocker", id)
-		}
 		seen[id] = true
-		if status != "met" {
+		if !met {
 			allMet = false
 		}
 	}
@@ -213,14 +212,38 @@ func checkCriteria(doc string) (allMet bool, err error) {
 	return allMet, nil
 }
 
-// checkMinBullets requires a named section to carry at least min list items.
-func checkMinBullets(doc, heading string, min int, what string) error {
+// checkCriterionRow validates one completion-criteria row. It returns the
+// criterion ID (empty when the row is not a criterion row), whether the row
+// claims the criterion met, and the first violation found.
+func checkCriterionRow(row []string) (id string, met bool, err error) {
+	if len(row) < 4 || !criterionID.MatchString(row[0]) {
+		return "", false, nil
+	}
+	id, status := row[0], row[2]
+	evidence := strings.Join(row[3:], " ")
+	if !validStatuses[status] {
+		return "", false, fmt.Errorf("criterion %s has status %q, want met|not-met|not-executed", id, status)
+	}
+	if strings.TrimSpace(row[1]) == "" {
+		return "", false, fmt.Errorf("criterion %s has no statement", id)
+	}
+	if status == "met" && (strings.TrimSpace(evidence) == "" || evidence == "-") {
+		return "", false, fmt.Errorf("criterion %s is marked met without an evidence pointer", id)
+	}
+	if strings.TrimSpace(evidence) == "" {
+		return "", false, fmt.Errorf("criterion %s has no evidence/blocker", id)
+	}
+	return id, status == "met", nil
+}
+
+// checkMinBullets requires a named section to carry at least atLeast list items.
+func checkMinBullets(doc, heading string, atLeast int, what string) error {
 	body, err := section(doc, heading)
 	if err != nil {
 		return err
 	}
-	if n := len(bullets(body)); n < min {
-		return fmt.Errorf("%s has %d bullets, want at least %d %ss", heading, n, min, what)
+	if n := len(bullets(body)); n < atLeast {
+		return fmt.Errorf("%s has %d bullets, want at least %d %ss", heading, n, atLeast, what)
 	}
 	return nil
 }

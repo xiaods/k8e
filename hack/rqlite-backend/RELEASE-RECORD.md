@@ -29,7 +29,7 @@ or when a relative link is broken.
 An upgrade of any row above re-runs the evidence below on the new version before
 the record changes; the rqlite upgrade surface is the endpoint table in
 [KIP-29 §7](../../docs/kip-29-rqlite-etcd-compat-backend.md) plus the schema in
-§5.
+KIP-29 §5.
 
 ## 3. Non-goals (binding)
 
