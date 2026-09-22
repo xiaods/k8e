@@ -332,7 +332,7 @@ func requireRQLite(t *testing.T) string {
 	t.Helper()
 	bin := os.Getenv("RQLITE_BIN")
 	if bin == "" {
-		t.Skip("RQLITE_BIN not set: run hack/rqlite-m0/run.sh for the M0 evidence suite")
+		t.Skip("RQLITE_BIN not set: run hack/rqlite-m0/run.sh or hack/rqlite-m1/run.sh for the evidence suites")
 	}
 	info, err := os.Stat(bin)
 	if err != nil {

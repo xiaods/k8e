@@ -2,11 +2,12 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-09-21 | Proposed — M0 (design + rqlite capability evidence) complete, M1 not started |
+| @xiaods | 2026-09-22 | Proposed — M0 (design + rqlite capability evidence) and M1 (etcd v3 compatibility layer) complete; Zig port and K8E integration open |
 
 **Created**: 2026-09-21
 **Relates to**: epic [#592](https://github.com/xiaods/k8e/issues/592) (replace embedded etcd with rqlite + a compatibility layer), [KIP-6](kip-6-embedded-etcd-design.md) (embedded etcd as sole backend — revisited here), [KIP-1](kip-1-native-etcd-storage-client.md) (native clientv3 storage client), [KIP-7](kip-7-embedded-etcd-fuse.md) (official `embed` package), [KIP-26](kip-26-upgrade-dependencies-to-kubernetes-1.37.md) (Kubernetes `v1.37.0-k3s1` / etcd `v3.7.1-k3s1`)
 **M0 evidence**: `make test-rqlite-m0` (`hack/rqlite-m0/run.sh`) → `tests/rqlitecompat/` (11 evidence tests + 1 helper process, against a real `rqlited`)
+**M1 evidence**: `make test-rqlite-m1` (`hack/rqlite-m1/run.sh`) → `pkg/rqlitecompat` (the layer) exercised by `tests/rqlitecompat/` differentially against this repository's embedded etcd, plus three-node, layer-restart, TLS/mTLS, `RangeStream` and wire-limit checks, on the same pinned `rqlited`
 
 ---
 
@@ -401,7 +402,7 @@ Boundary rules:
 | Server build | `rqlited v10.3.5 linux amd64 go1.27.1 sqlite3.53.4`, commit `58f9d8898a5f5d4bf712d472f96e38cc7cb4748a` |
 | SHA-256 (linux-amd64) | `edaef7580cd60f7f9d558cde2fb95011f6e356ff64da7167fb659ab4b6882014` |
 | SHA-256 (linux-arm64) | `23d5d09d34a9e2db54b2c21469aacb3b6563166e3d0d3901f4f4fb44990db99b` |
-| Harness | `make test-rqlite-m0` → `hack/rqlite-m0/run.sh`; downloads the pinned build, verifies the digest, prints the version, and runs `tests/rqlitecompat/` against it (`RQLITE_M0_TEST_ARGS` forwards `go test` flags, e.g. `-race`) |
+| Harness | `make test-rqlite-m0` → `hack/rqlite-m0/run.sh`; downloads the pinned build, verifies the digest, prints the version, and runs `tests/rqlitecompat/` against it (`RQLITE_M0_TEST_ARGS` forwards `go test` flags, e.g. `-race`). The M1 suite reuses the same verified binary: `make test-rqlite-m1` → `hack/rqlite-m1/run.sh` (selects `TestM1*`, `RQLITE_M1_TEST_ARGS`/`RQLITE_M1_RUN` override) |
 
 The arm64 digest is the published release digest, not yet exercised on arm64
 hardware; M1 must run the suite on both architectures before the compatibility
@@ -490,15 +491,95 @@ layer is called architecture-complete.
   events at or below it in bounded batches; time-based auto-compaction
   (`compact_rev_key` semantics) is mapped onto `Maintenance.Compact`.
 
-## 10. Milestones
+## 10. M1 result: the etcd v3 compatibility layer
 
-* **M0 (this KIP)** — design + capability evidence. Done when the suite in
-  §11 passes against the pinned rqlite.
-* **M1** — the Zig compatibility layer: gRPC/TLS, KV/MVCC, Txn, Watch, Lease,
-  Compaction, the maintenance/member calls in Appendix A classes A and B, plus
-  differential tests against the current embedded etcd (results, errors,
-  revisions, event order, crash recovery). Exit: the compatibility matrix is
-  complete and the differential/concurrency history checks pass.
+**Delivered**: `pkg/rqlitecompat` — a process-local gRPC server that speaks the
+etcd v3 wire protocol and keeps the whole store in rqlite through §7's HTTP API
+only. `make test-rqlite-m1` (`hack/rqlite-m1/run.sh`) runs the suite against the
+pinned `rqlited` **and** against the embedded etcd of this repository, so every
+observable — result, error, revision, event order — is compared with the real
+current datastore instead of a hand-written expectation.
+
+**Language.** M1 is a **Go** implementation of the language-neutral internal
+interface of §3.2. The delivery environment for M1 has no Zig toolchain and no
+Zig gRPC/HTTP2/TLS stack, so a Zig port could not be built, let alone verified;
+a Go layer whose protocol behaviour is proven against etcd is the honest
+intermediate step. The Zig port is a mechanical translation of this package
+(same rqlite calls, same schema, same error strings) and its acceptance test is
+this same M1 suite. It stays open as the M1 follow-up — it is not silently
+dropped.
+
+### 10.1 Implemented and differentially verified
+
+| Surface | Contract served | Evidence |
+|---|---|---|
+| `KV.Range` | single key, prefix, explicit range, `limit`+`more`, `count`/`count_only`, `keys_only`, `rev` (historical read), all sort targets, `ErrCompacted` | `TestM1DifferentialContracts`, `TestM1DocumentedDeviations`, `TestM1StoreBinaryAndRange` |
+| `KV.RangeStream` | etcd's chunking algorithm (initial chunk cliff, adaptive chunk limit, terminal chunk carrying `count`/`more`), `Unimplemented` for custom sort orders and revision filters | `TestM1RangeStreamDifferential` (12 shapes + terminal-chunk parity) |
+| `KV.Put` / `KV.DeleteRange` | `ignore_value`/`ignore_lease` validation, `prev_kv`, no-op semantics, byte-identical keys/values (binary safe) | `TestM1DifferentialContracts` |
+| `KV.Txn` | `mod`/`create`/`version`/`value`/`lease` compares, `then`/`else` put/delete/get/range, one revision per transaction, per-branch duplicate-key rejection, atomic response | M0 `TestTxnCompareBranchesAndRevision`/`TestTxnResponseComesFromTheCommittingTransaction`, `TestM1DifferentialContracts` |
+| `KV.Compact` | compaction watermark, `ErrCompacted` below it, surviving revision at the watermark, history/events strictly below dropped | `TestM1StoreCompactionDropsEventsAndHistory`, `TestM1DifferentialContracts` |
+| `Watch` | create/cancel, prefix and key watchers, `start_revision`, `prev_kv`, `NOPUT`/`NODELETE` filters, progress notify, `ErrCompacted` cancel with `compact_revision`, DELETE events as tombstones | `TestM1DifferentialContracts`, M0 watch evidence |
+| `Lease.Grant`/`Revoke`/`KeepAlive`/`TimeToLive`/`Leases` | TTL grant, attached keys, keep-alive stream, expiry reaping, revoke deletes the attached keys | `TestM1LayerRestartContinuity`, `TestM1TimeoutLimits`, M0 |
+| `Maintenance.Status`, `Maintenance.Alarm(GET)`, `Cluster.MemberList` | parseable semantic version (`3.7.1`), leader/member identity, leader-reported revision | `TestM1DifferentialContracts`, `TestM1ThreeNodeContracts` |
+| TLS and mTLS | the same contract over a TLS listener; a client without the CA, a plaintext client and an mTLS client without its certificate are all rejected and write nothing | `TestM1TLSAndMTLSServeTheSameContract` |
+| Size and timeout limits | the etcd `max-request-bytes` boundary (`etcdserver: request is too large`), the transport allowance above it, canceled/expired contexts | `TestM1RequestSizeLimitsMatchEtcd` (against an embedded etcd configured with the same limit), `TestM1TimeoutLimits` |
+| Multi-member semantics | one semantic implementation reused by every member: a 3-member rqlite cluster serves the same contract, survives a leader kill and restart, and keeps its revision/monotonicity/accepted-write guarantees | `TestM1ThreeNodeContracts`, `TestM1ThreeNodeFailoverKeepsServing`, `TestM1LayerRestartContinuity` |
+
+### 10.2 Deliberate deviations (explicit errors, never silent success)
+
+| Shape | Reply |
+|---|---|
+| `Compare` with `range_end`, nested transactions, txn `RequestRange` with `revision != 0` | `InvalidArgument`, "rqlite compat layer does not support ..." |
+| `Cluster.MemberAdd/Remove/Update/Promote` | `Unimplemented`: membership belongs to rqlite (`-join`, `POST /join`, `/remove`, `/nodes`) |
+| `Maintenance.Snapshot/Defragment/Hash/HashKV/MoveLeader/Downgrade` | `Unimplemented`: owned by rqlite (backup via `GET /db/backup`, compaction/vacuum via rqlite, leadership via Raft) |
+| `Maintenance.Alarm` activation | `Unimplemented`: rqlite has no etcd disk alarms; `GET` is served |
+| `AuthService` | not registered: gRPC answers `Unimplemented` for the unknown service. K8E authenticates clients by mTLS |
+| `v3election`, `v3lock`, `v3auth`, the v2 API | not served, as in class C |
+
+The reply for every one of these is a real gRPC status with a message naming the
+owner of the behaviour; none of them returns an empty success, which is what
+`TestM1DocumentedDeviations` pins.
+
+### 10.3 Known M1 limitations (recorded, not hidden)
+
+* **`RangeStream` reads the matching keys before it sends the first chunk**, so
+  the layer's memory cost for a large range is O(matches) and a fully consumed
+  stream costs O(n²) chunk reads. `Count`/`more` on the terminal chunk require
+  the full match count; an incremental chunk reader is the M2/M3 scaling item.
+* **No request-id de-duplication** (§6): a client that retries the same
+  write after a lost response can apply it twice. etcd itself does not promise
+  cross-RPC exactly-once, but it does deduplicate internal retries; M1 records
+  this as the uncertainty contract it inherits from M0.
+* **Watch streams are polled** (`DefaultWatchPollInterval`, 20ms) against the
+  durable event log rather than pushed. Watch latency is therefore bounded by
+  the poll interval, and a transient rqlite read error ends the stream with the
+  transport error rather than silently skipping events — a resumed watch reads
+  from its `start_revision`.
+* **A single compat layer process is not a cluster member**: several members may
+  each serve clients against the same rqlite cluster (that is what
+  `TestM1ThreeNode*` exercises), but member identity, leadership and durability
+  are rqlite's.
+* **Lease expiry** is driven by the member that owns the reaper; a restarted
+  member re-arms it from the stored expiry time (checked in
+  `TestM1LayerRestartContinuity`).
+
+### 10.4 Wall-clock and environment facts
+
+* Every evidence run uses real `rqlited` v10.3.5 processes (never a mock), and
+  the differential runs start this repository's embedded etcd next to them.
+* `go test ./...` stays green without the harness: the suite skips itself when
+  `RQLITE_BIN` is unset (the same rule M0 established).
+
+## 11. Milestones
+
+* **M0 (done)** — design + capability evidence. Done when the M0 evidence suite
+  (`make test-rqlite-m0`) passes against the pinned rqlite.
+* **M1 (done, see §10)** — the compatibility layer: gRPC/TLS, KV/MVCC, Txn,
+  Watch, Lease, Compaction, the maintenance/member calls in Appendix A classes A
+  and B, plus differential tests against the current embedded etcd (results,
+  errors, revisions, event order, crash recovery). Exit met: the compatibility
+  matrix is complete and the differential/concurrency history checks pass. The
+  **Zig port** of the delivered Go layer is the remaining M1 follow-up (§10).
 * **M2** — K8E integration: the new driver, process hosting, bootstrap, certs,
   configuration, build/release, explicit opt-in test backend, then the four
   ordered E2E stages of the epic (safe recovery after failure; multi-node
@@ -507,7 +588,7 @@ layer is called architecture-complete.
 * **M3** — migration of existing production clusters and the first release
   that may switch the default backend, with migration/rollback rehearsals.
 
-## 11. Non-goals
+## 12. Non-goals
 
 * No rewrite of rqlite or Raft; no general-purpose distributed SQL product.
 * No mandatory S3; SQLite file copying is not a consistency protocol.
@@ -523,7 +604,7 @@ layer is called architecture-complete.
 Classes:
 
 * **A — compat layer implements it** (serves the current Kubernetes call
-  surface; M1 work, with M0 evidence where noted).
+  surface; implemented in M1, §10.1, with M0 evidence where noted).
 * **B — call migration** (a caller inside K8E changes to a new interface or
   entry point; the etcd object/protocol does not have to be emulated).
 * **C — unsupported** (must return an explicit error; never an empty success).
@@ -533,18 +614,18 @@ Classes:
 | etcd API | Why it is needed | Provenance / status |
 |---|---|---|
 | `KV.Range` (single key, prefix, explicit range, `limit`, `rev`, `keys_only`, `count_only`, `sort`) | every read and list; pagination via a continue key | `pkg/storage/etcd3/store.go`, `client/v3/kubernetes/client.go` (`Get`/`List`/`Count` → `WithRev`/`WithRange`/`WithPrefix`/`WithLimit`/`WithCountOnly`); storage-level semantics proven in M0 (`Range`, `RangePrefix`, bytewise order) |
-| `KV.Range` with `rev` (historical read) | `ResourceVersion` reads, watch resume | design (M1); schema §5 keeps history for it |
+| `KV.Range` with `rev` (historical read) | `ResourceVersion` reads, watch resume | implemented in `pkg/rqlitecompat` (§10.1), `ErrCompacted` below the compaction watermark; schema §5 keeps the history |
 | `KV.Txn` (`If` mod/create/version/value/lease compare; `Then`/`Else` put/delete/get/range) | CAS for create/update/delete, `GuaranteedUpdate` | `client/v3/kubernetes` `OptimisticPut`/`OptimisticDelete` (`If ModRevision = expected` → `OpPut`/`OpDelete`, `Else OpGet`); **proven in M0** (single winner, shared revision, unchanged revision on failure, atomic response) |
 | `KV.Put`/`DeleteRange` (via Txn) | object writes and deletes | as above |
-| `KV.Compact` + compaction revision tracking | `pkg/storage/etcd3/compact.go` compacts on an interval and records the watermark under `compact_rev_key`; the apiserver reads it back | `compact.go:35,205,219,247,281`; design (M1) |
-| `KV.RangeStream` (server-streaming range) | large recursive lists (etcd v3.6+ streaming) | `store.go:748 shouldStream` + `store.go:937 streamChunks` (`GetStream` at 951); feature gate `EtcdRangeStream` is **Beta and enabled by default in 1.37** (`pkg/features/kube_features.go:159,396`); the apiserver assumes support until an endpoint reports `Unimplemented`, so M1 must implement it (or accept a documented fallback after the first failure) |
-| `Watch` (create/cancel, `rev`, prefix/range, filters, `prev_kv`, progress notify) | controllers, caches, `RequestWatchProgress` | `watcher.go:128,366,470,475,477` (`WithRev`, `WithPrevKV`, `WithProgressNotify`, `WithRequireLeader`); design (M1) |
-| `Lease.Grant` + attach key to lease (TTL) | `pkg/storage/etcd3/lease_manager.go:109` grants one reusable lease per object type (Kubernetes migrated off one-league-per-object) | design (M1) |
-| `Lease.KeepAlive`/`Revoke`/`TimeToLive` | keepalive from the apiserver; revoke on shutdown | design (M1) |
-| `Maintenance.Status` | apiserver `Monitor` metric (uses `DbSize`) and the watch-progress feature check (uses `Version`) | `factory/etcd3.go:277`, `pkg/storage/feature/feature_support_checker.go`; the layer must answer with a parseable semantic etcd version |
-| `Maintenance.Snapshot` | the apiserver's `/etcd-snapshot`-style maintenance flows | `pkg/etcd/snapshot.go:329` (`snapshotv3.SaveWithVersion`) — class B for K8E, but the RPC is served |
-| `Maintenance.Alarm`/`Defragment`/`Hash` | K8E's own maintenance paths | `pkg/etcd/etcd.go:1502,1513,1544`; mapping is class B, RPC presence is class A |
-| `Cluster.MemberList/Add/Remove/Update/Promote` | membership lifecycle | `pkg/etcd/etcd.go:255,628,1185,1204,1332,1372,1719`; class B mapping, RPC presence class A |
+| `KV.Compact` + compaction revision tracking | `pkg/storage/etcd3/compact.go` compacts on an interval and records the watermark under `compact_rev_key`; the apiserver reads it back | `compact.go:35,205,219,247,281`; implemented in `pkg/rqlitecompat` (§10.1) |
+| `KV.RangeStream` (server-streaming range) | large recursive lists (etcd v3.6+ streaming) | `store.go:748 shouldStream` + `store.go:937 streamChunks` (`GetStream` at 951); feature gate `EtcdRangeStream` is **Beta and enabled by default in 1.37** (`pkg/features/kube_features.go:159,396`); the apiserver assumes support until an endpoint reports `Unimplemented`, so M1 must implement it (or accept a documented fallback after the first failure); **implemented in M1** (§10.1) by mirroring etcd's chunking, with the scaling caveat in §10.3 |
+| `Watch` (create/cancel, `rev`, prefix/range, filters, `prev_kv`, progress notify) | controllers, caches, `RequestWatchProgress` | `watcher.go:128,366,470,475,477` (`WithRev`, `WithPrevKV`, `WithProgressNotify`, `WithRequireLeader`); implemented in `pkg/rqlitecompat` (§10.1), polled per §10.3 |
+| `Lease.Grant` + attach key to lease (TTL) | `pkg/storage/etcd3/lease_manager.go:109` grants one reusable lease per object type (Kubernetes migrated off one-league-per-object) | implemented in `pkg/rqlitecompat` (§10.1) |
+| `Lease.KeepAlive`/`Revoke`/`TimeToLive`/`Leases` | keepalive from the apiserver; revoke on shutdown | implemented in `pkg/rqlitecompat` (§10.1); expiry reaping survives a layer restart (§10.3) |
+| `Maintenance.Status` | apiserver `Monitor` metric (uses `DbSize`) and the watch-progress feature check (uses `Version`) | `factory/etcd3.go:277`, `pkg/storage/feature/feature_support_checker.go`; implemented in M1: a parseable semantic etcd version (`3.7.1`), the leader and the leader-reported revision |
+| ~~`Maintenance.Snapshot`~~ | the apiserver's `/etcd-snapshot`-style maintenance flows | `pkg/etcd/snapshot.go:329` (`snapshotv3.SaveWithVersion`) — **class B**: the RPC is *not* served (§10.2); K8E takes rqlite backups instead |
+| `Maintenance.Alarm(GET)` | K8E's own maintenance paths | `pkg/etcd/etcd.go:1502`; implemented in M1 (an empty alarm list). Activation is `Unimplemented` (§10.2) |
+| `Cluster.MemberList` | membership lifecycle | `pkg/etcd/etcd.go:255`; implemented in M1 (this member, the leader's revision). `Add`/`Remove`/`Update`/`Promote` are class C (§10.2) — rqlite owns membership |
 
 ### B. Call migration in K8E
 
@@ -569,7 +650,7 @@ Classes:
 |---|---|
 | etcd v2 API (`/v2/*`, `--enable-v2`) | not served; `Unimplemented` |
 | `AuthService` (`AuthEnable`, `Authenticate`, roles, users) | not implemented. Kubernetes does not use etcd's own auth against its datastore (K8E authenticates clients by mTLS); the RPCs return `Unimplemented` |
-| `Maintenance.MoveLeader`, `Downgrade`, `Alarm` on real disk alarms, `HashKV` | not implemented / mapped to explicit errors; rqlite exposes its own equivalents |
+| `Maintenance.MoveLeader`, `Downgrade`, `Defragment`, `Hash`, `HashKV`, `Snapshot`, `Alarm` activation | explicit `Unimplemented` with a message naming the rqlite owner (§10.2); rqlite exposes its own equivalents |
 | `v3election`, `v3lock`, `v3auth` gRPC-gateway services | not implemented (`Unimplemented`); not on the current K8E/Kubernetes path |
 | etcd snapshot/WAL file formats (`etcdutl snapshot restore`, member directories) | not readable; restore goes through rqlite backups (class B) |
 | etcd member identity semantics (member IDs, peer URLs, learner promotion protocol, `etcdctl member` output) | not emulated; K8E's driver exposes rqlite membership instead |
@@ -577,8 +658,13 @@ Classes:
 | `watch` guarantees for a revision that has been compacted | explicit `ErrCompacted`-equivalent error, never an empty stream |
 | Cross-RPC exactly-once for clients | not promised (etcd does not promise it either); internal retry de-duplication is per §6 |
 
-**Not verified in M0** (must be settled in M1): tombstone `version` parity with
-etcd, `RangeStream` behaviour under the enabled feature gate, watch progress
-notification ordering, lease expiry under leader change, compaction/revision
-interaction with concurrent readers, and the exact `Alarm`/`Defragment`
-mapping.
+**Settled in M1** (were the open M0 questions): `RangeStream` under the enabled
+feature gate (chunk-for-chunk differential against embedded etcd),
+watch progress-notify ordering, lease expiry and lease state across a layer
+restart and under a rqlite leader change, compaction/revision interaction with
+concurrent readers, and the `Alarm`/`Defragment` mapping (§10.2: explicit
+`Unimplemented`, because they are rqlite's, not the layer's).
+
+**Still open after M1**: tombstone `version` parity with etcd's internal value
+(our tombstones carry the delete revision and no version), and the Zig port of
+the layer (§10).
