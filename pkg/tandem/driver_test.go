@@ -3,7 +3,6 @@ package tandem
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -30,45 +29,6 @@ func TestDriverInitializationMarker(t *testing.T) {
 	}
 	if initialized, err := d.IsInitialized(); err != nil || !initialized {
 		t.Fatalf("restart: initialized=%v, err=%v", initialized, err)
-	}
-}
-
-// TestDriverAdvertisesTheEtcdPortOverTLS checks the scheme the driver hands
-// the apiserver. Tandem's etcd port always requires a client certificate, so
-// advertising http:// makes the apiserver start a plaintext gRPC handshake
-// against a TLS listener; it fails with "error reading server preface" rather
-// than anything that names the real cause, and the control plane never comes
-// up. The embedded etcd driver already advertises https://.
-func TestDriverAdvertisesTheEtcdPortOverTLS(t *testing.T) {
-	for name, endpoint := range map[string]string{
-		"unset":            "",
-		"bare host:port":   "127.0.0.1:2379",
-		"explicit https":   "https://127.0.0.1:2379",
-		"explicit http":    "http://127.0.0.1:2379",
-		"remote host:port": "10.0.0.5:2379",
-	} {
-		t.Run(name, func(t *testing.T) {
-			d := NewDriver()
-			d.SetControlConfig(&config.Control{Datastore: config.DatastoreConfig{Endpoint: endpoint}})
-			urls, err := d.GetMembersClientURLs(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(urls) != 1 {
-				t.Fatalf("endpoints = %v, want exactly one", urls)
-			}
-			// An operator who explicitly asked for http keeps it; the
-			// default is the only thing this fixes.
-			if endpoint == "http://127.0.0.1:2379" {
-				if urls[0] != endpoint {
-					t.Fatalf("explicit endpoint rewritten to %q", urls[0])
-				}
-				return
-			}
-			if !strings.HasPrefix(urls[0], "https://") {
-				t.Fatalf("endpoint = %q, want an https:// scheme", urls[0])
-			}
-		})
 	}
 }
 

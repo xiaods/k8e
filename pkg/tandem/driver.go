@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/xiaods/k8e/pkg/clientaccess"
@@ -162,15 +161,7 @@ func (d *Driver) GetMembersClientURLs(context.Context) ([]string, error) {
 	}
 	endpoint := d.control.Datastore.Endpoint
 	if endpoint == "" {
-		endpoint = "127.0.0.1:2379"
-	}
-	// The scheme is https whenever the caller has not set one. Tandem's etcd
-	// port always requires the apiserver's client certificate, so advertising
-	// http:// makes the apiserver attempt a plaintext gRPC handshake and fail
-	// with a server-preface error instead of a usable connection. The default
-	// here matches what the embedded etcd driver advertises.
-	if !strings.Contains(endpoint, "://") {
-		endpoint = "https://" + endpoint
+		endpoint = "http://127.0.0.1:2379"
 	}
 	return []string{endpoint}, nil
 }

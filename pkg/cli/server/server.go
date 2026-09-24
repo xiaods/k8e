@@ -91,6 +91,22 @@ func applyBundleDisables(controlConfig *config.Control, cfg *cmds.Server) {
 	}
 }
 
+// tandemDefaultEndpoint supplies the datastore endpoint when the Tandem
+// backend is selected and the operator has not set one.
+//
+// The scheme is https because Tandem's etcd port requires the apiserver's
+// client certificate. Advertising http:// makes the apiserver begin a
+// plaintext gRPC handshake at a TLS listener, and the only symptom is "error
+// reading server preface: EOF" followed by a generic connection timeout —
+// nothing in that error names the port or the cause. The embedded etcd
+// backend reports the same endpoint over https://, so this matches it.
+func tandemDefaultEndpoint(cfg *cmds.Server) string {
+	if cfg.DatastoreBackend != "tandem" || cfg.DatastoreEndpoint != "" {
+		return cfg.DatastoreEndpoint
+	}
+	return "https://127.0.0.1:2379"
+}
+
 // run starts the k8e server: it resolves the runtime configuration, brings up the
 // control plane and blocks until it is shut down.
 //
@@ -108,9 +124,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 			cfg.DatastoreBackend = "tandem"
 		}
 	}
-	if cfg.DatastoreBackend == "tandem" && cfg.DatastoreEndpoint == "" {
-		cfg.DatastoreEndpoint = "http://127.0.0.1:2379"
-	}
+	cfg.DatastoreEndpoint = tandemDefaultEndpoint(cfg)
 	// Validate build env
 	cmds.MustValidateGolang()
 
