@@ -873,7 +873,7 @@ Verification: Orchestrator spawns two sub-agents in parallel; both write to `/wo
 
 Register SandboxMatrix controller, gRPC gateway, and `sandboxd` mutation webhook in `pkg/server/server.go`. Add all manifests to `pkg/deploy/` bundle. Add `--disable-sandbox-matrix` opt-out flag. Apply Firecracker `RuntimeClass` only when `/dev/kvm` is present on the node.
 
-Verification: Fresh `k8e server --cluster-init` → gRPC gateway reachable on `:50051` → Python client creates session, runs code, egress enforced by Cilium `toFQDNs`, session destroyed, CNP cleaned up.
+Verification: Fresh `k8e server --bootstrap` → gRPC gateway reachable on `:50051` → Python client creates session, runs code, egress enforced by Cilium `toFQDNs`, session destroyed, CNP cleaned up.
 
 ### Task 9 — Sandbox Runtime Configuration
 

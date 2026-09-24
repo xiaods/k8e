@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#MISE description="Run all local CI builds and checks"
+set -euo pipefail
+
+project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+cd "$project_root"
+
+zig fmt --check build.zig src examples tests benchmarks
+actionlint
+
+.mise/tasks/check-transpiled-c
+archives=(.zig-cache/transpiled-c-dist/*.tar.gz)
+test "${#archives[@]}" -eq 1
+tests/consumer/run_cmake_c.sh "${archives[0]}" "${archives[0]}.sha256"
+
+zig build
+zig build -Doptimize=ReleaseSafe
+zig build test --summary all
+zig build test -Doptimize=ReleaseSafe --summary all
+
+tests/consumer/run_raw.sh
+tests/consumer/run_cpp.sh
+
+TSAN_OPTIONS=halt_on_error=1:exitcode=66 \
+    zig build test -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe \
+    -Dsanitize-thread=true -Dsanitize-c=false --summary all --test-timeout 30s
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    zig build test -Doptimize=Debug -Dsanitize-thread=false -Dsanitize-c=true --summary all
+
+.mise/tasks/prepare-tls-deps
+zig build test -Dtls=true --summary all
+zig build test -Dtls=true -Doptimize=ReleaseSafe --summary all
+TSAN_OPTIONS=halt_on_error=1:exitcode=66 \
+    zig build test -Dtls=true -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe \
+    -Dsanitize-thread=true -Dsanitize-c=false --summary all --test-timeout 30s
+UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+    zig build test -Dtls=true -Dsanitize-thread=false -Dsanitize-c=true --summary all
+
+.mise/tasks/prepare-gperftools
+zig build test -Dgperftools=true --summary all
+zig build test -Dgperftools=true -Dtcmalloc=false --summary all
+zig build test -Dgperftools=false -Dtcmalloc=true --summary all
+
+scripts/interop.sh
+tests/official/run_unary.sh
+tests/official/run_tls.sh
+tests/official/run_http2.sh
+tests/official/run_http2_edge.sh

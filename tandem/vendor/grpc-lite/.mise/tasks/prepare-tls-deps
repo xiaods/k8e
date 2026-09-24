@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#MISE description="Prepare the pinned optional mbedTLS package"
+set -euo pipefail
+
+url='https://codeload.github.com/Mbed-TLS/mbedtls/tar.gz/refs/tags/mbedtls-3.6.6'
+hash='N-V-__8AAI1FmQLj92go7nR7_J6kwr-7uYyuitngGqydvWkd'
+cache_dir="${ZIG_GLOBAL_CACHE_DIR:-$HOME/.cache/zig}/p"
+mkdir -p "$cache_dir"
+
+if [[ ! -d "$cache_dir/$hash" ]]; then
+  output=$(zigfetch "$url" 2>&1)
+  actual_hash=${output##*$'\n'}
+  if [[ "$actual_hash" != "$hash" ]]; then
+    printf 'mbedTLS hash mismatch: expected %s, got %s\n' "$hash" "$actual_hash" >&2
+    exit 1
+  fi
+fi
+
+if [[ ! -f "$cache_dir/$hash.tar.gz" ]]; then
+  curl -fsSL -o "$cache_dir/$hash.tar.gz" "$url"
+fi

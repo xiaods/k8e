@@ -119,8 +119,8 @@ func bootstrapHandler(runtime *config.ControlRuntime) http.Handler {
 		return bootstrap.Handler(&runtime.ControlRuntimeBootstrap)
 	}
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
-		logrus.Warnf("Received HTTP bootstrap request from %s, but embedded etcd is not enabled.", req.RemoteAddr)
-		util.SendError(errors.New("etcd disabled"), resp, req, http.StatusBadRequest)
+		logrus.Warnf("Received HTTP bootstrap request from %s, but the datastore is not enabled.", req.RemoteAddr)
+		util.SendError(errors.New("datastore disabled"), resp, req, http.StatusBadRequest)
 	})
 }
 
@@ -362,8 +362,40 @@ func ping() http.Handler {
 	})
 }
 
+// serveStatic exposes the contents of the server's static asset directory.
+// Directory listing is disabled so that a request for the prefix root cannot
+// enumerate the deployed files; only named regular files are served. The
+// requested path is opened relative to an os.Root so that traversal and
+// symbolic links cannot escape staticDir. ServeContent uses the opened file
+// without resolving its path again.
 func serveStatic(urlPrefix, staticDir string) http.Handler {
-	return http.StripPrefix(urlPrefix, http.FileServer(http.Dir(staticDir)))
+	return http.StripPrefix(urlPrefix, http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
+		for _, segment := range strings.Split(req.URL.Path, "/") {
+			if segment == ".." {
+				http.NotFound(resp, req)
+				return
+			}
+		}
+		cleaned := path.Clean("/" + req.URL.Path)
+		root, err := os.OpenRoot(staticDir)
+		if err != nil {
+			http.NotFound(resp, req)
+			return
+		}
+		defer root.Close()
+		file, err := root.Open(filepath.FromSlash(strings.TrimPrefix(cleaned, "/")))
+		if err != nil {
+			http.NotFound(resp, req)
+			return
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil || !info.Mode().IsRegular() {
+			http.NotFound(resp, req)
+			return
+		}
+		http.ServeContent(resp, req, info.Name(), info.ModTime(), file)
+	}))
 }
 
 // nodePassBootstrapper returns a node name, or http error code and error

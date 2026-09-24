@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Test grpc-lite with tcmalloc and gperftools"
+set -euo pipefail
+
+mise run prepare-gperftools
+zig build test -Dgperftools=true --summary all "$@"

@@ -6,6 +6,7 @@ version = 1
 # skews both issue counts and coverage metrics on every manifest bump.
 exclude_patterns = [
   "pkg/deploy/zz_generated_bindata.go",
+  "tandem/vendor/**",
 ]
 
 [[analyzers]]

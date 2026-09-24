@@ -1,0 +1,4 @@
+**
+!third_party/
+!third_party/grpc-http2-test/
+!third_party/grpc-http2-test/**

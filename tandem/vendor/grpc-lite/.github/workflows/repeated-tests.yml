@@ -1,0 +1,62 @@
+name: Repeated Tests
+
+on:
+  schedule:
+    - cron: "43 2 * * *"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Iterations per test configuration
+        required: true
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  repeated-tests:
+    name: ${{ matrix.name }} x${{ inputs.iterations || '20' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debug
+            task: test
+          - name: ReleaseSafe
+            task: test-release-safe
+          - name: TSan
+            task: test-tsan
+          - name: TLS TSan
+            task: test-tls-tsan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      TEST_ITERATIONS: ${{ inputs.iterations || '20' }}
+      TEST_TASK: ${{ matrix.task }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Install mise tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.7.14
+
+      - name: Run repeated tests
+        run: |
+          if ((TEST_ITERATIONS < 1)); then
+            printf 'iterations must be greater than zero\n' >&2
+            exit 2
+          fi
+          for ((iteration = 1; iteration <= TEST_ITERATIONS; iteration++)); do
+            printf 'Iteration %d/%d: %s\n' "$iteration" "$TEST_ITERATIONS" "$TEST_TASK"
+            mise run "$TEST_TASK"
+          done

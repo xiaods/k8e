@@ -29,8 +29,8 @@ import (
 	"github.com/xiaods/k8e/pkg/version"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
-	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	apiserverconfigv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
+	apiserverv1beta1 "k8s.io/apiserver/pkg/apis/apiserver/v1beta1"
 	"k8s.io/apiserver/pkg/authentication/user"
 	"k8s.io/client-go/util/keyutil"
 )
@@ -459,10 +459,6 @@ func genETCDCerts(config *config.Control) error {
 		runtime.ETCDPeerCA, runtime.ETCDPeerCAKey,
 		runtime.PeerServerClientETCDCert, runtime.PeerServerClientETCDKey); err != nil {
 		return err
-	}
-
-	if config.DisableETCD {
-		return nil
 	}
 
 	if _, err := createClientCertKey(regen, "etcd-server", nil,

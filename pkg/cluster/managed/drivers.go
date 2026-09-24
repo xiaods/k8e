@@ -2,7 +2,9 @@ package managed
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -37,8 +39,30 @@ func Registered() []Driver {
 	return drivers
 }
 
+// Default returns the driver used when an operator has not chosen a backend.
+// Embedded etcd stays the default until the M3 migration gate in issue #592.
 func Default() Driver {
 	return drivers[0]
+}
+
+// Select returns the driver an operator asked for by name. An empty name
+// yields the default. An unknown name is an error rather than a silent
+// fallback, so a typo in --datastore-backend cannot quietly select a different
+// backend than the one that was requested.
+func Select(name string) (Driver, error) {
+	if name == "" {
+		return Default(), nil
+	}
+	for _, driver := range drivers {
+		if driver.EndpointName() == name {
+			return driver, nil
+		}
+	}
+	names := make([]string, 0, len(drivers))
+	for _, driver := range drivers {
+		names = append(names, driver.EndpointName())
+	}
+	return nil, fmt.Errorf("unknown datastore backend %q; available: %s", name, strings.Join(names, ", "))
 }
 
 // SnapshotResult is returned by the Snapshot function,
