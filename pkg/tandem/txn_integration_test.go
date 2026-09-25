@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -35,25 +36,12 @@ func TestTandemPersistentTxn(t *testing.T) {
 // Txn would have looped forever on a page that never ended.
 func testTxnRangeLimit(t *testing.T, ctx context.Context, cli *clientv3.Client) {
 	t.Helper()
-	for _, key := range []string{"txnlimit/a", "txnlimit/b", "txnlimit/c"} {
-		if _, err := cli.Put(ctx, key, "v"); err != nil {
-			t.Fatalf("seed %s: %v", key, err)
-		}
-	}
-	defer func() {
-		if _, err := cli.Delete(ctx, "txnlimit/", clientv3.WithPrefix()); err != nil {
-			t.Errorf("cleanup: %v", err)
-		}
-	}()
+	seedTxnLimitKeys(t, ctx, cli)
+	defer cleanupTxnLimitKeys(t, ctx, cli)
 
-	limited, err := cli.Txn(ctx).Then(clientv3.OpGet("txnlimit/", clientv3.WithPrefix(), clientv3.WithLimit(2))).Commit()
-	if err != nil {
-		t.Fatalf("limited txn range: %v", err)
-	}
-	if !limited.Succeeded || len(limited.Responses) != 1 {
-		t.Fatalf("limited txn range responses: %+v", limited)
-	}
-	page := limited.Responses[0].GetResponseRange()
+	// A limit below the match count truncates the page, keeps the full count
+	// and reports that more pages remain.
+	page := txnRangeAtLimit(t, ctx, cli, 2)
 	if len(page.Kvs) != 2 {
 		t.Fatalf("txn range returned %d keys, want 2 (limit not applied)", len(page.Kvs))
 	}
@@ -68,14 +56,42 @@ func testTxnRangeLimit(t *testing.T, ctx context.Context, cli *clientv3.Client) 
 	}
 
 	// A limit at or above the match count must not claim more pages.
-	full, err := cli.Txn(ctx).Then(clientv3.OpGet("txnlimit/", clientv3.WithPrefix(), clientv3.WithLimit(3))).Commit()
-	if err != nil {
-		t.Fatalf("untruncated txn range: %v", err)
-	}
-	untruncated := full.Responses[0].GetResponseRange()
+	untruncated := txnRangeAtLimit(t, ctx, cli, 3)
 	if len(untruncated.Kvs) != 3 || untruncated.Count != 3 || untruncated.More {
 		t.Fatalf("untruncated txn range: %d keys, count %d, more %v; want 3/3/false", len(untruncated.Kvs), untruncated.Count, untruncated.More)
 	}
+}
+
+func seedTxnLimitKeys(t *testing.T, ctx context.Context, cli *clientv3.Client) {
+	t.Helper()
+	for _, key := range []string{"txnlimit/a", "txnlimit/b", "txnlimit/c"} {
+		if _, err := cli.Put(ctx, key, "v"); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+}
+
+func cleanupTxnLimitKeys(t *testing.T, ctx context.Context, cli *clientv3.Client) {
+	t.Helper()
+	if _, err := cli.Delete(ctx, "txnlimit/", clientv3.WithPrefix()); err != nil {
+		t.Errorf("cleanup: %v", err)
+	}
+}
+
+// txnRangeAtLimit runs a read-only Txn whose single op is a prefix Range with
+// the given limit, and returns what that op answered.
+func txnRangeAtLimit(t *testing.T, ctx context.Context, cli *clientv3.Client, limit int64) *pb.RangeResponse {
+	t.Helper()
+	response, err := cli.Txn(ctx).
+		Then(clientv3.OpGet("txnlimit/", clientv3.WithPrefix(), clientv3.WithLimit(limit))).
+		Commit()
+	if err != nil {
+		t.Fatalf("txn range at limit %d: %v", limit, err)
+	}
+	if !response.Succeeded || len(response.Responses) != 1 {
+		t.Fatalf("txn range at limit %d: responses: %+v", limit, response)
+	}
+	return response.Responses[0].GetResponseRange()
 }
 
 func testTxnCRUD(t *testing.T, ctx context.Context, cli *clientv3.Client) {
