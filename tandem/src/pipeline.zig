@@ -602,28 +602,32 @@ fn handleLeaseTimeToLive(server: *PipelineServer, request_data: []const u8) ![]u
     const allocator = server.allocator;
     const request = try messages.LeaseTimeToLiveRequest.decode(request_data);
 
-    const manager = server.storage.leaseManager();
-    const ttl = manager.leaseTTL(request.id);
+    // The TTL and the attached keys both come from the storage layer, which
+    // knows whether the answer lives in rqlite or in memory. Reading the
+    // in-memory LeaseManager directly reported every lease as unknown on the
+    // persistent path, because a grant there writes to rqlite and leaves
+    // nothing in the local manager.
+    const ttl = try server.storage.leaseTTLOf(request.id);
 
-    // etcd returns the attached keys only when the request asks for them.
-    var keys = std.ArrayList(u8).empty;
-    if (request.keys) {
-        const attached = try manager.leaseKeys(request.id);
-        defer allocator.free(attached);
-        for (attached) |key| {
-            if (keys.items.len != 0) try keys.appendSlice(allocator, "\x00");
-            try keys.appendSlice(allocator, key);
-            allocator.free(key);
-        }
+    // etcd returns the attached keys only when the request asks for them, and
+    // each key is its own repeated field on the wire.
+    var owned_keys = std.ArrayList([]const u8).empty;
+    defer {
+        for (owned_keys.items) |key| allocator.free(key);
+        owned_keys.deinit(allocator);
     }
-    defer keys.deinit(allocator);
+    if (request.keys) {
+        const attached = try server.storage.leaseKeysOf(request.id);
+        defer allocator.free(attached);
+        for (attached) |key| try owned_keys.append(allocator, key);
+    }
 
     const response = messages.LeaseTimeToLiveResponse{
         .header = server.buildHeader(),
         .id = request.id,
         .ttl = ttl.ttl,
         .granted_ttl = ttl.granted_ttl,
-        .keys = try keys.toOwnedSlice(allocator),
+        .keys = owned_keys.items,
     };
     return response.encode(allocator);
 }
@@ -631,9 +635,12 @@ fn handleLeaseTimeToLive(server: *PipelineServer, request_data: []const u8) ![]u
 fn handleLeaseLeases(server: *PipelineServer, _: []const u8) ![]u8 {
     const allocator = server.allocator;
 
-    const live = try server.storage.leaseManager().allLeases();
+    // Read through the storage layer for the same reason TimeToLive does: the
+    // in-memory manager is never populated on the persistent path, so listing
+    // it there reported no leases at all while grants were live in rqlite.
+    const live = try server.storage.allLeaseIds();
     const statuses = try allocator.alloc(messages.LeaseStatus, live.len);
-    for (live, 0..) |lease, i| statuses[i] = .{ .id = lease.id };
+    for (live, 0..) |id, i| statuses[i] = .{ .id = id };
 
     const response = messages.LeaseLeasesResponse{
         .header = server.buildHeader(),

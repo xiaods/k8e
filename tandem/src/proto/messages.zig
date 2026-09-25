@@ -798,7 +798,11 @@ pub const LeaseTimeToLiveResponse = struct {
     id: i64 = 0,
     ttl: i64 = 0,
     granted_ttl: i64 = 0,
-    keys: []u8 = &[_]u8{},
+    /// etcdserverpb.LeaseTimeToLiveResponse.keys is `repeated bytes`, so each
+    /// attached key is its own field. Encoding them as one blob with a
+    /// separator made a lease holding two keys arrive at the client as a
+    /// single key containing a NUL.
+    keys: []const []const u8 = &.{},
 
     pub fn encode(self: LeaseTimeToLiveResponse, allocator: Allocator) ![]u8 {
         var w = wire.Writer.init(allocator);
@@ -810,7 +814,7 @@ pub const LeaseTimeToLiveResponse = struct {
         try w.v(2, @as(u64, @bitCast(self.id)));
         try w.v(3, @as(u64, @bitCast(self.ttl)));
         try w.v(4, @as(u64, @bitCast(self.granted_ttl)));
-        try w.bytes(5, self.keys);
+        for (self.keys) |key| try w.bytes(5, key);
         return w.buf.toOwnedSlice(allocator);
     }
 };
