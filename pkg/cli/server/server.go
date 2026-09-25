@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,6 @@ import (
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	"github.com/xiaods/k8e/pkg/datadir"
-	"github.com/xiaods/k8e/pkg/etcd"
 	k8emetrics "github.com/xiaods/k8e/pkg/metrics"
 	"github.com/xiaods/k8e/pkg/proctitle"
 	"github.com/xiaods/k8e/pkg/profile"
@@ -91,12 +91,40 @@ func applyBundleDisables(controlConfig *config.Control, cfg *cmds.Server) {
 	}
 }
 
+// tandemDefaultEndpoint supplies the datastore endpoint when the Tandem
+// backend is selected and the operator has not set one.
+//
+// The scheme is https because Tandem's etcd port requires the apiserver's
+// client certificate. Advertising http:// makes the apiserver begin a
+// plaintext gRPC handshake at a TLS listener, and the only symptom is "error
+// reading server preface: EOF" followed by a generic connection timeout —
+// nothing in that error names the port or the cause. The embedded etcd
+// backend reports the same endpoint over https://, so this matches it.
+func tandemDefaultEndpoint(cfg *cmds.Server) string {
+	if cfg.DatastoreBackend != "tandem" || cfg.DatastoreEndpoint != "" {
+		return cfg.DatastoreEndpoint
+	}
+	return "https://127.0.0.1:2379"
+}
+
 // run starts the k8e server: it resolves the runtime configuration, brings up the
 // control plane and blocks until it is shut down.
 //
 // skipcq: GO-R1005
 func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomControllers, controllers server.CustomControllers) error {
 	var err error
+	if cfg.TandemBootstrap && cfg.TandemJoin != "" {
+		return errors.New("--bootstrap and --join cannot be used together")
+	}
+	// --bootstrap/--join select the Tandem backend, so the endpoint the
+	// compatibility layer serves becomes this node's datastore. Without them
+	// the default backend stays embedded etcd until issue #592's M3 gate.
+	if cfg.TandemBootstrap || cfg.TandemJoin != "" {
+		if cfg.DatastoreBackend == "" {
+			cfg.DatastoreBackend = "tandem"
+		}
+	}
+	cfg.DatastoreEndpoint = tandemDefaultEndpoint(cfg)
 	// Validate build env
 	cmds.MustValidateGolang()
 
@@ -181,7 +209,10 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.ExtraSchedulerAPIArgs = cfg.ExtraSchedulerArgs
 	serverConfig.ControlConfig.ClusterDomain = cfg.ClusterDomain
 	serverConfig.ControlConfig.Datastore.NotifyInterval = 5 * time.Second
+	serverConfig.ControlConfig.Datastore.Backend = cfg.DatastoreBackend
 	serverConfig.ControlConfig.Datastore.Endpoint = cfg.DatastoreEndpoint
+	serverConfig.ControlConfig.Datastore.TandemBootstrap = cfg.TandemBootstrap
+	serverConfig.ControlConfig.Datastore.TandemJoin = cfg.TandemJoin
 	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CAFile = cfg.DatastoreCAFile
 	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CertFile = cfg.DatastoreCertFile
 	serverConfig.ControlConfig.Datastore.BackendTLSConfig.KeyFile = cfg.DatastoreKeyFile
@@ -191,13 +222,11 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.ExtraCloudControllerArgs = cfg.ExtraCloudControllerArgs
 	serverConfig.ControlConfig.DisableCCM = cfg.DisableCCM
 	serverConfig.ControlConfig.DisableHelmController = cfg.DisableHelmController
-	serverConfig.ControlConfig.DisableETCD = cfg.DisableETCD
 	serverConfig.ControlConfig.DisableAPIServer = cfg.DisableAPIServer
 	serverConfig.ControlConfig.DisableScheduler = cfg.DisableScheduler
 	serverConfig.ControlConfig.DisableControllerManager = cfg.DisableControllerManager
 	serverConfig.ControlConfig.DisableAgent = cfg.DisableAgent
 	serverConfig.ControlConfig.EmbeddedRegistry = cfg.EmbeddedRegistry
-	serverConfig.ControlConfig.ClusterInit = cfg.ClusterInit
 	serverConfig.ControlConfig.EncryptSecrets = cfg.EncryptSecrets
 	serverConfig.ControlConfig.DisableSandboxMatrix = cfg.DisableSandboxMatrix
 	serverConfig.ControlConfig.SandboxConfig = config.SandboxConfig{
@@ -260,16 +289,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		serverConfig.ControlConfig.SupervisorPort = serverConfig.ControlConfig.HTTPSPort
 	}
 
-	if serverConfig.ControlConfig.DisableETCD && serverConfig.ControlConfig.JoinURL == "" {
-		return errors.New("invalid flag use; --server is required with --disable-etcd")
-	}
-
 	if serverConfig.ControlConfig.Datastore.Endpoint != "" && serverConfig.ControlConfig.DisableAPIServer {
 		return errors.New("invalid flag use; cannot use --disable-apiserver with --datastore-endpoint")
-	}
-
-	if serverConfig.ControlConfig.Datastore.Endpoint != "" && serverConfig.ControlConfig.DisableETCD {
-		return errors.New("invalid flag use; cannot use --disable-etcd with --datastore-endpoint")
 	}
 
 	if serverConfig.ControlConfig.DisableAPIServer {
@@ -427,7 +448,6 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	// If performing a cluster reset, make sure control-plane components are
 	// disabled so we only perform a reset or restore and bail out.
 	if cfg.ClusterReset {
-		serverConfig.ControlConfig.ClusterInit = true
 		serverConfig.ControlConfig.DisableAPIServer = true
 		serverConfig.ControlConfig.DisableControllerManager = true
 		serverConfig.ControlConfig.DisableScheduler = true
@@ -487,10 +507,8 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 			logrus.Info("Kube API server is now running")
 			serverConfig.ControlConfig.Runtime.StartupHooksWg.Wait()
 		}
-		if !serverConfig.ControlConfig.DisableETCD {
-			<-serverConfig.ControlConfig.Runtime.ETCDReady
-			logrus.Info("ETCD server is now running")
-		}
+		<-serverConfig.ControlConfig.Runtime.ETCDReady
+		logrus.Info("Tandem datastore is now running")
 
 		logrus.Info(version.Program + " is up and running")
 		os.Setenv("NOTIFY_SOCKET", notifySocket)
@@ -535,7 +553,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		}
 		// initialize the apiAddress Channel for receiving the api address from etcd
 		agentConfig.APIAddressCh = make(chan []string)
-		go getAPIAddressFromEtcd(ctx, serverConfig, agentConfig)
+		go forwardAPIAddressFromTandem(ctx, serverConfig, agentConfig)
 	}
 
 	// Embedded P2P registry (spegel) removed. Direct image pull from registries.
@@ -615,19 +633,28 @@ func getArgValueFromList(searchArg string, argList []string) string {
 	return value
 }
 
-func getAPIAddressFromEtcd(ctx context.Context, serverConfig server.Config, agentConfig cmds.Agent) {
+func forwardAPIAddressFromTandem(ctx context.Context, serverConfig server.Config, agentConfig cmds.Agent) {
 	defer close(agentConfig.APIAddressCh)
-	for {
-		toCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		defer cancel()
-		serverAddresses, err := etcd.GetAPIServerURLsFromETCD(toCtx, &serverConfig.ControlConfig)
-		if err == nil && len(serverAddresses) > 0 {
-			agentConfig.APIAddressCh <- serverAddresses
-			break
-		}
-		if !errors.Is(err, etcd.ErrAddressNotSet) {
-			logrus.Warnf("Failed to get apiserver address from etcd: %v", err)
-		}
-		<-toCtx.Done()
+	select {
+	case <-ctx.Done():
+		return
+	default:
 	}
+	address := serverConfig.ControlConfig.AdvertiseIP
+	if address == "" {
+		address = serverConfig.ControlConfig.PrivateIP
+	}
+	if serverConfig.ControlConfig.JoinURL != "" {
+		if joined, err := url.Parse(serverConfig.ControlConfig.JoinURL); err == nil {
+			address = joined.Hostname()
+		}
+	}
+	if address == "" {
+		return
+	}
+	port := serverConfig.ControlConfig.APIServerPort
+	if port == 0 {
+		port = serverConfig.ControlConfig.HTTPSPort
+	}
+	agentConfig.APIAddressCh <- []string{net.JoinHostPort(address, fmt.Sprintf("%d", port))}
 }

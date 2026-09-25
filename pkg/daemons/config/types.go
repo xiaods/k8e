@@ -46,6 +46,12 @@ type TLSConfig struct {
 
 // DatastoreConfig holds configuration for the etcd datastore.
 type DatastoreConfig struct {
+	// Backend selects the managed datastore driver by name (for example
+	// "etcd" or "tandem"). Empty means the default driver, which remains
+	// embedded etcd until issue #592's M3 migration gate.
+	Backend          string
+	TandemBootstrap  bool
+	TandemJoin       string
 	Endpoint         string
 	BackendTLSConfig TLSConfig
 	ServerTLSConfig  TLSConfig
@@ -260,22 +266,25 @@ type Control struct {
 	// The port which custom k8e API runs on
 	SupervisorPort int
 	// The port which kube-apiserver runs on
-	APIServerPort            int
-	APIServerBindAddress     string
-	AgentToken               string `json:"-"`
-	Token                    string `json:"-"`
-	ServiceNodePortRange     *utilnet.PortRange
-	KubeConfigOutput         string
-	KubeConfigMode           string
-	KubeConfigGroup          string
-	HelmJobImage             string
-	DataDir                  string
-	Datastore                DatastoreConfig `json:"-"`
-	Disables                 map[string]bool
-	DisableAgent             bool
+	APIServerPort        int
+	APIServerBindAddress string
+	AgentToken           string `json:"-"`
+	Token                string `json:"-"`
+	ServiceNodePortRange *utilnet.PortRange
+	KubeConfigOutput     string
+	KubeConfigMode       string
+	KubeConfigGroup      string
+	HelmJobImage         string
+	DataDir              string
+	Datastore            DatastoreConfig `json:"-"`
+	Disables             map[string]bool
+	DisableAgent         bool
+	// Deprecated internal fields retained only while the legacy snapshot
+	// package is removed; no CLI path sets these values.
+	DisableETCD              bool
+	ClusterInit              bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
-	DisableETCD              bool
 	DisableScheduler         bool
 	Rootless                 bool
 	ExtraAPIArgs             []string
@@ -289,7 +298,6 @@ type Control struct {
 	DefaultLocalStoragePath  string
 	Skips                    map[string]bool
 	SystemDefaultRegistry    string
-	ClusterInit              bool
 	ClusterReset             bool
 	ClusterResetRestorePath  string
 	MinTLSVersion            string

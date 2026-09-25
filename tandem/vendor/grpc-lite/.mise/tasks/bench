@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+#MISE description="Run one local grpc-lite E2E benchmark"
+#USAGE flag "--scenario <scenario>" help="Benchmark scenario" default="unary" {
+#USAGE   choices "unary" "bidi-ping-pong" "bidi-throughput"
+#USAGE }
+#USAGE flag "--transport <transport>" help="Transport adapter" default="raw" {
+#USAGE   choices "raw" "typed"
+#USAGE }
+#USAGE flag "--warmup <duration>" help="Warmup duration" default="1s"
+#USAGE flag "--duration <duration>" help="Measurement duration" default="3s"
+#USAGE flag "--streams <count>" help="Concurrent workers or streams" default="1"
+#USAGE flag "--channels <count>" help="Client channels" default="1"
+#USAGE flag "--reactors <count>" help="Server reactor threads" default="1"
+#USAGE flag "--pipeline <count>" help="Outstanding messages per throughput stream" default="32"
+#USAGE flag "--payload-bytes <bytes>" help="Application payload size" default="128"
+#USAGE flag "--payload-pattern <pattern>" help="Payload byte pattern" default="repeated" {
+#USAGE   choices "repeated" "deterministic-random"
+#USAGE }
+#USAGE flag "--compression <compression>" help="Per-message compression" default="identity" {
+#USAGE   choices "identity" "gzip"
+#USAGE }
+#USAGE flag "--port <port>" help="Local server port"
+#USAGE flag "--output <path>" help="Also write JSON to this path"
+#USAGE flag "--compact" help="Emit compact JSON instead of pretty JSON"
+set -euo pipefail
+
+project_root=$(git rev-parse --show-toplevel)
+work_dir="$project_root/.zig-cache/benchmark"
+requested_port=${usage_port:-0}
+server_log="$work_dir/server-$$.log"
+server_pid=
+
+cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+mkdir -p "$work_dir"
+zig build -Doptimize=ReleaseFast
+"$project_root/zig-out/bin/grpc-lite-benchmark-server" \
+  --host=127.0.0.1 --port="$requested_port" --reactors="${usage_reactors}" >"$server_log" 2>&1 &
+server_pid=$!
+
+port=$requested_port
+if [[ "$port" == "0" ]]; then
+  for _ in {1..100}; do
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      printf '%s\n' 'benchmark server exited before reporting its port' >&2
+      cat "$server_log" >&2
+      exit 1
+    fi
+    if [[ -s "$server_log" ]]; then
+      IFS= read -r readiness <"$server_log" || true
+      if [[ "$readiness" =~ :([0-9]+)$ ]]; then
+        port=${BASH_REMATCH[1]}
+        break
+      fi
+    fi
+    sleep 0.05
+  done
+  if [[ "$port" == "0" ]]; then
+    printf '%s\n' 'timed out waiting for benchmark server port' >&2
+    cat "$server_log" >&2
+    exit 1
+  fi
+fi
+
+ready=false
+for _ in {1..100}; do
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    printf '%s\n' 'benchmark server exited before accepting connections' >&2
+    cat "$server_log" >&2
+    exit 1
+  fi
+  if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+    exec 3>&-
+    exec 3<&-
+    ready=true
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$ready" != "true" ]]; then
+  printf 'timed out waiting for benchmark server on port %s\n' "$port" >&2
+  cat "$server_log" >&2
+  exit 1
+fi
+
+args=(
+  --host=127.0.0.1
+  --port="$port"
+  --scenario="${usage_scenario}"
+  --transport="${usage_transport}"
+  --warmup="${usage_warmup}"
+  --duration="${usage_duration}"
+  --streams="${usage_streams}"
+  --channels="${usage_channels}"
+  --server-reactors="${usage_reactors}"
+  --pipeline="${usage_pipeline}"
+  --payload-bytes="${usage_payload_bytes}"
+  --payload-pattern="${usage_payload_pattern}"
+  --compression="${usage_compression}"
+)
+if [[ -n "${usage_output:-}" ]]; then
+  mkdir -p "$(dirname "${usage_output}")"
+  args+=(--output="${usage_output}")
+fi
+if [[ "${usage_compact:-false}" == "true" ]]; then
+  args+=(--compact)
+fi
+"$project_root/zig-out/bin/grpc-lite-benchmark-client" "${args[@]}"

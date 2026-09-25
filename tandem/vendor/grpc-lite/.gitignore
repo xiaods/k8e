@@ -1,0 +1,14 @@
+/.cache/
+/.idea/
+/.mise.local.toml
+/.opencode/
+/.pi/
+/.vscode/
+**/.zig-cache/
+/golden/
+/opencode.json
+/third_party/struct_proto26/
+/transpiled/
+/zig-pkg/
+/zig-out/
+/coverage/

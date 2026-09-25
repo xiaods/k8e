@@ -1,0 +1,134 @@
+[tools]
+zig = "0.16.0"
+cmake = "4.3.4"
+ninja = "1.13.2"
+grpcurl = "1.9.3"
+go = "1.26.5"
+actionlint = "1.7.12"
+"github:jiacai2050/zigcli" = "0.6.2"
+
+[tasks.bootstrap]
+description = "Fetch build dependencies"
+run = "zig build --fetch=needed"
+
+[tasks.build]
+description = "Build grpc-lite"
+run = "zig build"
+
+[tasks.build-release-safe]
+description = "Build grpc-lite with ReleaseSafe optimization"
+run = "zig build -Doptimize=ReleaseSafe"
+
+[tasks.transpile-c]
+description = "Generate local C sources for CMake consumers"
+run = "tools/transpile_c.sh"
+
+[tasks.package-transpiled-c]
+description = "Create the generated-only C release bundle"
+run = "tools/package_transpiled_c.sh ${GRPC_LITE_TRANSPILED_C_DIST_DIR:-.zig-cache/transpiled-c-dist}"
+
+[tasks.check-transpiled-c]
+description = "Verify generated C bundle reproducibility"
+run = ".mise/tasks/check-transpiled-c"
+
+[tasks.test]
+description = "Run all tests"
+run = "zig build test --summary all"
+
+[tasks.test-release-safe]
+description = "Run all tests with ReleaseSafe optimization"
+run = "zig build test -Doptimize=ReleaseSafe --summary all"
+
+[tasks.coverage]
+description = "Generate core Zig coverage with kcov"
+run = "tools/coverage.sh"
+
+[tasks.test-tsan]
+description = "Run all tests with ThreadSanitizer"
+run = "TSAN_OPTIONS=halt_on_error=1:exitcode=66 zig build test -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe -Dsanitize-thread=true -Dsanitize-c=false --summary all --test-timeout 30s"
+
+[tasks.test-ubsan]
+description = "Run all tests with C undefined behavior detection"
+run = "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 zig build test -Doptimize=Debug -Dsanitize-thread=false -Dsanitize-c=true --summary all"
+
+[tasks.test-tls]
+description = "Run all tests with optional TLS support"
+depends = ["prepare-tls-deps"]
+run = "zig build test -Dtls=true --summary all"
+
+[tasks.test-tls-release-safe]
+description = "Run TLS tests with ReleaseSafe optimization"
+depends = ["prepare-tls-deps"]
+run = "zig build test -Dtls=true -Doptimize=ReleaseSafe --summary all"
+
+[tasks.test-tls-tsan]
+description = "Run TLS tests with ThreadSanitizer"
+depends = ["prepare-tls-deps"]
+run = "TSAN_OPTIONS=halt_on_error=1:exitcode=66 zig build test -Dtls=true -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseSafe -Dsanitize-thread=true -Dsanitize-c=false --summary all --test-timeout 30s"
+
+[tasks.test-tls-ubsan]
+description = "Run TLS tests with C undefined behavior detection"
+depends = ["prepare-tls-deps"]
+run = "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 zig build test -Dtls=true -Dsanitize-thread=false -Dsanitize-c=true --summary all"
+
+[tasks.test-consumer]
+description = "Build a raw consumer from the package archive"
+run = "tests/consumer/run_raw.sh"
+
+[tasks.test-consumer-cpp]
+description = "Generate, build, and run the C++ package consumer"
+run = "tests/consumer/run_cpp.sh"
+
+[tasks.test-consumer-cmake-c]
+description = "Build the generated C bundle without Zig or network access"
+depends = ["check-transpiled-c"]
+run = '''bash -c '
+archives=(.zig-cache/transpiled-c-dist/*.tar.gz)
+test "${#archives[@]}" -eq 1
+tests/consumer/run_cmake_c.sh "${archives[0]}" "${archives[0]}.sha256"
+' '''
+
+[tasks.gen-proto]
+description = "Generate Zig protobuf sources"
+run = "zig build gen-proto"
+
+[tasks.gen-grpcpp]
+description = "Generate synchronous C++ service glue"
+run = "zig build gen-grpcpp"
+
+[tasks.gen-interop-proto]
+description = "Generate official gRPC interop protobuf sources"
+run = "zig build gen-interop-proto"
+
+[tasks.fmt]
+description = "Format Zig sources"
+run = "zig fmt build.zig src examples tests benchmarks"
+
+[tasks.fmt-check]
+description = "Check Zig formatting"
+run = "zig fmt --check build.zig src examples tests benchmarks"
+
+[tasks.ci-lint]
+description = "Validate GitHub Actions workflows"
+run = "actionlint"
+
+[tasks.interop]
+description = "Run grpcurl against the Zig echo server"
+run = "scripts/interop.sh"
+
+[tasks.interop-official]
+description = "Run official grpc-go and generated C++ interoperability tests"
+run = "tests/official/run_unary.sh"
+
+[tasks.interop-tls]
+description = "Run TLS unary and streaming interoperability against grpc-go"
+depends = ["prepare-tls-deps"]
+run = "tests/official/run_tls.sh"
+
+[tasks.interop-http2]
+description = "Run the official gRPC HTTP/2 framing suite"
+run = "tests/official/run_http2.sh"
+
+[tasks.interop-http2-edge]
+description = "Run official gRPC HTTP/2 edge-case server tests"
+run = "tests/official/run_http2_edge.sh"

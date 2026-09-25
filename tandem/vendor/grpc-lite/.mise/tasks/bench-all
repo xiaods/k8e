@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#MISE description="Run the default grpc-lite E2E benchmark matrix"
+#USAGE flag "--warmup <duration>" help="Warmup duration per case" default="500ms"
+#USAGE flag "--duration <duration>" help="Measurement duration per case" default="2s"
+#USAGE flag "--streams <count>" help="Concurrent workers or streams" default="1"
+#USAGE flag "--channels <count>" help="Client channels" default="1"
+#USAGE flag "--reactors <count>" help="Server reactor threads" default="1"
+#USAGE flag "--pipeline <count>" help="Outstanding messages per throughput stream" default="32"
+#USAGE flag "--payload-bytes <bytes>" help="Application payload size" default="128"
+#USAGE flag "--payload-pattern <pattern>" help="Payload byte pattern" default="repeated" {
+#USAGE   choices "repeated" "deterministic-random"
+#USAGE }
+#USAGE flag "--compression <compression>" help="Per-message compression" default="identity" {
+#USAGE   choices "identity" "gzip"
+#USAGE }
+#USAGE flag "--output-dir <path>" help="Directory for pretty JSON results" default=".zig-cache/benchmark/results"
+#USAGE flag "--compact" help="Write compact JSON instead of pretty JSON"
+set -euo pipefail
+
+project_root=$(git rev-parse --show-toplevel)
+output_dir=${usage_output_dir}
+if [[ "$output_dir" != /* ]]; then
+  output_dir="$project_root/$output_dir"
+fi
+mkdir -p "$output_dir"
+
+for transport in raw typed; do
+  for scenario in unary bidi-ping-pong bidi-throughput; do
+    output="$output_dir/$transport-$scenario.json"
+    args=(
+      --scenario="$scenario"
+      --transport="$transport"
+      --warmup="${usage_warmup}"
+      --duration="${usage_duration}"
+      --streams="${usage_streams}"
+      --channels="${usage_channels}"
+      --reactors="${usage_reactors}"
+      --pipeline="${usage_pipeline}"
+      --payload-bytes="${usage_payload_bytes}"
+      --payload-pattern="${usage_payload_pattern}"
+      --compression="${usage_compression}"
+      --output="$output"
+    )
+    if [[ "${usage_compact:-false}" == "true" ]]; then
+      args+=(--compact)
+    fi
+    mise run bench -- "${args[@]}" >/dev/null
+    printf '%s\n' "$output"
+  done
+done

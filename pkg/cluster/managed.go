@@ -1,23 +1,20 @@
 package cluster
 
-// A managed database is one whose lifecycle we control - initializing the cluster, adding/removing members, taking snapshots, etc.
-// This is currently just used for the embedded etcd datastore. Kine and other external etcd clusters are NOT considered managed.
+// A managed database is one whose lifecycle we control. Tandem is the only
+// supported managed datastore and owns the rqlite-backed cluster lifecycle.
 
 import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"time"
 
 	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
-	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/nodepassword"
 	"github.com/xiaods/k8e/pkg/version"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // testClusterDB returns a channel that will be closed when the datastore connection is available.
@@ -52,6 +49,10 @@ func (c *Cluster) testClusterDB(ctx context.Context) (<-chan struct{}, error) {
 
 // start starts the database, unless a cluster reset has been requested, in which case
 // it does that instead.
+// managedStarted records that the managed datastore has already been brought
+// up. Bootstrap starts the driver when it needs to read or write bootstrap
+// keys, which happens before Cluster.Start; without this the second call would
+// start a second copy of the datastore.
 func (c *Cluster) start(ctx context.Context) error {
 	if c.managedDB == nil {
 		return nil
@@ -88,7 +89,14 @@ func (c *Cluster) start(ctx context.Context) error {
 	}
 
 	// Starting the managed database will clear the reset-flag if set
-	return c.managedDB.Start(ctx, c.clientAccessInfo)
+	if c.managedStarted {
+		return nil
+	}
+	if err := c.managedDB.Start(ctx, c.clientAccessInfo); err != nil {
+		return err
+	}
+	c.managedStarted = true
+	return nil
 }
 
 // registerDBHandlers registers managed-datastore-specific callbacks, and installs additional HTTP route handlers.
@@ -102,58 +110,48 @@ func (c *Cluster) registerDBHandlers(handler http.Handler) (http.Handler, error)
 	return c.managedDB.Register(handler)
 }
 
-// assignManagedDriver assigns a driver based on a number of different configuration variables.
-// If a driver has been initialized it is used.
-// If no specific endpoint has been requested and creating or joining has been requested,
-// we use the default driver.
-// If none of the above are true, no managed driver is assigned.
+// assignManagedDriver selects the managed datastore driver for this server.
+//
+// Issue #592 requires that embedded etcd stays the default backend until the
+// M3 migration gate, and that a new backend is only reachable by explicitly
+// opting in. Selection therefore prefers whichever driver already has an
+// initialized data dir on disk, so an existing cluster keeps its backend across
+// upgrades, and otherwise picks a driver only when the operator asked for a
+// managed datastore.
 func (c *Cluster) assignManagedDriver(ctx context.Context) error {
-	// Check all managed drivers for an initialized database on disk; use one if found
+	// A driver with an initialized data dir on disk owns this cluster already.
 	for _, driver := range managed.Registered() {
 		if err := driver.SetControlConfig(c.config); err != nil {
 			return err
 		}
-		if ok, err := driver.IsInitialized(); err != nil {
+		initialized, err := driver.IsInitialized()
+		if err != nil {
 			return err
-		} else if ok {
+		}
+		if initialized {
 			c.managedDB = driver
 			return nil
 		}
 	}
 
-	// If we have been asked to initialize or join a cluster, do so using the default managed database.
-	if c.config.Datastore.Endpoint == "" && (c.config.ClusterInit || (c.config.Token != "" && c.config.JoinURL != "")) {
-		c.managedDB = managed.Default()
+	// An explicitly configured endpoint means the operator is pointing at a
+	// datastore they manage; K8E starts no local one.
+	if c.config.Datastore.Endpoint != "" && c.config.Datastore.Backend == "" {
+		return nil
 	}
 
+	selected, err := managed.Select(c.config.Datastore.Backend)
+	if err != nil {
+		return err
+	}
+	if selected == nil {
+		return nil
+	}
+	if err := selected.SetControlConfig(c.config); err != nil {
+		return err
+	}
+	c.managedDB = selected
 	return nil
-}
-
-// setupEtcdProxy starts a goroutine to periodically update the etcd proxy with the current list of
-// cluster client URLs, as retrieved from etcd.
-func (c *Cluster) setupEtcdProxy(ctx context.Context, etcdProxy etcd.Proxy) {
-	if c.managedDB == nil {
-		return
-	}
-	// We use Poll here instead of Until because we want to wait the interval before running the function.
-	go wait.PollUntilContextCancel(ctx, 30*time.Second, false, func(ctx context.Context) (bool, error) {
-		clientURLs, err := c.managedDB.GetMembersClientURLs(ctx)
-		if err != nil {
-			logrus.Warnf("Failed to get etcd ClientURLs: %v", err)
-			return false, nil
-		}
-		// client URLs are a full URI, but the proxy only wants host:port
-		for i, c := range clientURLs {
-			u, err := url.Parse(c)
-			if err != nil {
-				logrus.Warnf("Failed to parse etcd ClientURL: %v", err)
-				return false, nil
-			}
-			clientURLs[i] = u.Host
-		}
-		etcdProxy.Update(clientURLs)
-		return false, nil
-	})
 }
 
 // deleteNodePasswdSecret wipes out the node password secret after restoration

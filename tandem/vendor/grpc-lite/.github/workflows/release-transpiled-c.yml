@@ -1,0 +1,188 @@
+name: Release transpiled C bundle
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transpiled-c-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  full-validation:
+    name: Full validation for tag SHA
+    uses: ./.github/workflows/ci.yml
+    with:
+      validation-ref: ${{ github.sha }}
+    permissions:
+      contents: read
+
+  package:
+    name: Validate and package generated C
+    needs: full-validation
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Validate tag
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          version=${GITHUB_REF_NAME#v}
+          zon=$(sed -n 's/^[[:space:]]*\.version = "\([^"]*\)",$/\1/p' build.zig.zon)
+          cmake=$(sed -n 's/^project(grpc_lite VERSION \([^ ]*\) LANGUAGES C)$/\1/p' CMakeLists.txt)
+          config=$(sed -n 's/^set(PACKAGE_VERSION "\([^"]*\)")$/\1/p' cmake/grpc_liteConfigVersion.cmake)
+          test "$version" = "$zon"
+          test "$version" = "$cmake"
+          test "$version" = "$config"
+
+      - name: Install pinned mise and Zig
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.7.14
+
+      - name: Package independently twice
+        run: mise run check-transpiled-c
+
+      - name: Validate release manifest provenance
+        run: |
+          archive=(.zig-cache/transpiled-c-dist/*.tar.gz)
+          test "${#archive[@]}" -eq 1
+          root=$(basename "${archive[0]}" .tar.gz)
+          mkdir manifest-check
+          tar -xzf "${archive[0]}" -C manifest-check "$root/manifest.json"
+          test "$(jq -r .source_commit "manifest-check/$root/manifest.json")" = "$(git rev-parse HEAD)"
+          test "$(jq -r .dirty "manifest-check/$root/manifest.json")" = false
+          test "$(jq -r .project_version "manifest-check/$root/manifest.json")" = "${GITHUB_REF_NAME#v}"
+
+      - name: Upload validated bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: grpc-lite-transpiled-c-release
+          path: .zig-cache/transpiled-c-dist/*
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  consumer:
+    name: Validate release bundle — no Zig/no network
+    needs: package
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout event commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Verify no-Zig container host
+        run: |
+          test -z "$(command -v zig || true)"
+          docker version
+
+      - name: Download validated bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: grpc-lite-transpiled-c-release
+          path: bundle-dist
+
+      - name: Test exact bundle
+        run: |
+          test -z "$(command -v zig || true)"
+          archives=(bundle-dist/*.tar.gz)
+          test "${#archives[@]}" -eq 1
+          tests/consumer/run_cmake_c.sh \
+            "${archives[0]}" "${archives[0]}.sha256"
+
+  release:
+    name: Upload generated C release assets
+    needs:
+      - package
+      - consumer
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download validated bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: grpc-lite-transpiled-c-release
+          path: bundle-dist
+
+      - name: Create, verify, and publish workflow draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          marker='<!-- grpc-lite-transpiled-c-workflow-owned -->'
+          tag=$GITHUB_REF_NAME
+          archives=(bundle-dist/*.tar.gz)
+          test "${#archives[@]}" -eq 1
+          archive=${archives[0]}
+          root=$(basename "$archive" .tar.gz)
+          manifest_commit=$(tar -xOf "$archive" "$root/manifest.json" | jq -r .source_commit)
+          test "$manifest_commit" = "$GITHUB_SHA"
+          (cd bundle-dist && sha256sum --check "$(basename "$archive").sha256")
+
+          require_current_tag() {
+            local object_json object_type object_sha
+            object_json=$(gh api "repos/$GH_REPO/git/ref/tags/$tag")
+            object_type=$(jq -r .object.type <<<"$object_json")
+            object_sha=$(jq -r .object.sha <<<"$object_json")
+            while [[ "$object_type" == tag ]]; do
+              object_json=$(gh api "repos/$GH_REPO/git/tags/$object_sha")
+              object_type=$(jq -r .object.type <<<"$object_json")
+              object_sha=$(jq -r .object.sha <<<"$object_json")
+            done
+            if [[ "$object_type" != commit || "$object_sha" != "$manifest_commit" ]]; then
+              printf 'Tag %s now resolves to %s %s; expected commit %s\n' \
+                "$tag" "$object_type" "$object_sha" "$manifest_commit" >&2
+              return 1
+            fi
+          }
+
+          require_current_tag
+          if ! release_json=$(gh release view "$tag" --json isDraft,body 2>/dev/null); then
+            require_current_tag
+            gh release create "$tag" --verify-tag --draft --title "$tag" \
+              --notes "$marker
+          Generated-only C bundle for insecure Linux x86_64."
+            release_json=$(gh release view "$tag" --json isDraft,body)
+          fi
+          is_draft=$(jq -r .isDraft <<<"$release_json")
+          grep -Fq "$marker" <<<"$(jq -r .body <<<"$release_json")"
+
+          mkdir remote-assets
+          for local_asset in bundle-dist/*.tar.gz bundle-dist/*.tar.gz.sha256; do
+            name=$(basename "$local_asset")
+            rm -f "remote-assets/$name"
+            if gh release view "$tag" --json assets --jq '.assets[].name' | grep -Fxq "$name"; then
+              gh release download "$tag" --pattern "$name" --dir remote-assets
+              cmp "$local_asset" "remote-assets/$name"
+            else
+              require_current_tag
+              gh release upload "$tag" "$local_asset"
+              gh release download "$tag" --pattern "$name" --dir remote-assets
+              cmp "$local_asset" "remote-assets/$name"
+            fi
+          done
+
+          if [[ "$is_draft" == true ]]; then
+            require_current_tag
+            gh release edit "$tag" --draft=false
+          fi

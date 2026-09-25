@@ -1,0 +1,64 @@
+name: Soak
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Iterations per soak case
+        required: true
+        type: number
+        default: 1000
+      timeout_seconds:
+        description: Timeout per soak case
+        required: true
+        type: number
+        default: 900
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  soak:
+    name: Official unary soak (x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      SOAK_ITERATIONS: ${{ inputs.iterations || '1000' }}
+      SOAK_MAX_FAILURES: "0"
+      SOAK_OVERALL_TIMEOUT_SECONDS: ${{ inputs.timeout_seconds || '900' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install mise tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.7.14
+
+      - name: Install Protobuf C++ tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            protobuf-compiler \
+            libprotobuf-dev
+
+      - name: Run official unary soak
+        run: mise run interop-official
+
+      - name: Upload soak logs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: official-unary-soak
+          path: .zig-cache/official/*.log
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 14

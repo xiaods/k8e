@@ -56,7 +56,10 @@ type Server struct {
 	ExtraControllerArgs      cli.StringSlice
 	ExtraCloudControllerArgs cli.StringSlice
 	Rootless                 bool
+	DatastoreBackend         string
 	DatastoreEndpoint        string
+	TandemBootstrap          bool
+	TandemJoin               string
 	DatastoreCAFile          string
 	DatastoreCertFile        string
 	DatastoreKeyFile         string
@@ -73,9 +76,7 @@ type Server struct {
 	CiliumDNSProxyEnabled    bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
-	DisableETCD              bool
 	EmbeddedRegistry         bool
-	ClusterInit              bool
 	ClusterReset             bool
 	ClusterResetRestorePath  string
 	EncryptSecrets           bool
@@ -253,6 +254,8 @@ var ServerFlags = []cli.Flag{
 		Destination: &ServerConfig.HelmJobImage,
 	},
 	ServerToken,
+	&cli.BoolFlag{Name: "bootstrap", Usage: "(cluster) Bootstrap the first Tandem/rqlite node", EnvVar: version.ProgramUpper + "_BOOTSTRAP", Destination: &ServerConfig.TandemBootstrap},
+	&cli.StringFlag{Name: "join", Usage: "(cluster) Join Tandem/rqlite using a reachable Raft address, for example 10.0.0.1:4002", EnvVar: version.ProgramUpper + "_JOIN", Destination: &ServerConfig.TandemJoin},
 	&cli.StringFlag{
 		Name:        "token-file",
 		Usage:       "(cluster) File containing the token",
@@ -278,12 +281,6 @@ var ServerFlags = []cli.Flag{
 		Destination: &ServerConfig.ServerURL,
 	},
 	&cli.BoolFlag{
-		Name:        "cluster-init",
-		Usage:       "(cluster) Initialize a new cluster using embedded Etcd",
-		EnvVar:      version.ProgramUpper + "_CLUSTER_INIT",
-		Destination: &ServerConfig.ClusterInit,
-	},
-	&cli.BoolFlag{
 		Name:        "cluster-reset",
 		Usage:       "(cluster) Forget all peers and become sole member of a new cluster",
 		EnvVar:      version.ProgramUpper + "_CLUSTER_RESET",
@@ -302,6 +299,12 @@ var ServerFlags = []cli.Flag{
 		Name:  "kube-cloud-controller-manager-arg",
 		Usage: "(flags) Customized flag for kube-cloud-controller-manager process",
 		Value: &ServerConfig.ExtraCloudControllerArgs,
+	},
+	&cli.StringFlag{
+		Name:        "datastore-backend",
+		Usage:       "(db) Managed datastore driver to run: etcd (default) or tandem",
+		Destination: &ServerConfig.DatastoreBackend,
+		EnvVar:      version.ProgramUpper + "_DATASTORE_BACKEND",
 	},
 	&cli.StringFlag{
 		Name:        "datastore-endpoint",
@@ -480,12 +483,6 @@ var ServerFlags = []cli.Flag{
 		Hidden:      true,
 		Usage:       "(experimental/components) Disable running kube-controller-manager",
 		Destination: &ServerConfig.DisableControllerManager,
-	},
-	&cli.BoolFlag{
-		Name:        "disable-etcd",
-		Hidden:      true,
-		Usage:       "(experimental/components) Disable running etcd",
-		Destination: &ServerConfig.DisableETCD,
 	},
 	&cli.BoolFlag{
 		Name:        "embedded-registry",

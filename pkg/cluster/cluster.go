@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"context"
-	"net/url"
 	"runtime"
 	"strings"
 	"time"
@@ -12,9 +11,7 @@ import (
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/etcd"
 	"k8s.io/apimachinery/pkg/util/wait"
-	utilsnet "k8s.io/utils/net"
 )
 
 type Cluster struct {
@@ -23,70 +20,25 @@ type Cluster struct {
 	managedDB        managed.Driver
 	joining          bool
 	storageStarted   bool
-	saveBootstrap    bool
-	shouldBootstrap  bool
-	cnFilterFunc     func(...string) []string
+	// managedStarted guards against starting the managed datastore twice:
+	// Bootstrap brings it up when it must read or write bootstrap keys, and
+	// Cluster.Start runs afterwards on the same Cluster.
+	managedStarted  bool
+	saveBootstrap   bool
+	shouldBootstrap bool
+	cnFilterFunc    func(...string) []string
 }
 
 // Start creates the dynamic tls listener, http request handler,
 // handles starting and writing/reading bootstrap data, and returns a channel
-// that will be closed when datastore is ready. If embedded etcd is in use,
-// a secondary call to Cluster.save is made.
+// that will be closed when the Tandem datastore is ready.
 func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 	// Set up the dynamiclistener and http request handlers
 	if err := c.initClusterAndHTTPS(ctx); err != nil {
 		return nil, errors.Wrap(err, "init cluster datastore and https")
 	}
 
-	if c.config.DisableETCD {
-		ready := make(chan struct{})
-		defer close(ready)
-
-		// try to get /db/info urls first, for a current list of etcd cluster member client URLs
-		clientURLs, _, err := etcd.ClientURLs(ctx, c.clientAccessInfo, c.config.PrivateIP)
-		if err != nil {
-			return nil, err
-		}
-		// If we somehow got no error but also no client URLs, just use the address of the server we're joining
-		if len(clientURLs) == 0 {
-			clientURL, err := url.Parse(c.config.JoinURL)
-			if err != nil {
-				return nil, err
-			}
-			clientURL.Host = clientURL.Hostname() + ":2379"
-			clientURLs = append(clientURLs, clientURL.String())
-			logrus.Warnf("Got empty etcd ClientURL list; using server URL %s", clientURL)
-		}
-		etcdProxy, err := etcd.NewETCDProxy(ctx, c.config.SupervisorPort, c.config.DataDir, clientURLs[0], utilsnet.IsIPv6CIDR(c.config.ServiceIPRanges[0]))
-		if err != nil {
-			return nil, err
-		}
-		// immediately update the load balancer with all etcd addresses
-		// client URLs are a full URI, but the proxy only wants host:port
-		for i, c := range clientURLs {
-			u, err := url.Parse(c)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to parse etcd ClientURL")
-			}
-			clientURLs[i] = u.Host
-		}
-		etcdProxy.Update(clientURLs)
-
-		// start periodic endpoint sync goroutine
-		c.setupEtcdProxy(ctx, etcdProxy)
-
-		// remove etcd member if it exists
-		if err := c.managedDB.RemoveSelf(ctx); err != nil {
-			logrus.Warnf("Failed to remove this node from etcd members")
-		}
-
-		c.config.Runtime.EtcdConfig.Endpoints = strings.Split(c.config.Datastore.Endpoint, ",")
-		c.config.Runtime.EtcdConfig.TLSConfig = c.config.Datastore.BackendTLSConfig
-
-		return ready, nil
-	}
-
-	// start managed database (if necessary)
+	// Tandem is the only supported managed datastore.
 	if err := c.start(ctx); err != nil {
 		return nil, errors.Wrap(err, "start managed database")
 	}
@@ -97,7 +49,7 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 		return nil, err
 	}
 
-	if err := c.startStorage(ctx, false); err != nil {
+	if err := c.startStorage(ctx); err != nil {
 		return nil, err
 	}
 
@@ -141,19 +93,26 @@ func (c *Cluster) Start(ctx context.Context) (<-chan struct{}, error) {
 	return ready, nil
 }
 
-// startStorage configures the etcd endpoints for the embedded etcd backend.
+// startStorage configures the Kubernetes storage client to use Tandem's etcd-compatible endpoint.
 // It populates the runtime EtcdConfig with the endpoints and TLS configuration
 // derived from the datastore configuration.
-func (c *Cluster) startStorage(ctx context.Context, bootstrap bool) error {
+func (c *Cluster) startStorage(ctx context.Context) error {
 	if c.storageStarted {
 		return nil
 	}
 	c.storageStarted = true
 
-	if !bootstrap {
+	// The datastore endpoint serves mTLS now that the driver requires client
+	// certificates, so the storage client is configured with K8E's etcd
+	// credentials on every path, including bootstrap — which is the first
+	// path to reach the datastore. An operator pointing at an external
+	// datastore supplies their own credentials via the datastore TLS flags,
+	// and those take precedence.
+	if c.config.Datastore.BackendTLSConfig.CAFile == "" {
 		c.config.Datastore.ServerTLSConfig.CAFile = c.config.Runtime.ETCDServerCA
 		c.config.Datastore.ServerTLSConfig.CertFile = c.config.Runtime.ServerETCDCert
 		c.config.Datastore.ServerTLSConfig.KeyFile = c.config.Runtime.ServerETCDKey
+		c.config.Datastore.BackendTLSConfig = c.config.Datastore.ServerTLSConfig
 	}
 
 	// Direct etcd endpoint configuration — no kine intermediary

@@ -167,6 +167,17 @@ jobs:
             sleep 20
           done
           exit 1
+      - name: Tandem persistent transaction and TLS regressions
+        run: |
+          image_container=$(docker create k8e-e2e:local)
+          trap 'docker rm "$image_container" >/dev/null' EXIT
+          docker cp "$image_container:/usr/local/bin/rqlited" "$RUNNER_TEMP/rqlited"
+          chmod +x "$RUNNER_TEMP/rqlited"
+          (cd tandem && zig build persistence-probe test -Dtarget=x86_64-linux-musl)
+          TANDEM_TEST_BINARY="$PWD/bin/tandem" \
+          TANDEM_TEST_PROBE="$PWD/tandem/zig-out/bin/persistence-probe" \
+          TANDEM_TEST_RQLITED="$RUNNER_TEMP/rqlited" \
+            go test -tags=tandem_integration ./pkg/tandem -count=1 -timeout=180s
       - name: Run E2E profile l1
         env:
           E2E_SKIP_IMAGE_BUILD: '1'
