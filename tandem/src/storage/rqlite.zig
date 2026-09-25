@@ -215,7 +215,7 @@ pub const RqliteClient = struct {
         // owned by the client, so this needs a real buffer.
         var buf: [512]u8 = undefined;
         const path = std.fmt.bufPrint(&buf, "{s}/status", .{self.base_url}) catch return error.InvalidUrl;
-        const response = try self.http_client.get(path);
+        var response = try self.http_client.get(path);
         defer response.deinit();
 
         return try parseStatusResponse(self.allocator, response.body);
@@ -297,8 +297,13 @@ pub const Value = union(enum) {
 
 pub const NodeStatus = struct {
     leader_address: []const u8,
+    leader_id: []const u8,
     node_id: []const u8,
     version: []const u8,
+    /// store.raft.applied_index — the last log index this node applied.
+    raft_applied_index: i64 = 0,
+    /// store.raft.term — the Raft term this node has seen.
+    raft_term: i64 = 0,
 };
 
 fn responseResults(value: std.json.Value) ![]std.json.Value {
@@ -427,15 +432,78 @@ fn parseQueryEntry(allocator: Allocator, value: std.json.Value) !QueryResult {
     return result;
 }
 
+/// Parse the parts of rqlite's /status that Maintenance.Status reports.
+///
+/// This walks the parsed JSON rather than scanning for `"key":"` patterns.
+/// rqlite nests `leader` and `raft` inside `store`, and both carry a `node_id`
+/// and a `term`, so a textual search for the first occurrence of either name
+/// returns whichever one happens to appear first in the document rather than
+/// the one that was asked for.
 fn parseStatusResponse(allocator: Allocator, body: []const u8) !NodeStatus {
-    const leader = extractStringField(body, "leader") orelse "";
-    const node_id = extractStringField(body, "node_id") orelse "";
-    const version = extractStringField(body, "version") orelse "";
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{}) catch
+        return NodeStatus{
+            .leader_address = try allocator.dupe(u8, ""),
+            .leader_id = try allocator.dupe(u8, ""),
+            .node_id = try allocator.dupe(u8, ""),
+            .version = try allocator.dupe(u8, ""),
+        };
+    defer parsed.deinit();
+
+    const root = parsed.value;
+    if (root != .object) {
+        return NodeStatus{
+            .leader_address = try allocator.dupe(u8, ""),
+            .leader_id = try allocator.dupe(u8, ""),
+            .node_id = try allocator.dupe(u8, ""),
+            .version = try allocator.dupe(u8, ""),
+        };
+    }
+    const store = root.object.get("store");
+    const store_obj: ?std.json.ObjectMap = if (store != null and store.? == .object) store.?.object else null;
+
+    const node_id = if (store_obj) |o| jsonString(o.get("node_id")) else "";
+    const leader_addr = blk: {
+        const leader = if (store_obj) |o| o.get("leader") else null;
+        if (leader == null or leader.? != .object) break :blk "";
+        break :blk jsonString(leader.?.object.get("addr"));
+    };
+    const leader_id = blk: {
+        const leader = if (store_obj) |o| o.get("leader") else null;
+        if (leader == null or leader.? != .object) break :blk "";
+        break :blk jsonString(leader.?.object.get("node_id"));
+    };
+    const applied_index = blk: {
+        const raft = if (store_obj) |o| o.get("raft") else null;
+        if (raft == null or raft.? != .object) break :blk @as(i64, 0);
+        break :blk jsonInt(raft.?.object.get("applied_index"));
+    };
+    const term = blk: {
+        const raft = if (store_obj) |o| o.get("raft") else null;
+        if (raft == null or raft.? != .object) break :blk @as(i64, 0);
+        break :blk jsonInt(raft.?.object.get("term"));
+    };
 
     return NodeStatus{
-        .leader_address = try allocator.dupe(u8, leader),
+        .leader_address = try allocator.dupe(u8, leader_addr),
+        .leader_id = try allocator.dupe(u8, leader_id),
         .node_id = try allocator.dupe(u8, node_id),
-        .version = try allocator.dupe(u8, version),
+        .version = try allocator.dupe(u8, extractStringField(body, "version") orelse ""),
+        .raft_applied_index = applied_index,
+        .raft_term = term,
+    };
+}
+
+fn jsonString(value: ?std.json.Value) []const u8 {
+    const v = value orelse return "";
+    return if (v == .string) v.string else "";
+}
+
+fn jsonInt(value: ?std.json.Value) i64 {
+    const v = value orelse return 0;
+    return switch (v) {
+        .integer => |n| n,
+        .float => |f| @intFromFloat(f),
+        else => 0,
     };
 }
 
@@ -1649,4 +1717,48 @@ test "a binary key is emitted as a blob literal, not a lossy TEXT cast" {
 fn isLeadershipPending(body: []const u8) bool {
     return std.mem.indexOf(u8, body, "leader not found") != null or
         std.mem.indexOf(u8, body, "no leader") != null;
+}
+
+test "the rqlite status parser reads nested leader and raft fields" {
+    // rqlite nests `leader` and `raft` inside `store`, and both carry keys
+    // that also appear at the top level. A textual search for the first
+    // `"node_id":"` or `"term":` in the document returns whichever one comes
+    // first in the JSON, not the one that was asked for, so this exercises the
+    // nesting rather than a flat fixture.
+    const body =
+        \\{"build":{"version":"10.3.6"},
+        \\ "store":{"ready":true,"node_id":"n2",
+        \\   "leader":{"addr":"10.0.0.1:4002","node_id":"n1"},
+        \\   "raft":{"term":7,"applied_index":4211,"commit_index":4211},
+        \\   "fsm_index":4200,"db_applied_index":4200}}
+    ;
+    const status = try parseStatusResponse(testing.allocator, body);
+    defer testing.allocator.free(status.leader_address);
+    defer testing.allocator.free(status.leader_id);
+    defer testing.allocator.free(status.node_id);
+    defer testing.allocator.free(status.version);
+
+    // The leader is n1, not this node's own id.
+    try testing.expectEqualStrings("n1", status.leader_id);
+    try testing.expectEqualStrings("10.0.0.1:4002", status.leader_address);
+    try testing.expectEqualStrings("n2", status.node_id);
+    try testing.expectEqual(@as(i64, 4211), status.raft_applied_index);
+    try testing.expectEqual(@as(i64, 7), status.raft_term);
+    try testing.expectEqualStrings("10.3.6", status.version);
+}
+
+test "a status without a leader reports none rather than a fabricated one" {
+    // A node that has not elected itself still answers /status, and the
+    // caller reports "no leader" instead of the constant 1 this used to send.
+    const body = \\{"store":{"ready":false,"node_id":"n1","leader":{},"raft":{"term":0,"applied_index":0}}}
+    ;
+    const status = try parseStatusResponse(testing.allocator, body);
+    defer testing.allocator.free(status.leader_address);
+    defer testing.allocator.free(status.leader_id);
+    defer testing.allocator.free(status.node_id);
+    defer testing.allocator.free(status.version);
+
+    try testing.expectEqualStrings("", status.leader_id);
+    try testing.expectEqualStrings("", status.leader_address);
+    try testing.expectEqual(@as(i64, 0), status.raft_applied_index);
 }

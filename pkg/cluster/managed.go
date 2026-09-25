@@ -78,8 +78,11 @@ func (c *Cluster) start(ctx context.Context) error {
 		}
 
 		// The reset-flag exists, ask the user to remove it if they want to reset again.
-		return fmt.Errorf("Managed etcd cluster membership was previously reset, please remove the cluster-reset flag and start %s normally. "+
-			"If you need to perform another cluster reset, you must first manually delete the file at %s", version.Program, c.managedDB.ResetFile())
+		// The driver names itself: the default backend is still embedded etcd,
+		// but telling an operator "Managed etcd" while they are running the
+		// Tandem backend sends them to the wrong data directory.
+		return fmt.Errorf("Managed %s cluster membership was previously reset, please remove the cluster-reset flag and start %s normally. "+
+			"If you need to perform another cluster reset, you must first manually delete the file at %s", c.managedDB.EndpointName(), version.Program, c.managedDB.ResetFile())
 	}
 
 	if resetDone {

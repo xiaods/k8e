@@ -220,6 +220,19 @@ pub fn watchEvent(event: mvcc.WatchEvent) messages.Event {
 /// Adapter used by the protocol server without introducing a module cycle.
 /// Route and handle a request based on parsed method path
 pub fn routeRequest(server: *PipelineServer, path: MethodPath, request_data: []const u8) ![]u8 {
+    // Only the services listed here have handlers, and only the paths
+    // registered in main.zig are reachable at all: grpc-lite looks the path
+    // up in its handler table before dispatch and answers `unimplemented` for
+    // anything missing, so an unrouted method never reaches this function.
+    //
+    // The Cluster and Auth services, and the Maintenance calls other than
+    // Status and Snapshot, are absent on purpose. They once had handlers here,
+    // and every one of them answered with a constant — an empty member list, a
+    // fabricated leader, a zero hash, an AuthEnable-shaped reply to UserAdd.
+    // KIP-29 forbids that: a call the layer does not serve must say so rather
+    // than return something that looks like success. Wiring any of them up
+    // later means implementing it against rqlite's own /nodes, /status and
+    // membership endpoints, not restoring the placeholder.
     if (std.mem.eql(u8, path.service, "etcdserverpb.KV")) {
         if (std.mem.eql(u8, path.method, "Range")) return try handleKVRange(server, request_data);
         if (std.mem.eql(u8, path.method, "Put")) return try handleKVPut(server, request_data);
@@ -234,38 +247,13 @@ pub fn routeRequest(server: *PipelineServer, path: MethodPath, request_data: []c
         if (std.mem.eql(u8, path.method, "LeaseKeepAlive")) return try handleLeaseKeepAlive(server, request_data);
         if (std.mem.eql(u8, path.method, "LeaseTimeToLive")) return try handleLeaseTimeToLive(server, request_data);
         if (std.mem.eql(u8, path.method, "LeaseLeases")) return try handleLeaseLeases(server, request_data);
-    } else if (std.mem.eql(u8, path.service, "etcdserverpb.Cluster")) {
-        if (std.mem.eql(u8, path.method, "MemberList")) return try handleMemberList(server, request_data);
-        if (std.mem.eql(u8, path.method, "MemberAdd")) return try handleMemberAdd(server, request_data);
-        if (std.mem.eql(u8, path.method, "MemberRemove")) return try handleMemberRemove(server, request_data);
-        if (std.mem.eql(u8, path.method, "MemberUpdate")) return try handleMemberUpdate(server, request_data);
-        if (std.mem.eql(u8, path.method, "MemberPromote")) return try handleMemberPromote(server, request_data);
     } else if (std.mem.eql(u8, path.service, "etcdserverpb.Maintenance")) {
+        // Status carries a real db size and the version string the apiserver
+        // reads to decide watch-progress support; Snapshot refuses explicitly
+        // rather than returning a body that would decode as an empty snapshot.
+        // Neither is registered on the wire yet.
         if (std.mem.eql(u8, path.method, "Status")) return try handleStatus(server, request_data);
-        if (std.mem.eql(u8, path.method, "Defragment")) return try handleDefragment(server, request_data);
-        if (std.mem.eql(u8, path.method, "Hash")) return try handleHash(server, request_data);
-        if (std.mem.eql(u8, path.method, "HashKV")) return try handleHashKV(server, request_data);
         if (std.mem.eql(u8, path.method, "Snapshot")) return try handleSnapshot(server, request_data);
-        if (std.mem.eql(u8, path.method, "MoveLeader")) return try handleMoveLeader(server, request_data);
-        if (std.mem.eql(u8, path.method, "Alarm")) return try handleAlarm(server, request_data);
-    } else if (std.mem.eql(u8, path.service, "etcdserverpb.Auth")) {
-        if (std.mem.eql(u8, path.method, "AuthEnable")) return try handleAuthEnable(server, request_data);
-        if (std.mem.eql(u8, path.method, "AuthDisable")) return try handleAuthDisable(server, request_data);
-        if (std.mem.eql(u8, path.method, "AuthStatus")) return try handleAuthStatus(server, request_data);
-        if (std.mem.eql(u8, path.method, "Authenticate")) return try handleAuthenticate(server, request_data);
-        if (std.mem.eql(u8, path.method, "UserAdd")) return try handleUserAdd(server, request_data);
-        if (std.mem.eql(u8, path.method, "UserGet")) return try handleUserGet(server, request_data);
-        if (std.mem.eql(u8, path.method, "UserList")) return try handleUserList(server, request_data);
-        if (std.mem.eql(u8, path.method, "UserDelete")) return try handleUserDelete(server, request_data);
-        if (std.mem.eql(u8, path.method, "UserChangePassword")) return try handleUserChangePassword(server, request_data);
-        if (std.mem.eql(u8, path.method, "UserGrantRole")) return try handleUserGrantRole(server, request_data);
-        if (std.mem.eql(u8, path.method, "UserRevokeRole")) return try handleUserRevokeRole(server, request_data);
-        if (std.mem.eql(u8, path.method, "RoleAdd")) return try handleRoleAdd(server, request_data);
-        if (std.mem.eql(u8, path.method, "RoleGet")) return try handleRoleGet(server, request_data);
-        if (std.mem.eql(u8, path.method, "RoleList")) return try handleRoleList(server, request_data);
-        if (std.mem.eql(u8, path.method, "RoleDelete")) return try handleRoleDelete(server, request_data);
-        if (std.mem.eql(u8, path.method, "RoleGrantPermission")) return try handleRoleGrantPermission(server, request_data);
-        if (std.mem.eql(u8, path.method, "RoleRevokePermission")) return try handleRoleRevokePermission(server, request_data);
     }
 
     return error.UnimplementedMethod;
@@ -651,108 +639,6 @@ fn handleLeaseLeases(server: *PipelineServer, _: []const u8) ![]u8 {
     return encoded;
 }
 
-// ─── Cluster Service Handlers ────────────────────────────────────────────────
-
-fn handleMemberList(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.MemberListResponse{
-        .header = server.buildHeader(),
-        .members = &[_]messages.Member{},
-    };
-
-    return response.encode(allocator);
-}
-
-fn handleMemberAdd(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.MemberAddResponse{
-        .header = server.buildHeader(),
-        .member = .{},
-        .members = &[_]messages.Member{},
-    };
-
-    return encodeMemberAddResponse(response, allocator);
-}
-
-fn handleMemberRemove(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.MemberRemoveResponse{
-        .header = server.buildHeader(),
-        .members = &[_]messages.Member{},
-    };
-
-    return encodeMemberRemoveResponse(response, allocator);
-}
-
-fn handleMemberUpdate(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.MemberUpdateResponse{
-        .header = server.buildHeader(),
-        .members = &[_]messages.Member{},
-    };
-
-    return encodeMemberUpdateResponse(response, allocator);
-}
-
-fn handleMemberPromote(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.MemberUpdateResponse{
-        .header = server.buildHeader(),
-        .members = &[_]messages.Member{},
-    };
-
-    return encodeMemberUpdateResponse(response, allocator);
-}
-
-fn encodeMemberAddResponse(response: messages.MemberAddResponse, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try response.header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    const member_bytes = try response.member.encode(allocator);
-    defer allocator.free(member_bytes);
-    try w.msg(2, member_bytes);
-    for (response.members) |m| {
-        const m_bytes = try m.encode(allocator);
-        defer allocator.free(m_bytes);
-        try w.msg(3, m_bytes);
-    }
-    return w.buf.toOwnedSlice(allocator);
-}
-
-fn encodeMemberRemoveResponse(response: messages.MemberRemoveResponse, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try response.header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    for (response.members) |m| {
-        const m_bytes = try m.encode(allocator);
-        defer allocator.free(m_bytes);
-        try w.msg(2, m_bytes);
-    }
-    return w.buf.toOwnedSlice(allocator);
-}
-
-fn encodeMemberUpdateResponse(response: messages.MemberUpdateResponse, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try response.header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    for (response.members) |m| {
-        const m_bytes = try m.encode(allocator);
-        defer allocator.free(m_bytes);
-        try w.msg(2, m_bytes);
-    }
-    return w.buf.toOwnedSlice(allocator);
-}
-
-// ─── Maintenance Service Handlers ─────────────────────────────────────────────
-
 fn handleStatus(server: *PipelineServer, _: []const u8) ![]u8 {
     const allocator = server.allocator;
 
@@ -775,14 +661,45 @@ fn handleStatus(server: *PipelineServer, _: []const u8) ![]u8 {
         } else |_| {}
     }
 
+    // Leader and the Raft indices come from rqlite's own /status. They used to
+    // be the constants 1 and 1, which is a fabricated answer: the apiserver
+    // reads this call on every start, so a hard-coded leader would be a
+    // plausible-looking lie in exactly the place an operator would look during
+    // an incident. A status rqlite cannot answer leaves them at zero, which
+    // reads as "no leader known" rather than as a fabricated one.
+    var leader: u64 = 0;
+    var raft_index: u64 = 0;
+    var raft_applied_index: u64 = 0;
+    var raft_term: u64 = server.raft_term;
+    if (server.storage.client) |*client| {
+        if (client.status()) |node| {
+            defer allocator.free(node.leader_address);
+            defer allocator.free(node.leader_id);
+            defer allocator.free(node.node_id);
+            defer allocator.free(node.version);
+            // rqlite identifies a member by string; etcd's Status reports a
+            // numeric member ID, so the leader is reported as present (1) or
+            // absent (0) rather than inventing an ID that maps to nothing.
+            leader = if (node.leader_id.len > 0) 1 else 0;
+            if (node.raft_applied_index > 0) {
+                raft_applied_index = @intCast(node.raft_applied_index);
+                raft_index = raft_applied_index;
+            }
+            if (node.raft_term > 0) raft_term = @intCast(node.raft_term);
+        } else |_| {}
+    }
+
     const response = messages.StatusResponse{
         .header = server.buildHeader(),
+        // The apiserver parses this to decide whether the endpoint supports
+        // RequestWatchProgress, so it must stay a real semantic version above
+        // the 3.5.13 threshold rather than a placeholder.
         .version = etcdVersion,
         .db_size = db_size,
-        .leader = 1,
-        .raft_index = 1,
-        .raft_term = @intCast(server.raft_term),
-        .raft_applied_index = 1,
+        .leader = leader,
+        .raft_index = raft_index,
+        .raft_term = raft_term,
+        .raft_applied_index = raft_applied_index,
         .errors = &[_][]const u8{},
         .db_size_in_use = db_size_in_use,
         .is_learner = false,
@@ -791,196 +708,12 @@ fn handleStatus(server: *PipelineServer, _: []const u8) ![]u8 {
     return response.encode(allocator);
 }
 
-fn handleDefragment(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.DefragmentResponse{
-        .header = server.buildHeader(),
-    };
-
-    return response.encode(allocator);
-}
-
-fn handleHash(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.HashResponse{
-        .header = server.buildHeader(),
-        .hash = 0,
-    };
-
-    return encodeHashResponse(response, allocator);
-}
-
-fn handleHashKV(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.HashKVResponse{
-        .header = server.buildHeader(),
-        .hash = 0,
-        .compact_revision = 0,
-    };
-
-    return encodeHashKVResponse(response, allocator);
-}
-
 fn handleSnapshot(_: *PipelineServer, _: []const u8) ![]u8 {
     // An empty body here would be a silent success: the apiserver would treat
     // the response as a valid zero-length snapshot and record one it can never
     // restore from. KIP-29 requires an unsupported call to say so.
     return error.SnapshotNotImplemented;
 }
-
-fn handleMoveLeader(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-
-    const response = messages.MoveLeaderResponse{
-        .header = server.buildHeader(),
-    };
-
-    return encodeMoveLeaderResponse(response, allocator);
-}
-
-fn handleAlarm(server: *PipelineServer, request_data: []const u8) ![]u8 {
-    const allocator = server.allocator;
-    _ = try messages.AlarmRequest.decode(request_data);
-
-    const response = messages.AlarmResponse{
-        .header = server.buildHeader(),
-        .alarms = &[_]messages.AlarmMember{},
-    };
-
-    return response.encode(allocator);
-}
-
-fn encodeHashResponse(response: messages.HashResponse, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try response.header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    try w.fixed32(2, response.hash);
-    return w.buf.toOwnedSlice(allocator);
-}
-
-fn encodeHashKVResponse(response: messages.HashKVResponse, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try response.header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    try w.fixed32(2, response.hash);
-    try w.v(3, @as(u64, @bitCast(response.compact_revision)));
-    return w.buf.toOwnedSlice(allocator);
-}
-
-fn encodeMoveLeaderResponse(response: messages.MoveLeaderResponse, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try response.header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    return w.buf.toOwnedSlice(allocator);
-}
-
-// ─── Auth Service Handlers ───────────────────────────────────────────────────
-
-fn handleAuthEnable(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-    const response = messages.AuthEnableResponse{ .header = server.buildHeader() };
-    return encodeAuthResponse(response.header, allocator);
-}
-
-fn handleAuthDisable(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-    const response = messages.AuthDisableResponse{ .header = server.buildHeader() };
-    return encodeAuthResponse(response.header, allocator);
-}
-
-fn handleAuthStatus(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-    const response = messages.AuthStatusResponse{
-        .header = server.buildHeader(),
-        .enabled = false,
-        .auth_revision = 0,
-    };
-    return encodeAuthStatusResponse(response, allocator);
-}
-
-fn handleAuthenticate(server: *PipelineServer, _: []const u8) ![]u8 {
-    const allocator = server.allocator;
-    const response = messages.AuthenticateResponse{
-        .header = server.buildHeader(),
-        .token = "",
-    };
-    return encodeAuthenticateResponse(response, allocator);
-}
-
-fn handleUserAdd(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleUserGet(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleUserList(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleUserDelete(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleUserChangePassword(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleUserGrantRole(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleUserRevokeRole(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleRoleAdd(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleRoleGet(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleRoleList(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleRoleDelete(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleRoleGrantPermission(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-fn handleRoleRevokePermission(server: *PipelineServer, _: []const u8) ![]u8 {
-    return handleAuthEnable(server, &[_]u8{});
-}
-
-fn encodeAuthResponse(header: messages.ResponseHeader, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    return w.buf.toOwnedSlice(allocator);
-}
-
-fn encodeAuthStatusResponse(response: messages.AuthStatusResponse, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try response.header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    try w.b(2, response.enabled);
-    try w.v(3, response.auth_revision);
-    return w.buf.toOwnedSlice(allocator);
-}
-
-fn encodeAuthenticateResponse(response: messages.AuthenticateResponse, allocator: Allocator) ![]u8 {
-    var w = wire.Writer.init(allocator);
-    const header_bytes = try response.header.encode(allocator);
-    defer allocator.free(header_bytes);
-    try w.msg(1, header_bytes);
-    try w.bytes(2, response.token);
-    return w.buf.toOwnedSlice(allocator);
-}
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 const testing = std.testing;
 
@@ -1323,27 +1056,16 @@ test "e2e: Lease Grant request through pipeline" {
     try testing.expect(id_decoded);
 }
 
-test "e2e: Cluster MemberList through pipeline" {
+test "e2e: the Cluster service is not served" {
+    // MemberList used to answer with an empty member list, which reads as a
+    // cluster with no members rather than as a call the layer does not
+    // implement. KIP-29 requires the explicit error, so the handler is gone
+    // and the whole service refuses.
     var server = PipelineServer.initMemory(testing.allocator);
     defer server.deinit();
 
-    const response_data = try processRequest(&server, "/etcdserverpb.Cluster/MemberList", &[_]u8{});
-    defer testing.allocator.free(response_data);
-
-    var r = wire.Reader.init(response_data);
-    var header_decoded = false;
-    while (r.hasMore()) {
-        const tag = try r.nextTag();
-        switch (tag.field) {
-            1 => {
-                _ = try r.readBytes();
-                header_decoded = true;
-            },
-            2 => try r.skip(tag.wire_type),
-            else => try r.skip(tag.wire_type),
-        }
-    }
-    try testing.expect(header_decoded);
+    try testing.expectError(error.UnimplementedMethod, processRequest(&server, "/etcdserverpb.Cluster/MemberList", &[_]u8{}));
+    try testing.expectError(error.UnimplementedMethod, processRequest(&server, "/etcdserverpb.Cluster/MemberAdd", &[_]u8{}));
 }
 
 test "e2e: Maintenance Status through pipeline" {
@@ -1375,24 +1097,14 @@ test "e2e: Maintenance Status through pipeline" {
     try testing.expect(version_decoded);
 }
 
-test "e2e: Auth AuthStatus through pipeline" {
+test "e2e: the Auth service is not served" {
+    // Every Auth handler answered with an AuthEnable-shaped response, so
+    // UserAdd or RoleAdd reported that a user or role had been created when
+    // nothing was. KIP-29 Appendix C puts the whole service out of scope for
+    // this backend — K8E authenticates with mTLS — so it now refuses.
     var server = PipelineServer.initMemory(testing.allocator);
     defer server.deinit();
 
-    const response_data = try processRequest(&server, "/etcdserverpb.Auth/AuthStatus", &[_]u8{});
-    defer testing.allocator.free(response_data);
-
-    var r = wire.Reader.init(response_data);
-    var header_decoded = false;
-    while (r.hasMore()) {
-        const tag = try r.nextTag();
-        switch (tag.field) {
-            1 => {
-                _ = try r.readBytes();
-                header_decoded = true;
-            },
-            else => try r.skip(tag.wire_type),
-        }
-    }
-    try testing.expect(header_decoded);
+    try testing.expectError(error.UnimplementedMethod, processRequest(&server, "/etcdserverpb.Auth/AuthStatus", &[_]u8{}));
+    try testing.expectError(error.UnimplementedMethod, processRequest(&server, "/etcdserverpb.Auth/UserAdd", &[_]u8{}));
 }

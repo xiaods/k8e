@@ -229,6 +229,13 @@ fn startGrpcLite(allocator: std.mem.Allocator, pipeline: *PipelineServer, config
         "/etcdserverpb.Lease/LeaseRevoke",
         "/etcdserverpb.Lease/LeaseTimeToLive",
         "/etcdserverpb.Lease/LeaseLeases",
+        // The apiserver calls this on every start, from
+        // etcd3.New -> CheckClient, to read the endpoint's version and decide
+        // whether RequestWatchProgress is supported. Leaving it unrouted made
+        // that probe fail on every boot — an error-level log each time — and
+        // disabled watch-list initial events. The version and db size are real,
+        // and the leader and Raft indices come from rqlite's /status.
+        "/etcdserverpb.Maintenance/Status",
     };
     var endpoints: [paths.len]grpc_lite_adapter.UnaryEndpoint = undefined;
     for (paths, 0..) |path, i| {
