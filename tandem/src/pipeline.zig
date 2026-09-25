@@ -599,7 +599,7 @@ fn handleLeaseTimeToLive(server: *PipelineServer, request_data: []const u8) ![]u
     const request = try messages.LeaseTimeToLiveRequest.decode(request_data);
 
     const manager = server.storage.leaseManager();
-    const ttl = try manager.leaseTTL(request.id);
+    const ttl = manager.leaseTTL(request.id);
 
     // etcd returns the attached keys only when the request asks for them.
     var keys = std.ArrayList(u8).empty;

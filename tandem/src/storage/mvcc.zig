@@ -159,6 +159,13 @@ pub const Storage = struct {
         // etcd answers ErrCompacted; KIP-29 Appendix A requires that explicit
         // error rather than a silently wrong answer.
         if (revision > 0 and revision <= self.compact_revision) return error.Compacted;
+        // A revision the store has not reached yet is not an empty read, it
+        // is a client that is ahead of the datastore. etcd answers
+        // ErrFutureRev, and without this the historical query simply matched
+        // no history row and returned an empty success — the same answer a
+        // read of a genuinely absent key gives, so a caller could not tell a
+        // stale read from a missing object.
+        if (revision > self.current_revision) return error.FutureRevision;
         if (self.client == null) return self.memoryRange(key, range_end, limit, revision, keys_only, count_only);
         if (self.client) |*c| {
             const sql = try rqlite.SqlBuilder.rangeSql(
@@ -1100,15 +1107,22 @@ pub const LeaseManager = struct {
     }
 
     /// Remaining TTL in seconds, floored at zero, and the granted TTL the
-    /// lease was created with. Reports LeaseNotFound for an unknown lease so
-    /// LeaseTimeToLive can answer from real state instead of a constant.
-    pub fn leaseTTL(self: *LeaseManager, lease_id: i64) !struct { ttl: i64, granted_ttl: i64 } {
+    /// lease was created with.
+    ///
+    /// etcd does not report an unknown or already-expired lease as an error:
+    /// `LeaseTimeToLive` answers with a TTL of -1 and a zero granted TTL. The
+    /// apiserver's lease manager reads that -1 to decide a lease is gone
+    /// rather than treating the call as a transport failure, so returning
+    /// LeaseNotFound here made a dead lease indistinguishable from a broken
+    /// connection. A live lease reports its remaining whole seconds.
+    pub fn leaseTTL(self: *LeaseManager, lease_id: i64) struct { ttl: i64, granted_ttl: i64 } {
         for (self.leases.items) |lease| {
             if (lease.id != lease_id) continue;
             const remaining = lease.expires_at - nowSeconds();
-            return .{ .ttl = if (remaining > 0) remaining else 0, .granted_ttl = lease.ttl };
+            if (remaining <= 0) return .{ .ttl = -1, .granted_ttl = 0 };
+            return .{ .ttl = remaining, .granted_ttl = lease.ttl };
         }
-        return error.LeaseNotFound;
+        return .{ .ttl = -1, .granted_ttl = 0 };
     }
 
     /// Every live lease, for LeaseLeases.
@@ -1320,6 +1334,32 @@ test "lease keys placeholder" {
     try testing.expectEqual(@as(usize, 0), keys.len);
 }
 
+test "an unknown or expired lease reports TTL -1 rather than an error" {
+    // etcd answers LeaseTimeToLive for a lease it no longer has with a
+    // successful response carrying TTL -1. Reporting LeaseNotFound made a
+    // dead lease look like a transport failure to the apiserver's lease
+    // manager, which retries rather than treating the lease as gone.
+    var lm = LeaseManager.init(testing.allocator);
+    defer lm.deinit();
+
+    const unknown = lm.leaseTTL(4242);
+    try testing.expectEqual(@as(i64, -1), unknown.ttl);
+    try testing.expectEqual(@as(i64, 0), unknown.granted_ttl);
+
+    // A live lease reports its remaining seconds and the TTL it was granted.
+    try lm.createLease(7, 60);
+    const live = lm.leaseTTL(7);
+    try testing.expect(live.ttl > 0 and live.ttl <= 60);
+    try testing.expectEqual(@as(i64, 60), live.granted_ttl);
+
+    // Once the deadline has passed the same call reports -1, which is how a
+    // caller distinguishes a lapsed lease from a live one.
+    lm.leases.items[0].expires_at = nowSeconds() - 1;
+    const expired = lm.leaseTTL(7);
+    try testing.expectEqual(@as(i64, -1), expired.ttl);
+    try testing.expectEqual(@as(i64, 0), expired.granted_ttl);
+}
+
 test "a historical read at or below the compaction watermark reports Compacted" {
     // Without the guard the underlying history rows are simply gone, so the
     // read returned an empty success that looked like a missing key.
@@ -1331,6 +1371,9 @@ test "a historical read at or below the compaction watermark reports Compacted" 
 
     try testing.expectError(error.Compacted, storage.range("a", "", 0, 1, false, false));
     try testing.expectError(error.Compacted, storage.range("a", "", 0, 2, false, false));
+    // A revision the store has not reached is a different failure from a
+    // compacted one, and neither may answer as an empty read.
+    try testing.expectError(error.FutureRevision, storage.range("a", "", 0, 99, false, false));
     // Reads of the current state still work; memoryRange returns owned keys.
     const current = try storage.range("a", "", 0, 0, false, false);
     for (current.kvs) |kv| {

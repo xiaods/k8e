@@ -14,7 +14,7 @@ called complete:
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
 | Maintenance | Status reports real db size and a parseable version; Snapshot returns an explicit `Unimplemented` | Alarm/Defragment/Hash remain constant-valued; decide each mapping or return an explicit error |
 | Single/three member | single node only | Share one semantic engine and add rqlite cluster lifecycle management |
-| Differential tests | incomplete | Compare etcd and Tandem results, errors, revisions and event order |
+| Differential tests | harness landed; KV, revision, tombstone, watch-order and error-code cases run against a real etcd, and it found three real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
 | Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Extend to multi-node crash recovery, concurrent histories and differential checks |
 
 ## Defects found and fixed in the M1 audit
@@ -85,6 +85,33 @@ test, because the in-memory store implements the same logic correctly:
   inside a single request: the delete captures the rows it removes into a
   temporary table before mutating them. The Txn path was already atomic, so the
   single-write path was the one that was not.
+
+A third pass ran the operations against a **real embedded etcd** rather than
+against Tandem's own expectations, which is the only way to catch a rule that
+is wrong in the same way on both sides. It found three more:
+
+* **`LeaseTimeToLive` reported an unknown or expired lease as `NotFound`.**
+  etcd answers with a successful response carrying TTL `-1`, and the
+  apiserver's lease manager reads that `-1` to decide a lease is gone. A
+  `NotFound` was indistinguishable from a transport failure, so the caller
+  retried a lease that would never come back. An expired lease also reported
+  TTL `0` where etcd reports `-1`. Both now report `-1` with a zero granted TTL.
+* **A read at a revision the store had not reached returned an empty success.**
+  Only the compaction watermark was checked, so a future revision simply
+  matched no history row and answered exactly as a read of an absent key
+  would — silently wrong, and the caller could not tell a stale read from a
+  missing object. It now returns `ErrFutureRev`'s `OutOfRange`, as etcd does.
+* **Every unrouted method reported `INTERNAL` instead of `UNIMPLEMENTED`.**
+  The apiserver reads `unimplemented` as "this endpoint lacks the feature" and
+  falls back; `internal` reads as a temporary fault and is retried. The two
+  are opposites, and a fallback that never triggers is how a missing RPC turns
+  into an outage.
+
+The suite also had to learn that etcd's Go client does **not** surface these
+failures as gRPC statuses — the interceptors return `rpctypes.EtcdError`, which
+carries a `Code()` but no `GRPCStatus()`. Reading the code through
+`status.FromError` reported `Unknown` for every failure, which would have made
+the comparison vacuous. The normalizer handles that type explicitly.
 
 ## Running the Linux integration suite locally
 

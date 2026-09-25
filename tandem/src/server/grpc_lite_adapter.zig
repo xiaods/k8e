@@ -113,6 +113,12 @@ pub fn statusForError(err: anyerror) grpc.status.Status {
         // Serving an empty body would read as a valid empty snapshot, so an
         // unimplemented maintenance call has to say so on the wire.
         error.SnapshotNotImplemented => .unimplemented,
+        // An unrouted method path lands here. Reporting it as `internal`
+        // would tell the apiserver the endpoint is temporarily broken, so it
+        // retries a feature that will never arrive; `unimplemented` is what
+        // lets it fall back. This is the difference the comment above warns
+        // about, reached from the routing side rather than the storage side.
+        error.UnimplementedMethod => .unimplemented,
         error.InvalidResponse, error.RqliteError => .internal,
         error.OutOfMemory => .resource_exhausted,
         else => .internal,
@@ -315,4 +321,8 @@ test "storage errors map onto the gRPC codes etcd returns" {
     // A maintenance call the layer does not serve has to be visibly
     // unimplemented; an empty success would read as a valid empty snapshot.
     try std.testing.expectEqual(grpc.status.Code.unimplemented, statusForError(error.SnapshotNotImplemented).code);
+    // An unrouted method must report the same way. `internal` would tell the
+    // apiserver the endpoint is temporarily broken and make it retry a
+    // feature that is never coming.
+    try std.testing.expectEqual(grpc.status.Code.unimplemented, statusForError(error.UnimplementedMethod).code);
 }
