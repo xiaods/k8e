@@ -240,3 +240,117 @@ func waitForStarts(t *testing.T, path string, want int) {
 	data, _ := os.ReadFile(path)
 	t.Fatalf("timed out waiting for %d starts; saw %q", want, data)
 }
+
+// A multi-member cluster cannot be formed by passing -join alone: rqlite
+// bootstraps each node as its own single-member cluster unless it is told how
+// many voters to expect, and it needs the complete address set rather than one
+// seed. Both flags are therefore derived from the peer list.
+func TestRqliteArgsFormAClusterFromThePeerSet(t *testing.T) {
+	args := rqliteArgs(Config{
+		NodeID:          "n2",
+		RqliteHTTP:      "127.0.0.1:4002",
+		RqliteRaft:      "127.0.0.1:4003",
+		BootstrapExpect: 3,
+		RqlitePeers:     []string{"127.0.0.1:4001", "127.0.0.1:4003", "127.0.0.1:4005"},
+	}, "/data")
+
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-node-id n2") {
+		t.Errorf("node id missing from %v", args)
+	}
+	if !strings.Contains(joined, "-bootstrap-expect 3") {
+		t.Errorf("expected voter count missing from %v", args)
+	}
+	if !strings.Contains(joined, "-join 127.0.0.1:4001,127.0.0.1:4003,127.0.0.1:4005") {
+		t.Errorf("full peer set missing from %v", args)
+	}
+	if args[len(args)-1] != "/data" {
+		t.Errorf("data dir must stay the final argument, got %v", args)
+	}
+}
+
+// A single node must keep its historical arguments: adding a bootstrap flag
+// to a lone member would make it wait for voters that never arrive.
+func TestRqliteArgsStaySingleNodeWithoutAPeerSet(t *testing.T) {
+	args := rqliteArgs(Config{
+		NodeID:     "n1",
+		RqliteHTTP: "127.0.0.1:4001",
+		RqliteRaft: "127.0.0.1:4002",
+	}, "/data")
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "-bootstrap-expect") || strings.Contains(joined, "-join") {
+		t.Errorf("single node must not receive cluster flags: %v", args)
+	}
+}
+
+// Joining a cluster that is already running is a different operation from
+// forming a new one: only the seed address is needed, and a bootstrap count
+// would make the node wait for a formation that has already happened.
+func TestRqliteArgsJoinAnExistingCluster(t *testing.T) {
+	args := rqliteArgs(Config{
+		NodeID:      "n3",
+		RqliteHTTP:  "127.0.0.1:4003",
+		RqliteRaft:  "127.0.0.1:4004",
+		RqliteJoin:  "10.0.0.1:4002",
+		RqlitePeers: []string{"10.0.0.1:4002"},
+	}, "/data")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "-join 10.0.0.1:4002") {
+		t.Errorf("seed address missing from %v", args)
+	}
+	if strings.Contains(joined, "-bootstrap-expect") {
+		t.Errorf("joining a running cluster must not wait for a formation: %v", args)
+	}
+}
+
+// The node id is rqlite's -node-id and the lease owner, so a collision is not
+// recoverable: two members with one id cannot form a membership, and two lease
+// owners with one string defeat the single-expiry-owner claim. The historical
+// "1" fallback is only safe when there is no peer set to collide with.
+func TestHostnameFallbackIsNotUsedForACluster(t *testing.T) {
+	single := withDefaults(Config{RqliteHTTP: "127.0.0.1:4001", RqliteRaft: "127.0.0.1:4002"})
+	if single.NodeID == "" {
+		t.Error("a single node still needs some identity")
+	}
+	cluster := withDefaults(Config{
+		RqliteHTTP:  "127.0.0.1:4001",
+		RqliteRaft:  "127.0.0.1:4002",
+		RqlitePeers: []string{"a:4002", "b:4002", "c:4002"},
+	})
+	if cluster.NodeID == "1" {
+		t.Error("a multi-node cluster must not fall back to the constant id 1")
+	}
+}
+
+// Two k8e processes on one data directory would open the same SQLite file
+// and the same Raft log. The second must be told who holds it rather than
+// discovering it as an opaque rqlite failure.
+func TestSecondProcessOnTheSameDataDirIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	if err := prepareDataDir(dir); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	lock, err := lockDataDir(dir)
+	if err != nil {
+		t.Fatalf("first lock: %v", err)
+	}
+	if _, err := lockDataDir(dir); err == nil {
+		_ = lock.Unlock()
+		t.Fatal("a second process acquired a held data dir lock")
+	} else if !strings.Contains(err.Error(), "already in use") {
+		_ = lock.Unlock()
+		t.Fatalf("unhelpful error for a held lock: %v", err)
+	}
+
+	// Releasing lets the next process in, which is what a restart needs.
+	if err := lock.Unlock(); err != nil {
+		t.Fatalf("unlock: %v", err)
+	}
+	_ = lock.Close()
+	next, err := lockDataDir(dir)
+	if err != nil {
+		t.Fatalf("lock after release: %v", err)
+	}
+	_ = next.Unlock()
+	_ = next.Close()
+}

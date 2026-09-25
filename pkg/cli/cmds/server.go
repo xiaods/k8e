@@ -60,6 +60,10 @@ type Server struct {
 	DatastoreEndpoint        string
 	TandemBootstrap          bool
 	TandemJoin               string
+	TandemNodeID             string
+	TandemRaftPeers          cli.StringSlice
+	TandemBootstrapExpect    int
+	TandemRaftPort           string
 	DatastoreCAFile          string
 	DatastoreCertFile        string
 	DatastoreKeyFile         string
@@ -256,6 +260,10 @@ var ServerFlags = []cli.Flag{
 	ServerToken,
 	&cli.BoolFlag{Name: "bootstrap", Usage: "(cluster) Bootstrap the first Tandem/rqlite node", EnvVar: version.ProgramUpper + "_BOOTSTRAP", Destination: &ServerConfig.TandemBootstrap},
 	&cli.StringFlag{Name: "join", Usage: "(cluster) Join Tandem/rqlite using a reachable Raft address, for example 10.0.0.1:4002", EnvVar: version.ProgramUpper + "_JOIN", Destination: &ServerConfig.TandemJoin},
+	&cli.StringFlag{Name: "tandem-node-id", Usage: "(cluster) Unique rqlite member id and lease owner for this node; defaults to the hostname, which is a guess rather than a guarantee", EnvVar: version.ProgramUpper + "_TANDEM_NODE_ID", Destination: &ServerConfig.TandemNodeID},
+	&cli.StringSliceFlag{Name: "tandem-raft-peer", Usage: "(cluster) Raft address of a voting member; repeat for every member including this one, for example 10.0.0.1:4002", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_PEER", Value: &ServerConfig.TandemRaftPeers},
+	&cli.IntFlag{Name: "tandem-bootstrap-expect", Usage: "(cluster) Number of rqlite voters to wait for before forming a cluster; defaults to the peer count", EnvVar: version.ProgramUpper + "_TANDEM_BOOTSTRAP_EXPECT", Destination: &ServerConfig.TandemBootstrapExpect},
+	&cli.StringFlag{Name: "tandem-raft-port", Usage: "(cluster) Raft listener port; several nodes on one host need distinct ports", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_PORT", Destination: &ServerConfig.TandemRaftPort},
 	&cli.StringFlag{
 		Name:        "token-file",
 		Usage:       "(cluster) File containing the token",

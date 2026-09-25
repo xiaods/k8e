@@ -13,7 +13,7 @@ called complete:
 | Lease | background reaper with a single expiry owner, heartbeat-takeover after owner loss | Grant, keepalive, expiry, lease-driven deletes, owner exclusivity and takeover of a crashed owner's leases are covered against a real rqlite; qualify under real multi-node clock skew and partition |
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
 | Maintenance | `Status` is served on the wire with a real version, db size and rqlite leader/raft state; `Snapshot` returns an explicit `Unimplemented` | The other Maintenance calls, the whole Cluster service and the whole Auth service have no handler. The placeholders that answered with constants were removed rather than registered |
-| Single/three member | single node only | Share one semantic engine and add rqlite cluster lifecycle management |
+| Single/three member | three members form one voting group, replicate between compat layers, and keep serving after the leader's store dies; node identity, peer set and Raft port are configurable | Raft mTLS between members, dynamic member join and exit, and asymmetric-partition behaviour are not yet covered |
 | Differential tests | running in CI against a real etcd; KV, revision, tombstone, watch-order, lease and error-code cases covered, and it found ten real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
 | Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Extend to multi-node crash recovery, concurrent histories and differential checks |
 
@@ -162,6 +162,41 @@ M1 audit had already repaired once:
   never populates, so it reported an empty list while grants were live in
   rqlite.
 
+## Three-member lifecycle
+
+rqlite already implements the whole consensus layer — membership, elections,
+quorum, catch-up, crash recovery. What was missing was the configuration
+surface to reach it, and a test at the layer K8E actually runs.
+
+**What the wiring needed.** A cluster cannot be formed by passing `-join`. With
+`-bootstrap-expect` alone each node bootstraps as its own single-member cluster;
+with a seed address alone a node can only ever reach that one member. rqlite's
+automatic clustering wants *both*: the expected voter count and the complete
+Raft address set on every node. `Config` had a single `RqliteJoin` string and
+no way to express either, so a second node had to be told about the first by
+hand and still would not have joined it.
+
+Three things were added: the peer set and expected voter count, a Raft port
+that is not hardcoded to 4002 so several members can run on one host, and an
+explicit node identity. The identity matters twice over — it is rqlite's
+`-node-id` and it is the lease owner string, so two members sharing one cannot
+form a membership *and* defeat the single-expiry-owner claim. The historical
+`"1"` fallback is now only reachable when no peer set was declared, where a
+collision is not possible.
+
+**A data-dir lock.** `prepareDataDir` refused a directory holding foreign data,
+but it is a content check, not a concurrency guard: two k8e processes on one
+`--data-dir` both passed it and then opened the same SQLite file and the same
+Raft log. The second now gets an error naming the holder, instead of an opaque
+rqlite failure or two members with one id fighting over one log. The lock is
+advisory and cross-platform, so the Windows build is covered too.
+
+**Not covered yet.** Raft traffic between members is plaintext — KIP-29 §4
+wants `-node-cert`/`-node-key`/`-node-ca-cert` on the rqlite flags, and none of
+them are passed. Dynamic join against a running cluster and member removal are
+also unexercised, as is loss of quorum: the fixture proves a surviving majority
+keeps serving, not that a lone member correctly refuses to.
+
 ## Backend cleanup
 
 Three things that were not test work, and one of them was a live defect.
@@ -280,10 +315,10 @@ previous-delete response shape; `KV.RangeStream` is not implemented at all; the
 Cluster and Auth services and the remaining Maintenance calls have no handler,
 so the "etcd v3.7 compatible" claim does not hold for them; the driver's
 Snapshot/Reset/Restore are still unimplemented, so `k8e etcd-snapshot` style
-operational workflows are unavailable on this backend; multi-node
-join/readiness/failover; removal of embedded-etcd production paths;
-reset/snapshot/restore; the Go full suite and Kubernetes E2E on a normal Linux
-environment. M1 remains open.
+operational workflows are unavailable on this backend; Raft mTLS between
+members, dynamic member join and exit, and loss-of-quorum behaviour; removal
+of embedded-etcd production paths; reset/snapshot/restore; the Go full suite
+and Kubernetes E2E on a normal Linux environment. M1 remains open.
 
 The differential suite now runs in CI on every push, so a divergence between
 the two backends fails the build rather than waiting for a local run. It is a
