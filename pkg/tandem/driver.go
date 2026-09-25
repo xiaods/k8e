@@ -148,8 +148,12 @@ func (d *Driver) Snapshot(context.Context) (*managed.SnapshotResult, error) {
 // ReconcileSnapshotData reports that snapshot reconciliation is not
 // implemented rather than returning nil, which the cluster treats as success.
 // A nil here makes the reconcile loop report success while doing nothing.
+//
+// The sentinel is managed.ErrNotImplemented so the caller can tell "this
+// driver has nothing to reconcile" from "reconciling failed". A plain error
+// is retried, which logged this once a second for the life of the process.
 func (d *Driver) ReconcileSnapshotData(context.Context) error {
-	return fmt.Errorf("tandem snapshot reconciliation is not implemented")
+	return fmt.Errorf("tandem snapshot reconciliation: %w", managed.ErrNotImplemented)
 }
 
 // GetMembersClientURLs returns the etcd-compatible endpoint this node serves.

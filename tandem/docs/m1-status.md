@@ -12,7 +12,7 @@ called complete:
 | Watch | cross-process fanout validated on Linux | Live transaction events, historical replay, filters, cancellation, compaction errors and a watcher on one process observing a peer's commit are covered; still to validate slow consumers and recovery |
 | Lease | background reaper with a single expiry owner, heartbeat-takeover after owner loss | Grant, keepalive, expiry, lease-driven deletes, owner exclusivity and takeover of a crashed owner's leases are covered against a real rqlite; qualify under real multi-node clock skew and partition |
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
-| Maintenance | Status reports real db size and a parseable version; Snapshot returns an explicit `Unimplemented` | Alarm/Defragment/Hash remain constant-valued; decide each mapping or return an explicit error |
+| Maintenance | `Status` is served on the wire with a real version, db size and rqlite leader/raft state; `Snapshot` returns an explicit `Unimplemented` | The other Maintenance calls, the whole Cluster service and the whole Auth service have no handler. The placeholders that answered with constants were removed rather than registered |
 | Single/three member | single node only | Share one semantic engine and add rqlite cluster lifecycle management |
 | Differential tests | running in CI against a real etcd; KV, revision, tombstone, watch-order, lease and error-code cases covered, and it found ten real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
 | Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Extend to multi-node crash recovery, concurrent histories and differential checks |
@@ -162,6 +162,34 @@ M1 audit had already repaired once:
   never populates, so it reported an empty list while grants were live in
   rqlite.
 
+## Backend cleanup
+
+Three things that were not test work, and one of them was a live defect.
+
+**The snapshot reconcile loop logged an error every second.** `Cluster.Start`
+polls `ReconcileSnapshotData` once a second and logs whatever it returns,
+retrying until it succeeds. The Tandem driver returns an error unconditionally
+because there is nothing for it to reconcile, and `--etcd-disable-snapshots`
+defaults to false, so every Tandem node without that flag filled its log at
+error level for the life of the process. A driver that has no counterpart for
+an operation now returns `managed.ErrNotImplemented`, which the loop treats as
+terminal: it is not a failure, and retrying it cannot succeed.
+
+**Two Go functions were dead regardless of backend.**
+`pkg/etcd/etcdproxy.go` (143 lines) was the kine intermediary that KIP-29
+removed, with no callers left anywhere. `GetAPIServerURLsFromETCD` read the
+apiserver address key out of etcd and had no callers either. Both are gone.
+
+`ClientURLs` was *not* removed: it is called from `pkg/etcd/etcd.go:575` and is
+live. An audit that classified it as dead would have been wrong, which is why
+each candidate was checked against its actual references before deletion.
+
+**The remaining `pkg/etcd` tree stays.** Switching the default backend is the
+M3 flag day, and issue #592 is explicit that it must not be switched early.
+`pkg/embedw` stays too: the differential suite imports `tests/etcdrobustness`,
+which starts its embedded etcd through it, so removing it would remove the
+ability to check Tandem against etcd at all.
+
 ## Running the Linux integration suite locally
 
 The tagged suite needs a Linux Tandem binary, so on macOS it has to run
@@ -248,13 +276,14 @@ depend solely on manual runs. CI must pass on the pushed head before claiming
 Linux amd64 qualification.
 
 Remaining merge gates: complete compare/options semantics and the
-previous-delete response shape; `KV.RangeStream` and the Maintenance/Cluster/Auth
-services are still unregistered, so the "etcd v3.7 compatible" claim does not
-hold for them; the driver's Snapshot/Reset/Restore are still unimplemented, so
-`k8e etcd-snapshot` style operational workflows are unavailable on this
-backend; multi-node join/readiness/failover; removal of embedded-etcd
-production paths; reset/snapshot/restore; the Go full suite and Kubernetes E2E
-on a normal Linux environment. M1 remains open.
+previous-delete response shape; `KV.RangeStream` is not implemented at all; the
+Cluster and Auth services and the remaining Maintenance calls have no handler,
+so the "etcd v3.7 compatible" claim does not hold for them; the driver's
+Snapshot/Reset/Restore are still unimplemented, so `k8e etcd-snapshot` style
+operational workflows are unavailable on this backend; multi-node
+join/readiness/failover; removal of embedded-etcd production paths;
+reset/snapshot/restore; the Go full suite and Kubernetes E2E on a normal Linux
+environment. M1 remains open.
 
 The differential suite now runs in CI on every push, so a divergence between
 the two backends fails the build rather than waiting for a local run. It is a
@@ -262,16 +291,33 @@ separate step from the persistence suite because it starts an etcd member per
 case and fails on a disagreement rather than on a crash; a green run means the
 two backends answer the same, not that Tandem matches its own expectations.
 
-Two of the merge gates are not test work and are worth stating as such.
-`RangeStream` and the Cluster/Maintenance/Auth services are *implemented but
-unrouted*, and most of those handlers return an empty success — an empty member
-list, a fabricated leader, a constant hash — which KIP-29 forbids for a call the
-layer does not serve. Registering them unchanged would turn an honest
-`Unimplemented` into something that looks like success, so wiring them up
-requires real values (a genuine `Status`, a real single-member list) rather than
-a route entry. The driver's Snapshot/Reset/Restore is the same shape: the rqlite
-backup format is not an etcd snapshot, so the operation has to be reimplemented
-against `/db/backup` and `/db/load` rather than re-exposed.
+### The unrouted services, and why they are empty rather than stubbed
+
+The Cluster and Auth services, and the Maintenance calls other than `Status`,
+once had handlers here. Every one answered with a constant: an empty member
+list, a fabricated leader and raft index of 1, a hash of 0, an
+`AuthEnable`-shaped reply to `UserAdd` and `UserList`. None of them was
+registered on the wire, so grpc-lite refused the path before it reached
+`processRequest` and the caller's answer was an honest `Unimplemented` — the
+handlers were dead code, and registering them unchanged would have turned that
+into a false success. KIP-29 forbids answering a call the layer does not serve
+with something that merely looks like a success, so they were deleted.
+
+Wiring any of them up later means implementing it against rqlite's own `/nodes`,
+`/status` and membership endpoints, not restoring the placeholder. The same
+applies to the driver's `Snapshot`/`Reset`/`Restore`: a rqlite backup is a
+SQLite file, not an etcd snapshot, so those operations have to be built against
+`/db/backup` and `/db/load`.
+
+`Maintenance.Status` was the exception and is now served. The apiserver calls it
+on every start, from `etcd3.New` through `CheckClient`, to read the endpoint
+version and decide whether `RequestWatchProgress` is supported; while it was
+unrouted that probe failed on every boot, logging at error level and leaving
+watch-list initial events disabled. It reports a real version and db size, and
+the leader and Raft indices now come from rqlite's `/status` rather than being
+the constant 1. The leader is reported as present-or-absent rather than by id,
+because rqlite identifies a member by string and etcd's `Status` reports a
+numeric member id — there is no honest number to put there.
 
 Portable persistence regression (requires Go, Zig and a native rqlited):
 
