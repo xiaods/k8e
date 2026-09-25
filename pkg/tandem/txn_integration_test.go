@@ -26,6 +26,56 @@ func TestTandemPersistentTxn(t *testing.T) {
 	waitForReady(t, ctx, cli, 300*time.Millisecond, 30*time.Second, "schema readiness")
 	testTxnCRUD(t, ctx, cli)
 	testTxnCAS(t, ctx, cli)
+	testTxnRangeLimit(t, ctx, cli)
+}
+
+// A Range inside a Txn must honour the op's own limit: etcd truncates the
+// page, reports the full count of matching keys and sets more. Only the unary
+// Range path did this before, so a paginating controller reading through a
+// Txn would have looped forever on a page that never ended.
+func testTxnRangeLimit(t *testing.T, ctx context.Context, cli *clientv3.Client) {
+	t.Helper()
+	for _, key := range []string{"txnlimit/a", "txnlimit/b", "txnlimit/c"} {
+		if _, err := cli.Put(ctx, key, "v"); err != nil {
+			t.Fatalf("seed %s: %v", key, err)
+		}
+	}
+	defer func() {
+		if _, err := cli.Delete(ctx, "txnlimit/", clientv3.WithPrefix()); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}()
+
+	limited, err := cli.Txn(ctx).Then(clientv3.OpGet("txnlimit/", clientv3.WithPrefix(), clientv3.WithLimit(2))).Commit()
+	if err != nil {
+		t.Fatalf("limited txn range: %v", err)
+	}
+	if !limited.Succeeded || len(limited.Responses) != 1 {
+		t.Fatalf("limited txn range responses: %+v", limited)
+	}
+	page := limited.Responses[0].GetResponseRange()
+	if len(page.Kvs) != 2 {
+		t.Fatalf("txn range returned %d keys, want 2 (limit not applied)", len(page.Kvs))
+	}
+	if page.Count != 3 {
+		t.Fatalf("txn range count = %d, want 3 (full match count)", page.Count)
+	}
+	if !page.More {
+		t.Fatal("txn range more = false, want true when the limit truncates the page")
+	}
+	if string(page.Kvs[0].Key) != "txnlimit/a" || string(page.Kvs[1].Key) != "txnlimit/b" {
+		t.Fatalf("txn range page out of order: %q, %q", page.Kvs[0].Key, page.Kvs[1].Key)
+	}
+
+	// A limit at or above the match count must not claim more pages.
+	full, err := cli.Txn(ctx).Then(clientv3.OpGet("txnlimit/", clientv3.WithPrefix(), clientv3.WithLimit(3))).Commit()
+	if err != nil {
+		t.Fatalf("untruncated txn range: %v", err)
+	}
+	untruncated := full.Responses[0].GetResponseRange()
+	if len(untruncated.Kvs) != 3 || untruncated.Count != 3 || untruncated.More {
+		t.Fatalf("untruncated txn range: %d keys, count %d, more %v; want 3/3/false", len(untruncated.Kvs), untruncated.Count, untruncated.More)
+	}
 }
 
 func testTxnCRUD(t *testing.T, ctx context.Context, cli *clientv3.Client) {

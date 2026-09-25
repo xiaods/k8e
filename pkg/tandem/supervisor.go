@@ -144,7 +144,6 @@ func (s *Supervisor) startRqlite(ctx context.Context, rqliteDir string) error {
 		"-node-id", s.cfg.NodeID,
 		"-http-addr", s.cfg.RqliteHTTP,
 		"-raft-addr", s.cfg.RqliteRaft,
-		"-raft-cluster-remove-shutdown=true",
 		rqliteDir,
 	)
 	if s.cfg.RqliteJoin != "" {
@@ -450,6 +449,7 @@ func tandemEnvironment(cfg Config) []string {
 		"TANDEM_DATA_DIR=" + cfg.DataDir,
 		"TANDEM_LISTEN_ADDR=" + cfg.TandemListen,
 		"TANDEM_RQLITE_ADDR=http://" + cfg.RqliteHTTP,
+		"TANDEM_LEASE_OWNER=" + cfg.NodeID,
 		fmt.Sprintf("TANDEM_TLS_REQUIRE_CLIENT_CERT=%t", cfg.TandemMTLS),
 	}
 	if cfg.TandemTLSCert != "" {

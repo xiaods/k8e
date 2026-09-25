@@ -195,6 +195,8 @@ fn watchMessage(
     const endpoint: *WatchEndpoint = @ptrCast(@alignCast(opaque_endpoint.?));
     endpoint.pipeline.lock();
     defer endpoint.pipeline.unlock();
+    try endpoint.pipeline.storage.syncState();
+    try endpoint.pipeline.publishCommittedSinceCursor();
     lock(&endpoint.mutex);
     defer endpoint.mutex.unlock();
     const request = try messages.WatchRequest.decode(request_data);

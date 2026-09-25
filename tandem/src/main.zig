@@ -23,8 +23,8 @@ pub const Config = struct {
     /// Require client certificate (mTLS)
     require_client_cert: bool = true,
     /// Identifies this instance when it claims ownership of a lease's expiry.
-    /// Defaults to the listen address, which is unique per node; override when
-    /// two instances would otherwise share one.
+    /// The Supervisor supplies its unique node ID. Standalone launches may
+    /// override the listen-address fallback when multiple hosts share it.
     lease_owner: []const u8 = "",
 
     pub fn fromEnvironment() !Config {
@@ -44,8 +44,8 @@ pub const Config = struct {
                 return error.InvalidBooleanEnvironmentValue;
         }
         if (environment("TANDEM_LEASE_OWNER")) |value| config.lease_owner = value;
-        // The listen address is already unique per node, so it is a usable
-        // default identity when nothing else is configured.
+        // Standalone processes retain a fallback identity; managed launches
+        // receive the unique rqlite node ID from the Supervisor.
         if (config.lease_owner.len == 0) config.lease_owner = config.listen_addr;
         return config;
     }
@@ -144,7 +144,7 @@ const LeaseReaper = struct {
             // the data a client is about to read — and a watch resuming from
             // that revision would silently miss events.
             context.server.lock();
-            const outcome = context.server.storage.expireLeases();
+            const outcome = reapAndPublish(context.server);
             context.server.unlock();
             // A failed scan is logged and retried on the next tick rather than
             // propagated: rqlite may briefly be unreachable while it elects a
@@ -164,6 +164,21 @@ const LeaseReaper = struct {
                 _ = std.posix.poll(&.{}, 50) catch {};
             }
         }
+    }
+
+    fn reapAndPublish(server: *PipelineServer) !i64 {
+        try server.storage.syncState();
+        // The fan-out must not be gated on the expiry scan succeeding. rqlite
+        // is briefly unreachable while it elects a leader, and a scan that
+        // fails on the next tick would otherwise stop this instance from
+        // delivering commits made by its peers for as long as the blip lasts.
+        const deleted = server.storage.expireLeases() catch |err| {
+            std.log.warn("lease expiry scan failed: {s}", .{@errorName(err)});
+            try server.publishCommittedSinceCursor();
+            return 0;
+        };
+        try server.publishCommittedSinceCursor();
+        return deleted;
     }
 };
 

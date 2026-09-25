@@ -122,6 +122,45 @@ func TestTandemPersistentLeaseOwnerIsExclusive(t *testing.T) {
 	}
 }
 
+func TestTandemPersistentLeaseTakeoverAfterCrash(t *testing.T) {
+	probe := os.Getenv("TANDEM_TEST_PROBE")
+	if probe == "" {
+		t.Fatal("set TANDEM_TEST_PROBE to the persistence-probe executable")
+	}
+	url, _ := startTestRqlite(t, t.TempDir(), "", "")
+	cmd := exec.CommandContext(t.Context(), probe)
+	cmd.Env = append(os.Environ(), "TANDEM_RQLITE_ADDR="+url, "TANDEM_PROBE_PHASE=lease-takeover")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("lease takeover: %v: %s", err, out)
+	}
+}
+
+func TestTandemPersistentLeaseIDsAreShared(t *testing.T) {
+	probe := os.Getenv("TANDEM_TEST_PROBE")
+	if probe == "" {
+		t.Fatal("set TANDEM_TEST_PROBE to the persistence-probe executable")
+	}
+	url, _ := startTestRqlite(t, t.TempDir(), "", "")
+	cmd := exec.CommandContext(t.Context(), probe)
+	cmd.Env = append(os.Environ(), "TANDEM_RQLITE_ADDR="+url, "TANDEM_PROBE_PHASE=lease-ids")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("shared lease IDs: %v: %s", err, out)
+	}
+}
+
+func TestTandemPersistentStandalonePreviousValues(t *testing.T) {
+	probe := os.Getenv("TANDEM_TEST_PROBE")
+	if probe == "" {
+		t.Fatal("set TANDEM_TEST_PROBE to the persistence-probe executable")
+	}
+	url, _ := startTestRqlite(t, t.TempDir(), "", "")
+	cmd := exec.CommandContext(t.Context(), probe)
+	cmd.Env = append(os.Environ(), "TANDEM_RQLITE_ADDR="+url, "TANDEM_PROBE_PHASE=standalone-prev")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("standalone previous values: %v: %s", err, out)
+	}
+}
+
 func TestTandemPersistentLeaseExpiry(t *testing.T) {
 	probe := os.Getenv("TANDEM_TEST_PROBE")
 	if probe == "" {

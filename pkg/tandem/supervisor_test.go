@@ -30,6 +30,7 @@ func TestAdvertiseIPDoesNotExposeSQL(t *testing.T) {
 
 func TestTandemEnvironmentIncludesTLSConfiguration(t *testing.T) {
 	environment := tandemEnvironment(Config{
+		NodeID:        "node-a",
 		DataDir:       "/var/lib/k8e/tandem",
 		TandemListen:  "127.0.0.1:2379",
 		RqliteHTTP:    "127.0.0.1:4001",
@@ -39,6 +40,7 @@ func TestTandemEnvironmentIncludesTLSConfiguration(t *testing.T) {
 		TandemMTLS:    true,
 	})
 	for _, expected := range []string{
+		"TANDEM_LEASE_OWNER=node-a",
 		"TANDEM_TLS_CERT_FILE=/tls/server.crt",
 		"TANDEM_TLS_KEY_FILE=/tls/server.key",
 		"TANDEM_TLS_CA_FILE=/tls/client-ca.crt",

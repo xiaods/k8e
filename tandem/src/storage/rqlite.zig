@@ -129,9 +129,9 @@ pub const RqliteClient = struct {
     /// another transaction even if the scratch table were persistent.
     pub fn transaction(self: *RqliteClient, sql: []const u8) !QueryResult {
         const sets = try self.transactionSets(sql);
-        defer for (sets) |*set| set.deinit(self.allocator);
         defer self.allocator.free(sets);
         if (sets.len == 0) return error.InvalidResponse;
+        for (sets[1..]) |*set| set.deinit(self.allocator);
         return sets[0];
     }
 
@@ -612,8 +612,11 @@ pub const SqlBuilder = struct {
         \\  ttl INTEGER NOT NULL,
         \\  created_at INTEGER NOT NULL,
         \\  expires_at INTEGER NOT NULL,
-        \\  owner TEXT NOT NULL DEFAULT ''
+        \\  owner TEXT NOT NULL DEFAULT '',
+        \\  owner_expires_at INTEGER NOT NULL DEFAULT 0
         \\);
+        \\CREATE TABLE IF NOT EXISTS lease_sequence (id INTEGER PRIMARY KEY, last_id INTEGER NOT NULL);
+        \\INSERT OR IGNORE INTO lease_sequence(id,last_id) SELECT 1,MAX(1000,COALESCE(MAX(id),1000)) FROM leases;
         \\CREATE INDEX IF NOT EXISTS idx_leases_expiry ON leases(expires_at);
         \\CREATE TABLE IF NOT EXISTS lease_keys (
         \\  lease_id INTEGER NOT NULL,
@@ -644,6 +647,14 @@ pub const SqlBuilder = struct {
     /// fail with "duplicate column name". Checked before running the migration.
     pub fn leasesOwnerColumnSql() []const u8 {
         return "SELECT COUNT(*) FROM pragma_table_info('leases') WHERE name='owner'";
+    }
+
+    pub fn leasesOwnerDeadlineColumnSql() []const u8 {
+        return "SELECT COUNT(*) FROM pragma_table_info('leases') WHERE name='owner_expires_at'";
+    }
+
+    pub fn ownerDeadlineMigrationSql() []const u8 {
+        return "ALTER TABLE leases ADD COLUMN owner_expires_at INTEGER NOT NULL DEFAULT 0";
     }
 
     fn keyPredicate(allocator: Allocator, key: []const u8, end: []const u8) ![]u8 {
@@ -692,6 +703,22 @@ pub const SqlBuilder = struct {
         return std.fmt.allocPrint(allocator, "UPDATE revision SET current_revision=current_revision+1 WHERE id=1 AND EXISTS(SELECT 1 FROM kv WHERE {s});" ++
             "INSERT INTO kv_history(key,value,create_revision,mod_revision,version,lease,deleted) SELECT key,value,create_revision,(SELECT current_revision FROM revision WHERE id=1),version,lease,1 FROM kv WHERE {s};" ++
             "DELETE FROM kv WHERE {s};DELETE FROM lease_keys WHERE {s};", .{ predicate, predicate, predicate, predicate });
+    }
+
+    /// Capture the exact deleted rows before mutating them, inside the same
+    /// Raft transaction. The first result set is the prev_kvs and its length
+    /// is the authoritative deleted count.
+    pub fn atomicDeleteRangeSql(allocator: Allocator, key: []const u8, range_end: []const u8) ![]u8 {
+        const predicate = try keyPredicate(allocator, key, range_end);
+        defer allocator.free(predicate);
+        return std.fmt.allocPrint(allocator,
+            "BEGIN;DROP TABLE IF EXISTS tandem_delete_prev;CREATE TEMP TABLE tandem_delete_prev AS SELECT key,value,create_revision,mod_revision,version,lease FROM kv WHERE {s};" ++
+            "UPDATE revision SET current_revision=current_revision+1 WHERE id=1 AND EXISTS(SELECT 1 FROM tandem_delete_prev);" ++
+            "INSERT INTO kv_history(key,value,create_revision,mod_revision,version,lease,deleted) SELECT key,value,create_revision,(SELECT current_revision FROM revision WHERE id=1),version,lease,1 FROM tandem_delete_prev;" ++
+            "DELETE FROM lease_keys WHERE key IN (SELECT key FROM tandem_delete_prev);" ++
+            "DELETE FROM kv WHERE key IN (SELECT key FROM tandem_delete_prev);" ++
+            "SELECT key,value,create_revision,mod_revision,version,lease FROM tandem_delete_prev ORDER BY key;" ++
+            "SELECT current_revision FROM revision WHERE id=1;DROP TABLE tandem_delete_prev;COMMIT;", .{predicate});
     }
 
     pub fn currentRevisionSql() []const u8 {
@@ -748,7 +775,11 @@ pub const SqlBuilder = struct {
     /// timestamp is a replicated input rather than something each replica
     /// computes for itself, as KIP-29 §6 requires.
     pub fn createLeaseForSql(allocator: Allocator, id: i64, ttl: i64, now: i64) ![]u8 {
-        return std.fmt.allocPrint(allocator, "INSERT OR REPLACE INTO leases(id,ttl,created_at,expires_at) VALUES({d},{d},{d},{d})", .{ id, ttl, now, now + ttl });
+        return std.fmt.allocPrint(allocator, "BEGIN;INSERT INTO leases(id,ttl,created_at,expires_at) VALUES({d},{d},{d},{d});UPDATE lease_sequence SET last_id=MAX(last_id,{d}) WHERE id=1;COMMIT;", .{ id, ttl, now, now + ttl, id });
+    }
+
+    pub fn allocateLeaseSql(allocator: Allocator, ttl: i64, now: i64) ![]u8 {
+        return std.fmt.allocPrint(allocator, "BEGIN;UPDATE lease_sequence SET last_id=last_id+1 WHERE id=1;INSERT INTO leases(id,ttl,created_at,expires_at) SELECT last_id,{d},{d},{d} FROM lease_sequence WHERE id=1;SELECT last_id FROM lease_sequence WHERE id=1;COMMIT;", .{ ttl, now, now + ttl });
     }
 
     /// Take ownership of one expired lease, or report that someone else won.
@@ -758,21 +789,36 @@ pub const SqlBuilder = struct {
     /// against the owner column. The condition is part of the same Raft
     /// transaction as the claim, so two instances racing on the same lease
     /// cannot both believe they own it: exactly one UPDATE reports a row.
-    pub fn claimLeaseForSql(allocator: Allocator, id: i64, owner: []const u8) ![]u8 {
+    pub fn claimLeaseForSql(allocator: Allocator, id: i64, owner: []const u8, now: i64) ![]u8 {
         var buf = std.ArrayList(u8).empty;
         errdefer buf.deinit(allocator);
         try buf.appendSlice(allocator, "UPDATE leases SET owner='");
         try appendSqlString(allocator, &buf, owner);
-        try buf.appendSlice(allocator, "' WHERE id=");
+        try buf.appendSlice(allocator, "',owner_expires_at=");
+        try formatInt(allocator, &buf, now + 30);
+        try buf.appendSlice(allocator, " WHERE id=");
         try formatInt(allocator, &buf, id);
-        // Unowned only. The empty owner is what "free for the taking" means, so
-        // a lease already held by a live instance is never taken from it.
-        //
-        // This has to be `owner=''` rather than `owner!=<something>`: inside an
-        // UPDATE, a bare column name on the right-hand side of a comparison
-        // resolves to the value being assigned, not the stored one, so a
-        // self-comparison is always false and the claim never succeeds.
-        try buf.appendSlice(allocator, " AND owner=''");
+        try buf.appendSlice(allocator, " AND expires_at<=");
+        try formatInt(allocator, &buf, now);
+        try buf.appendSlice(allocator, " AND (owner='' OR owner='");
+        try appendSqlString(allocator, &buf, owner);
+        try buf.appendSlice(allocator, "' OR owner_expires_at<=");
+        try formatInt(allocator, &buf, now);
+        try buf.appendSlice(allocator, ")");
+        return buf.toOwnedSlice(allocator);
+    }
+
+    pub fn renewLeaseOwnerSql(allocator: Allocator, id: i64, owner: []const u8, now: i64) ![]u8 {
+        var buf = std.ArrayList(u8).empty;
+        errdefer buf.deinit(allocator);
+        try buf.appendSlice(allocator, "UPDATE leases SET owner_expires_at=");
+        try formatInt(allocator, &buf, now + 30);
+        try buf.appendSlice(allocator, " WHERE id=");
+        try formatInt(allocator, &buf, id);
+        try buf.appendSlice(allocator, " AND owner='");
+        try appendSqlString(allocator, &buf, owner);
+        try buf.appendSlice(allocator, "' AND owner_expires_at>");
+        try formatInt(allocator, &buf, now);
         return buf.toOwnedSlice(allocator);
     }
 
@@ -781,7 +827,7 @@ pub const SqlBuilder = struct {
     pub fn releaseLeasesForSql(allocator: Allocator, owner: []const u8) ![]u8 {
         var buf = std.ArrayList(u8).empty;
         errdefer buf.deinit(allocator);
-        try buf.appendSlice(allocator, "UPDATE leases SET owner='' WHERE owner='");
+        try buf.appendSlice(allocator, "UPDATE leases SET owner='',owner_expires_at=0 WHERE owner='");
         try appendSqlString(allocator, &buf, owner);
         try buf.appendSlice(allocator, "';");
         return buf.toOwnedSlice(allocator);
@@ -893,10 +939,47 @@ pub const SqlBuilder = struct {
         return buf.toOwnedSlice(allocator);
     }
 
+    /// Fence an expiry worker that lost its owner deadline while waiting on
+    /// rqlite. Every mutation rechecks ownership and the lease deadline in
+    /// the same Raft transaction as the key deletion.
+    pub fn expireLeaseKeyOwnedSql(allocator: Allocator, key: []const u8, lease_id: i64, owner: []const u8, now: i64) ![]u8 {
+        const hex = try toHex(allocator, key);
+        defer allocator.free(hex);
+        const guard = try leaseOwnerGuardSql(allocator, lease_id, owner, now);
+        defer allocator.free(guard);
+        return std.fmt.allocPrint(allocator,
+            "BEGIN;UPDATE revision SET current_revision=current_revision+1 WHERE id=1 AND EXISTS(SELECT 1 FROM kv WHERE key=X'{s}' AND lease={d}) AND {s};" ++
+            "INSERT INTO kv_history(key,value,create_revision,mod_revision,version,lease,deleted) SELECT key,value,create_revision,(SELECT current_revision FROM revision WHERE id=1),version,lease,1 FROM kv WHERE key=X'{s}' AND lease={d} AND {s};" ++
+            "DELETE FROM kv WHERE key=X'{s}' AND lease={d} AND {s};" ++
+            "DELETE FROM lease_keys WHERE key=X'{s}' AND lease_id={d} AND {s};COMMIT;",
+            .{ hex, lease_id, guard, hex, lease_id, guard, hex, lease_id, guard, hex, lease_id, guard });
+    }
+
+    pub fn revokeLeaseOwnedSql(allocator: Allocator, lease_id: i64, owner: []const u8, now: i64) ![]u8 {
+        const guard = try leaseOwnerGuardSql(allocator, lease_id, owner, now);
+        defer allocator.free(guard);
+        return std.fmt.allocPrint(allocator, "BEGIN;DELETE FROM lease_keys WHERE lease_id={d} AND {s};DELETE FROM leases WHERE id={d} AND {s};COMMIT;", .{ lease_id, guard, lease_id, guard });
+    }
+
     pub fn compareSql() []const u8 {
         return "SELECT key, value, create_revision, mod_revision, version, lease FROM kv WHERE key = ?";
     }
 };
+
+fn leaseOwnerGuardSql(allocator: Allocator, lease_id: i64, owner: []const u8, now: i64) ![]u8 {
+    var buf = std.ArrayList(u8).empty;
+    errdefer buf.deinit(allocator);
+    try buf.appendSlice(allocator, "EXISTS(SELECT 1 FROM leases WHERE id=");
+    try formatInt(allocator, &buf, lease_id);
+    try buf.appendSlice(allocator, " AND owner='");
+    try appendSqlString(allocator, &buf, owner);
+    try buf.appendSlice(allocator, "' AND owner_expires_at>");
+    try formatInt(allocator, &buf, now);
+    try buf.appendSlice(allocator, " AND expires_at<=");
+    try formatInt(allocator, &buf, now);
+    try buf.appendSlice(allocator, ")");
+    return buf.toOwnedSlice(allocator);
+}
 
 /// `stmt<key BLOB literal> AND lease=<id>;` — the lease guard keeps an expiry
 /// from deleting a key that a concurrent Put has re-attached elsewhere.
@@ -1309,7 +1392,8 @@ test "lease deadlines are supplied by the caller, not by SQL now" {
     // forever. The timestamp therefore travels with the statement.
     const grant = try SqlBuilder.createLeaseForSql(testing.allocator, 7, 30, 1_700_000_000);
     defer testing.allocator.free(grant);
-    try testing.expectEqualStrings("INSERT OR REPLACE INTO leases(id,ttl,created_at,expires_at) VALUES(7,30,1700000000,1700000030)", grant);
+    try testing.expect(std.mem.indexOf(u8, grant, "INSERT INTO leases(id,ttl,created_at,expires_at) VALUES(7,30,1700000000,1700000030)") != null);
+    try testing.expect(std.mem.indexOf(u8, grant, "UPDATE lease_sequence SET last_id=MAX(last_id,7)") != null);
     try testing.expect(std.mem.indexOf(u8, grant, "strftime") == null);
 
     const keepalive = try SqlBuilder.keepAliveLeaseForSql(testing.allocator, 7, 1_700_000_000);
@@ -1321,6 +1405,33 @@ test "lease deadlines are supplied by the caller, not by SQL now" {
     defer testing.allocator.free(expired);
     try testing.expectEqualStrings("SELECT id FROM leases WHERE expires_at <= 1700000000", expired);
     try testing.expect(std.mem.indexOf(u8, expired, "strftime") == null);
+}
+
+test "lease IDs and expiry ownership are serialized and recoverable" {
+    const allocate = try SqlBuilder.allocateLeaseSql(testing.allocator, 20, 100);
+    defer testing.allocator.free(allocate);
+    try testing.expect(std.mem.indexOf(u8, allocate, "UPDATE lease_sequence SET last_id=last_id+1") != null);
+    try testing.expect(std.mem.indexOf(u8, allocate, "INSERT INTO leases(id,ttl,created_at,expires_at) SELECT last_id,20,100,120") != null);
+    const claim = try SqlBuilder.claimLeaseForSql(testing.allocator, 7, "node'1", 120);
+    defer testing.allocator.free(claim);
+    try testing.expect(std.mem.indexOf(u8, claim, "owner='node''1'") != null);
+    try testing.expect(std.mem.indexOf(u8, claim, "owner_expires_at=150") != null);
+    try testing.expect(std.mem.indexOf(u8, claim, "owner_expires_at<=120") != null);
+    const expired = try SqlBuilder.expireLeaseKeyOwnedSql(testing.allocator, "k\x00", 7, "node'1", 121);
+    defer testing.allocator.free(expired);
+    try testing.expect(std.mem.indexOf(u8, expired, "key=X'6b00'") != null);
+    try testing.expect(std.mem.indexOf(u8, expired, "owner='node''1' AND owner_expires_at>121 AND expires_at<=121") != null);
+}
+
+test "standalone delete captures previous rows before mutation" {
+    const sql = try SqlBuilder.atomicDeleteRangeSql(testing.allocator, "a", "z");
+    defer testing.allocator.free(sql);
+    const capture = std.mem.indexOf(u8, sql, "CREATE TEMP TABLE tandem_delete_prev AS SELECT").?;
+    const history = std.mem.indexOf(u8, sql, "INSERT INTO kv_history").?;
+    const removal = std.mem.indexOf(u8, sql, "DELETE FROM kv WHERE").?;
+    try testing.expect(capture < history);
+    try testing.expect(history < removal);
+    try testing.expect(std.mem.indexOf(u8, sql, "SELECT key,value,create_revision,mod_revision,version,lease FROM tandem_delete_prev ORDER BY key") != null);
 }
 
 /// The hex digits following the first `prefix`, used to assert on how a key was

@@ -44,8 +44,57 @@ func TestTandemWatchTLS(t *testing.T) {
 	}
 }
 
-// newTestClient returns a client plus the cancel func for its context. The
-// caller must defer the cancel inside its own subtest so teardown runs after
+// A watcher connected to one Tandem process must observe commits made by
+// another process against the same rqlite. Delivering events only to the
+// process that applied the write left a second instance's watchers silently
+// starved, which for a controller failover is indistinguishable from a broken
+// datastore.
+func TestTandemWatchFanOutAcrossProcesses(t *testing.T) {
+	binary := os.Getenv("TANDEM_TEST_BINARY")
+	if binary == "" {
+		t.Fatal("set TANDEM_TEST_BINARY to a Linux Tandem executable")
+	}
+	rqliteURL, _ := startTestRqlite(t, t.TempDir(), "", "")
+	watcherEndpoint, watcherCfg := startTandemOnRqlite(t, binary, rqliteURL, false)
+	writerEndpoint, writerCfg := startTandemOnRqlite(t, binary, rqliteURL, false)
+
+	watchCtx, watcher, cancelWatcher := newTestClient(t, watcherEndpoint, watcherCfg, 30*time.Second)
+	defer cancelWatcher()
+	writeCtx, writer, cancelWriter := newTestClient(t, writerEndpoint, writerCfg, 30*time.Second)
+	defer cancelWriter()
+	waitForReady(t, watchCtx, watcher, 200*time.Millisecond, 20*time.Second, "watcher readiness")
+	waitForReady(t, writeCtx, writer, 200*time.Millisecond, 20*time.Second, "writer readiness")
+
+	stream, err := pb.NewWatchClient(watcher.ActiveConnection()).Watch(watchCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &watchFixture{t: t, stream: stream}
+	id := w.create(&pb.WatchCreateRequest{Key: []byte("fanout/"), RangeEnd: []byte("fanout0")})
+
+	if _, err := writer.Put(writeCtx, "fanout/a", "written-by-peer"); err != nil {
+		t.Fatalf("peer write: %v", err)
+	}
+
+	// The write lands on the writer's process, not the watcher's, so this
+	// can only arrive through the shared-history fan-out.
+	got := w.expectEvents(id, 1, "cross-process event")
+	if string(got.Events[0].Kv.Key) != "fanout/a" || string(got.Events[0].Kv.Value) != "written-by-peer" {
+		t.Fatalf("cross-process event carried the wrong kv: %+v", got.Events[0].Kv)
+	}
+
+	// A write from the watcher's own process must still arrive, and the peer
+	// cursor must not have swallowed it.
+	if _, err := watcher.Put(watchCtx, "fanout/b", "written-locally"); err != nil {
+		t.Fatalf("local write: %v", err)
+	}
+	local := w.expectEvents(id, 1, "local event after peer event")
+	if string(local.Events[0].Kv.Key) != "fanout/b" {
+		t.Fatalf("local event carried the wrong kv: %+v", local.Events[0].Kv)
+	}
+}
+
+// newTestClient returns a client plus the cancel func for its context. The// caller must defer the cancel inside its own subtest so teardown runs after
 // the stream is done and before the Tandem process cleanup registered by
 // startTestTandem; cancelling from a t.Cleanup hook would race the stream.
 func newTestClient(t *testing.T, endpoint string, cfg *tls.Config, timeout time.Duration) (context.Context, *clientv3.Client, context.CancelFunc) {
@@ -267,6 +316,14 @@ func expectTLSRejected(t *testing.T, endpoint string, cfg *tls.Config) {
 func startTestTandem(t *testing.T, binary string, mutual bool) (string, *tls.Config) {
 	t.Helper()
 	rqliteURL, _ := startTestRqlite(t, t.TempDir(), "", "")
+	return startTandemOnRqlite(t, binary, rqliteURL, mutual)
+}
+
+// startTandemOnRqlite is startTestTandem with the datastore supplied by the
+// caller, so several Tandem processes can be pointed at one rqlite the way
+// several nodes share one etcd cluster.
+func startTandemOnRqlite(t *testing.T, binary, rqliteURL string, mutual bool) (string, *tls.Config) {
+	t.Helper()
 	cert, key, cfg := testPKI(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

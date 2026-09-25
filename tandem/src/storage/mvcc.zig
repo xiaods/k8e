@@ -61,6 +61,7 @@ pub const Storage = struct {
     /// Identifies this instance as the expiry owner for the leases it has
     /// claimed. Empty on the in-memory path, which has no peers.
     lease_owner: []const u8 = "",
+    next_memory_lease_id: i64 = 1000,
 
     pub fn init(allocator: Allocator, config: StorageConfig) !Storage {
         var client = try rqlite.RqliteClient.init(allocator, config.rqlite_url);
@@ -218,35 +219,16 @@ pub const Storage = struct {
         prev_kv: bool,
     ) !PutResult {
         if (self.client == null) return self.memoryPut(key, value, lease, prev_kv);
-        // prev_kv is captured by reading the row before the write, the same
-        // way deleteRange does. The per-key buffers are owned here: the range
-        // result only owns the outer slice, so releasing that alone leaked the
-        // key and value.
-        var prev: ?MVCCKeyValue = null;
-        if (prev_kv) {
-            const found = try self.range(key, "", 1, 0, false, false);
-            var keep_previous = false;
-            defer if (!keep_previous) {
-                for (found.kvs) |kv| {
-                    self.allocator.free(kv.key);
-                    self.allocator.free(kv.value);
-                }
-                self.allocator.free(found.kvs);
-            };
-            if (found.kvs.len > 0) {
-                prev = found.kvs[0];
-                keep_previous = true;
-            }
+        const op = rqlite.TxnOp{ .kind = .put, .key = key, .value = value, .range_end = "", .lease = lease };
+        const result = try self.txn(.{ .compare = &.{}, .success = &.{op}, .failure = &.{} });
+        defer self.allocator.free(result.responses);
+        if (result.responses.len != 1) return error.InvalidTransactionResult;
+        const previous = result.responses[0].prev_kv;
+        if (!prev_kv and previous != null) {
+            self.allocator.free(previous.?.key);
+            self.allocator.free(previous.?.value);
         }
-        errdefer if (prev) |kv| {
-            self.allocator.free(kv.key);
-            self.allocator.free(kv.value);
-        };
-        const sql = try rqlite.SqlBuilder.putSql(self.allocator, key, value, lease);
-        defer self.allocator.free(sql);
-        _ = try self.client.?.execute(sql);
-        try self.refreshRevision();
-        return .{ .prev_kv = prev, .revision = self.current_revision };
+        return .{ .prev_kv = if (prev_kv) previous else null, .revision = self.current_revision };
     }
 
     fn refreshRevision(self: *Storage) !void {
@@ -254,6 +236,18 @@ pub const Storage = struct {
         defer result.deinit(self.allocator);
         if (result.values.len != 1 or result.values[0].len != 1) return error.InvalidRevisionState;
         self.current_revision = result.values[0][0].integer;
+    }
+
+    /// Refresh the shared revision and compaction watermark before serving a
+    /// request. Another Tandem process can have committed since our last call.
+    pub fn syncState(self: *Storage) !void {
+        if (self.client) |*client| {
+            const result = try client.query("SELECT current_revision,(SELECT compact_revision FROM compaction WHERE id=1) FROM revision WHERE id=1");
+            defer result.deinit(self.allocator);
+            if (result.values.len != 1 or result.values[0].len != 2) return error.InvalidRevisionState;
+            self.current_revision = result.values[0][0].integer;
+            self.compact_revision = result.values[0][1].integer;
+        }
     }
 
     /// Delete keys in [key, range_end)
@@ -264,21 +258,35 @@ pub const Storage = struct {
         prev_kv: bool,
     ) !DeleteResult {
         if (self.client == null) return self.memoryDeleteRange(key, range_end, prev_kv);
-        const found = try self.range(key, range_end, 0, 0, false, false);
-        var keep_previous = false;
-        defer if (!keep_previous) {
-            for (found.kvs) |kv| {
+        const sql = try rqlite.SqlBuilder.atomicDeleteRangeSql(self.allocator, key, range_end);
+        defer self.allocator.free(sql);
+        const sets = try self.client.?.transactionSets(sql);
+        defer {
+            for (sets) |*set| set.deinit(self.allocator);
+            self.allocator.free(sets);
+        }
+        if (sets.len != 2 or sets[1].values.len != 1 or sets[1].values[0].len != 1) return error.InvalidTransactionResult;
+        self.current_revision = sets[1].values[0][0].integer;
+        var previous = std.ArrayList(MVCCKeyValue).empty;
+        errdefer {
+            for (previous.items) |kv| {
                 self.allocator.free(kv.key);
                 self.allocator.free(kv.value);
             }
-            self.allocator.free(found.kvs);
+            previous.deinit(self.allocator);
+        }
+        if (prev_kv) for (sets[0].values) |row| {
+            if (row.len != 6) return error.InvalidTransactionResult;
+            try previous.append(self.allocator, .{
+                .key = try self.allocator.dupe(u8, textValue(row[0])),
+                .value = try self.allocator.dupe(u8, textValue(row[1])),
+                .create_revision = row[2].integer,
+                .mod_revision = row[3].integer,
+                .version = row[4].integer,
+                .lease = row[5].integer,
+            });
         };
-        const sql = try rqlite.SqlBuilder.deleteRangeSql(self.allocator, key, range_end);
-        defer self.allocator.free(sql);
-        _ = try self.client.?.execute(sql);
-        try self.refreshRevision();
-        keep_previous = prev_kv;
-        return .{ .deleted = found.count, .prev_kvs = if (prev_kv) found.kvs else &.{} };
+        return .{ .deleted = @intCast(sets[0].values.len), .prev_kvs = try previous.toOwnedSlice(self.allocator) };
     }
 
     /// Atomic transaction - all operations in a single rqlite execute request
@@ -342,9 +350,8 @@ pub const Storage = struct {
             const operations = if (succeeded) txn_data.success else txn_data.failure;
             for (sets[1].values) |row| {
                 if (row.len < 10) continue;
-                const op_index = row[0].integer;
-                if (op_index < 1 or op_index > operations.len) continue;
-                var response = &responses.items[@intCast(op_index - 1)];
+                const index = branchRangeIndex(row[0].integer, txn_data.success.len, operations.len, succeeded) orelse continue;
+                var response = &responses.items[index];
                 if (response.kind != .range) continue;
                 const grown = try self.allocator.realloc(response.range_kvs, response.range_kvs.len + 1);
                 response.range_kvs = grown;
@@ -357,6 +364,7 @@ pub const Storage = struct {
                     .lease = row[7].integer,
                 };
                 response.range_count = row[8].integer;
+                response.range_more = row[9].integer != 0;
             }
         }
         return TxnResult{ .succeeded = succeeded, .responses = try responses.toOwnedSlice(self.allocator) };
@@ -397,11 +405,11 @@ pub const Storage = struct {
         for (operations) |operation| {
             switch (operation.kind) {
                 .put => {
-                    const result = try self.put(operation.key, operation.value, operation.lease, true);
+                    const result = try self.memoryPut(operation.key, operation.value, operation.lease, true);
                     try responses.append(self.allocator, .{ .kind = .put, .data = &[_]u8{}, .revision = result.revision, .prev_kv = result.prev_kv });
                 },
                 .delete => {
-                    const result = try self.deleteRange(operation.key, operation.range_end, true);
+                    const result = try self.memoryDeleteRange(operation.key, operation.range_end, true);
                     try responses.append(self.allocator, .{ .kind = .delete, .data = &[_]u8{}, .revision = self.current_revision, .affected = result.deleted });
                     for (result.prev_kvs) |kv| {
                         self.allocator.free(kv.key);
@@ -410,8 +418,8 @@ pub const Storage = struct {
                     self.allocator.free(result.prev_kvs);
                 },
                 .range => {
-                    _ = try self.range(operation.key, operation.range_end, 0, 0, false, false);
-                    try responses.append(self.allocator, .{ .kind = .range, .data = &[_]u8{} });
+                    const result = try self.memoryRange(operation.key, operation.range_end, 0, 0, false, false);
+                    try responses.append(self.allocator, .{ .kind = .range, .data = &[_]u8{}, .range_kvs = result.kvs, .range_count = result.count });
                 },
             }
         }
@@ -547,6 +555,24 @@ pub const Storage = struct {
             return;
         }
         try self.leases.createLease(lease_id, ttl);
+        self.next_memory_lease_id = @max(self.next_memory_lease_id, lease_id);
+    }
+
+    /// Allocate and grant in one serialized rqlite transaction. The sequence
+    /// survives deletion of old leases and is shared by every Tandem process.
+    pub fn allocateLease(self: *Storage, ttl: i64) !i64 {
+        if (self.client) |*client| {
+            const sql = try rqlite.SqlBuilder.allocateLeaseSql(self.allocator, ttl, nowSeconds());
+            defer self.allocator.free(sql);
+            const result = try client.transaction(sql);
+            defer result.deinit(self.allocator);
+            if (result.values.len != 1 or result.values[0].len != 1) return error.InvalidLeaseId;
+            return result.values[0][0].integer;
+        }
+        self.next_memory_lease_id += 1;
+        const id = self.next_memory_lease_id;
+        try self.leases.createLease(id, ttl);
+        return id;
     }
 
     pub fn keepAliveLease(self: *Storage, lease_id: i64) !void {
@@ -643,30 +669,45 @@ pub const Storage = struct {
             const expired_sql = try rqlite.SqlBuilder.expiredLeasesSql(self.allocator, nowSeconds());
             defer self.allocator.free(expired_sql);
             const expired = try client.query(expired_sql);
+            defer expired.deinit(self.allocator);
             var deleted: i64 = 0;
             for (expired.values) |row| {
                 if (row.len == 0) continue;
                 const lease_id = row[0].integer;
                 // Take ownership before touching a key. Without this, two
                 // instances would both delete and both advance the revision.
-                const claim_sql = try rqlite.SqlBuilder.claimLeaseForSql(self.allocator, lease_id, owner);
+                const claim_sql = try rqlite.SqlBuilder.claimLeaseForSql(self.allocator, lease_id, owner, nowSeconds());
                 defer self.allocator.free(claim_sql);
                 const claim = try client.execute(claim_sql);
                 if (claim.rows_affected == 0) continue;
                 const keys_sql = try rqlite.SqlBuilder.leaseKeysForIdSql(self.allocator, lease_id);
                 defer self.allocator.free(keys_sql);
                 const keys = try client.query(keys_sql);
+                defer keys.deinit(self.allocator);
+                var still_owner = true;
                 for (keys.values) |key_row| {
                     if (key_row.len == 0) continue;
+                    const renew_sql = try rqlite.SqlBuilder.renewLeaseOwnerSql(self.allocator, lease_id, owner, nowSeconds());
+                    defer self.allocator.free(renew_sql);
+                    const renewed = try client.execute(renew_sql);
+                    if (renewed.rows_affected == 0) {
+                        still_owner = false;
+                        break;
+                    }
                     // lease_keys.key is a BLOB column: reading .text here
                     // produced an empty key, so expiry matched no row and a
                     // lapsed lease silently kept its key forever.
-                    const delete_sql = try rqlite.SqlBuilder.expireLeaseKeySql(self.allocator, textValue(key_row[0]), lease_id);
+                    const delete_sql = try rqlite.SqlBuilder.expireLeaseKeyOwnedSql(self.allocator, textValue(key_row[0]), lease_id, owner, nowSeconds());
                     defer self.allocator.free(delete_sql);
                     const result = try client.execute(delete_sql);
                     deleted += result.rows_affected;
                 }
-                const revoke_sql = try rqlite.SqlBuilder.revokeLeaseForIdSql(self.allocator, lease_id);
+                if (!still_owner) continue;
+                const renew_sql = try rqlite.SqlBuilder.renewLeaseOwnerSql(self.allocator, lease_id, owner, nowSeconds());
+                defer self.allocator.free(renew_sql);
+                const renewed = try client.execute(renew_sql);
+                if (renewed.rows_affected == 0) continue;
+                const revoke_sql = try rqlite.SqlBuilder.revokeLeaseOwnedSql(self.allocator, lease_id, owner, nowSeconds());
                 defer self.allocator.free(revoke_sql);
                 _ = try client.execute(revoke_sql);
             }
@@ -824,6 +865,20 @@ pub const TxnData = struct {
     success: []const rqlite.TxnOp,
     failure: []const rqlite.TxnOp,
 };
+
+fn branchRangeIndex(global_id: i64, success_count: usize, branch_count: usize, succeeded: bool) ?usize {
+    const offset: i64 = if (succeeded) 0 else @intCast(success_count);
+    const local_id = global_id - offset;
+    if (local_id < 1 or local_id > @as(i64, @intCast(branch_count))) return null;
+    return @intCast(local_id - 1);
+}
+
+test "failure range IDs map from global SQL IDs to branch slots" {
+    try testing.expectEqual(@as(?usize, 0), branchRangeIndex(3, 2, 2, false));
+    try testing.expectEqual(@as(?usize, 1), branchRangeIndex(4, 2, 2, false));
+    try testing.expectEqual(@as(?usize, null), branchRangeIndex(2, 2, 2, false));
+    try testing.expectEqual(@as(?usize, 1), branchRangeIndex(2, 2, 2, true));
+}
 
 pub const TxnResult = struct {
     succeeded: bool,
@@ -1011,11 +1066,7 @@ pub const LeaseManager = struct {
 
     pub fn createLease(self: *LeaseManager, lease_id: i64, ttl: i64) !void {
         if (ttl <= 0) return error.InvalidLeaseTTL;
-        for (self.leases.items) |*lease| if (lease.id == lease_id) {
-            lease.ttl = ttl;
-            lease.expires_at = nowSeconds() + ttl;
-            return;
-        };
+        for (self.leases.items) |lease| if (lease.id == lease_id) return error.LeaseAlreadyExists;
         try self.leases.append(self.allocator, .{ .id = lease_id, .ttl = ttl, .expires_at = nowSeconds() + ttl });
     }
 
@@ -1117,8 +1168,11 @@ fn migrateLeases(allocator: Allocator, client: *rqlite.RqliteClient) !void {
     const present = try client.query(rqlite.SqlBuilder.leasesOwnerColumnSql());
     defer present.deinit(allocator);
     if (present.values.len != 1 or present.values[0].len != 1) return error.InvalidLeaseSchema;
-    if (present.values[0][0].integer != 0) return;
-    _ = try client.execute(rqlite.SqlBuilder.migrationSql());
+    if (present.values[0][0].integer == 0) _ = try client.execute(rqlite.SqlBuilder.migrationSql());
+    const deadline = try client.query(rqlite.SqlBuilder.leasesOwnerDeadlineColumnSql());
+    defer deadline.deinit(allocator);
+    if (deadline.values.len != 1 or deadline.values[0].len != 1) return error.InvalidLeaseSchema;
+    if (deadline.values[0][0].integer == 0) _ = try client.execute(rqlite.SqlBuilder.ownerDeadlineMigrationSql());
 }
 
 fn nowSeconds() i64 {

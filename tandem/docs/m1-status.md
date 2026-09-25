@@ -9,8 +9,8 @@ called complete:
 | gRPC/TLS transport | Linux TLS/mTLS Watch integration validated | Keep official-client interoperability in CI; document io_uring runtime requirements |
 | KV/MVCC | production persistence connected | Startup requires rqlite and restores revision/compaction; KV and history survive restart. Complete concurrent/differential semantics validation |
 | Txn | transaction-local Range answers from the committing transaction | Validate the remaining compare targets/options and the previous-delete response shape against etcd. Nested transactions are outside the promised surface (Appendix A scopes Txn to put/delete/get/range) and are refused with `Unimplemented`, which is the required handling for a call the layer does not serve |
-| Watch | single-process Linux integration validated | Live transaction events, historical replay, filters, cancellation and compaction errors are covered; validate cross-process fanout, slow consumers and recovery |
-| Lease | persistent grant, keepalive, expiry and lease-driven deletes | The reaper still runs on request rather than on a timer, and no single-expiry-owner is elected; both are required before failover |
+| Watch | cross-process fanout validated on Linux | Live transaction events, historical replay, filters, cancellation, compaction errors and a watcher on one process observing a peer's commit are covered; still to validate slow consumers and recovery |
+| Lease | background reaper with a single expiry owner, heartbeat-takeover after owner loss | Grant, keepalive, expiry, lease-driven deletes, owner exclusivity and takeover of a crashed owner's leases are covered against a real rqlite; qualify under real multi-node clock skew and partition |
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
 | Maintenance | Status reports real db size and a parseable version; Snapshot returns an explicit `Unimplemented` | Alarm/Defragment/Hash remain constant-valued; decide each mapping or return an explicit error |
 | Single/three member | single node only | Share one semantic engine and add rqlite cluster lifecycle management |
@@ -46,6 +46,46 @@ been green throughout.
   zero-length snapshot — the "empty success" the epic forbids. It now returns
   `Unimplemented` on the wire.
 
+A second audit, run against a multi-process deployment rather than a single one,
+found seven more defects. Each was invisible in-memory and none had a failing
+test, because the in-memory store implements the same logic correctly:
+
+* **A Txn's failure branch misfiled its Range results.** The capture assigned
+  every Range op a global id (`success.len + i + 1`), but the parser indexed
+  the response array by that number as if it were a branch-local index. When
+  the success branch was non-empty and its compare failed, the failure branch's
+  Range was either dropped or attached to another op's slot — silently wrong
+  data. The parser now maps the global id back to a branch-local index.
+* **A Range inside a Txn ignored its own `limit`** and always reported
+  `more = false`. The unary Range path did truncate and set `more`; only the
+  Txn path lost it, so a controller paginating through a Txn would loop forever
+  on a page that never ended.
+* **A lease owner that crashed could never be replaced.** `owner` was cleared
+  only on a graceful exit, so after `kill -9` the dead node's identity sat on
+  the lease forever and no other instance could claim it. Ownership is now a
+  heartbeat lease with a deadline, and every key deletion rechecks ownership in
+  the same Raft transaction as the delete, so an instance that lost its claim
+  while waiting cannot delete anything.
+* **Lease ids were a per-process counter starting at 1000**, never persisted
+  and never allocated through rqlite, so two instances granting at the same
+  time could hand out the same id. A shared `lease_sequence` row now allocates
+  them, and an explicit grant advances the sequence too.
+* **The response header carried a possibly stale in-process revision.** With
+  one rqlite behind several Tandem processes, a peer's commit did not refresh
+  the reader's cache, so a read could answer with a header revision older than
+  the data it returned. Every request now refreshes the shared revision and
+  compaction watermark before it is served.
+* **Watch events never crossed process boundaries** — only watchers on the
+  process that applied a write were notified, which the documentation already
+  conceded was unfinished. Watchers now follow one revision cursor over shared
+  history, so a watcher on one instance sees a peer's commit.
+* **`Put`/`DeleteRange` read `prev_kv` and the deleted count before the write**,
+  as two independent requests, so another write could land in between and the
+  reported previous values were not the ones actually overwritten. Both now run
+  inside a single request: the delete captures the rows it removes into a
+  temporary table before mutating them. The Txn path was already atomic, so the
+  single-write path was the one that was not.
+
 ## Running the Linux integration suite locally
 
 The tagged suite needs a Linux Tandem binary, so on macOS it has to run
@@ -74,7 +114,7 @@ docker run --rm --platform linux/arm64 --security-opt seccomp=unconfined \
 
 The container needs a musl rqlited (Alpine's package) to match the musl Tandem
 binary; a glibc rqlited from the rqlite release will not exec in the same
-container. On the same run all 23 tests pass.
+container. On the same run all 34 tests pass.
 
 
 The process must not report readiness while the transport is unavailable. The
@@ -105,9 +145,19 @@ Validated locally with OrbStack Linux arm64 and rqlite v10.3.6:
   logs and restart recovery.
 - Official-client Txn regression: create-if-absent, binary values, previous KV,
   one revision for multiple writes, read-only failure branch, exact-key and
-  empty deletes, and concurrent CAS.
+  empty deletes, concurrent CAS, and a Range inside a Txn honouring its own
+  `limit` — truncated page, full match count and `more` set.
 - Independent Pipeline processes contend on one rqlite using CAS; exactly one
   of eight wins. This does not qualify three-node lifecycle or failover.
+- A watcher on one Tandem process receives a commit made by a peer against the
+  same rqlite, and a lease whose owner was left behind by a crash is taken over
+  by a live instance. This does not qualify three-node lifecycle or failover.
+- `go test -tags=tandem_integration ./pkg/tandem` on native Linux arm64 against
+  a real rqlited: all 34 tests pass, including the official-client TLS/mTLS
+  Watch test, the persistent transaction test, lease expiry, owner exclusivity,
+  crash takeover, shared lease-id allocation, standalone previous values and
+  cross-process watch fan-out.
+- `zig build test`: 155/155.
 
 The L1 CI job also runs the tagged Tandem integration suite against its pinned
 rqlited and built Tandem binary, so persistence and TLS regressions no longer
@@ -115,8 +165,11 @@ depend solely on manual runs. CI must pass on the pushed head before claiming
 Linux amd64 qualification.
 
 Remaining merge gates: complete compare/options semantics and the
-previous-delete response shape; a background lease reaper with a single
-expiry owner; multi-node join/readiness/failover; removal of embedded-etcd
+previous-delete response shape; `KV.RangeStream` and the Maintenance/Cluster/Auth
+services are still unregistered, so the "etcd v3.7 compatible" claim does not
+hold for them; the driver's Snapshot/Reset/Restore are still unimplemented, so
+`k8e etcd-snapshot` style operational workflows are unavailable on this
+backend; multi-node join/readiness/failover; removal of embedded-etcd
 production paths; reset/snapshot/restore; the full etcd differential suite,
 the Go full suite and Kubernetes E2E on a normal Linux environment. M1
 remains open.

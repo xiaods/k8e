@@ -100,18 +100,13 @@ test "compaction records a boundary and rejects a future revision" {
 pub const PipelineServer = struct {
     allocator: Allocator,
     revision: i64 = 0,
-    next_lease_id: i64 = 1000,
     raft_term: u64 = 1,
     storage: mvcc.Storage,
     watch_registry: mvcc.WatchRegistry,
     watch_publish_context: ?*anyopaque = null,
     watch_publish_fn: ?*const fn (*anyopaque, []const messages.Event) anyerror!void = null,
+    watch_cursor: i64 = 0,
     mutex: std.atomic.Mutex = .unlocked,
-
-    pub fn nextLeaseId(self: *PipelineServer) i64 {
-        self.next_lease_id += 1;
-        return self.next_lease_id;
-    }
 
     pub fn lock(self: *PipelineServer) void {
         while (!self.mutex.tryLock()) std.atomic.spinLoopHint();
@@ -137,6 +132,7 @@ pub const PipelineServer = struct {
         return .{
             .allocator = allocator,
             .revision = storage.current_revision,
+            .watch_cursor = storage.current_revision,
             .raft_term = storage.raft_term,
             .storage = storage,
             .watch_registry = mvcc.WatchRegistry.init(allocator),
@@ -171,12 +167,31 @@ pub const PipelineServer = struct {
     ) void {
         self.watch_publish_context = context;
         self.watch_publish_fn = publish;
+        self.watch_cursor = self.storage.current_revision;
     }
 
     fn publishWatchEvents(self: *PipelineServer, events: []const messages.Event) void {
         if (self.watch_publish_fn) |publish| publish(self.watch_publish_context.?, events) catch |err| {
             std.log.err("failed to publish committed watch event: {s}", .{@errorName(err)});
         };
+    }
+
+    /// Poll the shared history under the pipeline lock. Local writes and
+    /// commits from other Tandem instances use the same revision cursor.
+    pub fn publishCommittedSinceCursor(self: *PipelineServer) !void {
+        const end = self.storage.current_revision;
+        if (end <= self.watch_cursor) return;
+        if (self.watch_publish_fn == null) {
+            self.watch_cursor = end;
+            return;
+        }
+        const history = try self.storage.watchHistory(self.watch_cursor + 1, end);
+        defer self.storage.freeWatchHistory(history);
+        var events: std.ArrayList(messages.Event) = .empty;
+        defer events.deinit(self.allocator);
+        for (history) |event| try events.append(self.allocator, watchEvent(event));
+        if (events.items.len != 0) self.publishWatchEvents(events.items);
+        self.watch_cursor = end;
     }
 };
 
@@ -186,18 +201,11 @@ pub const PipelineServer = struct {
 pub fn processRequest(server: *PipelineServer, method_path: []const u8, request_data: []const u8) ![]u8 {
     server.lock();
     defer server.unlock();
+    try server.storage.syncState();
     const path = try MethodPath.parse(method_path);
-    const before = server.storage.current_revision;
     const response = try routeRequest(server, path, request_data);
     errdefer server.allocator.free(response);
-    if (server.storage.current_revision == before) return response;
-    // Dispatch only committed history, after the entire transaction completes.
-    var events: std.ArrayList(messages.Event) = .empty;
-    defer events.deinit(server.allocator);
-    const history = try server.storage.watchHistory(before + 1, server.storage.current_revision);
-    defer server.storage.freeWatchHistory(history);
-    for (history) |event| try events.append(server.allocator, watchEvent(event));
-    if (events.items.len != 0) server.publishWatchEvents(events.items);
+    try server.publishCommittedSinceCursor();
     return response;
 }
 
@@ -277,6 +285,10 @@ fn handleKVRange(server: *PipelineServer, request_data: []const u8) ![]u8 {
         }
         allocator.free(result.kvs);
     }
+    // A peer may commit between the entry refresh and this linearizable read.
+    // The header must not predate data returned by the read itself.
+    try server.storage.syncState();
+    if (request.revision > 0 and request.revision <= server.storage.compact_revision) return error.Compacted;
     var kvs = try allocator.alloc(messages.KeyValue, result.kvs.len);
     for (result.kvs, 0..) |kv, i| kvs[i] = .{
         .key = kv.key,
@@ -408,11 +420,8 @@ fn handleKVTxn(server: *PipelineServer, request_data: []const u8) ![]u8 {
 fn freeTxnResponses(allocator: Allocator, responses: []messages.ResponseOp) void {
     for (responses) |response| switch (response.response) {
         .range => |range| {
-            for (range.kvs) |kv| {
-                allocator.free(kv.key);
-                allocator.free(kv.value);
-            }
-            allocator.free(range.kvs);
+            // The bytes belong to the storage response, freed separately.
+            if (range.kvs.len != 0) allocator.free(range.kvs);
         },
         else => {},
     };
@@ -441,8 +450,9 @@ fn txnResponse(server: *PipelineServer, operation: messages.RequestOp, stored: ?
             // commit change the answer after the fact, which KIP-29 §6 forbids,
             // and would also ignore this op's keys_only/limit/revision.
             if (stored) |result| {
-                var kvs = try server.allocator.alloc(messages.KeyValue, result.range_kvs.len);
-                for (result.range_kvs, 0..) |kv, i| kvs[i] = .{
+                const visible_len: usize = if (request.count_only) 0 else if (request.limit > 0) @min(result.range_kvs.len, @as(usize, @intCast(request.limit))) else result.range_kvs.len;
+                var kvs = try server.allocator.alloc(messages.KeyValue, visible_len);
+                for (result.range_kvs[0..visible_len], 0..) |kv, i| kvs[i] = .{
                     .key = kv.key,
                     .create_revision = kv.create_revision,
                     .mod_revision = kv.mod_revision,
@@ -453,8 +463,8 @@ fn txnResponse(server: *PipelineServer, operation: messages.RequestOp, stored: ?
                 break :blk .{ .response = .{ .range = .{
                     .header = server.buildHeader(),
                     .kvs = kvs,
-                    .more = result.range_more,
-                    .count = if (request.count_only) result.range_count else @as(i64, @intCast(kvs.len)),
+                    .more = !request.count_only and (result.range_more or result.range_kvs.len > visible_len),
+                    .count = result.range_count,
                 } } };
             }
             // No captured rows means the branch selected no Range op, so the
@@ -544,8 +554,10 @@ fn handleWatch(server: *PipelineServer, request_data: []const u8) ![]u8 {
 fn handleLeaseGrant(server: *PipelineServer, request_data: []const u8) ![]u8 {
     const allocator = server.allocator;
     const request = try messages.LeaseGrantRequest.decode(request_data);
-    const id = if (request.id != 0) request.id else server.nextLeaseId();
-    try server.storage.grantLease(id, request.ttl);
+    const id = if (request.id != 0) blk: {
+        try server.storage.grantLease(request.id, request.ttl);
+        break :blk request.id;
+    } else try server.storage.allocateLease(request.ttl);
 
     const response = messages.LeaseGrantResponse{
         .header = server.buildHeader(),
@@ -1007,6 +1019,40 @@ test "Range pagination exposes more and total count on the wire" {
     try testing.expectEqual(@as(i64, 2), counted.count);
     try testing.expectEqual(@as(usize, 0), counted.kvs.len);
     try testing.expect(!counted.more);
+}
+
+test "transaction range applies limit and keeps the full count" {
+    var server = PipelineServer.initMemory(testing.allocator);
+    defer server.deinit();
+    const rows = [_]mvcc.MVCCKeyValue{
+        .{ .key = "a", .value = "one", .create_revision = 1, .mod_revision = 1, .version = 1, .lease = 0 },
+        .{ .key = "b", .value = "two", .create_revision = 1, .mod_revision = 1, .version = 1, .lease = 0 },
+    };
+    const response = try txnResponse(&server, .{ .request = .{ .range = .{ .key = "a", .range_end = "c", .limit = 1 } } }, .{ .kind = .range, .data = "", .range_kvs = @constCast(&rows), .range_count = 2 });
+    defer testing.allocator.free(response.response.range.kvs);
+    const range = response.response.range;
+    try testing.expectEqual(@as(usize, 1), range.kvs.len);
+    try testing.expectEqualStrings("a", range.kvs[0].key);
+    try testing.expectEqual(@as(i64, 2), range.count);
+    try testing.expect(range.more);
+}
+
+test "watch cursor publishes commits made outside the request path once" {
+    var server = PipelineServer.initMemory(testing.allocator);
+    defer server.deinit();
+    const Capture = struct {
+        count: usize = 0,
+        fn publish(context: *anyopaque, events: []const messages.Event) !void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.count += events.len;
+        }
+    };
+    var capture = Capture{};
+    server.setWatchPublisher(&capture, Capture.publish);
+    _ = try server.storage.put("remote", "value", 0, false);
+    try server.publishCommittedSinceCursor();
+    try server.publishCommittedSinceCursor();
+    try testing.expectEqual(@as(usize, 1), capture.count);
 }
 
 test "pipeline server revision increment" {

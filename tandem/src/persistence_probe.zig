@@ -172,6 +172,30 @@ pub fn main(init: std.process.Init) !void {
         if (read.responses[3].range_count != 2) return error.TxnRangeCount;
         // Both writes and both reads belong to one revision.
         if (read.responses[0].revision != read.responses[3].revision) return error.TxnRangeSplitRevision;
+        const failed = try pipeline.storage.txn(.{
+            .compare = &.{.{ .key = "txn/a", .target = .version, .result = .equal, .target_value = 0, .value = "" }},
+            .success = &.{
+                .{ .kind = .put, .key = "txn/unused", .value = "bad", .range_end = "", .lease = 0 },
+                .{ .kind = .range, .key = "txn/unused", .value = "", .range_end = "", .lease = 0 },
+            },
+            .failure = &.{.{ .kind = .range, .key = "txn/", .value = "", .range_end = "txn0", .lease = 0 }},
+        });
+        defer {
+            for (failed.responses) |response| {
+                if (response.prev_kv) |kv| {
+                    allocator.free(kv.key);
+                    allocator.free(kv.value);
+                }
+                for (response.range_kvs) |kv| {
+                    allocator.free(kv.key);
+                    allocator.free(kv.value);
+                }
+                allocator.free(response.range_kvs);
+            }
+            allocator.free(failed.responses);
+        }
+        if (failed.succeeded or failed.responses.len != 1) return error.TxnFailureBranchNotSelected;
+        if (failed.responses[0].range_kvs.len != 2 or failed.responses[0].range_count != 2) return error.TxnFailureRangeMisindexed;
         std.debug.print("txn-range ok rev={d} single={d} both={d}\n", .{ read.responses[0].revision, single.len, both.len });
         return;
     }
@@ -203,8 +227,8 @@ pub fn main(init: std.process.Init) !void {
         const client = &pipeline.storage.client.?;
         try pipeline.storage.setLeaseOwner("instance-a");
         _ = try client.execute(
-            \\INSERT OR REPLACE INTO leases(id,ttl,created_at,expires_at,owner)
-            \\VALUES(6666,60,0,1,'instance-a')
+            \\INSERT OR REPLACE INTO leases(id,ttl,created_at,expires_at,owner,owner_expires_at)
+            \\VALUES(6666,60,0,1,'instance-a',4000000000)
         );
         // While instance-a holds it, nobody else may claim it.
         if (try pipeline.storage.expireLeasesOwned("instance-b") != 0) return error.ClaimStolenFromLiveOwner;
@@ -215,6 +239,57 @@ pub fn main(init: std.process.Init) !void {
         // Releasing twice must not error or change anything.
         try pipeline.storage.releaseLeases();
         std.debug.print("lease-release ok\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, phase, "lease-takeover")) {
+        try pipeline.storage.grantLease(7777, 60);
+        _ = try pipeline.storage.put("takeover/key", "old", 7777, false);
+        _ = try pipeline.storage.client.?.execute("UPDATE leases SET expires_at=1,owner='dead-node',owner_expires_at=1 WHERE id=7777");
+        _ = try pipeline.storage.expireLeasesOwned("live-node");
+        const remaining = try pipeline.storage.range("takeover/key", "", 0, 0, false, false);
+        defer {
+            for (remaining.kvs) |kv| {
+                allocator.free(kv.key);
+                allocator.free(kv.value);
+            }
+            allocator.free(remaining.kvs);
+        }
+        if (remaining.kvs.len != 0) return error.CrashedOwnerKeptKey;
+        std.debug.print("lease-takeover ok\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, phase, "lease-ids")) {
+        var peer = try PipelineServer.initPersistent(allocator, .{ .rqlite_url = url });
+        defer peer.deinit();
+        const first = try pipeline.storage.allocateLease(60);
+        const second = try peer.storage.allocateLease(60);
+        if (second != first + 1) return error.LeaseIdsCollided;
+        try pipeline.storage.grantLease(9000, 60);
+        const after_explicit = try peer.storage.allocateLease(60);
+        if (after_explicit <= 9000) return error.LeaseSequenceDidNotAdvance;
+        std.debug.print("lease-ids ok {d} {d} {d}\n", .{ first, second, after_explicit });
+        return;
+    }
+    if (std.mem.eql(u8, phase, "standalone-prev")) {
+        _ = try pipeline.storage.put("prev/a", "first", 0, false);
+        _ = try pipeline.storage.put("prev/b", "other", 0, false);
+        const updated = try pipeline.storage.put("prev/a", "second", 0, true);
+        defer if (updated.prev_kv) |kv| {
+            allocator.free(kv.key);
+            allocator.free(kv.value);
+        };
+        if (updated.prev_kv == null or !std.mem.eql(u8, updated.prev_kv.?.value, "first")) return error.PutPreviousValueWrong;
+        const deleted = try pipeline.storage.deleteRange("prev/", "prev0", true);
+        defer {
+            for (deleted.prev_kvs) |kv| {
+                allocator.free(kv.key);
+                allocator.free(kv.value);
+            }
+            allocator.free(deleted.prev_kvs);
+        }
+        if (deleted.deleted != 2 or deleted.prev_kvs.len != 2) return error.DeletePreviousCountWrong;
+        if (!std.mem.eql(u8, deleted.prev_kvs[0].value, "second")) return error.DeletePreviousValueWrong;
+        std.debug.print("standalone-prev ok\n", .{});
         return;
     }
     if (std.mem.eql(u8, phase, "write")) {
