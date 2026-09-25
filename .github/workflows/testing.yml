@@ -178,6 +178,21 @@ jobs:
           TANDEM_TEST_PROBE="$PWD/tandem/zig-out/bin/persistence-probe" \
           TANDEM_TEST_RQLITED="$RUNNER_TEMP/rqlited" \
             go test -tags=tandem_integration ./pkg/tandem -count=1 -timeout=180s
+      # The differential suite runs each operation against a real embedded etcd
+      # and against Tandem and compares the answers, so it needs its own step:
+      # it starts an etcd member per case on top of the rqlite and Tandem the
+      # integration suite already starts, and it fails on a divergence rather
+      # than on a crash. A green run means the two backends agree, not that
+      # Tandem matches its own expectations.
+      - name: Tandem differential against a real etcd
+        run: |
+          image_container=$(docker create k8e-e2e:local)
+          trap 'docker rm "$image_container" >/dev/null' EXIT
+          docker cp "$image_container:/usr/local/bin/rqlited" "$RUNNER_TEMP/rqlited"
+          chmod +x "$RUNNER_TEMP/rqlited"
+          TANDEM_TEST_BINARY="$PWD/bin/tandem" \
+          TANDEM_TEST_RQLITED="$RUNNER_TEMP/rqlited" \
+            go test -tags=tandem_differential ./pkg/tandem/differential -count=1 -timeout=600s -v
       - name: Run E2E profile l1
         env:
           E2E_SKIP_IMAGE_BUILD: '1'

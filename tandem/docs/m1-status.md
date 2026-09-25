@@ -14,7 +14,7 @@ called complete:
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
 | Maintenance | Status reports real db size and a parseable version; Snapshot returns an explicit `Unimplemented` | Alarm/Defragment/Hash remain constant-valued; decide each mapping or return an explicit error |
 | Single/three member | single node only | Share one semantic engine and add rqlite cluster lifecycle management |
-| Differential tests | harness landed; KV, revision, tombstone, watch-order and error-code cases run against a real etcd, and it found five real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
+| Differential tests | running in CI against a real etcd; KV, revision, tombstone, watch-order, lease and error-code cases covered, and it found ten real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
 | Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Extend to multi-node crash recovery, concurrent histories and differential checks |
 
 ## Defects found and fixed in the M1 audit
@@ -132,6 +132,36 @@ both were verified against a real etcd before being changed:
   one is named, and an impossible revision is refused before the transaction
   runs, as etcd does in `etcdserver/txn/range.go`.
 
+Covering the lease surface then found three more, all in the same subsystem the
+M1 audit had already repaired once:
+
+* **`LeaseRevoke` of an ungranted or already-revoked lease reported success.**
+  Both storage paths deleted whatever was attached and returned, so a caller
+  was told its revoke had taken effect when no lease existed to revoke. etcd
+  answers `NotFound`, and the shutdown path depends on the difference between
+  "released" and "never held". Both paths now check the lease is still granted.
+* **`LeaseTimeToLive` read the in-memory lease manager on the persistent
+  path.** A grant there writes to rqlite and leaves nothing in the local
+  manager, so every lease looked unknown: a live lease came back with TTL `-1`
+  and a zero granted TTL where etcd reports the real remaining and granted
+  values, and the attached-keys list was always empty. The handler now asks the
+  storage layer, which knows whether the answer lives in rqlite or in memory.
+* **A revoke advanced the revision once per attached key.** etcd deletes all
+  of a lease's keys on one revision; deleting them one at a time moved the
+  store two revisions where etcd moves one, splitting the deletions across
+  revisions for a watcher resuming across the revoke and leaving a gap in a
+  client's revision count that was never a real write. The revoke is now a
+  single statement.
+* **`LeaseTimeToLive` returned every attached key as one blob.** The wire type
+  is `repeated bytes`, but the reply was one `bytes` field with the keys joined
+  by a NUL, so a lease holding two keys arrived at the client as a *single* key
+  containing a NUL — and a key that legitimately contains a NUL was
+  indistinguishable from two. Each key is its own field now.
+* **`LeaseLeases` listed nothing on the persistent path.** Like
+  `LeaseTimeToLive`, it read the in-memory manager, which a persistent grant
+  never populates, so it reported an empty list while grants were live in
+  rqlite.
+
 ## Running the Linux integration suite locally
 
 The tagged suite needs a Linux Tandem binary, so on macOS it has to run
@@ -223,9 +253,25 @@ services are still unregistered, so the "etcd v3.7 compatible" claim does not
 hold for them; the driver's Snapshot/Reset/Restore are still unimplemented, so
 `k8e etcd-snapshot` style operational workflows are unavailable on this
 backend; multi-node join/readiness/failover; removal of embedded-etcd
-production paths; reset/snapshot/restore; the full etcd differential suite,
-the Go full suite and Kubernetes E2E on a normal Linux environment. M1
-remains open.
+production paths; reset/snapshot/restore; the Go full suite and Kubernetes E2E
+on a normal Linux environment. M1 remains open.
+
+The differential suite now runs in CI on every push, so a divergence between
+the two backends fails the build rather than waiting for a local run. It is a
+separate step from the persistence suite because it starts an etcd member per
+case and fails on a disagreement rather than on a crash; a green run means the
+two backends answer the same, not that Tandem matches its own expectations.
+
+Two of the merge gates are not test work and are worth stating as such.
+`RangeStream` and the Cluster/Maintenance/Auth services are *implemented but
+unrouted*, and most of those handlers return an empty success — an empty member
+list, a fabricated leader, a constant hash — which KIP-29 forbids for a call the
+layer does not serve. Registering them unchanged would turn an honest
+`Unimplemented` into something that looks like success, so wiring them up
+requires real values (a genuine `Status`, a real single-member list) rather than
+a route entry. The driver's Snapshot/Reset/Restore is the same shape: the rqlite
+backup format is not an etcd snapshot, so the operation has to be reimplemented
+against `/db/backup` and `/db/load` rather than re-exposed.
 
 Portable persistence regression (requires Go, Zig and a native rqlited):
 

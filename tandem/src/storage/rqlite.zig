@@ -899,8 +899,48 @@ pub const SqlBuilder = struct {
         return std.fmt.allocPrint(allocator, "SELECT key FROM lease_keys WHERE lease_id = {d}", .{lease_id});
     }
 
+    /// Whether the lease is still granted. Revoking one that was never
+    /// granted, or has already been revoked, has to report NotFound rather
+    /// than delete nothing and answer OK.
+    pub fn leaseExistsSql(allocator: Allocator, lease_id: i64) ![]u8 {
+        return std.fmt.allocPrint(allocator, "SELECT COUNT(*) FROM leases WHERE id = {d}", .{lease_id});
+    }
+
+    /// The granted TTL and the seconds left, for a live lease. The deadline
+    /// travels with the statement rather than being computed by SQL: rqlite
+    /// rewrites `now` in a write to a Raft-assigned instant, so a read-side
+    /// comparison would be against a different clock.
+    pub fn leaseTtlSql(allocator: Allocator, lease_id: i64, now: i64) ![]u8 {
+        return std.fmt.allocPrint(allocator, "SELECT ttl,expires_at-{d} FROM leases WHERE id={d}", .{ now, lease_id });
+    }
+
+    /// Every granted lease, for LeaseLeases.
+    pub fn allLeaseIdsSql(allocator: Allocator) ![]u8 {
+        return allocator.dupe(u8, "SELECT id FROM leases ORDER BY id");
+    }
+
     pub fn revokeLeaseForIdSql(allocator: Allocator, lease_id: i64) ![]u8 {
         return std.fmt.allocPrint(allocator, "BEGIN; DELETE FROM lease_keys WHERE lease_id = {d}; DELETE FROM leases WHERE id = {d}; COMMIT;", .{ lease_id, lease_id });
+    }
+
+    /// Revoke a lease and every key attached to it as ONE revision.
+    ///
+    /// Deleting the keys one at a time advanced the revision once per key, so
+    /// revoking a lease holding two keys moved the store two revisions where
+    /// etcd moves one. A watch resuming across the revoke therefore saw the
+    /// deletions split across revisions, and a client counting revisions to
+    /// order its own writes saw a gap that was never a real write.
+    pub fn revokeLeaseWithKeysSql(allocator: Allocator, lease_id: i64) ![]u8 {
+        return std.fmt.allocPrint(allocator,
+            "BEGIN;" ++
+            "UPDATE revision SET current_revision=current_revision+1 WHERE id=1 AND EXISTS(SELECT 1 FROM kv WHERE lease={d});" ++
+            "INSERT INTO kv_history(key,value,create_revision,mod_revision,version,lease,deleted) " ++
+            "SELECT key,value,create_revision,(SELECT current_revision FROM revision WHERE id=1),version,lease,1 FROM kv WHERE lease={d};" ++
+            "DELETE FROM kv WHERE lease={d};" ++
+            "DELETE FROM lease_keys WHERE lease_id={d};" ++
+            "DELETE FROM leases WHERE id={d};" ++
+            "COMMIT;",
+            .{ lease_id, lease_id, lease_id, lease_id, lease_id });
     }
 
     /// Expire one leased key: record the tombstone, drop the row and the lease

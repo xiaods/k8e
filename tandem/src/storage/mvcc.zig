@@ -44,6 +44,12 @@ pub const MVCCKeyValue = struct {
     lease: i64,
 };
 
+/// A lease's remaining and granted TTL, as LeaseTimeToLive reports it.
+/// A lease that is unknown or already lapsed reports -1 and a zero granted
+/// TTL rather than an error, which is what etcd does and what the apiserver's
+/// lease manager reads to decide a lease is gone.
+pub const LeaseTTL = struct { ttl: i64, granted_ttl: i64 };
+
 /// Storage engine
 pub const Storage = struct {
     allocator: Allocator,
@@ -585,6 +591,75 @@ pub const Storage = struct {
         return &self.leases;
     }
 
+    /// Read a lease's remaining and granted TTL. On the persistent path the
+    /// in-memory LeaseManager is never populated — grant writes to rqlite and
+    /// leaves nothing behind locally — so reading it there reported every
+    /// lease as unknown, and a live lease came back with TTL -1 and a zero
+    /// granted TTL where etcd reports the real remaining and granted values.
+    pub fn leaseTTLOf(self: *Storage, lease_id: i64) !LeaseTTL {
+        if (self.client) |*client| {
+            const sql = try rqlite.SqlBuilder.leaseTtlSql(self.allocator, lease_id, nowSeconds());
+            defer self.allocator.free(sql);
+            const result = try client.query(sql);
+            defer result.deinit(self.allocator);
+            if (result.values.len == 0 or result.values[0].len == 0) {
+                return .{ .ttl = -1, .granted_ttl = 0 };
+            }
+            const row = result.values[0];
+            if (row.len < 2 or row[0].integer == 0) return .{ .ttl = -1, .granted_ttl = 0 };
+            const remaining = row[1].integer;
+            if (remaining <= 0) return .{ .ttl = -1, .granted_ttl = 0 };
+            return .{ .ttl = remaining, .granted_ttl = row[0].integer };
+        }
+        return self.leases.leaseTTL(lease_id);
+    }
+
+    /// Every granted lease id, on either storage path. LeaseLeases read the
+    /// in-memory manager directly, which is never populated on the persistent
+    /// path, so it reported an empty list while grants were live in rqlite.
+    pub fn allLeaseIds(self: *Storage) ![]i64 {
+        if (self.client) |*client| {
+            const sql = try rqlite.SqlBuilder.allLeaseIdsSql(self.allocator);
+            defer self.allocator.free(sql);
+            const result = try client.query(sql);
+            defer result.deinit(self.allocator);
+            var ids = std.ArrayList(i64).empty;
+            errdefer ids.deinit(self.allocator);
+            for (result.values) |row| {
+                if (row.len == 0) continue;
+                try ids.append(self.allocator, row[0].integer);
+            }
+            return ids.toOwnedSlice(self.allocator);
+        }
+        const live = try self.leases.allLeases();
+        var ids = std.ArrayList(i64).empty;
+        errdefer ids.deinit(self.allocator);
+        for (live) |lease| try ids.append(self.allocator, lease.id);
+        return ids.toOwnedSlice(self.allocator);
+    }
+
+    /// The keys attached to a lease, on either storage path.
+    pub fn leaseKeysOf(self: *Storage, lease_id: i64) ![]const []const u8 {
+        if (self.client) |*client| {
+            const sql = try rqlite.SqlBuilder.leaseKeysForIdSql(self.allocator, lease_id);
+            defer self.allocator.free(sql);
+            const result = try client.query(sql);
+            defer result.deinit(self.allocator);
+            var keys = std.ArrayList([]const u8).empty;
+            errdefer {
+                for (keys.items) |key| self.allocator.free(key);
+                keys.deinit(self.allocator);
+            }
+            for (result.values) |row| {
+                if (row.len == 0) continue;
+                // lease_keys.key is a BLOB column.
+                try keys.append(self.allocator, try self.allocator.dupe(u8, textValue(row[0])));
+            }
+            return keys.toOwnedSlice(self.allocator);
+        }
+        return self.leases.leaseKeys(lease_id);
+    }
+
     pub fn grantLease(self: *Storage, lease_id: i64, ttl: i64) !void {
         if (self.client) |*client| {
             const sql = try rqlite.SqlBuilder.createLeaseForSql(self.allocator, lease_id, ttl, nowSeconds());
@@ -625,25 +700,29 @@ pub const Storage = struct {
 
     pub fn revokeLease(self: *Storage, lease_id: i64) !void {
         if (self.client) |*client| {
-            const keys_sql = try rqlite.SqlBuilder.leaseKeysForIdSql(self.allocator, lease_id);
-            defer self.allocator.free(keys_sql);
-            const keys = try client.query(keys_sql);
-            defer keys.deinit(self.allocator);
-            for (keys.values) |key_row| {
-                if (key_row.len == 0) continue;
-                // lease_keys.key is a BLOB column, so the decoded value is
-                // .blob; reading .text yielded an empty slice and the revoke
-                // deleted nothing while reporting success.
-                const delete_sql = try rqlite.SqlBuilder.expireLeaseKeySql(self.allocator, textValue(key_row[0]), lease_id);
-                defer self.allocator.free(delete_sql);
-                _ = try client.execute(delete_sql);
+            // A revoke of a lease that was never granted, or has already been
+            // revoked, reports NotFound. Deleting nothing and answering OK
+            // told the caller its revoke had taken effect when no lease had
+            // existed to revoke — and on the shutdown path that hides the
+            // difference between "released" and "never held".
+            const exists_sql = try rqlite.SqlBuilder.leaseExistsSql(self.allocator, lease_id);
+            defer self.allocator.free(exists_sql);
+            const exists = try client.query(exists_sql);
+            defer exists.deinit(self.allocator);
+            if (exists.values.len == 0 or exists.values[0].len == 0 or exists.values[0][0].integer == 0) {
+                return error.LeaseNotFound;
             }
-            try self.refreshRevision();
-            const revoke_sql = try rqlite.SqlBuilder.revokeLeaseForIdSql(self.allocator, lease_id);
+            // One statement for the lease and all of its keys, so the whole
+            // revoke lands on a single revision as it does in etcd.
+            const revoke_sql = try rqlite.SqlBuilder.revokeLeaseWithKeysSql(self.allocator, lease_id);
             defer self.allocator.free(revoke_sql);
             _ = try client.execute(revoke_sql);
+            try self.refreshRevision();
             return;
         }
+        // The in-memory manager already refuses an unknown lease, so both
+        // paths now report the same thing.
+        if (!self.leases.hasLease(lease_id)) return error.LeaseNotFound;
         const keys = try self.leases.leaseKeys(lease_id);
         defer {
             for (keys) |key| self.allocator.free(key);
@@ -1196,7 +1275,7 @@ pub const LeaseManager = struct {
     /// rather than treating the call as a transport failure, so returning
     /// LeaseNotFound here made a dead lease indistinguishable from a broken
     /// connection. A live lease reports its remaining whole seconds.
-    pub fn leaseTTL(self: *LeaseManager, lease_id: i64) struct { ttl: i64, granted_ttl: i64 } {
+    pub fn leaseTTL(self: *LeaseManager, lease_id: i64) LeaseTTL {
         for (self.leases.items) |lease| {
             if (lease.id != lease_id) continue;
             const remaining = lease.expires_at - nowSeconds();
@@ -1209,6 +1288,14 @@ pub const LeaseManager = struct {
     /// Every live lease, for LeaseLeases.
     pub fn allLeases(self: *LeaseManager) ![]Lease {
         return self.leases.items;
+    }
+
+    /// Whether the lease is still granted.
+    pub fn hasLease(self: *LeaseManager, lease_id: i64) bool {
+        for (self.leases.items) |lease| {
+            if (lease.id == lease_id) return true;
+        }
+        return false;
     }
 
     pub fn expiredLeases(self: *LeaseManager) ![]i64 {
@@ -1399,6 +1486,21 @@ test "lease create/revoke/keepalive" {
     // revoke removes the lease association.
     try lm.revokeLease(1);
     try testing.expectError(error.LeaseNotFound, lm.isExpired(1));
+}
+
+test "revoking a lease that is not granted reports LeaseNotFound" {
+    // etcd answers NotFound for a revoke of an unknown or already-revoked
+    // lease. Deleting nothing and reporting success told the caller its
+    // revoke had taken effect when there was no lease to revoke.
+    var storage = Storage.initMemory(testing.allocator);
+    defer storage.deinit();
+
+    try testing.expectError(error.LeaseNotFound, storage.revokeLease(99));
+
+    try storage.grantLease(5, 60);
+    try storage.revokeLease(5);
+    // A second revoke of the same lease is equally not-found.
+    try testing.expectError(error.LeaseNotFound, storage.revokeLease(5));
 }
 
 test "lease expired leases placeholder" {
