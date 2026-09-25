@@ -14,7 +14,7 @@ called complete:
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
 | Maintenance | Status reports real db size and a parseable version; Snapshot returns an explicit `Unimplemented` | Alarm/Defragment/Hash remain constant-valued; decide each mapping or return an explicit error |
 | Single/three member | single node only | Share one semantic engine and add rqlite cluster lifecycle management |
-| Differential tests | harness landed; KV, revision, tombstone, watch-order and error-code cases run against a real etcd, and it found three real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
+| Differential tests | harness landed; KV, revision, tombstone, watch-order and error-code cases run against a real etcd, and it found five real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
 | Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Extend to multi-node crash recovery, concurrent histories and differential checks |
 
 ## Defects found and fixed in the M1 audit
@@ -112,6 +112,25 @@ failures as gRPC statuses — the interceptors return `rpctypes.EtcdError`, whic
 carries a `Code()` but no `GRPCStatus()`. Reading the code through
 `status.FromError` reported `Unknown` for every failure, which would have made
 the comparison vacuous. The normalizer handles that type explicitly.
+
+Two more surfaced once the suite covered compaction and historical reads, and
+both were verified against a real etcd before being changed:
+
+* **A read at the compaction revision itself was refused.** The guard was
+  `revision <= compact_revision`, but compaction drops revisions *strictly
+  below* the watermark — the boundary revision is retained, and etcd's own
+  guard is `rev < compactMainRev` (`kvstore_txn.go`). A controller resuming
+  from exactly its last compacted revision got a spurious `OutOfRange` for a
+  read etcd serves. The same off-by-one was in the watch-resume guard, where
+  etcd compares `minRev < compactionRev` (`watchable_store.go`).
+* **A Range inside a Txn ignored its own revision and answered from the live
+  table.** The op was reduced to key and range_end, dropping `revision`, so a
+  read at an older revision returned the *current* value. That is wrong data
+  with nothing in the response to distinguish it from a correct read: asking
+  for revision 5 after the key had moved to revision 6 returned the revision-6
+  value. The op now carries its revision, the capture reads `kv_history` when
+  one is named, and an impossible revision is refused before the transaction
+  runs, as etcd does in `etcdserver/txn/range.go`.
 
 ## Running the Linux integration suite locally
 

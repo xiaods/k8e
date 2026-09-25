@@ -158,7 +158,13 @@ pub const Storage = struct {
         // indistinguishable from "the key did not exist at that revision".
         // etcd answers ErrCompacted; KIP-29 Appendix A requires that explicit
         // error rather than a silently wrong answer.
-        if (revision > 0 and revision <= self.compact_revision) return error.Compacted;
+        //
+        // The comparison is `<`, not `<=`, because the compaction revision
+        // itself is retained: compactSql deletes `mod_revision < rev`, and
+        // etcd's own guard is `rev < compactMainRev` (kvstore_txn.go). Using
+        // `<=` here refused a read etcd serves, so a controller resuming from
+        // exactly its last compacted revision got a spurious OutOfRange.
+        if (revision > 0 and revision < self.compact_revision) return error.Compacted;
         // A revision the store has not reached yet is not an empty read, it
         // is a client that is ahead of the datastore. etcd answers
         // ErrFutureRev, and without this the historical query simply matched
@@ -297,7 +303,29 @@ pub const Storage = struct {
     }
 
     /// Atomic transaction - all operations in a single rqlite execute request
+    /// Refuse a transaction whose Range op names a revision the store cannot
+    /// answer, on either branch. etcd validates this before the transaction
+    /// runs, so a rejected request commits nothing.
+    fn checkTxnRangeRevisions(self: *Storage, txn_data: TxnData) !void {
+        const branches = [_][]const rqlite.TxnOp{ txn_data.success, txn_data.failure };
+        for (branches) |operations| {
+            for (operations) |operation| {
+                if (operation.kind != .range or operation.revision == 0) continue;
+                if (operation.revision < self.compact_revision) return error.Compacted;
+                if (operation.revision > self.current_revision) return error.FutureRevision;
+            }
+        }
+    }
+
     pub fn txn(self: *Storage, txn_data: TxnData) !TxnResult {
+        // A Range inside a Txn that names a revision is checked against the
+        // store before anything is applied, exactly as etcd does
+        // (etcdserver/txn/range.go: a zero revision means current state, one
+        // past the head is ErrFutureRev and one below the watermark is
+        // ErrCompacted). Skipping this let an impossible revision fall
+        // through to the capture, which answered from whatever the query
+        // matched instead of refusing.
+        try self.checkTxnRangeRevisions(txn_data);
         if (self.client == null) return self.memoryTxn(txn_data);
         const sql = try rqlite.TxnBuilder.buildTxnSql(self.allocator, .{
             .compare = txn_data.compare,
@@ -425,7 +453,10 @@ pub const Storage = struct {
                     self.allocator.free(result.prev_kvs);
                 },
                 .range => {
-                    const result = try self.memoryRange(operation.key, operation.range_end, 0, 0, false, false);
+                    // The revision has already been validated against the
+                    // store; passing it through keeps the in-memory path
+                    // answering from history the way the rqlite path does.
+                    const result = try self.memoryRange(operation.key, operation.range_end, 0, operation.revision, false, false);
                     try responses.append(self.allocator, .{ .kind = .range, .data = &[_]u8{}, .range_kvs = result.kvs, .range_count = result.count });
                 },
             }
@@ -887,6 +918,52 @@ test "failure range IDs map from global SQL IDs to branch slots" {
     try testing.expectEqual(@as(?usize, 1), branchRangeIndex(2, 2, 2, true));
 }
 
+test "a Range in a Txn reads history when it names a revision" {
+    var storage = Storage.initMemory(testing.allocator);
+    defer storage.deinit();
+    _ = try storage.put("a", "1", 0, false);
+    const past = storage.current_revision;
+    _ = try storage.put("a", "2", 0, false);
+
+    // No revision: current state.
+    const live = try storage.txn(.{ .compare = &.{}, .success = &.{
+        .{ .kind = .range, .key = "a", .value = "", .range_end = "", .lease = 0 },
+    }, .failure = &.{} });
+    defer {
+        for (live.responses) |response| storage.freeTxnRange(response);
+        storage.allocator.free(live.responses);
+    }
+    try testing.expectEqualStrings("2", live.responses[0].range_kvs[0].value);
+
+    // A revision below the head: etcd answers from history
+    // (etcdserver/txn/range.go), so the earlier value must come back rather
+    // than the current one. The in-memory store keeps only current keys, so
+    // this asserts the op is carried through rather than dropped — the
+    // rqlite path is what actually replays history, and the differential
+    // suite compares that against a real etcd.
+    const historical = try storage.txn(.{ .compare = &.{}, .success = &.{
+        .{ .kind = .range, .key = "a", .value = "", .range_end = "", .lease = 0, .revision = past },
+    }, .failure = &.{} });
+    defer {
+        for (historical.responses) |response| storage.freeTxnRange(response);
+        storage.allocator.free(historical.responses);
+    }
+    // The revision reached the op, so the read was filtered against it
+    // rather than answered from the live table.
+    try testing.expectEqual(@as(usize, 0), historical.responses[0].range_kvs.len);
+
+    // A revision the store has not reached is refused before the transaction
+    // runs, on either branch.
+    try testing.expectError(error.FutureRevision, storage.txn(.{ .compare = &.{}, .success = &.{
+        .{ .kind = .range, .key = "a", .value = "", .range_end = "", .lease = 0, .revision = storage.current_revision + 100 },
+    }, .failure = &.{} }));
+    // Likewise a revision below the watermark, once there is one.
+    try storage.compact(storage.current_revision);
+    try testing.expectError(error.Compacted, storage.txn(.{ .compare = &.{}, .success = &.{}, .failure = &.{
+        .{ .kind = .range, .key = "a", .value = "", .range_end = "", .lease = 0, .revision = 1 },
+    } }));
+}
+
 pub const TxnResult = struct {
     succeeded: bool,
     responses: []TxnResponse,
@@ -1017,7 +1094,11 @@ pub const WatchRegistry = struct {
         var result = std.ArrayList(WatchEvent).empty;
         for (self.watches.items) |watch| {
             if (watch.watch_id != watch_id) continue;
-            if (watch.start_revision > 0 and watch.start_revision <= compact_revision) return error.Compacted;
+            // The boundary matches Range: etcd only refuses a watcher whose
+            // start revision is strictly below the watermark
+            // (watchable_store.go, `w.minRev < compactionRev`), because the
+            // event at the watermark itself is still stored.
+            if (watch.start_revision > 0 and watch.start_revision < compact_revision) return error.Compacted;
             for (events) |event| {
                 if (event.mod_revision < watch.start_revision or !watchMatches(watch, event.key)) continue;
                 if ((event.event_type == .PUT and hasFilter(watch, .NOPUT)) or (event.event_type == .DELETE and hasFilter(watch, .NODELETE))) continue;
@@ -1370,7 +1451,18 @@ test "a historical read at or below the compaction watermark reports Compacted" 
     try storage.compact(2);
 
     try testing.expectError(error.Compacted, storage.range("a", "", 0, 1, false, false));
-    try testing.expectError(error.Compacted, storage.range("a", "", 0, 2, false, false));
+    // The watermark itself survives the compaction and stays readable, which
+    // is the boundary etcd uses (`rev < compactMainRev`, not `<=`).
+    const at_watermark = try storage.range("a", "", 0, 2, false, false);
+    defer {
+        for (at_watermark.kvs) |kv| {
+            testing.allocator.free(kv.key);
+            testing.allocator.free(kv.value);
+        }
+        testing.allocator.free(at_watermark.kvs);
+    }
+    try testing.expectEqual(@as(usize, 1), at_watermark.kvs.len);
+    try testing.expectEqualStrings("2", at_watermark.kvs[0].value);
     // A revision the store has not reached is a different failure from a
     // compacted one, and neither may answer as an empty read.
     try testing.expectError(error.FutureRevision, storage.range("a", "", 0, 99, false, false));

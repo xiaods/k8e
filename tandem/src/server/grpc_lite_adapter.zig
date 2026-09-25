@@ -216,7 +216,7 @@ fn watchMessage(
             errdefer _ = registry.cancelWatch(id);
             const compact = endpoint.pipeline.storage.compact_revision;
             try sendWatch(endpoint, stream, .{ .header = header, .watch_id = id, .created = true });
-            if (create.start_revision > 0 and create.start_revision <= compact) {
+            if (create.start_revision > 0 and create.start_revision < compact) {
                 try sendWatch(endpoint, stream, .{ .header = header, .watch_id = id, .canceled = true, .compact_revision = compact });
                 _ = registry.cancelWatch(id);
                 return .continue_receiving;

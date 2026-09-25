@@ -70,12 +70,12 @@ test "a watch resuming from a compacted revision is refused, not silently empty"
     // key is field 1 and start_revision is field 3.
     const create = "\x0a\x05" ++ "\x0a\x01a" ++ "\x18\x01";
     try testing.expectError(error.Compacted, processRequest(&server, "/etcdserverpb.Watch/Watch", create));
-    // The watermark itself is compacted too, matching Range, Compact and
-    // watchHistory, which all reject at or below it: everything at or below
-    // the watermark has been removed, so a watch starting there can never
-    // deliver the events it was asked to resume from.
-    const at_watermark = "\x0a\x05" ++ "\x0a\x01a" ++ "\x18\x02";
-    try testing.expectError(error.Compacted, processRequest(&server, "/etcdserverpb.Watch/Watch", at_watermark));
+    // The watermark itself is still available, matching Range and etcd: the
+    // compaction removes revisions strictly below the watermark, so a watch
+    // resuming from the watermark can still deliver what it asked for. etcd's
+    // own guard is `minRev < compactionRev` for the same reason.
+    const at_watermark = try processRequest(&server, "/etcdserverpb.Watch/Watch", "\x0a\x05" ++ "\x0a\x01a" ++ "\x18\x02");
+    defer testing.allocator.free(at_watermark);
     // Above the watermark is still available.
     const after_watermark = try processRequest(&server, "/etcdserverpb.Watch/Watch", "\x0a\x05" ++ "\x0a\x01a" ++ "\x18\x03");
     defer testing.allocator.free(after_watermark);
@@ -288,7 +288,7 @@ fn handleKVRange(server: *PipelineServer, request_data: []const u8) ![]u8 {
     // A peer may commit between the entry refresh and this linearizable read.
     // The header must not predate data returned by the read itself.
     try server.storage.syncState();
-    if (request.revision > 0 and request.revision <= server.storage.compact_revision) return error.Compacted;
+    if (request.revision > 0 and request.revision < server.storage.compact_revision) return error.Compacted;
     var kvs = try allocator.alloc(messages.KeyValue, result.kvs.len);
     for (result.kvs, 0..) |kv, i| kvs[i] = .{
         .key = kv.key,
@@ -480,7 +480,7 @@ fn txnResponse(server: *PipelineServer, operation: messages.RequestOp, stored: ?
 fn txnOps(allocator: Allocator, requests: []const messages.RequestOp) ![]rqlite.TxnOp {
     var result = try allocator.alloc(rqlite.TxnOp, requests.len);
     for (requests, 0..) |request, i| result[i] = switch (request.request) {
-        .range => |op| .{ .kind = .range, .key = op.key, .value = &[_]u8{}, .range_end = op.range_end, .lease = 0 },
+        .range => |op| .{ .kind = .range, .key = op.key, .value = &[_]u8{}, .range_end = op.range_end, .lease = 0, .revision = op.revision },
         .put => |op| .{ .kind = .put, .key = op.key, .value = op.value, .range_end = &[_]u8{}, .lease = op.lease },
         .delete_range => |op| .{ .kind = .delete, .key = op.key, .value = &[_]u8{}, .range_end = op.range_end, .lease = 0 },
         .txn => return error.NestedTransactionUnsupported,
@@ -518,7 +518,11 @@ fn handleWatch(server: *PipelineServer, request_data: []const u8) ![]u8 {
             // see a successful create. KIP-29 requires an explicit Compacted
             // error here rather than an empty stream. A start_revision of 0
             // means "from now" and is never compacted.
-            if (create.start_revision > 0 and create.start_revision <= server.storage.compact_revision) {
+            //
+            // The boundary is strict: compaction drops revisions below the
+            // watermark, so a watch resuming exactly at it still has the
+            // events it asked for, and etcd accepts it.
+            if (create.start_revision > 0 and create.start_revision < server.storage.compact_revision) {
                 std.heap.page_allocator.free(create.key);
                 std.heap.page_allocator.free(create.range_end);
                 return error.Compacted;

@@ -1116,6 +1116,12 @@ pub const TxnBuilder = struct {
 /// before LIMIT so `count` and `more` describe the same snapshot. The op's own
 /// `limit` is not carried into the Txn op, so every matching row is captured
 /// and the limit is reported through the captured count.
+///
+/// A Range that names a revision reads history, not the live table. etcd
+/// answers such an op from the state as of that revision
+/// (etcdserver/txn/range.go), and answering from `kv` instead returned the
+/// current value for a revision the caller had already moved past — wrong
+/// data, with nothing in the response to distinguish it from a correct read.
 fn appendRangeCapture(allocator: Allocator, buf: *std.ArrayList(u8), op: TxnOp, success: bool, op_id: usize) !void {
     if (op.kind != .range) return;
     const gate: u8 = if (success) '1' else '0';
@@ -1125,7 +1131,16 @@ fn appendRangeCapture(allocator: Allocator, buf: *std.ArrayList(u8), op: TxnOp, 
     const prefix = try std.fmt.allocPrint(allocator, "{d},ROW_NUMBER() OVER (ORDER BY key)-1,", .{op_id});
     defer allocator.free(prefix);
     try buf.appendSlice(allocator, prefix);
-    try buf.appendSlice(allocator, "key,value,create_revision,mod_revision,version,lease,COUNT(*) OVER(),0 FROM kv WHERE ");
+    // The historical source mirrors rangeSql: the newest row per key at or
+    // before the requested revision, excluding keys deleted by then.
+    const source = if (op.revision > 0)
+        try std.fmt.allocPrint(allocator, "(SELECT * FROM kv_history WHERE id IN (SELECT MAX(id) FROM kv_history WHERE mod_revision<={d} GROUP BY key) AND deleted=0)", .{op.revision})
+    else
+        try allocator.dupe(u8, "kv");
+    defer allocator.free(source);
+    try buf.appendSlice(allocator, "key,value,create_revision,mod_revision,version,lease,COUNT(*) OVER(),0 FROM ");
+    try buf.appendSlice(allocator, source);
+    try buf.appendSlice(allocator, " WHERE ");
     try buf.appendSlice(allocator, predicate);
     try buf.appendSlice(allocator, " AND (SELECT ok FROM tandem_txn_result WHERE id=0)=");
     try buf.append(allocator, gate);
@@ -1242,6 +1257,10 @@ pub const TxnOp = struct {
     value: []const u8,
     range_end: []const u8,
     lease: i64,
+    /// The revision a Range op asked for, or 0 for the current state. etcd
+    /// answers a historical read inside a Txn from history, so dropping this
+    /// made the op return current data for a revision the caller named.
+    revision: i64 = 0,
 
     pub const Kind = enum {
         range,

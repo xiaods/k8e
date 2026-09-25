@@ -180,6 +180,38 @@ func TestDifferentialErrors(t *testing.T) {
 	}
 	runCase(t, h, compacted)
 
+	// A read at exactly the compaction revision. etcd's guard is
+	// `rev < compactMainRev`, so the boundary revision itself is still
+	// readable — it is the one that is kept. A `<=` guard rejects a read that
+	// etcd serves, which a controller resuming from its last seen revision
+	// would hit as a spurious OutOfRange.
+	atWatermark := step{
+		name: "a read at the compaction revision itself still succeeds",
+		run: func(t *testing.T, ctx context.Context, client *clientv3.Client, base int64) Observation {
+			for i := range 3 {
+				if _, err := client.Put(ctx, "diff/watermark/key", string(rune('a'+i))); err != nil {
+					t.Fatalf("seed: %v", err)
+				}
+			}
+			current, err := client.Get(ctx, "diff/watermark/key")
+			if err != nil {
+				t.Fatalf("read current: %v", err)
+			}
+			watermark := current.Header.Revision
+			if _, err := client.Compact(ctx, watermark); err != nil {
+				t.Fatalf("compact to %d: %v", watermark, err)
+			}
+			response, err := client.Get(ctx, "diff/watermark/key", clientv3.WithRev(watermark))
+			observation := Observation{Op: "ReadAtWatermark", Code: codeOf(err)}
+			if err == nil {
+				observation.Count = response.Count
+				observation.KVs = kvs(response.Kvs, base)
+			}
+			return observation
+		},
+	}
+	runCase(t, h, atWatermark)
+
 	leaseNotFound := step{
 		name: "unknown lease is NotFound",
 		run: func(t *testing.T, ctx context.Context, client *clientv3.Client, base int64) Observation {
@@ -188,6 +220,39 @@ func TestDifferentialErrors(t *testing.T) {
 		},
 	}
 	runCase(t, h, leaseNotFound)
+
+	// A Range inside a Txn that names a revision must answer from history.
+	// etcd checks the revision against the store and either answers from the
+	// historical snapshot or refuses; answering from current state instead
+	// returns data the caller did not ask for and cannot detect.
+	txnHistoricalRange := step{
+		name: "a Range in a Txn at an older revision answers from history",
+		run: func(t *testing.T, ctx context.Context, client *clientv3.Client, base int64) Observation {
+			if _, err := client.Put(ctx, "diff/txnhist", "v1"); err != nil {
+				t.Fatalf("first put: %v", err)
+			}
+			past, err := client.Get(ctx, "diff/txnhist")
+			if err != nil {
+				t.Fatalf("read for baseline: %v", err)
+			}
+			// Move the key on, so a current-state answer is distinguishable
+			// from the historical one.
+			if _, err := client.Put(ctx, "diff/txnhist", "v2"); err != nil {
+				t.Fatalf("second put: %v", err)
+			}
+			response, err := client.Txn(ctx).
+				Then(clientv3.OpGet("diff/txnhist", clientv3.WithRev(past.Header.Revision))).
+				Commit()
+			observation := Observation{Op: "TxnHistoricalRange", Code: codeOf(err)}
+			if err == nil {
+				observation.Revision = relative(response.Header.Revision, base)
+				observation.Count = rangeOf(t, response, 0).Count
+				observation.KVs = kvs(rangeOf(t, response, 0).Kvs, base)
+			}
+			return observation
+		},
+	}
+	runCase(t, h, txnHistoricalRange)
 
 	futureRevision := step{
 		name: "read at a future revision is OutOfRange",
