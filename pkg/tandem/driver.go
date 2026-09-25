@@ -71,6 +71,15 @@ func (d *Driver) Start(ctx context.Context, _ *clientaccess.Info) error {
 	cfg := Config{DataDir: filepath.Join(d.control.DataDir, "tandem"), Stdout: os.Stdout, Stderr: os.Stderr}
 	cfg.RqliteJoin = d.control.Datastore.TandemJoin
 	cfg.AdvertiseIP = d.control.AdvertiseIP
+	// The node identity and the peer set were previously never passed down, so
+	// every member fell back to its hostname and no cluster could be formed.
+	cfg.NodeID = d.control.Datastore.TandemNodeID
+	cfg.RqlitePeers = d.control.Datastore.TandemRaftPeers
+	cfg.BootstrapExpect = d.control.Datastore.TandemBootstrapExpect
+	cfg.RqliteRaftPort = d.control.Datastore.TandemRaftPort
+	if cfg.BootstrapExpect == 0 && len(cfg.RqlitePeers) > 1 {
+		cfg.BootstrapExpect = len(cfg.RqlitePeers)
+	}
 	// Terminate the etcd port with the same certificates the apiserver and the
 	// bootstrap client present. KIP-29 requires the compatibility layer to
 	// serve mTLS; serving it in plaintext would both violate that contract and

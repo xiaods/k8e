@@ -49,9 +49,25 @@ type DatastoreConfig struct {
 	// Backend selects the managed datastore driver by name (for example
 	// "etcd" or "tandem"). Empty means the default driver, which remains
 	// embedded etcd until issue #592's M3 migration gate.
-	Backend          string
-	TandemBootstrap  bool
-	TandemJoin       string
+	Backend         string
+	TandemBootstrap bool
+	TandemJoin      string
+	// TandemNodeID is this node's rqlite member identity and its lease-owner
+	// identity. It must be unique across a cluster: two members sharing one
+	// cannot form a Raft membership, and two lease owners sharing one string
+	// defeat the single-expiry-owner claim. Empty falls back to the hostname,
+	// which is a guess rather than a guarantee.
+	TandemNodeID string
+	// TandemRaftPeers is the Raft address of every voting member, this node
+	// included. rqlite's automatic clustering needs the full set on every
+	// node. Empty means a single-node deployment.
+	TandemRaftPeers []string
+	// TandemBootstrapExpect is the number of voters to wait for. Zero derives
+	// it from the peer list, and an empty peer list means single-node.
+	TandemBootstrapExpect int
+	// TandemRaftPort overrides the Raft listener port, which several nodes on
+	// one host need. Empty keeps the default.
+	TandemRaftPort   string
 	Endpoint         string
 	BackendTLSConfig TLSConfig
 	ServerTLSConfig  TLSConfig

@@ -13,35 +13,54 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/sirupsen/logrus"
 )
 
 type Config struct {
-	DataDir       string
-	RqliteBinary  string
-	TandemBinary  string
-	RqliteHTTP    string
-	RqliteRaft    string
-	RqliteJoin    string
-	AdvertiseIP   string
-	TandemListen  string
-	TandemTLSCert string
-	TandemTLSKey  string
-	TandemTLSCA   string
-	TandemMTLS    bool
-	NodeID        string
-	HealthTimeout time.Duration
-	Stdout        io.Writer
-	Stderr        io.Writer
+	DataDir      string
+	RqliteBinary string
+	TandemBinary string
+	RqliteHTTP   string
+	RqliteRaft   string
+	RqliteJoin   string
+	// RqlitePeers is the Raft address of every voting member, this node
+	// included. rqlite's automatic clustering needs the full set on every
+	// node: -bootstrap-expect alone leaves each node bootstrapping itself as a
+	// single-member cluster, and -join with only the seed address is not
+	// enough either. A single-node deployment leaves this empty.
+	RqlitePeers []string
+	// BootstrapExpect is the number of voters to wait for before forming a
+	// cluster. Zero means single-node, which is the historical behaviour.
+	BootstrapExpect int
+	// RqliteRaftPort is the port the Raft listener binds, combined with
+	// AdvertiseIP when one is set. It is configurable because several nodes
+	// can run on one host, which is also how the multi-node tests run.
+	RqliteRaftPort string
+	AdvertiseIP    string
+	TandemListen   string
+	TandemTLSCert  string
+	TandemTLSKey   string
+	TandemTLSCA    string
+	TandemMTLS     bool
+	NodeID         string
+	HealthTimeout  time.Duration
+	Stdout         io.Writer
+	Stderr         io.Writer
 }
 
 type Supervisor struct {
 	cfg    Config
 	rqlite *exec.Cmd
 	tandem *exec.Cmd
+	// dataLock excludes a second k8e process from this data directory. It is
+	// held for the lifetime of the supervised pair and released on Close.
+	dataLock *flock.Flock
 
 	// mu guards the child commands and the lifecycle fields below, which the
 	// monitor goroutine mutates while callers read readiness and shut down.
@@ -75,20 +94,36 @@ func withDefaults(c Config) Config {
 		c.RqliteHTTP = "127.0.0.1:4001"
 	}
 	if c.RqliteRaft == "" {
-		c.RqliteRaft = "127.0.0.1:4002"
+		c.RqliteRaftPort = "4002"
+		c.RqliteRaft = net.JoinHostPort("127.0.0.1", c.RqliteRaftPort)
+	}
+	if c.RqliteRaftPort == "" {
+		// Recover the port from an explicitly configured Raft address so a
+		// caller that set RqliteRaft directly still gets a usable
+		// advertise address.
+		if _, port, err := net.SplitHostPort(c.RqliteRaft); err == nil {
+			c.RqliteRaftPort = port
+		}
 	}
 	if c.TandemListen == "" {
 		c.TandemListen = "127.0.0.1:2379"
 	}
+	// The node identity is rqlite's -node-id and also the lease owner, so it
+	// has to be unique per node. A hostname is the best available guess, but
+	// it is not a guarantee: pods can be given the same spec.hostname, and a
+	// fallback constant would hand every node the same id, which a Raft
+	// membership cannot recover from. A multi-node deployment must set
+	// NodeID; the single-node default is only applied when no peer set was
+	// declared, where a collision is not possible.
 	if c.NodeID == "" {
 		c.NodeID, _ = os.Hostname()
-		if c.NodeID == "" {
+		if c.NodeID == "" && len(c.RqlitePeers) <= 1 {
 			c.NodeID = "1"
 		}
 	}
 	if c.AdvertiseIP != "" {
 		// The SQL API has no authentication configured and must stay local.
-		c.RqliteRaft = net.JoinHostPort(c.AdvertiseIP, "4002")
+		c.RqliteRaft = net.JoinHostPort(c.AdvertiseIP, c.RqliteRaftPort)
 	}
 	if c.HealthTimeout <= 0 {
 		c.HealthTimeout = 30 * time.Second
@@ -102,6 +137,16 @@ func (s *Supervisor) Start(ctx context.Context, cfg Config) error {
 	if err := prepareDataDir(rqliteDir); err != nil {
 		return err
 	}
+	// Take the directory lock before either child starts, and hold it until
+	// Close. Two k8e processes sharing a --data-dir would otherwise open the
+	// same SQLite file and the same Raft log.
+	lock, err := lockDataDir(rqliteDir)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.dataLock = lock
+	s.mu.Unlock()
 
 	// The children outlive this call, so they run on a context derived from a
 	// fresh cancellable parent rather than the caller's: a caller that cancels
@@ -139,16 +184,34 @@ func (s *Supervisor) Start(ctx context.Context, cfg Config) error {
 	return nil
 }
 
-func (s *Supervisor) startRqlite(ctx context.Context, rqliteDir string) error {
-	cmd := exec.CommandContext(ctx, s.cfg.RqliteBinary,
-		"-node-id", s.cfg.NodeID,
-		"-http-addr", s.cfg.RqliteHTTP,
-		"-raft-addr", s.cfg.RqliteRaft,
-		rqliteDir,
-	)
-	if s.cfg.RqliteJoin != "" {
-		cmd.Args = append(cmd.Args[:len(cmd.Args)-1], "-join", s.cfg.RqliteJoin, rqliteDir)
+// rqliteArgs builds the rqlited command line for a node.
+//
+// Three shapes, and they are not interchangeable. A lone member takes neither
+// cluster flag. A member forming a new cluster needs both -bootstrap-expect
+// and the complete peer list: the first says how many voters to wait for, and
+// without the second a node can only ever reach the seed. A member joining a
+// cluster that is already running needs only the seed address — asking it to
+// wait for a formation that has already happened would hang it.
+func rqliteArgs(cfg Config, rqliteDir string) []string {
+	args := []string{
+		"-node-id", cfg.NodeID,
+		"-http-addr", cfg.RqliteHTTP,
+		"-raft-addr", cfg.RqliteRaft,
 	}
+	switch {
+	case cfg.BootstrapExpect > 1:
+		args = append(args,
+			"-bootstrap-expect", strconv.Itoa(cfg.BootstrapExpect),
+			"-join", strings.Join(cfg.RqlitePeers, ","),
+		)
+	case cfg.RqliteJoin != "":
+		args = append(args, "-join", cfg.RqliteJoin)
+	}
+	return append(args, rqliteDir)
+}
+
+func (s *Supervisor) startRqlite(ctx context.Context, rqliteDir string) error {
+	cmd := exec.CommandContext(ctx, s.cfg.RqliteBinary, rqliteArgs(s.cfg, rqliteDir)...)
 	cmd.Stdout, cmd.Stderr = s.cfg.Stdout, s.cfg.Stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start rqlite: %w", err)
@@ -344,6 +407,47 @@ func prepareDataDir(rqliteDir string) error {
 	return nil
 }
 
+// lockDataDir takes an exclusive lock on the data directory and returns the
+// handle that keeps it. The lock is advisory and cross-platform, so it also
+// covers the Windows build.
+//
+// The content check above only refuses a directory holding foreign data. Two
+// k8e processes pointed at the same --data-dir both pass it and then open the
+// same SQLite file and the same Raft log, which is the failure a multi-node
+// test hits first and the hardest one to diagnose: rqlite's own file lock
+// turns into an opaque error, or two members with the same node id fight over
+// one log. Naming the other holder turns that into an explanation.
+func lockDataDir(rqliteDir string) (*flock.Flock, error) {
+	path := filepath.Join(rqliteDir, ".k8e-tandem.lock")
+	lock := flock.New(path)
+	locked, err := lock.TryLock()
+	if err != nil {
+		return nil, fmt.Errorf("lock rqlite data dir %s: %w", rqliteDir, err)
+	}
+	if !locked {
+		if holder := readLockHolder(path); holder != "" {
+			return nil, fmt.Errorf("rqlite data dir %s is already in use by %s; each node needs its own --data-dir", rqliteDir, holder)
+		}
+		return nil, fmt.Errorf("rqlite data dir %s is already in use by another process; each node needs its own --data-dir", rqliteDir)
+	}
+	// Record the holder so a second process can name it. The lock itself is
+	// what excludes; this is only so the error is an explanation.
+	who := fmt.Sprintf("pid %d", os.Getpid())
+	if host, err := os.Hostname(); err == nil && host != "" {
+		who = fmt.Sprintf("%s pid %d", host, os.Getpid())
+	}
+	_ = os.WriteFile(path, []byte(who), 0600)
+	return lock, nil
+}
+
+func readLockHolder(path string) string {
+	buf, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(buf))
+}
+
 // hasRqliteState reports whether the directory holds a rqlite store rather than
 // unrelated files. rqlited writes db.sqlite (plus its -wal/-shm siblings) and
 // raft.db beside the raft/ directory it snapshots into.
@@ -492,6 +596,17 @@ func (s *Supervisor) Close() error {
 		stopChild(rqlite)
 	}
 	s.monitor.Wait()
+	// Release the data directory only once both children are gone, so a
+	// replacement process cannot observe the lock as free while the old rqlite
+	// is still writing.
+	s.mu.Lock()
+	lock := s.dataLock
+	s.dataLock = nil
+	s.mu.Unlock()
+	if lock != nil {
+		_ = lock.Unlock()
+		_ = lock.Close()
+	}
 	return nil
 }
 
