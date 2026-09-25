@@ -2,6 +2,7 @@ package managed
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,6 +14,14 @@ import (
 var (
 	drivers []Driver
 )
+
+// ErrNotImplemented reports that a driver has no counterpart for an operation,
+// as distinct from an operation that failed. A caller that would otherwise
+// retry treats it as terminal: there is nothing to wait for, and retrying only
+// produces noise. Tandem returns it for snapshot reconciliation, which has no
+// meaning on a SQLite-backed store — retrying it once a second filled the log
+// for the life of the process.
+var ErrNotImplemented = errors.New("not implemented for this driver")
 
 type Driver interface {
 	SetControlConfig(config *config.Control) error

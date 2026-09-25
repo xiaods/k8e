@@ -2,6 +2,8 @@ package managed
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -23,17 +25,17 @@ func (s *stubDriver) IsInitialized() (bool, error)           { return s.initiali
 func (s *stubDriver) Register(h http.Handler) (http.Handler, error) {
 	return h, nil
 }
-func (s *stubDriver) Reset(context.Context, func() error) error      { return nil }
-func (s *stubDriver) IsReset() (bool, error)                         { return false, nil }
-func (s *stubDriver) ResetFile() string                              { return "" }
+func (s *stubDriver) Reset(context.Context, func() error) error       { return nil }
+func (s *stubDriver) IsReset() (bool, error)                          { return false, nil }
+func (s *stubDriver) ResetFile() string                               { return "" }
 func (s *stubDriver) Start(context.Context, *clientaccess.Info) error { s.started++; return nil }
-func (s *stubDriver) Test(context.Context) error                     { return nil }
-func (s *stubDriver) Restore(context.Context) error                  { return nil }
-func (s *stubDriver) EndpointName() string                           { return s.name }
+func (s *stubDriver) Test(context.Context) error                      { return nil }
+func (s *stubDriver) Restore(context.Context) error                   { return nil }
+func (s *stubDriver) EndpointName() string                            { return s.name }
 func (s *stubDriver) Snapshot(context.Context) (*SnapshotResult, error) {
 	return nil, nil
 }
-func (s *stubDriver) ReconcileSnapshotData(context.Context) error       { return nil }
+func (s *stubDriver) ReconcileSnapshotData(context.Context) error { return nil }
 func (s *stubDriver) GetMembersClientURLs(context.Context) ([]string, error) {
 	return nil, nil
 }
@@ -78,4 +80,34 @@ func TestSelectRejectsUnknownBackend(t *testing.T) {
 	if selected != nil {
 		t.Fatal("an unknown backend must not fall back to a default")
 	}
+}
+
+// A driver with no counterpart for an operation must be distinguishable from
+// one that failed, because the snapshot reconcile loop stops on the first and
+// retries the second. The Tandem store has no snapshot records to write, and
+// retrying that once a second filled the log for the life of the process.
+func TestErrNotImplementedIsDistinguishableFromFailure(t *testing.T) {
+	driver := &notImplementedDriver{stubDriver: stubDriver{name: "tandem"}}
+	err := driver.ReconcileSnapshotData(context.Background())
+	if !errors.Is(err, ErrNotImplemented) {
+		t.Fatalf("ReconcileSnapshotData returned %v, want an error wrapping ErrNotImplemented", err)
+	}
+	// A genuine failure must not be mistaken for the terminal case, or the
+	// loop would give up on a datastore that is merely broken.
+	failure := &failingDriver{stubDriver: stubDriver{name: "tandem"}}
+	if errors.Is(failure.ReconcileSnapshotData(context.Background()), ErrNotImplemented) {
+		t.Fatal("a reconcile failure must not satisfy errors.Is(ErrNotImplemented)")
+	}
+}
+
+type notImplementedDriver struct{ stubDriver }
+
+func (d *notImplementedDriver) ReconcileSnapshotData(context.Context) error {
+	return fmt.Errorf("reconcile: %w", ErrNotImplemented)
+}
+
+type failingDriver struct{ stubDriver }
+
+func (d *failingDriver) ReconcileSnapshotData(context.Context) error {
+	return errors.New("datastore unreachable")
 }
