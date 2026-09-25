@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -136,47 +135,4 @@ func codeOf(err error) codes.Code {
 		return s.Code()
 	}
 	return codes.Unknown
-}
-
-// kv normalizes one mvccpb pair against a baseline revision.
-func kv(in *mvccpb.KeyValue, baseline int64) KeyValue {
-	out := KeyValue{
-		Key:   string(in.Key),
-		Value: string(in.Value),
-		Lease: in.Lease,
-	}
-	// A revision at or below the baseline was created before the case began;
-	// subtracting keeps a pre-existing key comparable without asserting where
-	// either store started counting.
-	if in.CreateRevision > baseline {
-		out.CreateRevision = in.CreateRevision - baseline
-	}
-	if in.ModRevision > baseline {
-		out.ModRevision = in.ModRevision - baseline
-	}
-	out.Version = in.Version
-	return out
-}
-
-func kvs(in []*mvccpb.KeyValue, baseline int64) []KeyValue {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]KeyValue, 0, len(in))
-	for _, item := range in {
-		if item == nil {
-			continue
-		}
-		out = append(out, kv(item, baseline))
-	}
-	return out
-}
-
-// relative reduces a header revision to a delta from the case baseline. etcd
-// and Tandem do not share a revision space, so only the movement is comparable.
-func relative(revision, baseline int64) int64 {
-	if revision <= baseline {
-		return 0
-	}
-	return revision - baseline
 }

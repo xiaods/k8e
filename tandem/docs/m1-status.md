@@ -203,7 +203,14 @@ Validated locally with OrbStack Linux arm64 and rqlite v10.3.6:
   Watch test, the persistent transaction test, lease expiry, owner exclusivity,
   crash takeover, shared lease-id allocation, standalone previous values and
   cross-process watch fan-out.
-- `zig build test`: 155/155.
+- `go test -tags=tandem_differential ./pkg/tandem/differential` on the same
+  platform, against both a real embedded etcd and a real rqlited: 16 pass. Each
+  case runs the identical operation on both backends and compares the answers,
+  so a green run means the two agree rather than that Tandem matches its own
+  expectations. Three of its cases run without any process at all, which keeps
+  the normalizer and the known-difference registry honest on every `go test
+  ./...`.
+- `zig build test`: 159/159.
 
 The L1 CI job also runs the tagged Tandem integration suite against its pinned
 rqlited and built Tandem binary, so persistence and TLS regressions no longer
