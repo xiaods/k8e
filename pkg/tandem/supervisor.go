@@ -43,15 +43,33 @@ type Config struct {
 	// can run on one host, which is also how the multi-node tests run.
 	RqliteRaftPort string
 	AdvertiseIP    string
-	TandemListen   string
-	TandemTLSCert  string
-	TandemTLSKey   string
-	TandemTLSCA    string
-	TandemMTLS     bool
-	NodeID         string
-	HealthTimeout  time.Duration
-	Stdout         io.Writer
-	Stderr         io.Writer
+	// RqliteNodeCert, RqliteNodeKey and RqliteNodeCA turn on TLS for the Raft
+	// listener. KIP-29 §4 requires cross-node rqlite traffic to be protected:
+	// it carries every committed write, and a node that can reach the Raft
+	// port can join the membership or read the log. All three must be given
+	// together — a partial set is refused rather than silently downgraded to
+	// plaintext.
+	RqliteNodeCert string
+	RqliteNodeKey  string
+	RqliteNodeCA   string
+	// RqliteNodeVerifyClient requires every peer to present a certificate
+	// signed by RqliteNodeCA, which is what makes the listener mutually
+	// authenticated rather than merely encrypted.
+	RqliteNodeVerifyClient bool
+	// RqliteNodeServerName sets the name rqlite expects to find in a peer's
+	// certificate. Raft peers dial each other by address, so without it the
+	// certificate has to carry an IP SAN for every member; setting it lets one
+	// certificate with one hostname serve the whole cluster.
+	RqliteNodeServerName string
+	TandemListen         string
+	TandemTLSCert        string
+	TandemTLSKey         string
+	TandemTLSCA          string
+	TandemMTLS           bool
+	NodeID               string
+	HealthTimeout        time.Duration
+	Stdout               io.Writer
+	Stderr               io.Writer
 }
 
 type Supervisor struct {
@@ -159,6 +177,11 @@ func (s *Supervisor) Start(ctx context.Context, cfg Config) error {
 
 	if err := s.startRqlite(runCtx, rqliteDir); err != nil {
 		cancel()
+		// Release the data dir lock on the way out. A child that never
+		// started — a missing binary, or a credential set that was refused —
+		// would otherwise leave the next attempt told the directory is in
+		// use, which is not what is wrong.
+		_ = s.Close()
 		return err
 	}
 	if err := waitHealthy(ctx, rqliteURL(s.cfg.RqliteHTTP)+rqliteReadyzPath, s.cfg.HealthTimeout); err != nil {
@@ -192,12 +215,17 @@ func (s *Supervisor) Start(ctx context.Context, cfg Config) error {
 // without the second a node can only ever reach the seed. A member joining a
 // cluster that is already running needs only the seed address — asking it to
 // wait for a formation that has already happened would hang it.
-func rqliteArgs(cfg Config, rqliteDir string) []string {
+func rqliteArgs(cfg Config, rqliteDir string) ([]string, error) {
 	args := []string{
 		"-node-id", cfg.NodeID,
 		"-http-addr", cfg.RqliteHTTP,
 		"-raft-addr", cfg.RqliteRaft,
 	}
+	tlsArgs, err := rqliteNodeTLSArgs(cfg)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, tlsArgs...)
 	switch {
 	case cfg.BootstrapExpect > 1:
 		args = append(args,
@@ -207,11 +235,71 @@ func rqliteArgs(cfg Config, rqliteDir string) []string {
 	case cfg.RqliteJoin != "":
 		args = append(args, "-join", cfg.RqliteJoin)
 	}
-	return append(args, rqliteDir)
+	return append(args, rqliteDir), nil
+}
+
+// rqliteNodeTLSArgs builds the node-to-node encryption flags.
+//
+// A partial credential set is an error rather than a downgrade. rqlite turns
+// on TLS only when -node-cert is given, so passing a certificate without a key
+// (or a key without a CA to verify peers against) would start a node that
+// looks configured and is not — the exact "empty success" the epic forbids.
+// Nothing is emitted when no certificate was configured, which keeps the
+// single-node loopback deployment on the historical command line.
+func rqliteNodeTLSArgs(cfg Config) ([]string, error) {
+	credentials := []struct {
+		name string
+		path string
+	}{
+		{"certificate", cfg.RqliteNodeCert},
+		{"key", cfg.RqliteNodeKey},
+		{"CA", cfg.RqliteNodeCA},
+	}
+	var set, missing []string
+	for _, credential := range credentials {
+		if credential.path != "" {
+			set = append(set, credential.name)
+		} else {
+			missing = append(missing, credential.name)
+		}
+	}
+	if len(set) == 0 {
+		return nil, nil
+	}
+	if len(set) != len(credentials) {
+		return nil, fmt.Errorf("rqlite node TLS needs a complete credential set; got %s and no %s", strings.Join(set, ", "), strings.Join(missing, ", "))
+	}
+	// The files are checked here rather than left for rqlited to reject,
+	// because a missing file there surfaces as a node that never becomes ready
+	// and the supervisor reports it as a readiness timeout.
+	for _, credential := range credentials {
+		if _, err := os.Stat(credential.path); err != nil {
+			return nil, fmt.Errorf("rqlite node TLS %s %s: %w", credential.name, credential.path, err)
+		}
+	}
+	args := []string{
+		"-node-cert", cfg.RqliteNodeCert,
+		"-node-key", cfg.RqliteNodeKey,
+		"-node-ca-cert", cfg.RqliteNodeCA,
+	}
+	if cfg.RqliteNodeVerifyClient {
+		args = append(args, "-node-verify-client")
+	}
+	// Only meaningful with TLS on: it names the hostname a peer's certificate
+	// must carry, so a cluster can share one certificate instead of holding an
+	// IP SAN for every member's Raft address.
+	if cfg.RqliteNodeServerName != "" {
+		args = append(args, "-node-verify-server-name", cfg.RqliteNodeServerName)
+	}
+	return args, nil
 }
 
 func (s *Supervisor) startRqlite(ctx context.Context, rqliteDir string) error {
-	cmd := exec.CommandContext(ctx, s.cfg.RqliteBinary, rqliteArgs(s.cfg, rqliteDir)...)
+	args, err := rqliteArgs(s.cfg, rqliteDir)
+	if err != nil {
+		return fmt.Errorf("rqlite arguments: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, s.cfg.RqliteBinary, args...)
 	cmd.Stdout, cmd.Stderr = s.cfg.Stdout, s.cfg.Stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start rqlite: %w", err)

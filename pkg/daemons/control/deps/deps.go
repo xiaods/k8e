@@ -166,6 +166,9 @@ func CreateRuntimeCertFiles(config *config.Control) {
 	runtime.ClientETCDCert = filepath.Join(config.DataDir, "tls", "etcd", "client.crt")
 	runtime.ClientETCDKey = filepath.Join(config.DataDir, "tls", "etcd", "client.key")
 
+	runtime.TandemRaftNodeCert = filepath.Join(config.DataDir, "tls", "tandem-raft", "node.crt")
+	runtime.TandemRaftNodeKey = filepath.Join(config.DataDir, "tls", "tandem-raft", "node.key")
+
 	if config.EncryptSecrets {
 		runtime.EncryptionConfig = filepath.Join(config.DataDir, "cred", "encryption-config.json")
 		runtime.EncryptionHash = filepath.Join(config.DataDir, "cred", "encryption-state.json")
@@ -468,7 +471,59 @@ func genETCDCerts(config *config.Control) error {
 		return err
 	}
 
+	return genTandemRaftCerts(config)
+}
+
+// genTandemRaftCerts issues the certificate this node's rqlite Raft listener
+// presents to the other members.
+//
+// KIP-29 §4 requires cross-node rqlite traffic to be protected: it carries
+// every committed write, and anything that can reach the port can join the
+// membership or read the log. The certificate is signed by ETCDPeerCA, which
+// every server in the cluster already shares through the bootstrap data, so a
+// joining node is trusted without any extra distribution step.
+//
+// Its SAN is the address peers dial, which is the whole point: a peer verifies
+// the certificate against the address it connected to, so a certificate
+// borrowed from another service — or one carrying unrelated names — fails the
+// handshake. Without an advertise address the Raft listener stays on loopback,
+// which is the single-node and same-host case, and that is the SAN it gets.
+func genTandemRaftCerts(config *config.Control) error {
+	// Only the Tandem backend runs rqlite, so no other deployment pays for a
+	// certificate it cannot use.
+	if !strings.EqualFold(config.Datastore.Backend, "tandem") {
+		return nil
+	}
+	runtime := config.Runtime
+	regen, err := createSigningCertKey("etcd-peer", runtime.ETCDPeerCA, runtime.ETCDPeerCAKey)
+	if err != nil {
+		return err
+	}
+	altNames := tandemRaftAltNames(config)
+	if _, err := createClientCertKey(regen, "tandem-raft", nil,
+		altNames, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		runtime.ETCDPeerCA, runtime.ETCDPeerCAKey,
+		runtime.TandemRaftNodeCert, runtime.TandemRaftNodeKey); err != nil {
+		return err
+	}
 	return nil
+}
+
+// tandemRaftAltNames returns the names the Raft listener must answer for. It
+// mirrors how the supervisor builds the advertised Raft address: the advertise
+// IP when one is set, and loopback otherwise.
+func tandemRaftAltNames(config *config.Control) *certutil.AltNames {
+	altNames := &certutil.AltNames{}
+	address := config.AdvertiseIP
+	if address == "" {
+		address = "127.0.0.1"
+	}
+	if ip := net.ParseIP(address); ip != nil {
+		altNames.IPs = append(altNames.IPs, ip)
+	} else {
+		altNames.DNSNames = append(altNames.DNSNames, address)
+	}
+	return altNames
 }
 
 func genRequestHeaderCerts(config *config.Control) error {

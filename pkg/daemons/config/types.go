@@ -67,11 +67,27 @@ type DatastoreConfig struct {
 	TandemBootstrapExpect int
 	// TandemRaftPort overrides the Raft listener port, which several nodes on
 	// one host need. Empty keeps the default.
-	TandemRaftPort   string
-	Endpoint         string
-	BackendTLSConfig TLSConfig
-	ServerTLSConfig  TLSConfig
-	NotifyInterval   time.Duration
+	TandemRaftPort string
+	// TandemRaftCert, TandemRaftKey and TandemRaftCA protect the rqlite Raft
+	// listener between members. Empty means K8E issues a node certificate for
+	// the advertised Raft address from its own etcd peer CA; set all three to
+	// supply one instead. A partial set is refused rather than downgraded to
+	// plaintext, because every committed write crosses that link.
+	TandemRaftCert string
+	TandemRaftKey  string
+	TandemRaftCA   string
+	// TandemRaftVerifyClient requires a peer to present a certificate signed
+	// by the CA, which is what makes the listener mutually authenticated
+	// instead of merely encrypted.
+	TandemRaftVerifyClient bool
+	// TandemRaftServerName names the host a peer's certificate must carry.
+	// Raft members dial each other by address, so without it every member
+	// needs an IP SAN of its own.
+	TandemRaftServerName string
+	Endpoint             string
+	BackendTLSConfig     TLSConfig
+	ServerTLSConfig      TLSConfig
+	NotifyInterval       time.Duration
 }
 
 // ETCDConfig holds runtime etcd connection information.
@@ -461,6 +477,16 @@ type ControlRuntime struct {
 	PeerServerClientETCDKey  string
 	ClientETCDCert           string
 	ClientETCDKey            string
+
+	// TandemRaftNodeCert and TandemRaftNodeKey are the credentials the rqlite
+	// Raft listener on this node presents to its peers. They are issued from
+	// ETCDPeerCA — which every server already shares — and carry the advertised
+	// Raft address as a SAN, because a peer verifies the certificate against
+	// the address it dialled. They are deliberately not part of
+	// ControlRuntimeBootstrap: they are per-node, so they must not be copied
+	// to a joining server.
+	TandemRaftNodeCert string
+	TandemRaftNodeKey  string
 
 	K8e        *k8e.Factory
 	Core       *core.Factory

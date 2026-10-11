@@ -13,7 +13,7 @@ called complete:
 | Lease | background reaper with a single expiry owner, heartbeat-takeover after owner loss | Grant, keepalive, expiry, lease-driven deletes, owner exclusivity and takeover of a crashed owner's leases are covered against a real rqlite; qualify under real multi-node clock skew and partition |
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
 | Maintenance | `Status` is served on the wire with a real version, db size and rqlite leader/raft state; `Snapshot` returns an explicit `Unimplemented` | The other Maintenance calls, the whole Cluster service and the whole Auth service have no handler. The placeholders that answered with constants were removed rather than registered |
-| Single/three member | three members form one voting group, replicate between compat layers, and keep serving after the leader's store dies; node identity, peer set and Raft port are configurable | Raft mTLS between members, dynamic member join and exit, and asymmetric-partition behaviour are not yet covered |
+| Single/three member | three members form one voting group, replicate between compat layers, and keep serving after the leader's store dies; node identity, peer set, Raft port and Raft mTLS are configurable | Dynamic member join and exit, and asymmetric-partition behaviour are not yet covered; loss of quorum is still only proven from the surviving side |
 | Differential tests | running in CI against a real etcd; KV, revision, tombstone, watch-order, lease and error-code cases covered, and it found ten real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
 | Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Extend to multi-node crash recovery, concurrent histories and differential checks |
 
@@ -191,11 +191,45 @@ Raft log. The second now gets an error naming the holder, instead of an opaque
 rqlite failure or two members with one id fighting over one log. The lock is
 advisory and cross-platform, so the Windows build is covered too.
 
-**Not covered yet.** Raft traffic between members is plaintext — KIP-29 §4
-wants `-node-cert`/`-node-key`/`-node-ca-cert` on the rqlite flags, and none of
-them are passed. Dynamic join against a running cluster and member removal are
-also unexercised, as is loss of quorum: the fixture proves a surviving majority
+**Not covered yet.** Dynamic join against a running cluster and member removal
+are unexercised, as is loss of quorum: the fixture proves a surviving majority
 keeps serving, not that a lone member correctly refuses to.
+
+## Raft mTLS between members
+
+Every committed write crosses the Raft link, and anything that can reach the
+port can otherwise join the membership or read the log, so KIP-29 §4 does not
+accept it in plaintext. The supervisor now passes `-node-cert`, `-node-key`,
+`-node-ca-cert` and `-node-verify-client`; `-node-verify-server-name` is
+available for a cluster whose members are dialled by IP and share one
+certificate.
+
+**Where the default credential comes from.** An operator-supplied set always
+wins (`--tandem-raft-cert/-key/-ca`). Otherwise K8E issues a node certificate
+from **ETCDPeerCA**, which every server already shares through the bootstrap
+data, so a joining member is trusted without a new distribution step — and
+without a second CA to operate. The certificate is written to
+`${data-dir}/tls/tandem-raft/` and is deliberately *not* part of
+`ControlRuntimeBootstrap`, because it is per-node and must not be copied to a
+joiner.
+
+**Why the SAN is the advertised address.** A peer verifies the certificate
+against the address it dialled, so the leaf carries the Raft address the
+supervisor advertises (`--advertise-ip`, or loopback when there is none). A
+certificate borrowed from another service — the etcd peer certificate, say —
+would fail the handshake, which is why one is issued rather than reused.
+
+**What is refused.** A partial credential set is an error, not a downgrade:
+rqlite enables TLS only when `-node-cert` is given, so half a set would produce
+a node that looks protected and is not. A clustered node with no credentials at
+all is refused too. Only a lone member, whose Raft listener never leaves the
+host, may come up without them.
+
+**Evidence.** `TestTandemThreeNodeClusterWithRaftTLS` forms three members over
+TLS Raft, dials each listener to prove the handshake succeeds with the node
+certificate, checks that a peer presenting no certificate is refused, and
+replicates a write between members. The flag assembly and the refusal paths are
+covered by unit tests that run on every `go test`.
 
 ## Backend cleanup
 
@@ -315,10 +349,10 @@ previous-delete response shape; `KV.RangeStream` is not implemented at all; the
 Cluster and Auth services and the remaining Maintenance calls have no handler,
 so the "etcd v3.7 compatible" claim does not hold for them; the driver's
 Snapshot/Reset/Restore are still unimplemented, so `k8e etcd-snapshot` style
-operational workflows are unavailable on this backend; Raft mTLS between
-members, dynamic member join and exit, and loss-of-quorum behaviour; removal
-of embedded-etcd production paths; reset/snapshot/restore; the Go full suite
-and Kubernetes E2E on a normal Linux environment. M1 remains open.
+operational workflows are unavailable on this backend; dynamic member join and
+exit, and loss-of-quorum behaviour; removal of embedded-etcd production paths;
+reset/snapshot/restore; the Go full suite and Kubernetes E2E on a normal Linux
+environment. M1 remains open.
 
 The differential suite now runs in CI on every push, so a divergence between
 the two backends fails the build rather than waiting for a local run. It is a

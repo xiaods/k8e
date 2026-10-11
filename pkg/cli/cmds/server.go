@@ -64,6 +64,11 @@ type Server struct {
 	TandemRaftPeers          cli.StringSlice
 	TandemBootstrapExpect    int
 	TandemRaftPort           string
+	TandemRaftCert           string
+	TandemRaftKey            string
+	TandemRaftCA             string
+	TandemRaftVerifyClient   bool
+	TandemRaftServerName     string
 	DatastoreCAFile          string
 	DatastoreCertFile        string
 	DatastoreKeyFile         string
@@ -264,6 +269,11 @@ var ServerFlags = []cli.Flag{
 	&cli.StringSliceFlag{Name: "tandem-raft-peer", Usage: "(cluster) Raft address of a voting member; repeat for every member including this one, for example 10.0.0.1:4002", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_PEER", Value: &ServerConfig.TandemRaftPeers},
 	&cli.IntFlag{Name: "tandem-bootstrap-expect", Usage: "(cluster) Number of rqlite voters to wait for before forming a cluster; defaults to the peer count", EnvVar: version.ProgramUpper + "_TANDEM_BOOTSTRAP_EXPECT", Destination: &ServerConfig.TandemBootstrapExpect},
 	&cli.StringFlag{Name: "tandem-raft-port", Usage: "(cluster) Raft listener port; several nodes on one host need distinct ports", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_PORT", Destination: &ServerConfig.TandemRaftPort},
+	&cli.StringFlag{Name: "tandem-raft-cert", Usage: "(cluster) Certificate for the rqlite Raft listener; defaults to one K8E issues for the advertised Raft address", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_CERT", Destination: &ServerConfig.TandemRaftCert},
+	&cli.StringFlag{Name: "tandem-raft-key", Usage: "(cluster) Private key for --tandem-raft-cert", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_KEY", Destination: &ServerConfig.TandemRaftKey},
+	&cli.StringFlag{Name: "tandem-raft-ca", Usage: "(cluster) CA that signed the peer certificates; defaults to K8E's etcd peer CA", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_CA", Destination: &ServerConfig.TandemRaftCA},
+	&cli.BoolTFlag{Name: "tandem-raft-verify-client", Usage: "(cluster) Require every Raft peer to present a certificate signed by the CA, which is what makes the listener mutually authenticated (default: true)", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_VERIFY_CLIENT", Destination: &ServerConfig.TandemRaftVerifyClient},
+	&cli.StringFlag{Name: "tandem-raft-server-name", Usage: "(cluster) Hostname a peer's certificate must carry; lets one certificate serve a cluster whose members are dialled by IP", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_SERVER_NAME", Destination: &ServerConfig.TandemRaftServerName},
 	&cli.StringFlag{
 		Name:        "token-file",
 		Usage:       "(cluster) File containing the token",

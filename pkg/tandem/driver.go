@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/cluster/managed"
 	"github.com/xiaods/k8e/pkg/daemons/config"
@@ -77,8 +78,13 @@ func (d *Driver) Start(ctx context.Context, _ *clientaccess.Info) error {
 	cfg.RqlitePeers = d.control.Datastore.TandemRaftPeers
 	cfg.BootstrapExpect = d.control.Datastore.TandemBootstrapExpect
 	cfg.RqliteRaftPort = d.control.Datastore.TandemRaftPort
+	// The peer set decides whether Raft traffic leaves the host, so it has to
+	// be known before the Raft credentials are chosen.
 	if cfg.BootstrapExpect == 0 && len(cfg.RqlitePeers) > 1 {
 		cfg.BootstrapExpect = len(cfg.RqlitePeers)
+	}
+	if err := d.configureRaftTLS(&cfg); err != nil {
+		return err
 	}
 	// Terminate the etcd port with the same certificates the apiserver and the
 	// bootstrap client present. KIP-29 requires the compatibility layer to
@@ -119,6 +125,59 @@ func (d *Driver) configureTLS(cfg *Config) error {
 	}
 	cfg.TandemTLSCert, cfg.TandemTLSKey, cfg.TandemTLSCA = cert, key, ca
 	cfg.TandemMTLS = true
+	return nil
+}
+
+// configureRaftTLS protects the rqlite Raft listener between members.
+//
+// KIP-29 §4 requires cross-node rqlite traffic to be protected: it carries
+// every committed write, and anything that can reach the port can join the
+// membership or read the log. An explicit credential set always wins so an
+// operator can use their own CA; otherwise K8E issues a node certificate for
+// the advertised Raft address from the etcd peer CA, which every server
+// already shares through the bootstrap data, so a joining member is trusted
+// without an extra distribution step.
+//
+// A lone member's Raft listener never leaves the host, so it is the only shape
+// allowed to run without credentials. A clustered node without them is refused
+// rather than started in plaintext, and a partial set is refused everywhere:
+// rqlite turns on TLS only when -node-cert is given, so half a credential set
+// would produce a node that looks configured and is not.
+func (d *Driver) configureRaftTLS(cfg *Config) error {
+	datastore := d.control.Datastore
+	runtime := d.control.Runtime
+	cert, key, ca := datastore.TandemRaftCert, datastore.TandemRaftKey, datastore.TandemRaftCA
+	explicit := cert != "" || key != "" || ca != ""
+	if !explicit && runtime != nil {
+		cert, key, ca = runtime.TandemRaftNodeCert, runtime.TandemRaftNodeKey, runtime.ETCDPeerCA
+	}
+	clustered := len(cfg.RqlitePeers) > 1 || cfg.RqliteJoin != "" || cfg.BootstrapExpect > 1
+	if cert == "" && key == "" && ca == "" {
+		if clustered {
+			return fmt.Errorf("tandem requires Raft credentials to form or join a cluster; pass --tandem-raft-cert, --tandem-raft-key and --tandem-raft-ca, or let K8E issue them")
+		}
+		return nil
+	}
+	if cert == "" || key == "" || ca == "" {
+		return fmt.Errorf("tandem requires a complete Raft credential set (cert, key and CA); got cert=%q key=%q ca=%q", cert, key, ca)
+	}
+	for name, path := range map[string]string{"certificate": cert, "key": key, "CA": ca} {
+		if _, err := os.Stat(path); err != nil {
+			// Only a loopback-only member may come up without them; a
+			// clustered node that cannot present a certificate cannot join.
+			if !clustered && !explicit {
+				logrus.Warnf("tandem: no usable Raft credentials at %s; the Raft listener stays unencrypted on loopback", path)
+				return nil
+			}
+			return fmt.Errorf("tandem Raft %s %s: %w", name, path, err)
+		}
+	}
+	cfg.RqliteNodeCert, cfg.RqliteNodeKey, cfg.RqliteNodeCA = cert, key, ca
+	// Mutual authentication is the default: every member holds a certificate
+	// from the same CA, so requiring one costs nothing and means a host that
+	// merely reaches the port cannot join the membership.
+	cfg.RqliteNodeVerifyClient = datastore.TandemRaftVerifyClient || !explicit
+	cfg.RqliteNodeServerName = datastore.TandemRaftServerName
 	return nil
 }
 

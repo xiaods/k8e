@@ -217,6 +217,11 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	serverConfig.ControlConfig.Datastore.TandemRaftPeers = cfg.TandemRaftPeers.Value()
 	serverConfig.ControlConfig.Datastore.TandemBootstrapExpect = cfg.TandemBootstrapExpect
 	serverConfig.ControlConfig.Datastore.TandemRaftPort = cfg.TandemRaftPort
+	serverConfig.ControlConfig.Datastore.TandemRaftCert = cfg.TandemRaftCert
+	serverConfig.ControlConfig.Datastore.TandemRaftKey = cfg.TandemRaftKey
+	serverConfig.ControlConfig.Datastore.TandemRaftCA = cfg.TandemRaftCA
+	serverConfig.ControlConfig.Datastore.TandemRaftVerifyClient = cfg.TandemRaftVerifyClient
+	serverConfig.ControlConfig.Datastore.TandemRaftServerName = cfg.TandemRaftServerName
 	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CAFile = cfg.DatastoreCAFile
 	serverConfig.ControlConfig.Datastore.BackendTLSConfig.CertFile = cfg.DatastoreCertFile
 	serverConfig.ControlConfig.Datastore.BackendTLSConfig.KeyFile = cfg.DatastoreKeyFile

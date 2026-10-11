@@ -4,9 +4,17 @@ package tandem
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	cryptorand "crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -37,9 +45,18 @@ type clusterMember struct {
 	exited chan struct{}
 }
 
+// raftPKI holds the credentials the members present to each other, so a test
+// can dial a Raft listener the way a peer does.
+type raftPKI struct {
+	cert string
+	key  string
+	ca   string
+}
+
 type cluster struct {
 	t       *testing.T
 	members []*clusterMember
+	raftPKI raftPKI
 	stopped sync.Once
 }
 
@@ -52,7 +69,11 @@ type cluster struct {
 // mirrors tests/rqlitecompat: every member is told the full Raft address set
 // and the expected voter count, because either half alone leaves each node
 // bootstrapping as its own single-member cluster.
-func startCluster(t *testing.T, binary string, nodeCount int) *cluster {
+//
+// raftTLS turns on the protection KIP-29 §4 requires between members: without
+// it every committed write crosses the wire in plaintext and any host that
+// reaches the port can join the membership.
+func startCluster(t *testing.T, binary string, nodeCount int, raftTLS bool) *cluster {
 	t.Helper()
 	rqlited := os.Getenv("TANDEM_TEST_RQLITED")
 	if rqlited == "" {
@@ -83,6 +104,13 @@ func startCluster(t *testing.T, binary string, nodeCount int) *cluster {
 	// One PKI for the whole cluster: each member terminates mTLS with the
 	// same CA, which is how the Supervisor wires them in production.
 	certPath, keyPath, clientCfg := testPKI(t)
+	// Likewise one identity for the Raft links, minted before any process
+	// starts so a member cannot come up with a half-configured listener.
+	raftCert, raftKey, raftCA := "", "", ""
+	if raftTLS {
+		raftCert, raftKey, raftCA = testRaftPKI(t)
+		c.raftPKI = raftPKI{cert: raftCert, key: raftKey, ca: raftCA}
+	}
 
 	for _, member := range c.members {
 		logFile, err := os.Create(member.logPath)
@@ -100,6 +128,14 @@ func startCluster(t *testing.T, binary string, nodeCount int) *cluster {
 			rqliteArgs = append(rqliteArgs,
 				"-bootstrap-expect", strconv.Itoa(nodeCount),
 				"-join", strings.Join(raftAddrs, ","),
+			)
+		}
+		if raftTLS {
+			rqliteArgs = append(rqliteArgs,
+				"-node-cert", raftCert,
+				"-node-key", raftKey,
+				"-node-ca-cert", raftCA,
+				"-node-verify-client",
 			)
 		}
 		rqliteArgs = append(rqliteArgs, filepath.Join(member.dir, "rqlite"))
@@ -167,6 +203,69 @@ func startCluster(t *testing.T, binary string, nodeCount int) *cluster {
 		}
 	})
 	return c
+}
+
+// testRaftPKI mints the credentials rqlite's Raft listener presents to the
+// other members.
+//
+// Two things make it different from the leaf the etcd port uses. A peer
+// verifies the certificate against the address it dialled, so the leaf carries
+// the loopback address every member of this fixture is reachable at rather
+// than a name belonging to some other service. And each node is both a server
+// to its peers and a client of theirs, so the leaf needs both usages — a
+// server-only certificate would fail the client half of the handshake.
+func testRaftPKI(t *testing.T) (cert, key, ca string) {
+	t.Helper()
+	dir := t.TempDir()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "tandem raft test CA"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(cryptorand.Reader, template, template, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), cryptorand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "tandem raft node"},
+		NotBefore:    template.NotBefore,
+		NotAfter:     template.NotAfter,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:     []string{"localhost"},
+	}
+	leafDER, err := x509.CreateCertificate(cryptorand.Reader, leaf, template, &leafKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(leafKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(name string, block *pem.Block) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, pem.EncodeToMemory(block), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	return write("node.crt", &pem.Block{Type: "CERTIFICATE", Bytes: leafDER}),
+		write("node.key", &pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+		write("ca.crt", &pem.Block{Type: "CERTIFICATE", Bytes: caDER})
 }
 
 func (c *cluster) client(t *testing.T, member *clusterMember) *clientv3.Client {
@@ -277,7 +376,7 @@ func TestTandemThreeNodeCluster(t *testing.T) {
 	if binary == "" {
 		t.Fatal("set TANDEM_TEST_BINARY to a Linux Tandem executable")
 	}
-	c := startCluster(t, binary, 3)
+	c := startCluster(t, binary, 3, false)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
@@ -356,6 +455,112 @@ func TestTandemThreeNodeCluster(t *testing.T) {
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
+	})
+}
+
+// TestTandemThreeNodeClusterWithRaftTLS is the same formation, with the Raft
+// links between members encrypted and mutually authenticated the way KIP-29
+// §4 requires. A cluster that only forms in plaintext has not demonstrated the
+// property the deployment needs: every committed write crosses that link, and
+// a host that can reach the port can otherwise join the membership.
+func TestTandemThreeNodeClusterWithRaftTLS(t *testing.T) {
+	binary := os.Getenv("TANDEM_TEST_BINARY")
+	if binary == "" {
+		t.Fatal("set TANDEM_TEST_BINARY to a Linux Tandem executable")
+	}
+	c := startCluster(t, binary, 3, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	t.Run("every member sees three voters", func(t *testing.T) {
+		deadline := time.Now().Add(60 * time.Second)
+		for {
+			if nodes := rqliteNodes(t, c.members[0].httpAddr); len(nodes) == 3 {
+				for id, healthy := range nodes {
+					if !healthy {
+						t.Errorf("%s reports %s as a voter that is not reachable", c.members[0].id, id)
+					}
+				}
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("cluster never formed over TLS Raft: %s sees fewer than 3 voters", c.members[0].id)
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+	})
+
+	t.Run("the Raft listener speaks TLS", func(t *testing.T) {
+		// The listener is the thing under test, so it is dialled directly
+		// rather than through rqlite's own client: a successful handshake
+		// proves the link is encrypted, and a peer that cannot present a
+		// certificate signed by the CA must not get one.
+		certificate, err := tls.LoadX509KeyPair(c.raftPKI.cert, c.raftPKI.key)
+		if err != nil {
+			t.Fatalf("load node certificate: %v", err)
+		}
+		pool := x509.NewCertPool()
+		caPEM, err := os.ReadFile(c.raftPKI.ca)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool.AppendCertsFromPEM(caPEM)
+
+		for _, member := range c.members {
+			conn, err := tls.Dial("tcp", member.raftAddr, &tls.Config{
+				RootCAs:      pool,
+				Certificates: []tls.Certificate{certificate},
+				ServerName:   "127.0.0.1",
+				MinVersion:   tls.VersionTLS12,
+			})
+			if err != nil {
+				t.Fatalf("TLS handshake with %s Raft listener: %v", member.id, err)
+			}
+			_ = conn.Close()
+		}
+	})
+
+	t.Run("a peer without a certificate is refused", func(t *testing.T) {
+		pool := x509.NewCertPool()
+		caPEM, err := os.ReadFile(c.raftPKI.ca)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool.AppendCertsFromPEM(caPEM)
+		conn, err := tls.Dial("tcp", c.members[0].raftAddr, &tls.Config{
+			RootCAs:    pool,
+			ServerName: "127.0.0.1",
+			MinVersion: tls.VersionTLS12,
+		})
+		if err == nil {
+			// TLS 1.3 finishes the client handshake before the server's
+			// rejection arrives, so the refusal is visible on the first read.
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := conn.Read(make([]byte, 1)); err == nil {
+				conn.Close()
+				t.Fatal("a peer that presented no certificate was accepted")
+			}
+			conn.Close()
+		}
+	})
+
+	t.Run("a write on one member is readable on another", func(t *testing.T) {
+		writer := c.client(t, c.members[0])
+		reader := c.client(t, c.members[2])
+		if _, err := writer.Put(ctx, "cluster/tls-replicated", "value-from-n1"); err != nil {
+			t.Fatalf("write on %s: %v", c.members[0].id, err)
+		}
+		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+			response, err := reader.Get(ctx, "cluster/tls-replicated")
+			if err == nil && response.Count > 0 {
+				if got := string(response.Kvs[0].Value); got != "value-from-n1" {
+					t.Fatalf("read on %s got %q", c.members[2].id, got)
+				}
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		t.Fatalf("the write on %s never reached %s over TLS Raft", c.members[0].id, c.members[2].id)
 	})
 }
 
