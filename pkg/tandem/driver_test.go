@@ -1,12 +1,135 @@
 package tandem
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
 )
+
+// rqliteServer stands in for the local node's HTTP API. Only the two paths the
+// driver uses matter: the membership it reads before removing, and the removal
+// it then requests.
+func rqliteServer(t *testing.T, membership string, removed *[]string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/nodes":
+			_, _ = w.Write([]byte(membership))
+		case r.URL.Path == "/remove" && r.Method == http.MethodDelete:
+			buf := make([]byte, r.ContentLength)
+			if r.ContentLength > 0 {
+				_, _ = r.Body.Read(buf)
+			}
+			*removed = append(*removed, string(buf))
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+// A member leaving the group is the one membership change k8e has to request
+// itself: joining is rqlite's own operation, but nothing removes a node that
+// simply stops being wanted.
+func TestDriverRemoveSelfTakesTheNodeOutOfTheGroup(t *testing.T) {
+	nodes := func(ids ...string) string {
+		entries := make(map[string]membershipEntry, len(ids))
+		for _, id := range ids {
+			entries[id] = membershipEntry{ID: id, Addr: id + ":4002", Voter: true, Reachable: true}
+		}
+		body, err := json.Marshal(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+
+	newTestDriver := func(t *testing.T, membership string, removed *[]string) *Driver {
+		t.Helper()
+		server := rqliteServer(t, membership, removed)
+		d := NewDriver()
+		d.SetControlConfig(&config.Control{DataDir: t.TempDir(), Runtime: config.NewRuntime(nil)})
+		d.supervisor.cfg = Config{
+			NodeID:      "n2",
+			RqliteHTTP:  strings.TrimPrefix(server.URL, "http://"),
+			RqliteRaft:  "10.0.0.2:4002",
+			RqlitePeers: []string{"10.0.0.1:4002", "10.0.0.2:4002", "10.0.0.3:4002"},
+		}
+		return d
+	}
+
+	t.Run("a member is removed by its node identity", func(t *testing.T) {
+		var removed []string
+		d := newTestDriver(t, nodes("n1", "n2", "n3"), &removed)
+		if err := d.RemoveSelf(context.Background()); err != nil {
+			t.Fatalf("RemoveSelf: %v", err)
+		}
+		if len(removed) != 1 {
+			t.Fatalf("expected one removal request, got %v", removed)
+		}
+		if !strings.Contains(removed[0], `"id":"n2"`) {
+			t.Errorf("removal request does not name this node: %s", removed[0])
+		}
+	})
+
+	// Nothing to remove is a success, not a failure: the postcondition holds.
+	// Reporting an error would make an operator retry a removal that is done.
+	t.Run("a node that is not a member is already out", func(t *testing.T) {
+		var removed []string
+		d := newTestDriver(t, nodes("n1", "n3"), &removed)
+		if err := d.RemoveSelf(context.Background()); err != nil {
+			t.Fatalf("RemoveSelf: %v", err)
+		}
+		if len(removed) != 0 {
+			t.Errorf("a node outside the group must not be removed: %v", removed)
+		}
+	})
+
+	// Removal is a Raft operation, so a group that lost quorum cannot service
+	// it. Attempting it anyway and reporting success would leave the node a
+	// member while telling the caller it is not, which is the worst answer:
+	// the group keeps counting it towards quorum.
+	t.Run("a group without quorum is refused", func(t *testing.T) {
+		// This node and one other are gone: the group has three voters and
+		// can reach one of them, so there is no leader to service the
+		// removal.
+		entries := map[string]membershipEntry{
+			"n1": {ID: "n1", Voter: true, Reachable: false},
+			"n2": {ID: "n2", Voter: true, Reachable: true},
+			"n3": {ID: "n3", Voter: true, Reachable: false},
+		}
+		body, err := json.Marshal(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var removed []string
+		d := newTestDriver(t, string(body), &removed)
+		err = d.RemoveSelf(context.Background())
+		if !errors.Is(err, ErrNoQuorum) {
+			t.Fatalf("RemoveSelf = %v, want ErrNoQuorum", err)
+		}
+		if len(removed) != 0 {
+			t.Errorf("a minority must not be told it removed anything: %v", removed)
+		}
+	})
+
+	t.Run("removal needs a running local node", func(t *testing.T) {
+		d := NewDriver()
+		d.SetControlConfig(&config.Control{DataDir: t.TempDir(), Runtime: config.NewRuntime(nil)})
+		if err := d.RemoveSelf(context.Background()); err == nil {
+			t.Fatal("expected a driver with no running rqlite to refuse")
+		}
+	})
+}
 
 func TestDriverInitializationMarker(t *testing.T) {
 	d := NewDriver()
