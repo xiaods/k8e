@@ -732,7 +732,10 @@ func TestTandemClusterDynamicMembership(t *testing.T) {
 		t.Fatal("set TANDEM_TEST_BINARY to a Linux Tandem executable")
 	}
 	c := startCluster(t, binary, 3, false)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	// Generous because the waits inside each step are: a join, a catch-up read
+	// and a removal each carry their own deadline, and a slow machine can use
+	// all of one before the group settles.
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Second)
 	defer cancel()
 
 	waitForGroup(t, c.members[0], 3, 60*time.Second)
@@ -783,6 +786,16 @@ func TestTandemClusterDynamicMembership(t *testing.T) {
 		if membership.HasVoter("n4") {
 			t.Fatalf("%s is still a voting member after removal: %+v", joined.id, membership.Nodes)
 		}
+		// Stopping the member is the other half of leaving. A node that is no
+		// longer in the configuration but is still running keeps timing out
+		// and calling elections against the group it was removed from, and
+		// that is disruptive enough to stop the group committing: on CI the
+		// group refused writes for as long as the removed member was left up,
+		// while still listing a leader and a quorum. Leaving is therefore
+		// removing the member *and* stopping it, in that order — the order a
+		// node follows when it removes itself on the way down.
+		c.killRqlite(t, joined)
+
 		// Shrinking back to three lowers the quorum again and the survivors
 		// still hold it, so the group must keep serving. The write is retried
 		// rather than asserted once: a membership change is itself a Raft

@@ -213,7 +213,7 @@ waited on, and a node that never appears is reported as a failure to join rather
 than as a healthy single-member cluster.
 
 **Leaving.** `RemoveSelf` is now implemented against rqlite's `DELETE /remove`,
-identified by node id. Three things about it are worth recording, because each
+identified by node id. Four things about it are worth recording, because each
 one turns a silent no-op into a visible success:
 
 - *The body carries the id and nothing else.* Current rqlite parses it strictly
@@ -227,10 +227,21 @@ one turns a silent no-op into a visible success:
   rather than by the response.
 - *A node that is already out is a success.* The postcondition holds, and
   reporting an error would send an operator to retry a removal that is done.
+- *Leaving is removing the member **and** stopping it, in that order.* A node
+  that is no longer in the configuration but is still running keeps timing out
+  and calling elections against the group it was removed from. That is not a
+  theoretical worry: with the removed member left up, the group went on
+  refusing writes for as long as it was watched — ninety seconds, which is
+  rqlite's apply timeout repeated — while still listing a leader and a quorum,
+  so every readiness check passed and nothing was committed. The removal had to
+  be followed by stopping the member before the group served again. That is also
+  the order a node follows when it removes itself on the way down, which is what
+  `RemoveSelf` exists for.
 
 `-raft-cluster-remove-shutdown` is deliberately not enabled: on that setting a
 rolling restart of a three-member group removes each member as it stops, which
-is a membership change nobody asked for. Leaving is explicit.
+is a membership change nobody asked for. Leaving is explicit, and it is two
+steps.
 
 **Quorum.** The quorum is a strict majority, `(N/2)+1`, counted over voting
 members only — a read replica receives the log but does not vote, and counting
@@ -245,8 +256,8 @@ it", because the two point at opposite remedies.
 **Evidence.** `TestTandemClusterDynamicMembership` grows a running three-member
 group to four — asserting the new member is a *voter*, that the quorum rises
 from two to three, and that it can read a value written before it arrived, so a
-join that never received the log is caught — and then removes it and writes
-again. `TestTandemClusterQuorumLoss` takes two of three stores down and requires
+join that never received the log is caught — and then removes it, stops it, and
+writes again. `TestTandemClusterQuorumLoss` takes two of three stores down and requires
 the survivor to stop answering readiness, to report no quorum, and to refuse a
 write; then brings both back and requires the value committed before the loss to
 still be there, because a recovery that came back empty would be data loss
@@ -258,13 +269,16 @@ read replicas, the removal request, and the readiness verdicts on every
 list every voter, reach a quorum of them and still be unable to commit, because
 it has not agreed on a leader. Readiness and a quorum both hold in that window,
 so neither is enough before a write is attempted: the first version of the test
-asserted a write straight after the removal was acknowledged, and on a loaded
-CI runner it saw the group refuse for ten seconds — rqlite's apply timeout —
-because the config change itself is a Raft entry and the group had not applied
-it yet. `waitForGroup` now also requires a leader, and a write made after a
-membership change is retried up to a deadline. What the test asserts is that
-the group resumes serving; asserting that it serves in the same instant was
-measuring the runner, not the group.
+asserted a write straight after the removal was acknowledged, and on CI it saw
+the group refuse for ten seconds — rqlite's apply timeout — because the config
+change is itself a Raft entry and the group had not applied it yet. Retrying
+that write turned ten seconds into ninety, which is the same timeout repeating:
+the refusal was not a window the group was passing through, it was the state the
+group was in. `waitForGroup` now also requires the group to name a leader, and
+the write after a membership change is retried up to a deadline, but neither is
+what fixed it — stopping the removed member was, which is recorded above. What
+the test asserts is that the group resumes serving; asserting that it serves in
+the same instant was measuring the runner, not the group.
 
 Every assumption in this section — the shape of `/nodes`, the strict removal
 body, the 503 without a leader, the shrinking of the group afterwards — was
