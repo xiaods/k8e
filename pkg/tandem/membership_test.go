@@ -29,13 +29,10 @@ func nodesBody(t *testing.T, nodes ...Node) string {
 	t.Helper()
 	entries := make(map[string]membershipEntry, len(nodes))
 	for _, node := range nodes {
-		entries[node.ID] = membershipEntry{
-			ID:        node.ID,
-			Addr:      node.Addr,
-			Voter:     node.Voter,
-			Reachable: node.Reachable,
-			Leader:    node.Leader,
-		}
+		// Converted rather than copied field by field: the two types are the
+		// same shape, and a conversion cannot fall behind when one of them
+		// gains a field.
+		entries[node.ID] = membershipEntry(node)
 	}
 	body, err := json.Marshal(entries)
 	if err != nil {
@@ -44,6 +41,8 @@ func nodesBody(t *testing.T, nodes ...Node) string {
 	return string(body)
 }
 
+// voter builds a member the way /nodes reports it: a voter at an address of
+// its own, reachable or not depending on what the case needs.
 func voter(id string, reachable bool) Node {
 	return Node{ID: id, Addr: id + ".raft:4002", Voter: true, Reachable: reachable}
 }
@@ -112,6 +111,63 @@ func TestMembershipWithoutAMajorityHasNoQuorum(t *testing.T) {
 	}
 }
 
+// The window a caller has to wait out: every voter is listed and reachable,
+// and the group still cannot commit, because it has not agreed on a leader.
+// Readiness and a quorum both hold here, which is why neither is enough on its
+// own before a write is attempted.
+func TestMembershipWithQuorumButNoLeaderCannotServe(t *testing.T) {
+	client := newMembershipClient("http://127.0.0.1:1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(nodesBody(t, voter("n1", true), voter("n2", true), voter("n3", true))))
+	}))
+	defer server.Close()
+	client.base = server.URL
+
+	membership, err := client.nodes(context.Background())
+	if err != nil {
+		t.Fatalf("nodes: %v", err)
+	}
+	if !membership.HasQuorum() {
+		t.Fatal("three of three voters is a quorum, leader or not")
+	}
+	if membership.HasLeader() {
+		t.Fatal("a group that names no leader must not report one")
+	}
+	if _, ok := membership.Leader(); ok {
+		t.Error("Leader() must not return a node when the group has none")
+	}
+}
+
+// The same group once it has settled. Naming the leader is what turns
+// "the members are present" into "the group can serve".
+func TestMembershipNamesItsLeader(t *testing.T) {
+	client := newMembershipClient("http://127.0.0.1:1")
+	leader := voter("n2", true)
+	leader.Leader = true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(nodesBody(t, voter("n1", true), leader, voter("n3", true))))
+	}))
+	defer server.Close()
+	client.base = server.URL
+
+	membership, err := client.nodes(context.Background())
+	if err != nil {
+		t.Fatalf("nodes: %v", err)
+	}
+	node, ok := membership.Leader()
+	if !ok {
+		t.Fatal("the group names a leader")
+	}
+	if node.ID != "n2" {
+		t.Errorf("leader = %q, want n2", node.ID)
+	}
+	if !membership.HasLeader() {
+		t.Error("HasLeader must agree with Leader")
+	}
+}
+
+// A node that is not the leader refuses the request rather than answering with
+// an old membership, and that refusal is an error rather than an empty group.
 func TestMembershipSurfacesAServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "node is not the leader", http.StatusServiceUnavailable)
@@ -197,6 +253,8 @@ func TestWaitUntilVoterWaitsForTheJoin(t *testing.T) {
 	}
 }
 
+// The failure mode the wait exists to catch: a node that was told to join and
+// never did has to be reported as a failure to join, not waited for forever.
 func TestWaitUntilVoterGivesUpOnANodeThatNeverJoins(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(nodesBody(t, voter("n1", true), voter("n2", true))))
@@ -211,6 +269,8 @@ func TestWaitUntilVoterGivesUpOnANodeThatNeverJoins(t *testing.T) {
 	}
 }
 
+// Two of three is a quorum even though one member is down, which is the case a
+// cluster exists for.
 func TestWaitQuorumAcceptsAMajority(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(nodesBody(t, voter("n1", true), voter("n2", true), voter("n3", false))))
@@ -221,6 +281,8 @@ func TestWaitQuorumAcceptsAMajority(t *testing.T) {
 	}
 }
 
+// The case that has to be caught before anything is served: one voter out of
+// three, reported as ErrNoQuorum rather than as a node that could not be read.
 func TestWaitQuorumRejectsAMinority(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(nodesBody(t, voter("n1", true), voter("n2", false), voter("n3", false))))
@@ -295,6 +357,9 @@ func TestReadyDistinguishesAnUnreadableMembership(t *testing.T) {
 	}
 }
 
+// Which configurations make this node part of a group: being told one peer's
+// address is not the same as being told to join it, and only the latter is a
+// cluster this node has to be a member of.
 func TestClustered(t *testing.T) {
 	cases := map[string]struct {
 		cfg  Config

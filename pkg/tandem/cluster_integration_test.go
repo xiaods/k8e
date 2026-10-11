@@ -679,6 +679,13 @@ func membershipOf(t *testing.T, member *clusterMember, timeout time.Duration) Me
 // window is refused — a removal returns "leader not found" and a write never
 // lands. Readiness is what closes that window: rqlite answers it only once it
 // has elected a leader and can reach a quorum.
+//
+// The leader is checked as well, because readiness and a quorum can both hold
+// while the group is mid-election. That window is real and it is where a write
+// is refused, so a caller that writes straight after this returns is not
+// measuring the group, it is measuring whether the election happened to be
+// over. Requiring a leader here is what makes the next write an assertion
+// about the group rather than about scheduling.
 func waitForGroup(t *testing.T, member *clusterMember, want int, timeout time.Duration) Membership {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -686,12 +693,12 @@ func waitForGroup(t *testing.T, member *clusterMember, want int, timeout time.Du
 	for {
 		if rqliteReady(member.httpAddr) {
 			last = membershipOf(t, member, 30*time.Second)
-			if len(last.Voters()) == want && last.HasQuorum() {
+			if len(last.Voters()) == want && last.HasQuorum() && last.HasLeader() {
 				return last
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("%s never reported %d voters with a quorum: %+v", member.id, want, last.Nodes)
+			t.Fatalf("%s never reported %d voters with a quorum and a leader: %+v", member.id, want, last.Nodes)
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
@@ -777,9 +784,21 @@ func TestTandemClusterDynamicMembership(t *testing.T) {
 			t.Fatalf("%s is still a voting member after removal: %+v", joined.id, membership.Nodes)
 		}
 		// Shrinking back to three lowers the quorum again and the survivors
-		// still hold it, so the group must keep serving.
-		if _, err := writer.Put(ctx, "cluster/after-remove", "written-by-three-again"); err != nil {
-			t.Fatalf("the group stopped serving after a removal: %v", err)
+		// still hold it, so the group must keep serving. The write is retried
+		// rather than asserted once: a membership change is itself a Raft
+		// entry, and the group can refuse writes for a moment while it is
+		// applied. What has to hold is that the group resumes serving, not
+		// that it serves in the same instant the removal was acknowledged.
+		deadline := time.Now().Add(90 * time.Second)
+		var lastErr error
+		for {
+			if _, lastErr = writer.Put(ctx, "cluster/after-remove", "written-by-three-again"); lastErr == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the group stopped serving after a removal: %v", lastErr)
+			}
+			time.Sleep(500 * time.Millisecond)
 		}
 	})
 }
@@ -852,15 +871,36 @@ func TestTandemClusterQuorumLoss(t *testing.T) {
 
 		// Recovery that came back empty would be data loss dressed as
 		// availability, so the value committed before the loss has to survive.
-		response, err := clients[0].Get(ctx, "quorum/before-loss")
-		if err != nil || response.Count == 0 {
-			t.Fatalf("the value committed before quorum was lost is gone: %v", err)
+		// The read is retried for the same reason the write below is: a group
+		// that has just re-elected a leader can refuse for a moment, and the
+		// claim being made is about what survives, not about latency.
+		deadline := time.Now().Add(90 * time.Second)
+		var got string
+		var lastErr error
+		for {
+			var response *clientv3.GetResponse
+			response, lastErr = clients[0].Get(ctx, "quorum/before-loss")
+			if lastErr == nil && response.Count > 0 {
+				got = string(response.Kvs[0].Value)
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the value committed before quorum was lost is gone: %v", lastErr)
+			}
+			time.Sleep(500 * time.Millisecond)
 		}
-		if got := string(response.Kvs[0].Value); got != "committed" {
+		if got != "committed" {
 			t.Fatalf("value after recovery = %q", got)
 		}
-		if _, err := clients[0].Put(ctx, "quorum/after-recovery", "accepted"); err != nil {
-			t.Fatalf("the group did not accept a write after recovery: %v", err)
+		writeDeadline := time.Now().Add(90 * time.Second)
+		for {
+			if _, lastErr = clients[0].Put(ctx, "quorum/after-recovery", "accepted"); lastErr == nil {
+				return
+			}
+			if time.Now().After(writeDeadline) {
+				t.Fatalf("the group did not accept a write after recovery: %v", lastErr)
+			}
+			time.Sleep(500 * time.Millisecond)
 		}
 	})
 }

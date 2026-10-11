@@ -254,9 +254,23 @@ dressed as availability. Unit tests cover the quorum table, the exclusion of
 read replicas, the removal request, and the readiness verdicts on every
 `go test`.
 
+**Waiting for a group that can serve, not for one that exists.** A group can
+list every voter, reach a quorum of them and still be unable to commit, because
+it has not agreed on a leader. Readiness and a quorum both hold in that window,
+so neither is enough before a write is attempted: the first version of the test
+asserted a write straight after the removal was acknowledged, and on a loaded
+CI runner it saw the group refuse for ten seconds — rqlite's apply timeout —
+because the config change itself is a Raft entry and the group had not applied
+it yet. `waitForGroup` now also requires a leader, and a write made after a
+membership change is retried up to a deadline. What the test asserts is that
+the group resumes serving; asserting that it serves in the same instant was
+measuring the runner, not the group.
+
 Every assumption in this section — the shape of `/nodes`, the strict removal
 body, the 503 without a leader, the shrinking of the group afterwards — was
-checked against a real three-member rqlited v10.5.3 before being written down.
+checked against a real three-member rqlited before being written down, and the
+suite was then run against **v10.3.6**, the version the CI image pins, rather
+than only against the newest release.
 
 ## Raft mTLS between members
 

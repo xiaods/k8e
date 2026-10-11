@@ -82,6 +82,27 @@ func (m Membership) QuorumError() error {
 	return fmt.Errorf("%w: %d of %d voters reachable, %d needed", ErrNoQuorum, m.Reachable(), len(voters), m.Quorum())
 }
 
+// Leader returns the member the group currently agrees on, if any.
+//
+// A group can list every voter, reach a quorum of them and still have no
+// leader: that is the window during an election, and a write made in it cannot
+// be committed. Naming the leader is what separates "the members are present"
+// from "the group can serve".
+func (m Membership) Leader() (Node, bool) {
+	for _, node := range m.Nodes {
+		if node.Leader {
+			return node, true
+		}
+	}
+	return Node{}, false
+}
+
+// HasLeader reports whether the group has agreed on a leader.
+func (m Membership) HasLeader() bool {
+	_, ok := m.Leader()
+	return ok
+}
+
 // HasVoter reports whether id is a voting member, whether or not the group can
 // reach it. That is the question a removal has to answer: a member that is
 // listed but unreachable still has to be removed, and a member that is not
@@ -118,8 +139,14 @@ const membershipTimeout = 5 * time.Second
 // voters and assuming they are all voters would silently count a read replica.
 const nodesPath = "/nodes?nonvoters"
 
+// removePath is the endpoint that takes a member out of the group. It is only
+// reachable on a node that can commit, which is why a removal is checked
+// against the membership before it is attempted.
 const removePath = "/remove"
 
+// newMembershipClient talks to one node's rqlite HTTP port. Membership is read
+// and changed through the node itself: rqlite forwards a write to the leader,
+// and a node that cannot reach one says so rather than acting on stale state.
 func newMembershipClient(base string) *membershipClient {
 	return &membershipClient{
 		base:   strings.TrimSuffix(base, "/"),
@@ -137,6 +164,11 @@ type membershipEntry struct {
 	Leader    bool   `json:"leader"`
 }
 
+// nodes reads the group as this node currently sees it. Every membership
+// decision — whether a join was committed, whether a majority is held, whether
+// a member is still in the group — is made against a fresh reading rather than
+// a remembered one, because the answer is the one thing that changes underneath
+// a node that is starting, leaving or partitioned.
 func (c *membershipClient) nodes(ctx context.Context) (Membership, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+nodesPath, http.NoBody)
 	if err != nil {
