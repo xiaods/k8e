@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#MISE description="Run a standalone grpc-lite benchmark server"
+#USAGE flag "--host <host>" help="Listen IPv4 address" default="0.0.0.0"
+#USAGE flag "--port <port>" help="Listen port" default="50061"
+#USAGE flag "--reactors <count>" help="Server reactor threads" default="1"
+set -euo pipefail
+
+project_root=$(git rev-parse --show-toplevel)
+zig build -Doptimize=ReleaseFast
+exec "$project_root/zig-out/bin/grpc-lite-benchmark-server" \
+  --host="${usage_host}" --port="${usage_port}" --reactors="${usage_reactors}"

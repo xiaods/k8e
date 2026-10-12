@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+#MISE description="Prepare the pinned gperftools fork for Zig builds"
+set -euo pipefail
+
+url=https://codeload.github.com/fanyang89/gperftools/tar.gz/1a01cd2cf8f7000845d343fa8e0bbac70378858b
+expected_hash=N-V-__8AAGKVkABvsDVHhSU8seHKvtJ8Q23b9Y0OMiFVWt-y
+
+zigfetch_succeeded=false
+if fetch_output=$(zigfetch "$url" 2>&1); then
+  printf '%s\n' "$fetch_output"
+  actual_hash=${fetch_output##*$'\n'}
+  if [[ "$actual_hash" != "$expected_hash" ]]; then
+    printf 'gperftools hash mismatch: expected %s, got %s\n' \
+      "$expected_hash" "$actual_hash" >&2
+    exit 1
+  fi
+  zigfetch_succeeded=true
+else
+  printf '%s\n' "$fetch_output" >&2
+  printf '%s\n' 'zigfetch failed; falling back to a verified local archive' >&2
+fi
+
+cache_root=${ZIG_GLOBAL_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/zig}
+package_cache="$cache_root/p"
+archive="$package_cache/$expected_hash.tar.gz"
+mkdir -p "$package_cache"
+if [[ ! -f "$archive" ]]; then
+  temporary="$archive.tmp.$$"
+  trap 'rm -f "$temporary"' EXIT
+  curl -fsSL -o "$temporary" "$url"
+  mv "$temporary" "$archive"
+  trap - EXIT
+fi
+
+if [[ "$zigfetch_succeeded" != true ]]; then
+  actual_hash=$(zig fetch "$archive")
+  if [[ "$actual_hash" != "$expected_hash" ]]; then
+    printf 'gperftools hash mismatch: expected %s, got %s\n' \
+      "$expected_hash" "$actual_hash" >&2
+    exit 1
+  fi
+  project_package="$(git rev-parse --show-toplevel)/zig-pkg/$expected_hash"
+  if [[ ! -d "$project_package" ]]; then
+    mkdir -p "$(dirname "$project_package")"
+    temporary_package="$project_package.tmp.$$"
+    mkdir "$temporary_package"
+    trap 'rm -rf "$temporary_package"' EXIT
+    tar --extract --gzip --file "$archive" --strip-components=1 --directory "$temporary_package"
+    mv "$temporary_package" "$project_package"
+    trap - EXIT
+  fi
+fi
+
+printf 'Prepared gperftools %s\n' "$expected_hash"

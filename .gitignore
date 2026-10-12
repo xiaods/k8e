@@ -37,4 +37,7 @@ zig-out
 /server
 /sandbox-cli
 /sandboxcli
+/tandem/bin
+/tandem/zig-pkg
+/tandem/a.o
 /.pi/

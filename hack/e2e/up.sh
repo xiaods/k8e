@@ -67,6 +67,13 @@ while IFS= read -r line; do
     docker_args+=("${line}")
 done < <(e2e_profile_docker_args)
 
+if tandem_bin="$(e2e_tandem_binary)"; then
+    e2e_log "mounting tandem binary: ${tandem_bin}"
+    docker_args+=(-v "${tandem_bin}:/usr/local/bin/tandem:ro")
+else
+    e2e_warn "no tandem binary found on host; tandem must be present in container image"
+fi
+
 env_args=()
 if e2e_profile_needs_agent; then
     env_args+=(-e "K8E_E2E_CONTAINERD_ROOT=${E2E_CONTAINERD_ROOT}")
@@ -91,7 +98,7 @@ docker run -d --name "${E2E_CONTAINER}" \
     "${env_args[@]+"${env_args[@]}"}" \
     "${E2E_IMAGE}" \
     /usr/local/bin/k8e server \
-    --cluster-init \
+    --bootstrap \
     --data-dir "${E2E_IN_CONTAINER_DATA_DIR}/data" \
     --write-kubeconfig "${E2E_IN_CONTAINER_KUBECONFIG}" \
     --https-listen-port "${E2E_IN_CONTAINER_API_PORT}" \

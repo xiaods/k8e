@@ -21,7 +21,6 @@ import (
 	"github.com/xiaods/k8e/pkg/bootstrap"
 	"github.com/xiaods/k8e/pkg/clientaccess"
 	"github.com/xiaods/k8e/pkg/daemons/config"
-	"github.com/xiaods/k8e/pkg/etcd"
 	"github.com/xiaods/k8e/pkg/etcdstorage"
 	"github.com/xiaods/k8e/pkg/util"
 	"github.com/xiaods/k8e/pkg/version"
@@ -53,21 +52,24 @@ func (c *Cluster) Bootstrap(ctx context.Context, clusterReset bool) error {
 				}
 				logrus.Warnf("Unable to reconcile with datastore: %v", err)
 			}
-			// In the case of etcd, if the database has been initialized, it doesn't
-			// need to be bootstrapped however we still need to check the database
-			// and reconcile the bootstrap data. Below we're starting a temporary
-			// instance of etcd in the event that etcd certificates are unavailable,
-			// reading the data, and comparing that to the data on disk, all the while
-			// starting normal etcd.
-			if isInitialized {
-				if err := c.reconcileEtcd(ctx); err != nil {
-					logrus.Fatalf("Failed to reconcile with temporary etcd: %v", err)
-				}
-			}
+			// Tandem exposes one stable client endpoint and persists bootstrap
+			// state through rqlite. There is no temporary embedded-etcd
+			// reconciliation path.
 		}
 	}
 
 	if c.shouldBootstrap {
+		// Bootstrap reads and writes bootstrap keys through the datastore, so the
+		// datastore has to be serving before this runs. KIP-29 §4 fixes the order
+		// as rqlite -> compatibility layer -> bootstrap -> kube-apiserver; this
+		// function runs before Cluster.Start, so the managed driver is started
+		// here when bootstrapping is actually going to touch it.
+		if err := c.start(ctx); err != nil {
+			return errors.Wrap(err, "start managed database for bootstrap")
+		}
+		if err := c.startStorage(ctx); err != nil {
+			return errors.Wrap(err, "configure storage client for bootstrap")
+		}
 		return c.bootstrap(ctx)
 	}
 
@@ -75,7 +77,7 @@ func (c *Cluster) Bootstrap(ctx context.Context, clusterReset bool) error {
 }
 
 // shouldBootstrapLoad returns true if we need to load ControlRuntimeBootstrap data again and a second boolean
-// indicating that the server has or has not been initialized, if etcd. This is controlled by a stamp file on
+// indicating whether the Tandem datastore has been initialized. This is controlled by a stamp file on
 // disk that records successful bootstrap using a hash of the join token.
 func (c *Cluster) shouldBootstrapLoad(ctx context.Context) (bool, bool, error) {
 	// Non-nil managedDB indicates that the database is either initialized, initializing, or joining
@@ -398,15 +400,6 @@ func (c *Cluster) httpBootstrap(ctx context.Context) error {
 	return c.ReconcileBootstrapData(ctx, bytes.NewReader(content), &c.config.Runtime.ControlRuntimeBootstrap, true)
 }
 
-func (c *Cluster) retrieveInitializedDBdata(ctx context.Context) (*bytes.Buffer, error) {
-	var buf bytes.Buffer
-	if err := bootstrap.ReadFromDisk(&buf, &c.config.Runtime.ControlRuntimeBootstrap); err != nil {
-		return nil, err
-	}
-
-	return &buf, nil
-}
-
 // bootstrap performs cluster bootstrapping, either via HTTP (for managed databases) or direct load from datastore.
 func (c *Cluster) bootstrap(ctx context.Context) error {
 	c.joining = true
@@ -474,52 +467,4 @@ func ipsTo16Bytes(mySlice []*net.IPNet) {
 	for _, ipNet := range mySlice {
 		ipNet.IP = ipNet.IP.To16()
 	}
-}
-
-// reconcileEtcd starts a temporary single-member etcd cluster using a copy of the
-// etcd database, and uses it to reconcile bootstrap data. This is necessary
-// because the full etcd cluster may not have quorum during startup, but we still
-// need to extract data from the datastore.
-func (c *Cluster) reconcileEtcd(ctx context.Context) error {
-	logrus.Info("Starting temporary etcd to reconcile with datastore")
-
-	tempConfig := config.ETCDConfig{Endpoints: []string{"http://127.0.0.1:2399"}}
-	originalConfig := c.config.Runtime.EtcdConfig
-	c.config.Runtime.EtcdConfig = tempConfig
-	reconcileCtx, cancel := context.WithCancel(ctx)
-
-	defer func() {
-		cancel()
-		c.config.Runtime.EtcdConfig = originalConfig
-	}()
-
-	e := etcd.NewETCD()
-	if err := e.SetControlConfig(c.config); err != nil {
-		return err
-	}
-	if err := e.StartEmbeddedTemporary(reconcileCtx); err != nil {
-		return err
-	}
-
-	for {
-		if err := e.Test(reconcileCtx); err != nil && !errors.Is(err, etcd.ErrNotMember) {
-			logrus.Infof("Failed to test temporary data store connection: %v", err)
-		} else {
-			logrus.Info(e.EndpointName() + " temporary data store connection OK")
-			break
-		}
-
-		select {
-		case <-time.After(5 * time.Second):
-		case <-reconcileCtx.Done():
-			break
-		}
-	}
-
-	data, err := c.retrieveInitializedDBdata(reconcileCtx)
-	if err != nil {
-		return err
-	}
-
-	return c.ReconcileBootstrapData(reconcileCtx, bytes.NewReader(data.Bytes()), &c.config.Runtime.ControlRuntimeBootstrap, false)
 }

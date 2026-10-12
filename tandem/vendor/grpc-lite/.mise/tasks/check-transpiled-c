@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+#MISE description="Build and verify the reproducible generated C bundle"
+set -euo pipefail
+
+project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/grpc-lite-check-transpiled-c.XXXXXX")
+output_dir=${GRPC_LITE_TRANSPILED_C_DIST_DIR:-"$project_root/.zig-cache/transpiled-c-dist"}
+cleanup() {
+    local status=$?
+    rm -rf "$work_dir"
+    return "$status"
+}
+trap cleanup EXIT
+
+diagnose_archive_mismatch() {
+    local first_archive=$1
+    local second_archive=$2
+    local diagnostics_dir="$work_dir/archive-diagnostics"
+    local first_manifest
+    local second_manifest
+
+    mkdir -p "$diagnostics_dir/first" "$diagnostics_dir/second"
+    tar -xzf "$first_archive" -C "$diagnostics_dir/first"
+    tar -xzf "$second_archive" -C "$diagnostics_dir/second"
+    first_manifest=$(find "$diagnostics_dir/first" -type f -name manifest.json -print -quit)
+    second_manifest=$(find "$diagnostics_dir/second" -type f -name manifest.json -print -quit)
+
+    {
+        printf '%s\n' 'Generated archive manifests:'
+        diff -u --label first/manifest.json --label second/manifest.json \
+            "$first_manifest" "$second_manifest" || true
+        (
+            cd "$diagnostics_dir/first"
+            find . -type f -print0 | sort -z | xargs -0 sha256sum
+        ) >"$diagnostics_dir/first-files.sha256"
+        (
+            cd "$diagnostics_dir/second"
+            find . -type f -print0 | sort -z | xargs -0 sha256sum
+        ) >"$diagnostics_dir/second-files.sha256"
+        printf '%s\n' 'Generated archive per-file SHA-256 hashes:'
+        diff -u --label first/files.sha256 --label second/files.sha256 \
+            "$diagnostics_dir/first-files.sha256" \
+            "$diagnostics_dir/second-files.sha256" || true
+    } >&2
+}
+
+if [[ -n "$(git -C "$project_root" ls-files transpiled)" ]]; then
+    printf '%s\n' 'Generated C must not be tracked under transpiled/' >&2
+    exit 1
+fi
+if git -C "$project_root" archive HEAD | tar -tf - | grep -q '^transpiled/'; then
+    printf '%s\n' 'git archive unexpectedly contains transpiled/' >&2
+    exit 1
+fi
+
+rm -rf "$output_dir"
+mkdir -p "$output_dir"
+GRPC_LITE_ZIG_CACHE_DIR="$work_dir/cache-1" \
+    GRPC_LITE_ZIG_GLOBAL_CACHE_DIR="$work_dir/global-cache-1" \
+    "$project_root/tools/package_transpiled_c.sh" "$output_dir"
+archive_1=("$output_dir/"*.tar.gz)
+if [[ ${#archive_1[@]} -ne 1 ]]; then
+    printf '%s\n' 'Packaging did not produce exactly one archive on the first run' >&2
+    exit 1
+fi
+cp "${archive_1[0]}" "$work_dir/first.tar.gz"
+cp "${archive_1[0]}.sha256" "$work_dir/first.tar.gz.sha256"
+
+GRPC_LITE_ZIG_CACHE_DIR="$work_dir/cache-2" \
+    GRPC_LITE_ZIG_GLOBAL_CACHE_DIR="$work_dir/global-cache-2" \
+    "$project_root/tools/package_transpiled_c.sh" "$output_dir"
+archive_2=("$output_dir/"*.tar.gz)
+if [[ ${#archive_2[@]} -ne 1 ]]; then
+    printf '%s\n' 'Packaging did not produce exactly one archive on the second run' >&2
+    exit 1
+fi
+if ! cmp "$work_dir/first.tar.gz" "${archive_2[0]}"; then
+    diagnose_archive_mismatch "$work_dir/first.tar.gz" "${archive_2[0]}"
+    exit 1
+fi
+if ! cmp "$work_dir/first.tar.gz.sha256" "${archive_2[0]}.sha256"; then
+    diff -u --label first.tar.gz.sha256 --label second.tar.gz.sha256 \
+        "$work_dir/first.tar.gz.sha256" "${archive_2[0]}.sha256" >&2 || true
+    exit 1
+fi
+(
+    cd "$output_dir"
+    sha256sum --check "$(basename "${archive_2[0]}").sha256"
+)
+
+printf 'Reproducible transpiled C bundle: %s\n' "${archive_2[0]}"

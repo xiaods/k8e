@@ -46,10 +46,48 @@ type TLSConfig struct {
 
 // DatastoreConfig holds configuration for the etcd datastore.
 type DatastoreConfig struct {
-	Endpoint         string
-	BackendTLSConfig TLSConfig
-	ServerTLSConfig  TLSConfig
-	NotifyInterval   time.Duration
+	// Backend selects the managed datastore driver by name (for example
+	// "etcd" or "tandem"). Empty means the default driver, which remains
+	// embedded etcd until issue #592's M3 migration gate.
+	Backend         string
+	TandemBootstrap bool
+	TandemJoin      string
+	// TandemNodeID is this node's rqlite member identity and its lease-owner
+	// identity. It must be unique across a cluster: two members sharing one
+	// cannot form a Raft membership, and two lease owners sharing one string
+	// defeat the single-expiry-owner claim. Empty falls back to the hostname,
+	// which is a guess rather than a guarantee.
+	TandemNodeID string
+	// TandemRaftPeers is the Raft address of every voting member, this node
+	// included. rqlite's automatic clustering needs the full set on every
+	// node. Empty means a single-node deployment.
+	TandemRaftPeers []string
+	// TandemBootstrapExpect is the number of voters to wait for. Zero derives
+	// it from the peer list, and an empty peer list means single-node.
+	TandemBootstrapExpect int
+	// TandemRaftPort overrides the Raft listener port, which several nodes on
+	// one host need. Empty keeps the default.
+	TandemRaftPort string
+	// TandemRaftCert, TandemRaftKey and TandemRaftCA protect the rqlite Raft
+	// listener between members. Empty means K8E issues a node certificate for
+	// the advertised Raft address from its own etcd peer CA; set all three to
+	// supply one instead. A partial set is refused rather than downgraded to
+	// plaintext, because every committed write crosses that link.
+	TandemRaftCert string
+	TandemRaftKey  string
+	TandemRaftCA   string
+	// TandemRaftVerifyClient requires a peer to present a certificate signed
+	// by the CA, which is what makes the listener mutually authenticated
+	// instead of merely encrypted.
+	TandemRaftVerifyClient bool
+	// TandemRaftServerName names the host a peer's certificate must carry.
+	// Raft members dial each other by address, so without it every member
+	// needs an IP SAN of its own.
+	TandemRaftServerName string
+	Endpoint             string
+	BackendTLSConfig     TLSConfig
+	ServerTLSConfig      TLSConfig
+	NotifyInterval       time.Duration
 }
 
 // ETCDConfig holds runtime etcd connection information.
@@ -260,22 +298,25 @@ type Control struct {
 	// The port which custom k8e API runs on
 	SupervisorPort int
 	// The port which kube-apiserver runs on
-	APIServerPort            int
-	APIServerBindAddress     string
-	AgentToken               string `json:"-"`
-	Token                    string `json:"-"`
-	ServiceNodePortRange     *utilnet.PortRange
-	KubeConfigOutput         string
-	KubeConfigMode           string
-	KubeConfigGroup          string
-	HelmJobImage             string
-	DataDir                  string
-	Datastore                DatastoreConfig `json:"-"`
-	Disables                 map[string]bool
-	DisableAgent             bool
+	APIServerPort        int
+	APIServerBindAddress string
+	AgentToken           string `json:"-"`
+	Token                string `json:"-"`
+	ServiceNodePortRange *utilnet.PortRange
+	KubeConfigOutput     string
+	KubeConfigMode       string
+	KubeConfigGroup      string
+	HelmJobImage         string
+	DataDir              string
+	Datastore            DatastoreConfig `json:"-"`
+	Disables             map[string]bool
+	DisableAgent         bool
+	// Deprecated internal fields retained only while the legacy snapshot
+	// package is removed; no CLI path sets these values.
+	DisableETCD              bool
+	ClusterInit              bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
-	DisableETCD              bool
 	DisableScheduler         bool
 	Rootless                 bool
 	ExtraAPIArgs             []string
@@ -289,7 +330,6 @@ type Control struct {
 	DefaultLocalStoragePath  string
 	Skips                    map[string]bool
 	SystemDefaultRegistry    string
-	ClusterInit              bool
 	ClusterReset             bool
 	ClusterResetRestorePath  string
 	MinTLSVersion            string
@@ -437,6 +477,16 @@ type ControlRuntime struct {
 	PeerServerClientETCDKey  string
 	ClientETCDCert           string
 	ClientETCDKey            string
+
+	// TandemRaftNodeCert and TandemRaftNodeKey are the credentials the rqlite
+	// Raft listener on this node presents to its peers. They are issued from
+	// ETCDPeerCA — which every server already shares — and carry the advertised
+	// Raft address as a SAN, because a peer verifies the certificate against
+	// the address it dialled. They are deliberately not part of
+	// ControlRuntimeBootstrap: they are per-node, so they must not be copied
+	// to a joining server.
+	TandemRaftNodeCert string
+	TandemRaftNodeKey  string
 
 	K8e        *k8e.Factory
 	Core       *core.Factory

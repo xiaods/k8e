@@ -1687,32 +1687,6 @@ func backupDirWithRetention(dir string, maxBackupRetention int) (string, error) 
 	return backupDir, nil
 }
 
-// GetAPIServerURLsFromETCD will try to fetch the version.Program/apiaddresses key from etcd
-// and unmarshal it to a list of apiserver endpoints.
-func GetAPIServerURLsFromETCD(ctx context.Context, cfg *config.Control) ([]string, error) {
-	cl, conn, err := getClient(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-
-	etcdResp, err := cl.KV.Get(ctx, AddressKey)
-	if err != nil {
-		return nil, err
-	}
-
-	if etcdResp.Count == 0 || len(etcdResp.Kvs[0].Value) == 0 {
-		return nil, ErrAddressNotSet
-	}
-
-	var addresses []string
-	if err := json.Unmarshal(etcdResp.Kvs[0].Value, &addresses); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal apiserver addresses from etcd: %v", err)
-	}
-
-	return addresses, nil
-}
-
 // GetMembersClientURLs will list through the member lists in etcd and return
 // back a combined list of client urls for each member in the cluster
 func (e *ETCD) GetMembersClientURLs(ctx context.Context) ([]string, error) {
