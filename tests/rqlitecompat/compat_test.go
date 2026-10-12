@@ -10,10 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	compat "github.com/xiaods/k8e/pkg/rqlitecompat"
 )
 
 // bootstrap starts a cluster and returns a client, a store and the cluster.
-func bootstrap(t *testing.T, nodes int) (*Cluster, *Client, *Store) {
+func bootstrap(t *testing.T, nodes int) (*Cluster, *compat.Client, *Store) {
 	t.Helper()
 	cluster := StartCluster(t, nodes)
 	client := cluster.Client()
@@ -33,7 +35,7 @@ func TestSchemaBootstrapIsIdempotentAndBlobsRoundTrip(t *testing.T) {
 
 // assertBootstrapIsIdempotent re-runs the schema bootstrap and checks that a
 // second run resets neither the revision counter nor the schema row.
-func assertBootstrapIsIdempotent(ctx context.Context, t *testing.T, client *Client, store *Store) {
+func assertBootstrapIsIdempotent(ctx context.Context, t *testing.T, client *compat.Client, store *Store) {
 	t.Helper()
 	requireNoError(t, "second bootstrap", Bootstrap(ctx, client))
 
@@ -190,7 +192,7 @@ func TestTxnResponseComesFromTheCommittingTransaction(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	racer := NewStore(NewClient(cluster.Endpoints()...))
+	racer := NewStore(compat.NewClient(cluster.Endpoints()...))
 	var racing atomic.Bool
 	racing.Store(true)
 	racerErr := make(chan error, 1)
@@ -362,7 +364,7 @@ func TestLinearizableReadFromEveryNode(t *testing.T) {
 
 	recorder := newRecordingTransport()
 	for _, n := range cluster.Nodes() {
-		nodeClient := NewClient(n.Endpoint())
+		nodeClient := compat.NewClient(n.Endpoint())
 		nodeClient.SetTransport(recorder)
 		kv, revision, err := NewStore(nodeClient).Range(ctx, key)
 		requireNoError(t, fmt.Sprintf("read via %s", n.ID), err)
@@ -468,7 +470,7 @@ func TestLeaderSwitchKeepsAcknowledgedWrites(t *testing.T) {
 // writeWorker writes perWorker distinct keys through its own adapter client and
 // records every acknowledgement.
 func writeWorker(ctx context.Context, endpoints []string, worker, perWorker int, acks *ackLog) error {
-	workerStore := NewStore(NewClient(endpoints...))
+	workerStore := NewStore(compat.NewClient(endpoints...))
 	for i := 0; i < perWorker; i++ {
 		requestID := fmt.Sprintf("switch-%d-%d", worker, i)
 		key := []byte(fmt.Sprintf("/registry/k8e/switch/w%d/%03d", worker, i))
@@ -530,7 +532,7 @@ func assertAcknowledgedWritesReadable(ctx context.Context, t *testing.T, store *
 
 // assertRestartedNodeCaughtUp restarts the killed node, waits for it to apply
 // the new leader's index and reads the first acknowledged write from it.
-func assertRestartedNodeCaughtUp(ctx context.Context, t *testing.T, cluster *Cluster, client *Client, killed, newLeader *Node, collected map[string]ack) {
+func assertRestartedNodeCaughtUp(ctx context.Context, t *testing.T, cluster *Cluster, client *compat.Client, killed, newLeader *Node, collected map[string]ack) {
 	t.Helper()
 	cluster.Restart(killed)
 	status, err := client.Status(ctx, newLeader.Endpoint())
@@ -538,7 +540,7 @@ func assertRestartedNodeCaughtUp(ctx context.Context, t *testing.T, cluster *Clu
 	requireNoError(t, "the restarted node did not catch up", cluster.waitForNodeCatchUp(ctx, killed, status.Store.DBAppliedIndex))
 
 	first := collected["switch-0-0"]
-	kv, revision, err := NewStore(NewClient(killed.Endpoint())).Range(ctx, first.key)
+	kv, revision, err := NewStore(compat.NewClient(killed.Endpoint())).Range(ctx, first.key)
 	requireNoError(t, "read from the restarted node", err)
 	requireTrue(t, fmt.Sprintf("read from the restarted node = exists=%v mod=%d revision=%d, want the acknowledged %q@%d",
 		kv.Exists, kv.ModRevision, revision, first.requestID, first.revision),
@@ -670,7 +672,7 @@ func assertQuorumlessWriteFails(ctx context.Context, t *testing.T, surviving *No
 	defer cancel()
 
 	started := time.Now()
-	_, err := NewStore(NewClient(surviving.Endpoint())).TxnCAS(shortCtx, CASRequest{
+	_, err := NewStore(compat.NewClient(surviving.Endpoint())).TxnCAS(shortCtx, CASRequest{
 		RequestID: "quorum-2",
 		Key:       failedKey,
 		Value:     []byte("never"),

@@ -91,6 +91,16 @@ type TxnResult struct {
 	Responses []OpResponse
 }
 
+// txnRef records the op that produced a response row and where that row lands
+// in the transaction's statement list, so the response can be rebuilt in the
+// order the client sent the ops.
+type txnRef struct {
+	kind    OpKind
+	success bool
+	op      Op
+	result  int
+}
+
 // Txn applies compares plus the taken branch's ops inside one rqlite
 // transaction. Compares are evaluated as SQL over the pre-txn state, the
 // branch is pinned in txn_ctx, and every mutation of the branch shares one
@@ -104,61 +114,17 @@ func (s *Store) Txn(ctx context.Context, req TxnRequest) (*TxnResult, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	passedExpr, compareParams := compareExpr(req.Compares)
-	stmts := []Statement{
-		{SQL: `DELETE FROM txn_ctx`},
-		{SQL: `INSERT INTO txn_ctx(id, passed, rev) SELECT 1, CASE WHEN ` + passedExpr + ` THEN 1 ELSE 0 END, ` + revisionExpr + ` + 1`,
-			Params: compareParams},
-	}
-
-	type ref struct {
-		kind    OpKind
-		success bool
-		op      Op
-		result  int
-	}
-	var refs []ref
-
-	appendOps := func(ops []Op, success bool) error {
-		guard := `(SELECT passed FROM txn_ctx WHERE id = 1) = 0`
-		if success {
-			guard = `(SELECT passed FROM txn_ctx WHERE id = 1) = 1`
-		}
-		for _, op := range ops {
-			switch op.Kind {
-			case OpRange:
-				rangeStmts, err := rangeStatements(*op.Range, current, current, guard)
-				if err != nil {
-					return err
-				}
-				stmts = append(stmts, rangeStmts...)
-				refs = append(refs, ref{kind: OpRange, success: success, op: op, result: len(stmts) - 1})
-			case OpPut:
-				core, prevIdx := putCore(*op.Put, txnRevExpr, guard)
-				stmts = append(stmts, core...)
-				refs = append(refs, ref{kind: OpPut, success: success, op: op, result: len(stmts) - len(core) + prevIdx})
-			case OpDelete:
-				core, prevIdx := deleteCore(*op.Delete, txnRevExpr, guard)
-				stmts = append(stmts, core...)
-				refs = append(refs, ref{kind: OpDelete, success: success, op: op, result: len(stmts) - len(core) + prevIdx})
-			}
-		}
-		return nil
-	}
-	if err := appendOps(req.Success, true); err != nil {
+	stmts, refs, err := buildTxnStatements(req, current)
+	if err != nil {
 		return nil, err
 	}
-	if err := appendOps(req.Failure, false); err != nil {
-		return nil, err
-	}
-
-	stmts = append(stmts, Statement{SQL: bumpTxnSQL})
-	stateIdx := len(stmts)
-	stmts = append(stmts, Statement{SQL: `SELECT passed, rev FROM txn_ctx WHERE id = 1`})
-	revIdx := len(stmts)
-	stmts = append(stmts, Statement{SQL: readRevisionSQL})
-
+	// The branch state and the revision the transaction committed at are the
+	// last two statements of the list.
+	stmts = append(stmts,
+		Statement{SQL: bumpTxnSQL},
+		Statement{SQL: `SELECT passed, rev FROM txn_ctx WHERE id = 1`},
+		Statement{SQL: readRevisionSQL},
+	)
 	resp, err := s.client.Write(ctx, stmts...)
 	if err != nil {
 		return nil, err
@@ -166,55 +132,159 @@ func (s *Store) Txn(ctx context.Context, req TxnRequest) (*TxnResult, error) {
 	if len(resp.Results) != len(stmts) {
 		return nil, &Err{Message: fmt.Sprintf("txn response has %d results, want %d", len(resp.Results), len(stmts))}
 	}
-
-	state, err := resp.Results[stateIdx].row(0)
+	succeeded, err := txnSucceeded(resp.Results[len(stmts)-2])
 	if err != nil {
 		return nil, err
 	}
-	rev, err := readRevisionResult(resp.Results[revIdx])
+	rev, err := readRevisionResult(resp.Results[len(stmts)-1])
 	if err != nil {
 		return nil, err
 	}
-	result := &TxnResult{Succeeded: state.int("passed") == 1, Revision: rev}
+	responses, err := decodeTxnResponses(resp, refs, succeeded, rev)
+	if err != nil {
+		return nil, err
+	}
+	return &TxnResult{Succeeded: succeeded, Revision: rev, Responses: responses}, nil
+}
 
+// buildTxnStatements renders the compares and both branches as the statement
+// list of one transaction: the branch predicate is a SQL guard, so the ops of
+// the branch that did not run are no-ops.
+func buildTxnStatements(req TxnRequest, current int64) ([]Statement, []txnRef, error) {
+	passedExpr, compareParams := compareExpr(req.Compares)
+	stmts := []Statement{
+		{SQL: `DELETE FROM txn_ctx`},
+		{SQL: `INSERT INTO txn_ctx(id, passed, rev) SELECT 1, CASE WHEN ` + passedExpr + ` THEN 1 ELSE 0 END, ` + revisionExpr + ` + 1`,
+			Params: compareParams},
+	}
+	thenStmts, thenRefs, err := branchStatements(req.Success, true, current, len(stmts))
+	if err != nil {
+		return nil, nil, err
+	}
+	stmts = append(stmts, thenStmts...)
+	elseStmts, elseRefs, err := branchStatements(req.Failure, false, current, len(stmts))
+	if err != nil {
+		return nil, nil, err
+	}
+	return append(stmts, elseStmts...), append(thenRefs, elseRefs...), nil
+}
+
+// branchStatements renders one branch's ops behind the branch guard. offset is
+// the index the branch's first statement gets in the transaction, which is
+// what turns an op's local result index into a response index.
+func branchStatements(ops []Op, success bool, current int64, offset int) ([]Statement, []txnRef, error) {
+	guard := `(SELECT passed FROM txn_ctx WHERE id = 1) = 0`
+	if success {
+		guard = `(SELECT passed FROM txn_ctx WHERE id = 1) = 1`
+	}
+	var stmts []Statement
+	var refs []txnRef
+	for _, op := range ops {
+		core, resultIdx, err := opStatements(op, current, guard)
+		if err != nil {
+			return nil, nil, err
+		}
+		stmts = append(stmts, core...)
+		refs = append(refs, txnRef{kind: op.Kind, success: success, op: op,
+			result: offset + len(stmts) - len(core) + resultIdx})
+	}
+	return stmts, refs, nil
+}
+
+// opStatements renders one op of a branch and reports the index of the
+// statement that carries the op's response row inside the returned list.
+func opStatements(op Op, current int64, guard string) ([]Statement, int, error) {
+	switch op.Kind {
+	case OpRange:
+		stmts, err := rangeStatements(*op.Range, current, current, guard)
+		if err != nil {
+			return nil, 0, err
+		}
+		return stmts, len(stmts) - 1, nil
+	case OpPut:
+		stmts, prevIdx := putCore(*op.Put, txnRevExpr, guard)
+		return stmts, prevIdx, nil
+	case OpDelete:
+		stmts, prevIdx := deleteCore(*op.Delete, txnRevExpr, guard)
+		return stmts, prevIdx, nil
+	default:
+		return nil, 0, unknownTxnOp(op.Kind)
+	}
+}
+
+// txnSucceeded reports whether the transaction took the then branch.
+func txnSucceeded(res StatementResult) (bool, error) {
+	state, err := res.row(0)
+	if err != nil {
+		return false, err
+	}
+	return state.int("passed") == 1, nil
+}
+
+// decodeTxnResponses rebuilds the response ops of the executed branch in the
+// order the client sent them.
+func decodeTxnResponses(resp Response, refs []txnRef, succeeded bool, rev int64) ([]OpResponse, error) {
+	var out []OpResponse
 	for _, r := range refs {
-		if r.success != result.Succeeded {
+		if r.success != succeeded {
 			continue
 		}
-		switch r.kind {
-		case OpRange:
-			rr, err := decodeRange(resp.Results[r.result], *r.op.Range)
-			if err != nil {
-				return nil, err
-			}
-			rr.Revision = rev
-			result.Responses = append(result.Responses, OpResponse{Kind: OpRange, Range: rr})
-		case OpPut:
-			prev, err := firstKV(resp.Results[r.result])
-			if err != nil {
-				return nil, err
-			}
-			if (r.op.Put.IgnoreValue || r.op.Put.IgnoreLease) && prev == nil {
-				return nil, rpctypes.ErrGRPCKeyNotFound
-			}
-			// The previous KV is only part of the response when the op asked
-			// for it, exactly like etcd's txn put (etcdserver/txn/put.go).
-			if !r.op.Put.PrevKv {
-				prev = nil
-			}
-			result.Responses = append(result.Responses, OpResponse{Kind: OpPut, Put: &PutResult{PrevKV: prev, Revision: rev}})
-		case OpDelete:
-			prev, err := kvsFromResult(resp.Results[r.result])
-			if err != nil {
-				return nil, err
-			}
-			if !r.op.Delete.PrevKv {
-				prev = nil
-			}
-			result.Responses = append(result.Responses, OpResponse{Kind: OpDelete, Delete: &DeleteResult{Deleted: int64(len(prev)), PrevKVs: prev, Revision: rev}})
+		op, err := decodeTxnOp(resp.Results[r.result], r, rev)
+		if err != nil {
+			return nil, err
 		}
+		out = append(out, op)
 	}
-	return result, nil
+	return out, nil
+}
+
+func decodeTxnOp(res StatementResult, r txnRef, rev int64) (OpResponse, error) {
+	switch r.kind {
+	case OpRange:
+		return decodeTxnRange(res, *r.op.Range, rev)
+	case OpPut:
+		return decodeTxnPut(res, *r.op.Put, rev)
+	case OpDelete:
+		return decodeTxnDelete(res, *r.op.Delete, rev)
+	default:
+		return OpResponse{}, unknownTxnOp(r.kind)
+	}
+}
+
+func decodeTxnRange(res StatementResult, opts RangeOptions, rev int64) (OpResponse, error) {
+	rr, err := decodeRange(res, opts)
+	if err != nil {
+		return OpResponse{}, err
+	}
+	rr.Revision = rev
+	return OpResponse{Kind: OpRange, Range: rr}, nil
+}
+
+func decodeTxnPut(res StatementResult, opts PutOptions, rev int64) (OpResponse, error) {
+	prev, err := firstKV(res)
+	if err != nil {
+		return OpResponse{}, err
+	}
+	if (opts.IgnoreValue || opts.IgnoreLease) && prev == nil {
+		return OpResponse{}, rpctypes.ErrGRPCKeyNotFound
+	}
+	// The previous KV is only part of the response when the op asked for it,
+	// exactly like etcd's txn put (etcdserver/txn/put.go).
+	if !opts.PrevKv {
+		prev = nil
+	}
+	return OpResponse{Kind: OpPut, Put: &PutResult{PrevKV: prev, Revision: rev}}, nil
+}
+
+func decodeTxnDelete(res StatementResult, opts DeleteOptions, rev int64) (OpResponse, error) {
+	prev, err := kvsFromResult(res)
+	if err != nil {
+		return OpResponse{}, err
+	}
+	if !opts.PrevKv {
+		prev = nil
+	}
+	return OpResponse{Kind: OpDelete, Delete: &DeleteResult{Deleted: int64(len(prev)), PrevKVs: prev, Revision: rev}}, nil
 }
 
 // validateTxn rejects requests exactly the way etcd's v3rpc layer does before
@@ -222,7 +292,21 @@ func (s *Store) Txn(ctx context.Context, req TxnRequest) (*TxnResult, error) {
 // and rejects the shapes this layer deliberately does not implement with an
 // explicit error instead of a silently wrong result.
 func validateTxn(req TxnRequest) error {
-	// etcd measures the transaction size as the largest of the three lists.
+	if err := checkTxnSize(req); err != nil {
+		return err
+	}
+	if err := checkTxnCompares(req.Compares); err != nil {
+		return err
+	}
+	if err := checkTxnBranch(req.Success); err != nil {
+		return err
+	}
+	return checkTxnBranch(req.Failure)
+}
+
+// checkTxnSize mirrors etcd's op limit: the transaction size is the largest of
+// the three lists.
+func checkTxnSize(req TxnRequest) error {
 	opc := len(req.Compares)
 	if opc < len(req.Success) {
 		opc = len(req.Success)
@@ -233,8 +317,11 @@ func validateTxn(req TxnRequest) error {
 	if opc > MaxTxnOps {
 		return rpctypes.ErrGRPCTooManyOps
 	}
+	return nil
+}
 
-	for _, c := range req.Compares {
+func checkTxnCompares(compares []Compare) error {
+	for _, c := range compares {
 		if len(c.Key) == 0 {
 			return rpctypes.ErrGRPCEmptyKey
 		}
@@ -242,48 +329,67 @@ func validateTxn(req TxnRequest) error {
 			return status.Error(codes.Unimplemented, "etcdserver: compare over a range is not supported by the rqlite compat layer")
 		}
 	}
-	checkOp := func(op Op) error {
-		switch op.Kind {
-		case OpRange:
-			if op.Range == nil {
-				return status.Error(codes.InvalidArgument, "etcdserver: nil range op")
-			}
-			if len(op.Range.Key) == 0 {
-				return rpctypes.ErrGRPCEmptyKey
-			}
-			if op.Range.Revision != 0 {
-				return status.Error(codes.Unimplemented, "etcdserver: a range op inside a txn can not specify a revision in the rqlite compat layer")
-			}
-		case OpPut:
-			if op.Put == nil {
-				return status.Error(codes.InvalidArgument, "etcdserver: nil put op")
-			}
-			if err := checkPutRequest(*op.Put); err != nil {
-				return err
-			}
-		case OpDelete:
-			if op.Delete == nil {
-				return status.Error(codes.InvalidArgument, "etcdserver: nil delete op")
-			}
-			if len(op.Delete.Key) == 0 {
-				return rpctypes.ErrGRPCEmptyKey
-			}
-		}
-		return nil
-	}
-	for _, ops := range [][]Op{req.Success, req.Failure} {
-		for _, op := range ops {
-			if err := checkOp(op); err != nil {
-				return err
-			}
-		}
-		// Overlapping writes in the same branch are rejected; the then/else
-		// branches are mutually exclusive, so a key may appear in both.
-		if err := checkIntervals(ops); err != nil {
+	return nil
+}
+
+// checkTxnBranch validates one branch and rejects overlapping writes in it. The
+// then/else branches are mutually exclusive, so a key may appear in both.
+func checkTxnBranch(ops []Op) error {
+	for _, op := range ops {
+		if err := checkTxnOp(op); err != nil {
 			return err
 		}
 	}
+	return checkIntervals(ops)
+}
+
+func checkTxnOp(op Op) error {
+	switch op.Kind {
+	case OpRange:
+		return checkTxnRangeOp(op.Range)
+	case OpPut:
+		return checkTxnPutOp(op.Put)
+	case OpDelete:
+		return checkTxnDeleteOp(op.Delete)
+	default:
+		return unknownTxnOp(op.Kind)
+	}
+}
+
+func checkTxnRangeOp(r *RangeOptions) error {
+	if r == nil {
+		return status.Error(codes.InvalidArgument, "etcdserver: nil range op")
+	}
+	if len(r.Key) == 0 {
+		return rpctypes.ErrGRPCEmptyKey
+	}
+	if r.Revision != 0 {
+		return status.Error(codes.Unimplemented, "etcdserver: a range op inside a txn can not specify a revision in the rqlite compat layer")
+	}
 	return nil
+}
+
+func checkTxnPutOp(p *PutOptions) error {
+	if p == nil {
+		return status.Error(codes.InvalidArgument, "etcdserver: nil put op")
+	}
+	return checkPutRequest(*p)
+}
+
+func checkTxnDeleteOp(d *DeleteOptions) error {
+	if d == nil {
+		return status.Error(codes.InvalidArgument, "etcdserver: nil delete op")
+	}
+	if len(d.Key) == 0 {
+		return rpctypes.ErrGRPCEmptyKey
+	}
+	return nil
+}
+
+// unknownTxnOp is the error for an op kind this layer never builds; it exists so
+// an unknown kind fails loudly instead of silently dropping the op.
+func unknownTxnOp(kind OpKind) error {
+	return status.Errorf(codes.InvalidArgument, "etcdserver: unknown txn op kind %d", kind)
 }
 
 // checkIntervals reports whether one branch puts and deletes overlap, the way

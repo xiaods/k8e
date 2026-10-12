@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	compat "github.com/xiaods/k8e/pkg/rqlitecompat"
 )
 
 // KV is a key-value entry as stored by the adapter. Exists is false for a
@@ -47,14 +49,14 @@ type CASResult struct {
 
 // Store is the prototype adapter: the etcd-shaped operations on top of rqlite.
 type Store struct {
-	client     *Client
+	client     *compat.Client
 	retryDelay time.Duration
 	timeout    time.Duration
 }
 
 // NewStore wraps a client. The retry budget bounds every operation so a
 // cluster without a leader cannot turn into an unbounded retry loop.
-func NewStore(c *Client) *Store {
+func NewStore(c *compat.Client) *Store {
 	return &Store{
 		client:     c,
 		retryDelay: 100 * time.Millisecond,
@@ -63,7 +65,7 @@ func NewStore(c *Client) *Store {
 }
 
 // Client exposes the underlying rqlite client (request counters, status).
-func (s *Store) Client() *Client { return s.client }
+func (s *Store) Client() *compat.Client { return s.client }
 
 // TxnCAS runs the compare, the mutation, the revision allocation, the history
 // write and the response read as one rqlite transaction — a single
@@ -82,20 +84,20 @@ func (s *Store) TxnCAS(ctx context.Context, req CASRequest) (CASResult, error) {
 	}
 	params := map[string]any{
 		"rid": req.RequestID,
-		"key": Blob(req.Key),
+		"key": compat.Blob(req.Key),
 	}
 
-	stmts := []Statement{
+	stmts := []compat.Statement{
 		{SQL: `INSERT INTO applied_requests(request_id, kind, outcome, revision)
 		       VALUES(:rid, :kind, 'pending', 0)
 		       ON CONFLICT(request_id) DO NOTHING`, Params: withKind(params, kind)},
 	}
 	stmts = append(stmts, mutationStatements(req, params)...)
 	stmts = append(stmts,
-		Statement{SQL: historyStatement, Params: params},
-		Statement{SQL: recordOutcomeStatement, Params: params},
-		Statement{SQL: bumpRevisionStatement, Params: params},
-		Statement{SQL: readOutcomeStatement, Params: params},
+		compat.Statement{SQL: historyStatement, Params: params},
+		compat.Statement{SQL: recordOutcomeStatement, Params: params},
+		compat.Statement{SQL: bumpRevisionStatement, Params: params},
+		compat.Statement{SQL: readOutcomeStatement, Params: params},
 	)
 
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
@@ -109,7 +111,7 @@ func (s *Store) TxnCAS(ctx context.Context, req CASRequest) (CASResult, error) {
 	// results[0] is the request-identity insert: rows_affected == 0 means the
 	// request id was already recorded, so this attempt was a replay.
 	deduped := resp.Results[0].RowsAffected == 0
-	outcome, err := resp.Results[len(resp.Results)-1].row(0)
+	outcome, err := resultRow(resp.Results[len(resp.Results)-1], 0)
 	if err != nil {
 		return CASResult{}, fmt.Errorf("read txn outcome: %w", err)
 	}
@@ -140,11 +142,11 @@ func (s *Store) Range(ctx context.Context, key []byte) (KV, int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	resp, err := s.client.Read(ctx, Statement{SQL: rangeStatement, Params: map[string]any{"key": Blob(key)}})
+	resp, err := s.client.Read(ctx, compat.Statement{SQL: rangeStatement, Params: map[string]any{"key": compat.Blob(key)}})
 	if err != nil {
 		return KV{}, 0, err
 	}
-	row, err := resp.Results[0].row(0)
+	row, err := resultRow(resp.Results[0], 0)
 	if err != nil {
 		return KV{}, 0, fmt.Errorf("read key: %w", err)
 	}
@@ -166,11 +168,11 @@ func (s *Store) RangePrefix(ctx context.Context, prefix []byte, limit int64) ([]
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	params := map[string]any{"start": Blob(prefix), "limit": limit, "end": nil}
+	params := map[string]any{"start": compat.Blob(prefix), "limit": limit, "end": nil}
 	if end := prefixEnd(prefix); end != nil {
-		params["end"] = Blob(end)
+		params["end"] = compat.Blob(end)
 	}
-	resp, err := s.client.Read(ctx, Statement{
+	resp, err := s.client.Read(ctx, compat.Statement{
 		SQL: `SELECT (SELECT value FROM k8e_compat_meta WHERE name = 'revision') AS revision,
 		             key, create_revision, mod_revision, version, value
 		      FROM kv
@@ -187,7 +189,7 @@ func (s *Store) RangePrefix(ctx context.Context, prefix []byte, limit int64) ([]
 	entries := make([]KV, 0, len(result.Values))
 	var revision int64
 	for i := range result.Values {
-		row, err := result.row(i)
+		row, err := resultRow(result, i)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -231,11 +233,11 @@ func (s *Store) MetaRevision(ctx context.Context) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	resp, err := s.client.Read(ctx, Statement{SQL: `SELECT value FROM k8e_compat_meta WHERE name = 'revision'`})
+	resp, err := s.client.Read(ctx, compat.Statement{SQL: `SELECT value FROM k8e_compat_meta WHERE name = 'revision'`})
 	if err != nil {
 		return 0, err
 	}
-	row, err := resp.Results[0].row(0)
+	row, err := resultRow(resp.Results[0], 0)
 	if err != nil {
 		return 0, fmt.Errorf("read revision: %w", err)
 	}
@@ -247,11 +249,11 @@ func (s *Store) SchemaVersion(ctx context.Context) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	resp, err := s.client.Read(ctx, Statement{SQL: `SELECT value FROM k8e_compat_meta WHERE name = 'schema_version'`})
+	resp, err := s.client.Read(ctx, compat.Statement{SQL: `SELECT value FROM k8e_compat_meta WHERE name = 'schema_version'`})
 	if err != nil {
 		return 0, err
 	}
-	row, err := resp.Results[0].row(0)
+	row, err := resultRow(resp.Results[0], 0)
 	if err != nil {
 		return 0, fmt.Errorf("read schema version: %w", err)
 	}
@@ -263,16 +265,16 @@ func (s *Store) History(ctx context.Context, key []byte) ([]HistoryEntry, error)
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	resp, err := s.client.Read(ctx, Statement{
+	resp, err := s.client.Read(ctx, compat.Statement{
 		SQL:    `SELECT mod_revision, version, deleted, value FROM kv_history WHERE key = :key ORDER BY mod_revision`,
-		Params: map[string]any{"key": Blob(key)},
+		Params: map[string]any{"key": compat.Blob(key)},
 	})
 	if err != nil {
 		return nil, err
 	}
 	entries := make([]HistoryEntry, 0, len(resp.Results[0].Values))
 	for i := range resp.Results[0].Values {
-		row, err := resp.Results[0].row(i)
+		row, err := resultRow(resp.Results[0], i)
 		if err != nil {
 			return nil, err
 		}
@@ -299,7 +301,7 @@ func (s *Store) RequestRecord(ctx context.Context, requestID string) (outcome st
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	resp, err := s.client.Read(ctx, Statement{
+	resp, err := s.client.Read(ctx, compat.Statement{
 		SQL:    `SELECT outcome, revision FROM applied_requests WHERE request_id = :rid`,
 		Params: map[string]any{"rid": requestID},
 	})
@@ -310,7 +312,7 @@ func (s *Store) RequestRecord(ctx context.Context, requestID string) (outcome st
 	if len(result.Values) == 0 {
 		return "", 0, false, nil
 	}
-	row, err := result.row(0)
+	row, err := resultRow(result, 0)
 	if err != nil {
 		return "", 0, false, err
 	}
@@ -319,7 +321,7 @@ func (s *Store) RequestRecord(ctx context.Context, requestID string) (outcome st
 
 // CountHistory returns how many revisions are retained for a key.
 func (s *Store) CountHistory(ctx context.Context, key []byte) (int64, error) {
-	resp, err := s.readCount(ctx, `SELECT count(*) FROM kv_history WHERE key = :key`, map[string]any{"key": Blob(key)})
+	resp, err := s.readCount(ctx, `SELECT count(*) FROM kv_history WHERE key = :key`, map[string]any{"key": compat.Blob(key)})
 	if err != nil {
 		return 0, err
 	}
@@ -340,11 +342,11 @@ func (s *Store) readCount(ctx context.Context, sql string, params map[string]any
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	resp, err := s.client.Read(ctx, Statement{SQL: sql, Params: params})
+	resp, err := s.client.Read(ctx, compat.Statement{SQL: sql, Params: params})
 	if err != nil {
 		return 0, err
 	}
-	row, err := resp.Results[0].row(0)
+	row, err := resultRow(resp.Results[0], 0)
 	if err != nil {
 		return 0, err
 	}
@@ -360,7 +362,7 @@ func (s *Store) readCount(ctx context.Context, sql string, params map[string]any
 // list is identical on every attempt — including the request id — so a retry
 // after a lost response is de-duplicated by the applied_requests row instead
 // of being applied twice.
-func (s *Store) write(ctx context.Context, stmts []Statement) (Response, error) {
+func (s *Store) write(ctx context.Context, stmts []compat.Statement) (compat.Response, error) {
 	attempts := 0
 	var lastErr error
 	for {
@@ -369,14 +371,14 @@ func (s *Store) write(ctx context.Context, stmts []Statement) (Response, error) 
 		if err == nil {
 			return resp, nil
 		}
-		var rerr *Err
+		var rerr *compat.Err
 		if !errors.As(err, &rerr) || !rerr.Transient() {
-			return Response{}, err
+			return compat.Response{}, err
 		}
 		lastErr = err
 		select {
 		case <-ctx.Done():
-			return Response{}, fmt.Errorf("rqlitecompat: write failed after %d attempts: %w", attempts, lastErr)
+			return compat.Response{}, fmt.Errorf("rqlitecompat: write failed after %d attempts: %w", attempts, lastErr)
 		case <-time.After(s.retryDelay):
 		}
 	}
@@ -395,10 +397,10 @@ func withKind(params map[string]any, kind string) map[string]any {
 // request id has not been recorded as applied yet, which is the first attempt.
 const pendingRequest = `(SELECT outcome FROM applied_requests WHERE request_id = :rid) = 'pending'`
 
-func mutationStatements(req CASRequest, params map[string]any) []Statement {
+func mutationStatements(req CASRequest, params map[string]any) []compat.Statement {
 	pending := pendingRequest
 	if req.Delete {
-		return []Statement{
+		return []compat.Statement{
 			{SQL: `INSERT INTO kv_history(key, mod_revision, version, deleted, value)
 			       SELECT key,
 			              (SELECT value FROM k8e_compat_meta WHERE name = 'revision') + 1,
@@ -410,7 +412,7 @@ func mutationStatements(req CASRequest, params map[string]any) []Statement {
 		}
 	}
 	if req.ExpectModRevision == 0 {
-		return []Statement{
+		return []compat.Statement{
 			{SQL: `INSERT INTO kv(key, create_revision, mod_revision, version, lease, value)
 			       SELECT :key,
 			              (SELECT value FROM k8e_compat_meta WHERE name = 'revision') + 1,
@@ -420,7 +422,7 @@ func mutationStatements(req CASRequest, params map[string]any) []Statement {
 				Params: withValue(params, req.Value)},
 		}
 	}
-	return []Statement{
+	return []compat.Statement{
 		{SQL: `UPDATE kv
 		       SET value = :val,
 		           mod_revision = (SELECT value FROM k8e_compat_meta WHERE name = 'revision') + 1,
@@ -502,14 +504,14 @@ func withValue(params map[string]any, value []byte) map[string]any {
 	for k, v := range params {
 		out[k] = v
 	}
-	out["val"] = Blob(value)
+	out["val"] = compat.Blob(value)
 	return out
 }
 
 // row decodes row i of a statement result into named values: int64 for
 // integers, []byte for BLOBs (rqlite returns them as byte arrays because of
 // blob_array) and string for text. Absent values (LEFT JOIN misses) are nil.
-func (r StatementResult) row(i int) (rowValues, error) {
+func resultRow(r compat.StatementResult, i int) (rowValues, error) {
 	if i >= len(r.Values) {
 		return nil, fmt.Errorf("statement returned %d rows, want row %d", len(r.Values), i)
 	}

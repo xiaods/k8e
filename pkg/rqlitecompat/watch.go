@@ -119,41 +119,63 @@ func (w *watchSession) poll(ctx context.Context) ([]WatchBatch, error) {
 		if !ok {
 			continue
 		}
-		if ws.lastRev < compact {
-			batches = append(batches, WatchBatch{WatchID: id, Canceled: true, CompactRevision: compact})
-			w.cancel(id)
-			continue
+		batch, send, err := w.pollWatcher(ctx, ws, current, compact)
+		if err != nil {
+			return nil, err
 		}
-		var got []Event
-		from := ws.lastRev
-		for {
-			events, more, err := w.store.EventsAfter(ctx, from, w.batch)
-			if err != nil {
-				return nil, err
-			}
-			for _, ev := range events {
-				if ev.Revision <= ws.lastRev || !matches(ws, ev) {
-					continue
-				}
-				got = append(got, ev)
-				ws.lastRev = ev.Revision
-			}
-			if !more || len(events) == 0 {
-				break
-			}
-			from = events[len(events)-1].Revision
-		}
-		if len(got) > 0 {
-			batches = append(batches, WatchBatch{WatchID: id, Revision: ws.lastRev, PrevKV: ws.PrevKV, Events: got})
-			continue
-		}
-		if ws.ProgressNotify && current > ws.lastRev {
-			batches = append(batches, WatchBatch{WatchID: id, Revision: current, ProgressNotify: true})
+		if send {
+			batches = append(batches, batch)
 		}
 	}
 	return batches, nil
 }
 
+// pollWatcher produces the one batch one watcher has to receive, if any: the
+// cancellation the compaction watermark forces, the events it has not seen yet,
+// or the progress notification it asked for.
+func (w *watchSession) pollWatcher(ctx context.Context, ws *watcherState, current, compact int64) (WatchBatch, bool, error) {
+	if ws.lastRev < compact {
+		w.cancel(ws.ID)
+		return WatchBatch{WatchID: ws.ID, Canceled: true, CompactRevision: compact}, true, nil
+	}
+	got, err := w.drainWatcher(ctx, ws)
+	if err != nil {
+		return WatchBatch{}, false, err
+	}
+	if len(got) > 0 {
+		return WatchBatch{WatchID: ws.ID, Revision: ws.lastRev, PrevKV: ws.PrevKV, Events: got}, true, nil
+	}
+	if ws.ProgressNotify && current > ws.lastRev {
+		return WatchBatch{WatchID: ws.ID, Revision: current, ProgressNotify: true}, true, nil
+	}
+	return WatchBatch{}, false, nil
+}
+
+// drainWatcher reads every event the watcher has not seen yet in bounded
+// batches and advances its revision, so a progress notification can never
+// overtake an event.
+func (w *watchSession) drainWatcher(ctx context.Context, ws *watcherState) ([]Event, error) {
+	var got []Event
+	from := ws.lastRev
+	for {
+		events, more, err := w.store.EventsAfter(ctx, from, w.batch)
+		if err != nil {
+			return nil, err
+		}
+		for _, ev := range events {
+			if ev.Revision <= ws.lastRev || !matches(ws, ev) {
+				continue
+			}
+			got = append(got, ev)
+			ws.lastRev = ev.Revision
+		}
+		if !more || len(events) == 0 {
+			break
+		}
+		from = events[len(events)-1].Revision
+	}
+	return got, nil
+}
 func matches(w *watcherState, ev Event) bool {
 	if ev.Type == EventPut && w.NoPut {
 		return false

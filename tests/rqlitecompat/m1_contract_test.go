@@ -81,7 +81,9 @@ func (r *contractRun) kvsText(kvs []*mvccpb.KeyValue) string {
 	return "[" + strings.Join(parts, " ") + "]"
 }
 
-// runContractScenario drives one backend through the scripted scenario.
+// runContractScenario drives one backend through the scripted scenario: it fixes
+// the run baseline and then walks the phases in the order a client would, so both
+// backends record the same sequence of observations.
 func runContractScenario(t *testing.T, cli *clientv3.Client) *contractRun {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -94,53 +96,82 @@ func runContractScenario(t *testing.T, cli *clientv3.Client) *contractRun {
 	}
 	run.base = base.Header.Revision
 
+	firstRev := run.kvAndBinaryValues()
+	run.ranges()
+	run.transactions()
+	run.deletes(firstRev)
+	run.errorShapes()
+	run.leases()
+	run.watchStreams()
+	run.compaction()
+	run.leaseExpiry()
+	run.maintenance()
+
+	return run
+}
+
+// kvAndBinaryValues walks the KV revision, version and historical-read
+// steps plus the binary-safe key/value round-trip, and returns the revision
+// of the scenario's first write, which the delete phase compares against.
+func (c *contractRun) kvAndBinaryValues() int64 {
+	ctx, t, cli := c.ctx, c.t, c.cli
 	a, b := contractPrefix+"a", contractPrefix+"b"
 	binKey := contractPrefix + "bin\x00\xff"
 	binVal := string([]byte{0x00, 0x01, 0xfe, 0xff})
 	// --- KV revisions, versions and historical reads -----------------------
 	put, err := cli.Put(ctx, a, "1")
-	run.record("put-a-1", "rev=%d err=%s", run.rel(putRev(put)), errText(err))
+	c.record("put-a-1", "rev=%d err=%s", c.rel(putRev(put)), errText(err))
 	firstRev := putRev(put)
 	get, err := cli.Get(ctx, a)
-	run.record("get-a", "count=%d more=%v kvs=%s err=%s", getCount(get), getMore(get), run.kvsText(getKvs(get)), errText(err))
+	c.record("get-a", "count=%d more=%v kvs=%s err=%s", getCount(get), getMore(get), c.kvsText(getKvs(get)), errText(err))
 
 	put, err = cli.Put(ctx, a, "2", clientv3.WithPrevKV())
-	run.record("put-a-2", "rev=%d prev=%s err=%s", run.rel(putRev(put)), run.kvsText(putPrev(put)), errText(err))
+	c.record("put-a-2", "rev=%d prev=%s err=%s", c.rel(putRev(put)), c.kvsText(putPrev(put)), errText(err))
 
 	get, err = cli.Get(ctx, a, clientv3.WithRev(firstRev))
-	run.record("get-a-@hist", "count=%d kvs=%s err=%s", getCount(get), run.kvsText(getKvs(get)), errText(err))
+	c.record("get-a-@hist", "count=%d kvs=%s err=%s", getCount(get), c.kvsText(getKvs(get)), errText(err))
 
 	put, err = cli.Put(ctx, a, "", clientv3.WithIgnoreValue())
-	run.record("put-a-ignore-value", "rev=%d err=%s", run.rel(putRev(put)), errText(err))
+	c.record("put-a-ignore-value", "rev=%d err=%s", c.rel(putRev(put)), errText(err))
 	get, _ = cli.Get(ctx, a)
-	run.record("get-a-after-ignore-value", "count=%d value=%s", getCount(get), run.kvsText(getKvs(get)))
+	c.record("get-a-after-ignore-value", "count=%d value=%s", getCount(get), c.kvsText(getKvs(get)))
 
 	_, err = cli.Put(ctx, a, "not-allowed", clientv3.WithIgnoreValue())
-	run.record("err-ignore-value-provided", "%s", errText(err))
+	c.record("err-ignore-value-provided", "%s", errText(err))
 
 	put, err = cli.Put(ctx, contractPrefix+"ignore-lease-missing", "", clientv3.WithIgnoreLease())
-	run.record("err-ignore-lease-missing-key", "rev=%d err=%s", run.rel(putRev(put)), errText(err))
+	c.record("err-ignore-lease-missing-key", "rev=%d err=%s", c.rel(putRev(put)), errText(err))
 
 	leaseForIgnore, err := cli.Grant(ctx, 200)
-	run.record("lease-grant-for-ignore", "err=%s", errText(err))
+	c.record("lease-grant-for-ignore", "err=%s", errText(err))
 	_, err = cli.Put(ctx, contractPrefix+"ignore-lease-provided", "", clientv3.WithIgnoreLease(),
 		clientv3.WithLease(grantID(leaseForIgnore)))
-	run.record("err-ignore-lease-provided", "%s", errText(err))
+	c.record("err-ignore-lease-provided", "%s", errText(err))
 	if _, err := cli.Lease.Revoke(ctx, grantID(leaseForIgnore)); err != nil {
 		t.Fatalf("revoke ignore lease: %v", err)
 	}
 
 	// --- binary keys and values -------------------------------------------
 	put, err = cli.Put(ctx, binKey, binVal)
-	run.record("put-binary", "rev=%d err=%s", run.rel(putRev(put)), errText(err))
+	c.record("put-binary", "rev=%d err=%s", c.rel(putRev(put)), errText(err))
 	get, err = cli.Get(ctx, binKey)
-	run.record("get-binary", "count=%d value=%q err=%s", getCount(get), valueOf(getKvs(get)), errText(err))
+	c.record("get-binary", "count=%d value=%q err=%s", getCount(get), valueOf(getKvs(get)), errText(err))
 
 	put, err = cli.Put(ctx, b, "")
-	run.record("put-empty-value", "rev=%d err=%s", run.rel(putRev(put)), errText(err))
+	c.record("put-empty-value", "rev=%d err=%s", c.rel(putRev(put)), errText(err))
 	get, err = cli.Get(ctx, b)
-	run.record("get-empty-value", "count=%d value=%q err=%s", getCount(get), valueOf(getKvs(get)), errText(err))
+	c.record("get-empty-value", "count=%d value=%q err=%s", getCount(get), valueOf(getKvs(get)), errText(err))
 
+	return firstRev
+}
+
+// ranges walks prefix ranges with limits, sorts, counts and keys_only.
+func (c *contractRun) ranges() {
+	ctx, t, cli := c.ctx, c.t, c.cli
+	var (
+		err error
+		get *clientv3.GetResponse
+	)
 	// --- ranges, limits, sort and counts ----------------------------------
 	for _, k := range []string{"r1", "r2", "r3"} {
 		if _, err := cli.Put(ctx, contractPrefix+k, "v"+k); err != nil {
@@ -148,104 +179,133 @@ func runContractScenario(t *testing.T, cli *clientv3.Client) *contractRun {
 		}
 	}
 	get, err = cli.Get(ctx, contractPrefix+"r", clientv3.WithPrefix(), clientv3.WithLimit(2))
-	run.record("range-limit-2", "count=%d more=%v kvs=%s err=%s", getCount(get), getMore(get), run.kvsText(getKvs(get)), errText(err))
+	c.record("range-limit-2", "count=%d more=%v kvs=%s err=%s", getCount(get), getMore(get), c.kvsText(getKvs(get)), errText(err))
 
 	get, err = cli.Get(ctx, contractPrefix+"r", clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortDescend))
-	run.record("range-sort-desc", "count=%d kvs=%s err=%s", getCount(get), run.kvsText(getKvs(get)), errText(err))
+	c.record("range-sort-desc", "count=%d kvs=%s err=%s", getCount(get), c.kvsText(getKvs(get)), errText(err))
 
 	get, err = cli.Get(ctx, contractPrefix+"r", clientv3.WithPrefix(), clientv3.WithCountOnly())
-	run.record("range-count-only", "count=%d kvs=%s err=%s", getCount(get), run.kvsText(getKvs(get)), errText(err))
+	c.record("range-count-only", "count=%d kvs=%s err=%s", getCount(get), c.kvsText(getKvs(get)), errText(err))
 
 	get, err = cli.Get(ctx, contractPrefix+"r", clientv3.WithPrefix(), clientv3.WithKeysOnly())
-	run.record("range-keys-only", "count=%d kvs=%s err=%s", getCount(get), run.kvsText(getKvs(get)), errText(err))
+	c.record("range-keys-only", "count=%d kvs=%s err=%s", getCount(get), c.kvsText(getKvs(get)), errText(err))
 
 	get, err = cli.Get(ctx, contractPrefix+"r", clientv3.WithPrefix(), clientv3.WithLimit(1), clientv3.WithCountOnly())
-	run.record("range-limit-1-count-only", "count=%d more=%v err=%s", getCount(get), getMore(get), errText(err))
+	c.record("range-limit-1-count-only", "count=%d more=%v err=%s", getCount(get), getMore(get), errText(err))
+}
 
+// transactions walks txn success, failure, prev_kv and delete responses.
+func (c *contractRun) transactions() {
+	ctx, cli := c.ctx, c.cli
+	b := contractPrefix + "b"
 	// --- transactions ------------------------------------------------------
 	snap, _ := cli.Get(ctx, contractPrefix)
-	txnRev := run.rel(getRev(snap))
+	txnRev := c.rel(getRev(snap))
 	txn, err := cli.Txn(ctx).
 		If(clientv3.Compare(clientv3.Version(b), "=", 1)).
 		Then(clientv3.OpPut(b, "txn-then"), clientv3.OpGet(b)).
 		Else(clientv3.OpPut(b, "txn-else")).
 		Commit()
-	run.record("txn-success", "succeeded=%v rev=%d responses=%s err=%s",
-		txnSucceeded(txn), run.rel(txnRev2(txn)), run.txnResponsesText(txn), errText(err))
-	run.record("txn-success-delta", "delta=%d", run.rel(txnRev2(txn))-txnRev)
+	c.record("txn-success", "succeeded=%v rev=%d responses=%s err=%s",
+		txnSucceeded(txn), c.rel(txnRev2(txn)), c.txnResponsesText(txn), errText(err))
+	c.record("txn-success-delta", "delta=%d", c.rel(txnRev2(txn))-txnRev)
 
 	txn, err = cli.Txn(ctx).
 		If(clientv3.Compare(clientv3.Version(b), "=", 99)).
 		Then(clientv3.OpPut(b, "no")).
 		Else(clientv3.OpPut(b, "txn-else")).
 		Commit()
-	run.record("txn-failure", "succeeded=%v responses=%s err=%s", txnSucceeded(txn), run.txnResponsesText(txn), errText(err))
+	c.record("txn-failure", "succeeded=%v responses=%s err=%s", txnSucceeded(txn), c.txnResponsesText(txn), errText(err))
 
 	txn, err = cli.Txn(ctx).
 		If(clientv3.Compare(clientv3.Value(b), "=", "txn-else")).
 		Then(clientv3.OpPut(b, "txn-chain", clientv3.WithPrevKV()), clientv3.OpDelete(b, clientv3.WithPrevKV())).
 		Commit()
-	run.record("txn-prev-and-delete", "succeeded=%v rev=%d responses=%s err=%s",
-		txnSucceeded(txn), run.rel(txnRev2(txn)), run.txnResponsesText(txn), errText(err))
+	c.record("txn-prev-and-delete", "succeeded=%v rev=%d responses=%s err=%s",
+		txnSucceeded(txn), c.rel(txnRev2(txn)), c.txnResponsesText(txn), errText(err))
+}
 
+// deletes walks deleting a missing key and a present one, comparing both
+// revisions against firstRev.
+func (c *contractRun) deletes(firstRev int64) {
+	ctx, t, cli := c.ctx, c.t, c.cli
 	// --- deletes -----------------------------------------------------------
 	del, err := cli.Delete(ctx, contractPrefix+"deleted", clientv3.WithPrevKV())
-	run.record("delete-missing", "deleted=%d rev-delta=%d err=%s", delCount(del), run.rel(delRev(del))-run.rel(firstRev), errText(err))
+	c.record("delete-missing", "deleted=%d rev-delta=%d err=%s", delCount(del), c.rel(delRev(del))-c.rel(firstRev), errText(err))
 
 	_, err = cli.Put(ctx, contractPrefix+"deleted", "gone")
 	requireNoError(t, "put deleted key", err)
 	del, err = cli.Delete(ctx, contractPrefix+"deleted", clientv3.WithPrevKV())
-	run.record("delete-present", "deleted=%d prev=%s err=%s", delCount(del), run.kvsText(delPrev(del)), errText(err))
+	c.record("delete-present", "deleted=%d prev=%s err=%s", delCount(del), c.kvsText(delPrev(del)), errText(err))
+}
 
+// errorShapes records the errors a client can see: an empty key, a future
+// revision, too many ops and duplicate keys in one branch.
+func (c *contractRun) errorShapes() {
+	ctx, cli := c.ctx, c.cli
+	var err error
 	// --- errors ------------------------------------------------------------
 	_, err = cli.Get(ctx, "")
-	run.record("err-empty-key", "%s", errText(err))
+	c.record("err-empty-key", "%s", errText(err))
 
-	_, err = cli.Get(ctx, contractPrefix, clientv3.WithRev(run.abs(1000)))
-	run.record("err-future-revision", "%s", errText(err))
+	_, err = cli.Get(ctx, contractPrefix, clientv3.WithRev(c.abs(1000)))
+	c.record("err-future-revision", "%s", errText(err))
 
 	tooMany := make([]clientv3.Op, 0, 130)
 	for i := 0; i < 130; i++ {
 		tooMany = append(tooMany, clientv3.OpPut(fmt.Sprintf("%sdup-%d", contractPrefix, i), "x"))
 	}
 	_, err = cli.Txn(ctx).Then(tooMany...).Commit()
-	run.record("err-too-many-ops", "%s", errText(err))
+	c.record("err-too-many-ops", "%s", errText(err))
 
 	_, err = cli.Txn(ctx).
 		Then(clientv3.OpPut(contractPrefix+"twice", "1"), clientv3.OpPut(contractPrefix+"twice", "2")).
 		Commit()
-	run.record("err-duplicate-key", "%s", errText(err))
+	c.record("err-duplicate-key", "%s", errText(err))
+}
 
+// leases walks grant, ttl, keepalive, list, revoke and the attached keys.
+func (c *contractRun) leases() {
+	ctx, cli := c.ctx, c.cli
+	var (
+		err error
+		get *clientv3.GetResponse
+	)
 	// --- leases ------------------------------------------------------------
 	grant, err := cli.Grant(ctx, 100)
-	run.record("lease-grant", "err=%s ttl=%d", errText(err), grantTTL(grant))
+	c.record("lease-grant", "err=%s ttl=%d", errText(err), grantTTL(grant))
 	leaseID := grantID(grant)
 
 	_, err = cli.Lease.Revoke(ctx, 99999999)
-	run.record("lease-revoke-missing", "%s", errText(err))
+	c.record("lease-revoke-missing", "%s", errText(err))
 
 	_, err = cli.Put(ctx, contractPrefix+"leased", "v", clientv3.WithLease(leaseID))
-	run.record("put-with-lease", "%s", errText(err))
+	c.record("put-with-lease", "%s", errText(err))
 
 	ttl, err := cli.TimeToLive(ctx, leaseID, clientv3.WithAttachedKeys())
-	run.record("lease-ttl", "granted-ttl=%d ttl-in-range=%v keys=%d err=%s",
+	c.record("lease-ttl", "granted-ttl=%d ttl-in-range=%v keys=%d err=%s",
 		ttlGranted(ttl), ttlInRange(ttl), len(ttlKeys(ttl)), errText(err))
 
 	ka, err := cli.KeepAliveOnce(ctx, leaseID)
-	run.record("lease-keepalive", "ttl-in-range=%v err=%s", kaTTLInRange(ka), errText(err))
+	c.record("lease-keepalive", "ttl-in-range=%v err=%s", kaTTLInRange(ka), errText(err))
 
 	leases, err := cli.Leases(ctx)
-	run.record("lease-list", "contains=%v err=%s", containsLease(leaseStatuses(leases), leaseID), errText(err))
+	c.record("lease-list", "contains=%v err=%s", containsLease(leaseStatuses(leases), leaseID), errText(err))
 
 	_, err = cli.Put(ctx, contractPrefix+"bad-lease", "v", clientv3.WithLease(99999999))
-	run.record("err-put-missing-lease", "%s", errText(err))
+	c.record("err-put-missing-lease", "%s", errText(err))
 
 	_, err = cli.Lease.Revoke(ctx, leaseID)
-	run.record("lease-revoke", "err=%s", errText(err))
+	c.record("lease-revoke", "err=%s", errText(err))
 	get, err = cli.Get(ctx, contractPrefix+"leased")
-	run.record("leased-key-gone", "count=%d err=%s", getCount(get), errText(err))
+	c.record("leased-key-gone", "count=%d err=%s", getCount(get), errText(err))
+}
 
+// watchStreams records the event order of a key watcher with prev_kv and of
+// a prefix watcher that must filter a key outside its range.
+func (c *contractRun) watchStreams() {
+	ctx, t, cli := c.ctx, c.t, c.cli
 	// --- watch -------------------------------------------------------------
 	wk := contractPrefix + "watched"
 	wch := cli.Watch(ctx, wk, clientv3.WithPrevKV())
@@ -259,7 +319,7 @@ func runContractScenario(t *testing.T, cli *clientv3.Client) *contractRun {
 	if _, err := cli.Delete(ctx, wk); err != nil {
 		t.Fatalf("delete watched: %v", err)
 	}
-	run.record("watch-events", "%s", watchText(t, wch, 3, run))
+	c.record("watch-events", "%s", watchText(t, wch, 3, c))
 
 	wch = cli.Watch(ctx, contractPrefix+"r", clientv3.WithPrefix())
 	time.Sleep(300 * time.Millisecond)
@@ -269,23 +329,41 @@ func runContractScenario(t *testing.T, cli *clientv3.Client) *contractRun {
 	if _, err := cli.Put(ctx, contractPrefix+"other", "noise"); err != nil {
 		t.Fatalf("put noise: %v", err)
 	}
-	run.record("watch-prefix-filter", "%s", watchText(t, wch, 1, run))
+	c.record("watch-prefix-filter", "%s", watchText(t, wch, 1, c))
+}
 
+// compaction walks the watermark, the surviving revision at it and the
+// errors below and at the watermark.
+func (c *contractRun) compaction() {
+	ctx, cli := c.ctx, c.cli
+	a := contractPrefix + "a"
+	var (
+		err error
+		get *clientv3.GetResponse
+	)
 	// --- compaction --------------------------------------------------------
 	get, _ = cli.Get(ctx, contractPrefix)
 	compactRev := getRev(get)
 	_, err = cli.Compact(ctx, compactRev)
-	run.record("compact", "%s", errText(err))
+	c.record("compact", "%s", errText(err))
 	get, err = cli.Get(ctx, a, clientv3.WithRev(compactRev))
-	run.record("get-at-compact-rev", "count=%d kvs=%s err=%s", getCount(get), run.kvsText(getKvs(get)), errText(err))
+	c.record("get-at-compact-rev", "count=%d kvs=%s err=%s", getCount(get), c.kvsText(getKvs(get)), errText(err))
 	_, err = cli.Get(ctx, a, clientv3.WithRev(compactRev-1))
-	run.record("err-compacted", "%s", errText(err))
+	c.record("err-compacted", "%s", errText(err))
 	_, err = cli.Compact(ctx, compactRev-1)
-	run.record("err-compact-older", "%s", errText(err))
+	c.record("err-compact-older", "%s", errText(err))
+}
 
+// leaseExpiry waits until the reaper removes the key of a one-second lease.
+func (c *contractRun) leaseExpiry() {
+	ctx, t, cli := c.ctx, c.t, c.cli
+	var (
+		err error
+		get *clientv3.GetResponse
+	)
 	// --- lease expiry ------------------------------------------------------
 	expiring, err := cli.Grant(ctx, 1)
-	run.record("lease-grant-expiring", "err=%s", errText(err))
+	c.record("lease-grant-expiring", "err=%s", errText(err))
 	if _, err := cli.Put(ctx, contractPrefix+"expiring", "v", clientv3.WithLease(grantID(expiring))); err != nil {
 		t.Fatalf("put expiring: %v", err)
 	}
@@ -302,21 +380,23 @@ func runContractScenario(t *testing.T, cli *clientv3.Client) *contractRun {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	run.record("lease-expiry-removes-key", "expired=%v", expired)
+	c.record("lease-expiry-removes-key", "expired=%v", expired)
+}
 
+// maintenance records the status and member-list surfaces.
+func (c *contractRun) maintenance() {
+	ctx, cli := c.ctx, c.cli
 	// --- maintenance and cluster surfaces ----------------------------------
 	st, err := cli.Maintenance.Status(ctx, cli.Endpoints()[0])
 	if err != nil {
-		run.record("maintenance-status", "%s", errText(err))
+		c.record("maintenance-status", "%s", errText(err))
 	} else {
-		run.record("maintenance-status", "version=%s leader-set=%v raftTerm-set=%v",
+		c.record("maintenance-status", "version=%s leader-set=%v raftTerm-set=%v",
 			st.Version, st.Leader != 0, st.RaftTerm != 0)
 	}
 
 	members, err := cli.MemberList(ctx)
-	run.record("member-list", "members=%d err=%s", memberCount(members), errText(err))
-
-	return run
+	c.record("member-list", "members=%d err=%s", memberCount(members), errText(err))
 }
 
 // Nil-safe accessors: a differential step must record the error of a failed

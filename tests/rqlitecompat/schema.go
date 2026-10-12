@@ -3,6 +3,8 @@ package rqlitecompat
 import (
 	"context"
 	"strconv"
+
+	compat "github.com/xiaods/k8e/pkg/rqlitecompat"
 )
 
 // SchemaVersion is the version of the versioned schema this prototype writes.
@@ -58,10 +60,10 @@ var schemaStatements = []string{
 // Bootstrap creates the schema. It is idempotent: CREATE TABLE IF NOT EXISTS
 // plus INSERT OR IGNORE, so a second call neither resets the revision counter
 // nor duplicates the schema version row.
-func Bootstrap(ctx context.Context, c *Client) error {
-	stmts := make([]Statement, 0, len(schemaStatements))
+func Bootstrap(ctx context.Context, c *compat.Client) error {
+	stmts := make([]compat.Statement, 0, len(schemaStatements))
 	for _, sql := range schemaStatements {
-		stmts = append(stmts, Statement{SQL: sql})
+		stmts = append(stmts, compat.Statement{SQL: sql})
 	}
 	_, err := c.Write(ctx, stmts...)
 	return err

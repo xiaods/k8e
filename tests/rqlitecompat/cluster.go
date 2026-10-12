@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	compat "github.com/xiaods/k8e/pkg/rqlitecompat"
 )
 
 // Cluster is a real rqlited cluster started for one test. Tests drive the
@@ -153,7 +155,7 @@ func (c *Cluster) Endpoints() []string {
 func (c *Cluster) Nodes() []*Node { return c.nodes }
 
 // Client returns a client covering every node.
-func (c *Cluster) Client() *Client { return NewClient(c.Endpoints()...) }
+func (c *Cluster) Client() *compat.Client { return compat.NewClient(c.Endpoints()...) }
 
 // NodeByID finds a node by its rqlite node id.
 func (c *Cluster) NodeByID(id string) *Node {
@@ -167,7 +169,7 @@ func (c *Cluster) NodeByID(id string) *Node {
 
 // Leader returns the node currently reported as Raft leader.
 func (c *Cluster) Leader(ctx context.Context) (*Node, error) {
-	client := NewClient(c.Endpoints()...)
+	client := compat.NewClient(c.Endpoints()...)
 	var lastErr error
 	for _, n := range c.nodes {
 		if n.cmd == nil || n.cmd.Process == nil {
@@ -250,7 +252,7 @@ func (c *Cluster) StopAll() {
 // WaitForReady waits until every node answers /readyz and a leader is known.
 // It is used after a full cluster restart.
 func (c *Cluster) WaitForReady(ctx context.Context) error {
-	client := NewClient(c.Endpoints()...)
+	client := compat.NewClient(c.Endpoints()...)
 	report := map[string]error{}
 	for {
 		ready := 0
@@ -293,7 +295,7 @@ func (c *Cluster) DumpLogs() {
 
 func (c *Cluster) waitReady() {
 	c.t.Helper()
-	client := NewClient(c.Endpoints()...)
+	client := compat.NewClient(c.Endpoints()...)
 	for _, n := range c.nodes {
 		c.waitFor(fmt.Sprintf("%s ready", n.ID), 30*time.Second, func() error {
 			return client.Ready(context.Background(), n.Endpoint())
@@ -361,7 +363,7 @@ func hostPort(t *testing.T) string {
 // in both its Raft log and its SQLite FSM (the two /status fields the driver
 // uses to decide a node has caught up).
 func (c *Cluster) waitForNodeCatchUp(ctx context.Context, n *Node, index int64) error {
-	client := NewClient(n.Endpoint())
+	client := compat.NewClient(n.Endpoint())
 	for {
 		status, err := client.Status(ctx, n.Endpoint())
 		if err == nil && status.Store.DBAppliedIndex >= index && status.Store.Raft.AppliedIndex >= index {

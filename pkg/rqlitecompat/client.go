@@ -266,6 +266,71 @@ func (c *Client) Ready(ctx context.Context, endpoint string) error {
 	return nil
 }
 
+// SetTransport replaces the HTTP transport. Tests use it to drop a response
+// after rqlite has already committed a transaction, and to record the requests
+// that went on the wire.
+func (c *Client) SetTransport(rt http.RoundTripper) {
+	c.http.Transport = rt
+}
+
+// NodeStatus is the subset of /status the harness observes: the node identity,
+// the leader it knows and the applied indices. Field paths follow the real
+// v10.3.5 response: store.node_id, store.leader.node_id,
+// store.db_applied_index, store.raft.applied_index and build.version.
+type NodeStatus struct {
+	Store StoreStatus `json:"store"`
+	Build BuildStatus `json:"build"`
+}
+
+// StoreStatus is the store section of /status.
+type StoreStatus struct {
+	NodeID         string       `json:"node_id"`
+	Leader         LeaderStatus `json:"leader"`
+	DBAppliedIndex int64        `json:"db_applied_index"`
+	Raft           RaftStatus   `json:"raft"`
+}
+
+// LeaderStatus identifies the leader of a cluster.
+type LeaderStatus struct {
+	NodeID string `json:"node_id"`
+	Addr   string `json:"addr"`
+}
+
+// RaftStatus is the Raft section of /status.
+type RaftStatus struct {
+	AppliedIndex int64 `json:"applied_index"`
+}
+
+// BuildStatus is the build section of /status.
+type BuildStatus struct {
+	Version string `json:"version"`
+}
+
+// Status fetches /status from one node.
+func (c *Client) Status(ctx context.Context, endpoint string) (NodeStatus, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/status", http.NoBody)
+	if err != nil {
+		return NodeStatus{}, err
+	}
+	c.requests.Add(1)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return NodeStatus{}, &Err{Endpoint: endpoint, Message: err.Error()}
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return NodeStatus{}, &Err{Endpoint: endpoint, Status: resp.StatusCode, Message: err.Error()}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return NodeStatus{}, &Err{Endpoint: endpoint, Status: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+	}
+	var st NodeStatus
+	if err := json.Unmarshal(body, &st); err != nil {
+		return NodeStatus{}, &Err{Endpoint: endpoint, Status: resp.StatusCode, Message: "decode status: " + err.Error()}
+	}
+	return st, nil
+}
 func encodeStatements(stmts []Statement) []any {
 	out := make([]any, 0, len(stmts))
 	for _, s := range stmts {

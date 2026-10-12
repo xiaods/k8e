@@ -501,13 +501,14 @@ observable — result, error, revision, event order — is compared with the rea
 current datastore instead of a hand-written expectation.
 
 **Language.** M1 is a **Go** implementation of the language-neutral internal
-interface of §3.2. The delivery environment for M1 has no Zig toolchain and no
-Zig gRPC/HTTP2/TLS stack, so a Zig port could not be built, let alone verified;
-a Go layer whose protocol behaviour is proven against etcd is the honest
-intermediate step. The Zig port is a mechanical translation of this package
-(same rqlite calls, same schema, same error strings) and its acceptance test is
-this same M1 suite. It stays open as the M1 follow-up — it is not silently
-dropped.
+interface of §3.2. It is written in Go because that is where this M1 delivery
+could actually run the differential harness against the repository's embedded
+etcd: the layer's protocol behaviour is proven against etcd before any port
+exists. The Zig port is a mechanical translation of this package (same rqlite
+calls, same schema, same error strings) and its acceptance test is this same M1
+suite; its remaining gates are tracked one by one in `tandem/docs/m1-status.md`,
+which is the status document of the Zig (Tandem) layer. The Zig port stays open
+as the M1 follow-up — it is not silently dropped.
 
 ### 10.1 Implemented and differentially verified
 
@@ -579,7 +580,8 @@ owner of the behaviour; none of them returns an empty success, which is what
   and B, plus differential tests against the current embedded etcd (results,
   errors, revisions, event order, crash recovery). Exit met: the compatibility
   matrix is complete and the differential/concurrency history checks pass. The
-  **Zig port** of the delivered Go layer is the remaining M1 follow-up (§10).
+  **Zig port** of the delivered Go layer is the remaining M1 follow-up (§10),
+  tracked gate by gate in `tandem/docs/m1-status.md`.
 * **M2** — K8E integration: the new driver, process hosting, bootstrap, certs,
   configuration, build/release, explicit opt-in test backend, then the four
   ordered E2E stages of the epic (safe recovery after failure; multi-node

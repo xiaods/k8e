@@ -213,64 +213,49 @@ func (s *Server) RangeStream(req *etcdserverpb.RangeRequest, stream grpc.ServerS
 	if err := checkRangeStreamRequest(req); err != nil {
 		return err
 	}
-	ctx := stream.Context()
 	if req.CountOnly {
-		result, err := s.store.Range(ctx, rangeOptions(req))
-		if err != nil {
-			return err
-		}
-		return stream.Send(&etcdserverpb.RangeStreamResponse{RangeResponse: &etcdserverpb.RangeResponse{
-			Header: s.header(result.Revision),
-			Count:  result.Count,
-		}})
+		return s.streamRangeCount(req, stream)
 	}
+	return s.streamRangeChunks(req, stream)
+}
 
-	// The chunk loop walks the request forward itself, exactly like etcd's
-	// rangeStream: each round reads a limit and starts after the previous
-	// chunk's last key.
-	totalLimit := req.Limit
-	if totalLimit == 0 {
-		totalLimit = math.MaxInt64
+// streamRangeCount answers a count_only RangeStream with the single chunk etcd
+// sends for it.
+func (s *Server) streamRangeCount(req *etcdserverpb.RangeRequest, stream grpc.ServerStreamingServer[etcdserverpb.RangeStreamResponse]) error {
+	result, err := s.store.Range(stream.Context(), rangeOptions(req))
+	if err != nil {
+		return err
 	}
-	req.Limit = initialStreamChunkLimit
-	if req.Limit > totalLimit {
-		req.Limit = totalLimit
-	}
+	return stream.Send(&etcdserverpb.RangeStreamResponse{RangeResponse: &etcdserverpb.RangeResponse{
+		Header: s.header(result.Revision),
+		Count:  result.Count,
+	}})
+}
 
-	count := int64(0)
-	headerRev := int64(0)
+// rangeStreamState is the revision and key count the chunk loop carries across
+// rounds: the revision is pinned by the first chunk, so every chunk reads the
+// same snapshot of the store.
+type rangeStreamState struct {
+	totalLimit int64
+	count      int64
+	headerRev  int64
+}
+
+// streamRangeChunks walks the request forward itself, exactly like etcd's
+// rangeStream: each round reads a limit and starts after the previous chunk's
+// last key.
+func (s *Server) streamRangeChunks(req *etcdserverpb.RangeRequest, stream grpc.ServerStreamingServer[etcdserverpb.RangeStreamResponse]) error {
+	ctx := stream.Context()
+	st := rangeStreamState{totalLimit: req.Limit}
+	if st.totalLimit == 0 {
+		st.totalLimit = math.MaxInt64
+	}
+	req.Limit = min(initialStreamChunkLimit, st.totalLimit)
+
 	for {
-		result, err := s.store.Range(ctx, rangeOptions(req))
+		out, nextKey, done, err := s.rangeStreamChunk(ctx, req, &st)
 		if err != nil {
 			return err
-		}
-		if headerRev == 0 {
-			headerRev = result.Revision
-			if req.Revision == 0 {
-				req.Revision = headerRev
-			}
-		}
-		count += int64(len(result.KVs))
-
-		var nextKey []byte
-		if result.More {
-			nextKey = append(append([]byte{}, result.KVs[len(result.KVs)-1].Key...), 0x00)
-		}
-		out := &etcdserverpb.RangeResponse{Kvs: toPBKVs(result.KVs)}
-		done := !result.More || count == totalLimit
-		if done {
-			out.Header = s.header(headerRev)
-			out.More = result.More
-			out.Count = count
-			if result.More {
-				remaining, err := s.store.Range(ctx, RangeOptions{
-					Key: nextKey, RangeEnd: req.RangeEnd, Revision: req.Revision, CountOnly: true,
-				})
-				if err != nil {
-					return err
-				}
-				out.Count += remaining.Count
-			}
 		}
 		if err := stream.Send(&etcdserverpb.RangeStreamResponse{RangeResponse: out}); err != nil {
 			return err
@@ -279,9 +264,48 @@ func (s *Server) RangeStream(req *etcdserverpb.RangeRequest, stream grpc.ServerS
 			return nil
 		}
 		req.Key = nextKey
-		req.Limit = adjustChunkLimit(req.Limit, proto.Size(out), s.cfg.MaxRecvMsgSize)
-		req.Limit = min(req.Limit, totalLimit-count)
+		req.Limit = min(adjustChunkLimit(req.Limit, proto.Size(out), s.cfg.MaxRecvMsgSize), st.totalLimit-st.count)
 	}
+}
+
+// rangeStreamChunk reads one chunk and reports the key the next round continues
+// after plus whether the stream is complete. The terminal chunk carries the
+// header, the count of every key the stream sent and the more flag of the last
+// read, and it adds the count of the keys left behind it, like etcd.
+func (s *Server) rangeStreamChunk(ctx context.Context, req *etcdserverpb.RangeRequest, st *rangeStreamState) (*etcdserverpb.RangeResponse, []byte, bool, error) {
+	result, err := s.store.Range(ctx, rangeOptions(req))
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if st.headerRev == 0 {
+		st.headerRev = result.Revision
+		if req.Revision == 0 {
+			req.Revision = st.headerRev
+		}
+	}
+	st.count += int64(len(result.KVs))
+
+	var nextKey []byte
+	if result.More {
+		nextKey = append(append([]byte{}, result.KVs[len(result.KVs)-1].Key...), 0x00)
+	}
+	out := &etcdserverpb.RangeResponse{Kvs: toPBKVs(result.KVs)}
+	if result.More && st.count != st.totalLimit {
+		return out, nextKey, false, nil
+	}
+	out.Header = s.header(st.headerRev)
+	out.More = result.More
+	out.Count = st.count
+	if result.More {
+		remaining, err := s.store.Range(ctx, RangeOptions{
+			Key: nextKey, RangeEnd: req.RangeEnd, Revision: req.Revision, CountOnly: true,
+		})
+		if err != nil {
+			return nil, nil, false, err
+		}
+		out.Count += remaining.Count
+	}
+	return out, nextKey, true, nil
 }
 
 // checkRangeStreamRequest mirrors etcd: RangeStream serves the default key
@@ -756,45 +780,7 @@ func sortTarget(t etcdserverpb.RangeRequest_SortTarget) SortTarget {
 }
 
 func toTxnRequest(req *etcdserverpb.TxnRequest) (TxnRequest, error) {
-	out := TxnRequest{}
-	for _, c := range req.Compare {
-		cmp := Compare{Key: c.Key, RangeEnd: c.RangeEnd}
-		switch c.Target {
-		case etcdserverpb.Compare_VERSION:
-			cmp.Target = CompareVersion
-		case etcdserverpb.Compare_CREATE:
-			cmp.Target = CompareCreate
-		case etcdserverpb.Compare_MOD:
-			cmp.Target = CompareMod
-		case etcdserverpb.Compare_VALUE:
-			cmp.Target = CompareValue
-		case etcdserverpb.Compare_LEASE:
-			cmp.Target = CompareLease
-		}
-		switch c.Result {
-		case etcdserverpb.Compare_GREATER:
-			cmp.Op = CompareGreater
-		case etcdserverpb.Compare_LESS:
-			cmp.Op = CompareLess
-		case etcdserverpb.Compare_NOT_EQUAL:
-			cmp.Op = CompareNotEqual
-		default:
-			cmp.Op = CompareEqual
-		}
-		switch u := c.TargetUnion.(type) {
-		case *etcdserverpb.Compare_Version:
-			cmp.Version = u.Version
-		case *etcdserverpb.Compare_CreateRevision:
-			cmp.Version = u.CreateRevision
-		case *etcdserverpb.Compare_ModRevision:
-			cmp.Version = u.ModRevision
-		case *etcdserverpb.Compare_Lease:
-			cmp.Version = u.Lease
-		case *etcdserverpb.Compare_Value:
-			cmp.Value = u.Value
-		}
-		out.Compares = append(out.Compares, cmp)
-	}
+	out := TxnRequest{Compares: toTxnCompares(req.Compare)}
 	var err error
 	if out.Success, err = toTxnOps(req.Success); err != nil {
 		return TxnRequest{}, err
@@ -805,6 +791,76 @@ func toTxnRequest(req *etcdserverpb.TxnRequest) (TxnRequest, error) {
 	return out, nil
 }
 
+func toTxnCompares(compares []*etcdserverpb.Compare) []Compare {
+	var out []Compare
+	for _, c := range compares {
+		out = append(out, toTxnCompare(c))
+	}
+	return out
+}
+
+func toTxnCompare(c *etcdserverpb.Compare) Compare {
+	version, value := compareTargetUnion(c)
+	return Compare{
+		Key:      c.Key,
+		RangeEnd: c.RangeEnd,
+		Target:   compareTarget(c.Target),
+		Op:       compareOp(c.Result),
+		Version:  version,
+		Value:    value,
+	}
+}
+
+// compareTarget maps the wire target; an unset target is etcd's VERSION, the
+// zero value of CompareTarget.
+func compareTarget(t etcdserverpb.Compare_CompareTarget) CompareTarget {
+	switch t {
+	case etcdserverpb.Compare_CREATE:
+		return CompareCreate
+	case etcdserverpb.Compare_MOD:
+		return CompareMod
+	case etcdserverpb.Compare_VALUE:
+		return CompareValue
+	case etcdserverpb.Compare_LEASE:
+		return CompareLease
+	default:
+		return CompareVersion
+	}
+}
+
+// compareOp maps the wire comparison; an unset result is etcd's EQUAL, the zero
+// value of CompareOp.
+func compareOp(r etcdserverpb.Compare_CompareResult) CompareOp {
+	switch r {
+	case etcdserverpb.Compare_GREATER:
+		return CompareGreater
+	case etcdserverpb.Compare_LESS:
+		return CompareLess
+	case etcdserverpb.Compare_NOT_EQUAL:
+		return CompareNotEqual
+	default:
+		return CompareEqual
+	}
+}
+
+// compareTargetUnion is the compare's operand: the oneof carries either the
+// revision-like field or the value being compared.
+func compareTargetUnion(c *etcdserverpb.Compare) (int64, []byte) {
+	switch u := c.TargetUnion.(type) {
+	case *etcdserverpb.Compare_Version:
+		return u.Version, nil
+	case *etcdserverpb.Compare_CreateRevision:
+		return u.CreateRevision, nil
+	case *etcdserverpb.Compare_ModRevision:
+		return u.ModRevision, nil
+	case *etcdserverpb.Compare_Lease:
+		return u.Lease, nil
+	case *etcdserverpb.Compare_Value:
+		return 0, u.Value
+	default:
+		return 0, nil
+	}
+}
 func toTxnOps(ops []*etcdserverpb.RequestOp) ([]Op, error) {
 	out := make([]Op, 0, len(ops))
 	for _, op := range ops {
