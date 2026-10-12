@@ -60,7 +60,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | Capability | Description |
 |---|---|
 | 🔒 **Hardware Isolation** | Pluggable runtimes: gVisor (default), Kata Containers, Firecracker microVM |
-| 🌐 **Network Policies** | Cilium eBPF `toFQDNs` egress control — per-session, no proxy process needed; `allowed_hosts` enforced via `--cilium-dns-proxy` (KIP-16 M10) |
+| 🌐 **Network Policies** | Bundled Cilium enforces the standard `networking.k8s.io/v1` NetworkPolicy API by default — plus eBPF `toFQDNs` egress control per session; `allowed_hosts` enforced via `--cilium-dns-proxy` (KIP-16 M10) |
 | ⚖️ **Resource Quotas** | CPU/memory caps per agent session to prevent runaway costs |
 | 🗑️ **Ephemeral Workspaces** | Auto-cleanup after agent session ends; per-session workspace isolation for sub-agents (KIP-16 M1) |
 | 🧠 **Warm Pool** | Pre-booted sandbox pods for sub-500ms session claim latency; application-layer readiness handshake, adaptive sizing, per-session background-run caps |
@@ -114,7 +114,7 @@ door instead of raw infrastructure access.
 |---|---|
 | 🚪 **Sandbox Gateway** | Single gRPC (mTLS) + E2B-compatible HTTP door: sessions, exec, files, PTY terminals, exposure, snapshots |
 | 🛡️ **gVisor / Kata / Firecracker** | Pluggable sandbox isolation runtimes (user-space kernel / lightweight VMs / microVMs) |
-| 🔷 **Cilium (eBPF)** | Per-session network policy & egress control — no proxy process |
+| 🔷 **Cilium (eBPF)** | Default CNI — enforces the standard NetworkPolicy API plus per-session egress control, no proxy process |
 | 🧠 **Warm Pool Controller** | Pre-booted sandbox pods, adaptive sizing, sub-500ms claims |
 | 🤖 **k8e-sandbox-cli** | Standalone agent CLI — connect, run, expose, snapshots (`catalog` for SDK generation) |
 | 🔌 **dsh plugin family** | `@k8e-sandbox/*` npm packages — DeepSeek Harness integration with model-surface tools |
@@ -435,6 +435,50 @@ curl -sfL https://k8e.sh/install.sh | \
 
 ```bash
 curl -sfL https://k8e.sh/install.sh | INSTALL_K8E_EXEC="server --disable-sandbox-matrix" sh -
+```
+
+### Network Policy Enforcement
+
+K8E ships **Cilium** as its default CNI, so the standard Kubernetes
+`NetworkPolicy` API (`networking.k8s.io/v1`) is **enforced by default** — no
+extra component, CNI plugin or configuration is required. (That is stronger
+than a flannel-only default: flannel is a pure L3 overlay with no policy
+engine.)
+
+> ⚠️ **Without a policy-capable CNI, `NetworkPolicy` is a silent no-op.**
+> The API server *accepts and stores* `NetworkPolicy` objects whether or not
+> any CNI implements them — enforcement is a dataplane concern the API
+> deliberately does not model. There is no error, no warning and no event, and
+> `kubectl get networkpolicy` still reports the object as present.
+
+This applies when K8E runs with `--disable-cilium`: the bundled Cilium is
+gone, so you must supply your own CNI — and if that CNI has no policy engine
+(flannel is the classic example), `NetworkPolicy` objects are silent no-ops:
+
+```bash
+# Cilium off: install a policy-capable CNI yourself (e.g. Cilium or Calico),
+# or treat every NetworkPolicy object as documentation only.
+curl -sfL https://k8e.sh/install.sh | INSTALL_K8E_EXEC="server --disable-cilium" sh -
+```
+
+To check enforcement yourself, apply a deny-all egress policy and probe from a
+Pod in the same namespace:
+
+```bash
+kubectl apply -f - <<'YAML'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-egress
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+YAML
+
+# If this Pod still reaches the network, the CNI is not enforcing NetworkPolicy.
+kubectl run netpol-probe --rm -it --restart=Never --image=curlimages/curl -- \
+  curl -sS --max-time 5 https://example.com
 ```
 
 ### Key Environment Variables
