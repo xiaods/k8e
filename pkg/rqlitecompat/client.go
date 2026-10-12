@@ -92,9 +92,17 @@ func (e *Err) Transient() bool {
 	return false
 }
 
-// transientMarkers are the connectivity and leadership failures rqlite
-// reports. A SQLite message such as "no such table" is deliberately absent:
-// those are permanent and must surface to the caller.
+// transientMarkers are the connectivity, leadership and node-readiness
+// failures rqlite reports. A SQLite message such as "no such table" is
+// deliberately absent: those are permanent and must surface to the caller.
+//
+// "store not open" is rqlite's store-state error (ErrNotOpen) while a node's
+// store is closed: it is what a restarted member answers for the window
+// between "the Raft and HTTP listeners are up" and "the SQLite store is
+// open". The statement was never handed to SQLite, so failing over to the
+// next member is safe, and without the marker every client RPC that lands on
+// the restarting member fails with "rpc error: code = Unknown" instead of
+// being served by a healthy one (three-member failover).
 var transientMarkers = []string{
 	"connect: connection refused",
 	"connect: connection reset",
@@ -105,6 +113,7 @@ var transientMarkers = []string{
 	"transport is closing",
 	"no leader",
 	"leader not found",
+	"store not open",
 }
 
 // Blob converts raw bytes into the JSON form rqlite binds as a SQLite BLOB.
