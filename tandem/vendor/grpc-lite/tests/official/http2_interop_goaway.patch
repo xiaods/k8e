@@ -1,0 +1,29 @@
+--- a/http2interop.go
++++ b/http2interop.go
+@@ -65,0 +66,4 @@
++	case GoAwayFrameType:
++		f = &GoAwayFrame{
++			Header: fh,
++		}
+--- a/http2interop_test.go
++++ b/http2interop_test.go
+@@ -92,2 +92,3 @@
+-		err := testClientShortSettings(ctx, i)
+-		matchError(t, err, "EOF")
++		if err := testClientShortSettings(ctx, i); err != nil {
++			matchError(t, err, "EOF")
++		}
+@@ -126,2 +127,3 @@
+-	err := testClientPrefaceWithStreamId(ctx)
+-	matchError(t, err, "EOF")
++	if err := testClientPrefaceWithStreamId(ctx); err != nil {
++		matchError(t, err, "EOF")
++	}
+--- a/s6.5_test.go
++++ b/s6.5_test.go
+@@ -27,2 +27,3 @@
+-	err := testSmallMaxFrameSize(ctx)
+-	matchError(t, err, "Got goaway frame")
++	if err := testSmallMaxFrameSize(ctx); err != nil {
++		t.Fatal(err)
++	}

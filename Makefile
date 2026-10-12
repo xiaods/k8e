@@ -10,12 +10,25 @@ RQLITE_M0_TEST_ARGS ?=
 # Extra args for `make test-rqlite-m1`, e.g. RQLITE_M1_TEST_ARGS='-run TestM1ThreeNode'.
 RQLITE_M1_TEST_ARGS ?=
 
-.PHONY: all k8e clean deps format generate package package-cli package-airgap test test-rqlite-m0 test-rqlite-m1 e2e
+.PHONY: all k8e tandem clean deps format generate package package-cli package-airgap test test-rqlite-m0 test-rqlite-m1 e2e
 
 all:
 	zig build all
 
-k8e:
+tandem:
+	cd tandem && zig build
+	@mkdir -p bin
+	@arch=$$(uname -m); \
+	case "$$arch" in \
+		x86_64) tarch="x86_64-linux-musl" ;; \
+		arm64|aarch64) tarch="aarch64-linux-musl" ;; \
+		*) tarch="$$arch-linux-musl" ;; \
+	esac; \
+	if [ -f "tandem/bin/tandem-$$tarch" ]; then \
+		cp -f "tandem/bin/tandem-$$tarch" bin/tandem; \
+	fi
+
+k8e: tandem
 	zig build k8e
 
 clean:

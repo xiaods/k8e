@@ -1,0 +1,53 @@
+.{
+    .name = .grpc_lite,
+    .version = "0.4.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0xa8480adad018cc05,
+    .dependencies = .{
+        .libxev = .{
+            .url = "https://codeload.github.com/mitchellh/libxev/tar.gz/b0650f082458226860ed7ab0fc7c9c73823c8950",
+            .hash = "libxev-0.0.0-86vtcxkOFACqPXUTAPuq5i0xpDYWU5G5RfrYQXxlUT26",
+        },
+        .nghttp2 = .{
+            .url = "https://codeload.github.com/nghttp2/nghttp2/tar.gz/68cb6900fde14c77f0cd7add0e094a862960eb99",
+            .hash = "N-V-__8AAPOqVwAHvwAVJJjhhX72DyDtjWw--9WUZf3-uKRX",
+        },
+        .cares = .{
+            .url = "https://github.com/c-ares/c-ares/releases/download/v1.34.8/c-ares-1.34.8.tar.gz",
+            .hash = "N-V-__8AADDhTgDOiesa_sidmxGBzfPdF3OWU2HXS2GNZmVp",
+        },
+        .cpucycles = .{
+            .url = "https://cpucycles.cr.yp.to/libcpucycles-20260625.tar.gz",
+            .hash = "N-V-__8AAHSUBAA_Vn8NXM2L9F21QFvrTIxbH9yvxs5cO-lY",
+        },
+        .nanozlog = .{
+            .url = "https://github.com/wyzdwdz/nanozlog/archive/e693c11976d55ba0a5b8deeaaaf9f1c5cc30eba9.tar.gz",
+            .hash = "nanozlog-0.1.0-5UtdH535AADW7HUBpfLboKJkdB1IVYaqz7YFQ2dHIcqL",
+        },
+        .mbedtls = .{
+            .url = "https://codeload.github.com/Mbed-TLS/mbedtls/tar.gz/refs/tags/mbedtls-3.6.6",
+            .hash = "N-V-__8AAI1FmQLj92go7nR7_J6kwr-7uYyuitngGqydvWkd",
+            .lazy = true,
+        },
+        .gperftools = .{
+            .url = "https://codeload.github.com/fanyang89/gperftools/tar.gz/1a01cd2cf8f7000845d343fa8e0bbac70378858b",
+            .hash = "N-V-__8AAGKVkABvsDVHhSU8seHKvtJ8Q23b9Y0OMiFVWt-y",
+            .lazy = true,
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "CMakeLists.txt",
+        "cmake",
+        "docs",
+        "include",
+        "src",
+        "tools",
+        "examples",
+        "tests",
+        "proto",
+        "LICENSE",
+        "README.md",
+    },
+}

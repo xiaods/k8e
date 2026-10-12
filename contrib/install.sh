@@ -489,7 +489,7 @@ auto_configure() {
     export K8E_TOKEN
 
     # Default server command for one-click install
-    export INSTALL_K8E_EXEC="server --cluster-init --write-kubeconfig-mode 644"
+    export INSTALL_K8E_EXEC="server --bootstrap --write-kubeconfig-mode 644"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────

@@ -56,7 +56,19 @@ type Server struct {
 	ExtraControllerArgs      cli.StringSlice
 	ExtraCloudControllerArgs cli.StringSlice
 	Rootless                 bool
+	DatastoreBackend         string
 	DatastoreEndpoint        string
+	TandemBootstrap          bool
+	TandemJoin               string
+	TandemNodeID             string
+	TandemRaftPeers          cli.StringSlice
+	TandemBootstrapExpect    int
+	TandemRaftPort           string
+	TandemRaftCert           string
+	TandemRaftKey            string
+	TandemRaftCA             string
+	TandemRaftVerifyClient   bool
+	TandemRaftServerName     string
 	DatastoreCAFile          string
 	DatastoreCertFile        string
 	DatastoreKeyFile         string
@@ -73,9 +85,7 @@ type Server struct {
 	CiliumDNSProxyEnabled    bool
 	DisableAPIServer         bool
 	DisableControllerManager bool
-	DisableETCD              bool
 	EmbeddedRegistry         bool
-	ClusterInit              bool
 	ClusterReset             bool
 	ClusterResetRestorePath  string
 	EncryptSecrets           bool
@@ -253,6 +263,17 @@ var ServerFlags = []cli.Flag{
 		Destination: &ServerConfig.HelmJobImage,
 	},
 	ServerToken,
+	&cli.BoolFlag{Name: "bootstrap", Usage: "(cluster) Bootstrap the first Tandem/rqlite node", EnvVar: version.ProgramUpper + "_BOOTSTRAP", Destination: &ServerConfig.TandemBootstrap},
+	&cli.StringFlag{Name: "join", Usage: "(cluster) Join Tandem/rqlite using a reachable Raft address, for example 10.0.0.1:4002", EnvVar: version.ProgramUpper + "_JOIN", Destination: &ServerConfig.TandemJoin},
+	&cli.StringFlag{Name: "tandem-node-id", Usage: "(cluster) Unique rqlite member id and lease owner for this node; defaults to the hostname, which is a guess rather than a guarantee", EnvVar: version.ProgramUpper + "_TANDEM_NODE_ID", Destination: &ServerConfig.TandemNodeID},
+	&cli.StringSliceFlag{Name: "tandem-raft-peer", Usage: "(cluster) Raft address of a voting member; repeat for every member including this one, for example 10.0.0.1:4002", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_PEER", Value: &ServerConfig.TandemRaftPeers},
+	&cli.IntFlag{Name: "tandem-bootstrap-expect", Usage: "(cluster) Number of rqlite voters to wait for before forming a cluster; defaults to the peer count", EnvVar: version.ProgramUpper + "_TANDEM_BOOTSTRAP_EXPECT", Destination: &ServerConfig.TandemBootstrapExpect},
+	&cli.StringFlag{Name: "tandem-raft-port", Usage: "(cluster) Raft listener port; several nodes on one host need distinct ports", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_PORT", Destination: &ServerConfig.TandemRaftPort},
+	&cli.StringFlag{Name: "tandem-raft-cert", Usage: "(cluster) Certificate for the rqlite Raft listener; defaults to one K8E issues for the advertised Raft address", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_CERT", Destination: &ServerConfig.TandemRaftCert},
+	&cli.StringFlag{Name: "tandem-raft-key", Usage: "(cluster) Private key for --tandem-raft-cert", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_KEY", Destination: &ServerConfig.TandemRaftKey},
+	&cli.StringFlag{Name: "tandem-raft-ca", Usage: "(cluster) CA that signed the peer certificates; defaults to K8E's etcd peer CA", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_CA", Destination: &ServerConfig.TandemRaftCA},
+	&cli.BoolTFlag{Name: "tandem-raft-verify-client", Usage: "(cluster) Require every Raft peer to present a certificate signed by the CA, which is what makes the listener mutually authenticated (default: true)", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_VERIFY_CLIENT", Destination: &ServerConfig.TandemRaftVerifyClient},
+	&cli.StringFlag{Name: "tandem-raft-server-name", Usage: "(cluster) Hostname a peer's certificate must carry; lets one certificate serve a cluster whose members are dialled by IP", EnvVar: version.ProgramUpper + "_TANDEM_RAFT_SERVER_NAME", Destination: &ServerConfig.TandemRaftServerName},
 	&cli.StringFlag{
 		Name:        "token-file",
 		Usage:       "(cluster) File containing the token",
@@ -278,12 +299,6 @@ var ServerFlags = []cli.Flag{
 		Destination: &ServerConfig.ServerURL,
 	},
 	&cli.BoolFlag{
-		Name:        "cluster-init",
-		Usage:       "(cluster) Initialize a new cluster using embedded Etcd",
-		EnvVar:      version.ProgramUpper + "_CLUSTER_INIT",
-		Destination: &ServerConfig.ClusterInit,
-	},
-	&cli.BoolFlag{
 		Name:        "cluster-reset",
 		Usage:       "(cluster) Forget all peers and become sole member of a new cluster",
 		EnvVar:      version.ProgramUpper + "_CLUSTER_RESET",
@@ -302,6 +317,12 @@ var ServerFlags = []cli.Flag{
 		Name:  "kube-cloud-controller-manager-arg",
 		Usage: "(flags) Customized flag for kube-cloud-controller-manager process",
 		Value: &ServerConfig.ExtraCloudControllerArgs,
+	},
+	&cli.StringFlag{
+		Name:        "datastore-backend",
+		Usage:       "(db) Managed datastore driver to run: etcd (default) or tandem",
+		Destination: &ServerConfig.DatastoreBackend,
+		EnvVar:      version.ProgramUpper + "_DATASTORE_BACKEND",
 	},
 	&cli.StringFlag{
 		Name:        "datastore-endpoint",
@@ -480,12 +501,6 @@ var ServerFlags = []cli.Flag{
 		Hidden:      true,
 		Usage:       "(experimental/components) Disable running kube-controller-manager",
 		Destination: &ServerConfig.DisableControllerManager,
-	},
-	&cli.BoolFlag{
-		Name:        "disable-etcd",
-		Hidden:      true,
-		Usage:       "(experimental/components) Disable running etcd",
-		Destination: &ServerConfig.DisableETCD,
 	},
 	&cli.BoolFlag{
 		Name:        "embedded-registry",

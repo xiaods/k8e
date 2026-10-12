@@ -38,6 +38,7 @@ e2e_set_profile() {
     : "${E2E_DATA_DIR:=${E2E_STATE_DIR}/var}"
     : "${E2E_DIAG_DIR:=${E2E_STATE_DIR}/diagnostics}"
     : "${E2E_BINARY:=${E2E_REPO}/bin/k8e}"
+    : "${E2E_TANDEM_BINARY:=${E2E_REPO}/bin/tandem}"
     : "${E2E_KUBECONFIG:=${E2E_STATE_DIR}/kubeconfig}"
     # up.sh runs the server with --data-dir ${E2E_IN_CONTAINER_DATA_DIR}/data, so
     # that is where the addon manifests are staged. The server creates the tree as
@@ -99,7 +100,7 @@ e2e_set_profile() {
     esac
 
     export E2E_PROFILE E2E_CONTAINER E2E_STATE_DIR E2E_DATA_DIR E2E_DIAG_DIR
-    export E2E_BINARY E2E_KUBECONFIG E2E_IMAGE E2E_API_PORT
+    export E2E_BINARY E2E_TANDEM_BINARY E2E_KUBECONFIG E2E_IMAGE E2E_API_PORT
     export E2E_IN_CONTAINER_MANIFESTS_DIR E2E_CONTAINERD_SOCKET E2E_TEST_IMAGE
     export E2E_IN_CONTAINER_KUBELET_CONF_D
     export E2E_CONTAINERD_ROOT E2E_CONTAINERD_ROOT_VOLUME E2E_CONTAINERD_VOLUME_PATH
@@ -108,6 +109,32 @@ e2e_set_profile() {
     export E2E_SKIP_IMAGE_BUILD E2E_IN_CONTAINER_API_PORT E2E_EXTRA_SERVER_ARGS
     export E2E_IN_CONTAINER_DATA_DIR E2E_IN_CONTAINER_KUBECONFIG
     export E2E_GO_TEST_ARGS E2E_SKIP_GO_TESTS
+}
+
+# e2e_tandem_binary resolves the tandem binary to mount into the E2E container.
+e2e_tandem_binary() {
+    if [[ -n "${E2E_TANDEM_BINARY:-}" ]] && [[ -x "${E2E_TANDEM_BINARY}" ]]; then
+        echo "${E2E_TANDEM_BINARY}"
+        return 0
+    fi
+    local arch
+    case "$(docker info --format '{{.Architecture}}' 2>/dev/null || uname -m)" in
+    aarch64 | arm64) arch="aarch64" ;;
+    *) arch="x86_64" ;;
+    esac
+    local candidates=(
+        "${E2E_REPO}/bin/tandem"
+        "${E2E_REPO}/tandem/bin/tandem-${arch}-linux-musl"
+        "${E2E_REPO}/bin/tandem-${arch}-linux-musl"
+        "${E2E_REPO}/tandem/zig-out/bin/tandem"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [[ -x "${candidate}" ]]; then
+            echo "${candidate}"
+            return 0
+        fi
+    done
+    return 1
 }
 
 e2e_log() { printf '[e2e:%s] %s\n' "${E2E_PROFILE}" "$*"; }
@@ -224,6 +251,9 @@ e2e_profile_needs_agent() {
 
 # Extra docker arguments required by the profile.
 e2e_profile_docker_args() {
+    # Tandem's libxev transport uses io_uring, which Docker's default seccomp
+    # profile denies even for an otherwise unprivileged control-plane test.
+    printf '%s\n' --security-opt seccomp=unconfined
     if e2e_profile_needs_agent; then
         printf '%s\n' --privileged --cgroupns=host
         if [[ -d /lib/modules ]]; then

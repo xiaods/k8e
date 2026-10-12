@@ -64,7 +64,7 @@ func RotateBootstrapToken(ctx context.Context, config *config.Control, oldToken 
 // Save writes the current ControlRuntimeBootstrap data to the datastore. This contains a complete
 // snapshot of the cluster's CA certs and keys, encryption passphrases, etc - encrypted with the join token.
 // This is used when bootstrapping a cluster from a managed database or external etcd cluster.
-// This is NOT used with embedded etcd, which bootstraps over HTTP.
+// Tandem uses this path for encrypted bootstrap data shared by joining nodes.
 func Save(ctx context.Context, config *config.Control, override bool) error {
 	logrus.Info("Saving cluster bootstrap data to datastore")
 	buf := &bytes.Buffer{}
@@ -150,7 +150,7 @@ func bootstrapKeyData(ctx context.Context, storageClient etcdstorage.Client) (*e
 // bootstrap key as a lock. This function will not return successfully until either the
 // bootstrap key has been locked, or data is read into the struct.
 func (c *Cluster) storageBootstrap(ctx context.Context) error {
-	if err := c.startStorage(ctx, true); err != nil {
+	if err := c.startStorage(ctx); err != nil {
 		return err
 	}
 

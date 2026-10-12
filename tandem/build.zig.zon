@@ -1,0 +1,11 @@
+.{
+    .fingerprint = 0x3a8dd142ff9150bc,
+    .name = .tandem,
+    .version = "0.1.0",
+    .dependencies = .{
+        .grpc_lite = .{
+            .path = "vendor/grpc-lite",
+        },
+    },
+    .paths = .{""},
+}

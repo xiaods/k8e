@@ -1,0 +1,21 @@
+diff --git a/http2interop.go b/http2interop.go
+index d83476d..5802b92 100644
+--- a/http2interop.go
++++ b/http2interop.go
+@@ -278,0 +279,3 @@ func testTLSBadCipherSuites(ctx *HTTP2InteropCtx) error {
++	// CipherSuites does not configure TLS 1.3 suites. Restrict this negative test
++	// to TLS 1.2 so it exercises only the forbidden suites listed below.
++	config.MaxVersion = tls.VersionTLS12
+diff --git a/http2interop_test.go b/http2interop_test.go
+index ec4beac..7f996a1 100644
+--- a/http2interop_test.go
++++ b/http2interop_test.go
+@@ -137 +137 @@ func TestSoonTLSApplicationProtocol(t *testing.T) {
+-	matchError(t, err, "EOF", "broken pipe")
++	matchError(t, err, "EOF", "broken pipe", "no application protocol")
+@@ -149 +149 @@ func TestSoonTLSMaxVersion(t *testing.T) {
+-	matchError(t, err, "EOF", "server selected unsupported protocol")
++	matchError(t, err, "EOF", "server selected unsupported protocol", "no supported versions satisfy")
+@@ -159 +159 @@ func TestSoonTLSBadCipherSuites(t *testing.T) {
+-	matchError(t, err, "EOF", "Got goaway frame")
++	matchError(t, err, "EOF", "Got goaway frame", "handshake failure")

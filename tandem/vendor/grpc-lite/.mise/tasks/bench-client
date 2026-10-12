@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+#MISE description="Run a grpc-lite benchmark against an existing server"
+#USAGE flag "--host <host>" help="Benchmark server IPv4 address" default="127.0.0.1"
+#USAGE flag "--port <port>" help="Benchmark server port" default="50061"
+#USAGE flag "--scenario <scenario>" help="Benchmark scenario" default="unary" {
+#USAGE   choices "unary" "bidi-ping-pong" "bidi-throughput"
+#USAGE }
+#USAGE flag "--transport <transport>" help="Transport adapter" default="raw" {
+#USAGE   choices "raw" "typed"
+#USAGE }
+#USAGE flag "--warmup <duration>" help="Warmup duration" default="1s"
+#USAGE flag "--duration <duration>" help="Measurement duration" default="3s"
+#USAGE flag "--streams <count>" help="Concurrent workers or streams" default="1"
+#USAGE flag "--channels <count>" help="Client channels" default="1"
+#USAGE flag "--pipeline <count>" help="Outstanding messages per throughput stream" default="32"
+#USAGE flag "--payload-bytes <bytes>" help="Application payload size" default="128"
+#USAGE flag "--payload-pattern <pattern>" help="Payload byte pattern" default="repeated" {
+#USAGE   choices "repeated" "deterministic-random"
+#USAGE }
+#USAGE flag "--compression <compression>" help="Per-message compression" default="identity" {
+#USAGE   choices "identity" "gzip"
+#USAGE }
+#USAGE flag "--output <path>" help="Also write JSON to this path"
+#USAGE flag "--compact" help="Emit compact JSON instead of pretty JSON"
+set -euo pipefail
+
+project_root=$(git rev-parse --show-toplevel)
+zig build -Doptimize=ReleaseFast
+args=(
+  --host="${usage_host}"
+  --port="${usage_port}"
+  --scenario="${usage_scenario}"
+  --transport="${usage_transport}"
+  --warmup="${usage_warmup}"
+  --duration="${usage_duration}"
+  --streams="${usage_streams}"
+  --channels="${usage_channels}"
+  --pipeline="${usage_pipeline}"
+  --payload-bytes="${usage_payload_bytes}"
+  --payload-pattern="${usage_payload_pattern}"
+  --compression="${usage_compression}"
+)
+if [[ -n "${usage_output:-}" ]]; then
+  mkdir -p "$(dirname "${usage_output}")"
+  args+=(--output="${usage_output}")
+fi
+if [[ "${usage_compact:-false}" == "true" ]]; then
+  args+=(--compact)
+fi
+"$project_root/zig-out/bin/grpc-lite-benchmark-client" "${args[@]}"
