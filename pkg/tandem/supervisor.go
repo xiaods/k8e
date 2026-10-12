@@ -188,6 +188,16 @@ func (s *Supervisor) Start(ctx context.Context, cfg Config) error {
 		_ = s.Close()
 		return fmt.Errorf("rqlite readiness: %w", err)
 	}
+	// A node told to join a group has joined only once the group lists it as a
+	// voter. Skipping this would let a member that never reached its seed —
+	// and formed a group of its own — be reported as part of the cluster,
+	// which is the failure an operator cannot see from the outside.
+	if clustered(s.cfg) {
+		if err := waitUntilVoter(ctx, newMembershipClient(rqliteURL(s.cfg.RqliteHTTP)), s.cfg.NodeID, s.cfg.HealthTimeout); err != nil {
+			_ = s.Close()
+			return fmt.Errorf("tandem did not join the cluster: %w", err)
+		}
+	}
 	if err := s.startTandem(runCtx); err != nil {
 		_ = s.Close()
 		return err
@@ -205,6 +215,12 @@ func (s *Supervisor) Start(ctx context.Context, cfg Config) error {
 	s.mu.Unlock()
 	go s.supervise(runCtx)
 	return nil
+}
+
+// clustered reports whether the node was asked to take part in a voting group,
+// as opposed to running as a lone member.
+func clustered(cfg Config) bool {
+	return cfg.RqliteJoin != "" || cfg.BootstrapExpect > 1 || len(cfg.RqlitePeers) > 1
 }
 
 // rqliteArgs builds the rqlited command line for a node.
@@ -556,15 +572,20 @@ func hasRqliteState(rqliteDir string) bool {
 	return false
 }
 
-// Ready reports whether rqlite can currently serve the cluster: its /readyz
-// answers and a leader is known. rqlite returns 503 from /readyz while it has
-// no quorum, so this is what separates "the process is up" from "the datastore
-// can serve a request". A single-node cluster is ready as soon as it elects
-// itself, which is also what /readyz reports once bootstrap completes.
+// Ready reports whether rqlite can currently serve the cluster. A process that
+// is up is not the same as a datastore that can serve: /readyz answers 503
+// while the node has no leader, which is the ordinary state of a member that
+// has been cut off from its group.
 func (s *Supervisor) Ready(ctx context.Context) error {
 	if s.rqlite == nil || s.rqlite.Process == nil {
 		return fmt.Errorf("rqlite is not running")
 	}
+	return s.ready(ctx)
+}
+
+// ready asks the local node whether it can serve. It is separate from Ready so
+// the HTTP checks can be exercised without a running child.
+func (s *Supervisor) ready(ctx context.Context) error {
 	base := rqliteURL(s.cfg.RqliteHTTP)
 	if err := waitHealthy(ctx, base+rqliteReadyzPath, readinessPollTimeout); err != nil {
 		return fmt.Errorf("rqlite not ready: %w", err)
@@ -572,7 +593,16 @@ func (s *Supervisor) Ready(ctx context.Context) error {
 	if err := waitLeader(ctx, base+"/status", readinessPollTimeout); err != nil {
 		return fmt.Errorf("rqlite has no leader: %w", err)
 	}
-	return nil
+	// A leader is necessary but not sufficient: the group can have shrunk past
+	// the point where a write commits, and a member serving in that state
+	// would answer reads from a log that can never advance.
+	return waitQuorum(ctx, newMembershipClient(base), readinessPollTimeout)
+}
+
+// Membership asks the local rqlite node what it can see of the voting group.
+// It is the membership an operator would read to confirm a join or a removal.
+func (s *Supervisor) Membership(ctx context.Context) (Membership, error) {
+	return newMembershipClient(rqliteURL(s.cfg.RqliteHTTP)).nodes(ctx)
 }
 
 // readinessPollTimeout bounds a single Ready call. The caller retries, so this

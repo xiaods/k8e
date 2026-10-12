@@ -13,7 +13,7 @@ called complete:
 | Lease | background reaper with a single expiry owner, heartbeat-takeover after owner loss | Grant, keepalive, expiry, lease-driven deletes, owner exclusivity and takeover of a crashed owner's leases are covered against a real rqlite; qualify under real multi-node clock skew and partition |
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
 | Maintenance | `Status` is served on the wire with a real version, db size and rqlite leader/raft state; `Snapshot` returns an explicit `Unimplemented` | The other Maintenance calls, the whole Cluster service and the whole Auth service have no handler. The placeholders that answered with constants were removed rather than registered |
-| Single/three member | three members form one voting group, replicate between compat layers, and keep serving after the leader's store dies; node identity, peer set, Raft port and Raft mTLS are configurable | Dynamic member join and exit, and asymmetric-partition behaviour are not yet covered; loss of quorum is still only proven from the surviving side |
+| Single/three member | three members form one voting group, replicate between compat layers, and keep serving after the leader's store dies; node identity, peer set, Raft port and Raft mTLS are configurable; members join and leave while the group runs, and a member cut off from its majority refuses to serve | A real network partition is still approximated by killing stores rather than by dropping packets; nothing in a control-plane workflow calls the removal yet |
 | Differential tests | running in CI against a real etcd; KV, revision, tombstone, watch-order, lease and error-code cases covered, and it found ten real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
 | Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Extend to multi-node crash recovery, concurrent histories and differential checks |
 
@@ -191,9 +191,110 @@ Raft log. The second now gets an error naming the holder, instead of an opaque
 rqlite failure or two members with one id fighting over one log. The lock is
 advisory and cross-platform, so the Windows build is covered too.
 
-**Not covered yet.** Dynamic join against a running cluster and member removal
-are unexercised, as is loss of quorum: the fixture proves a surviving majority
-keeps serving, not that a lone member correctly refuses to.
+**Formation is not the same operation as joining.** A founding member is told
+how many voters to expect and the whole address set; a member that arrives later
+is given one seed and nothing else, because asking it to wait for a formation
+that has already happened would hang it. See the section below for what joining
+and leaving now prove.
+
+## Dynamic membership and quorum loss
+
+A three-member group is only worth forming if members can arrive and leave while
+it runs, and if a member cut off from its majority refuses to serve. rqlite
+supplies both; what was missing was K8E asking for them, and any evidence of the
+answer.
+
+**Joining.** `Start` now waits until the group lists this node as a voting
+member. Readiness cannot answer that question: a node that never reached its
+seed and formed a group of its own is ready too, and the difference is invisible
+at the socket — it listens, it answers, and it is holding a different database.
+Only the membership listing proves the join was committed, so it is what is
+waited on, and a node that never appears is reported as a failure to join rather
+than as a healthy single-member cluster.
+
+**Leaving.** `RemoveSelf` is now implemented against rqlite's `DELETE /remove`,
+identified by node id. Four things about it are worth recording, because each
+one turns a silent no-op into a visible success:
+
+- *The body carries the id and nothing else.* Current rqlite parses it strictly
+  and answers 400 to an unrecognised field, so including the Raft address that
+  older releases matched on is refused outright and the member is never removed.
+- *It needs a leader.* Removal is a Raft operation, so against a group that has
+  lost quorum it cannot be serviced. The membership is read first and the
+  refusal names the counts — the remedy is to bring members back, not to retry.
+  Trusting the status code alone would not do: rqlite answers 200 to removing an
+  id it does not know, so "not a member" is established by reading the group
+  rather than by the response.
+- *A node that is already out is a success.* The postcondition holds, and
+  reporting an error would send an operator to retry a removal that is done.
+- *Leaving is removing the member **and** stopping it, in that order.* A node
+  that is no longer in the configuration but is still running keeps timing out
+  and calling elections against the group it was removed from. That is not a
+  theoretical worry: with the removed member left up, the group went on
+  refusing writes for as long as it was watched — ninety seconds, which is
+  rqlite's apply timeout repeated — while still listing a leader and a quorum,
+  so every readiness check passed and nothing was committed. The removal had to
+  be followed by stopping the member before the group served again. That is also
+  the order a node follows when it removes itself on the way down, which is what
+  `RemoveSelf` exists for.
+
+`-raft-cluster-remove-shutdown` is deliberately not enabled: on that setting a
+rolling restart of a three-member group removes each member as it stops, which
+is a membership change nobody asked for. Leaving is explicit, and it is two
+steps.
+
+**Quorum.** The quorum is a strict majority, `(N/2)+1`, counted over voting
+members only — a read replica receives the log but does not vote, and counting
+it would overstate both the quorum held and the quorum needed. Readiness now
+checks three things in order: `/readyz`, a known leader, and a quorum. The first
+two are not sufficient on their own, which is the whole point: a leader can be
+reported by a group that can no longer commit, and a member serving in that
+state would answer reads from a log that will never advance. The minority case
+is reported as `ErrNoQuorum` with the counts, distinct from "I could not reach
+it", because the two point at opposite remedies.
+
+**Evidence.** `TestTandemClusterDynamicMembership` grows a running three-member
+group to four — asserting the new member is a *voter*, that the quorum rises
+from two to three, and that it can read a value written before it arrived, so a
+join that never received the log is caught — and then removes it, stops it, and
+writes again. `TestTandemClusterQuorumLoss` takes two of three stores down and requires
+the survivor to stop answering readiness, to report no quorum, and to refuse a
+write; then brings both back and requires the value committed before the loss to
+still be there, because a recovery that came back empty would be data loss
+dressed as availability. Unit tests cover the quorum table, the exclusion of
+read replicas, the removal request, and the readiness verdicts on every
+`go test`.
+
+**One thing the removal test does not assert.** After a removal the test writes
+to rqlite directly rather than through the compat layer, and the layer's own
+write is only recorded. That split is deliberate: on CI the layer's write was
+seen to time out for as long as it was retried — ninety seconds, which is the
+apply timeout repeating — while a plain `/db/execute` against the same member
+kept succeeding, so the group was committing and the layer was not. Whether the
+cause is the layer's transaction or rqlite's handling of it is not established,
+and folding the two into one assertion would have measured the layer and hidden
+the group. It is listed under the remaining gates as part of #616.
+
+**Waiting for a group that can serve, not for one that exists.** A group can
+list every voter, reach a quorum of them and still be unable to commit, because
+it has not agreed on a leader. Readiness and a quorum both hold in that window,
+so neither is enough before a write is attempted: the first version of the test
+asserted a write straight after the removal was acknowledged, and on CI it saw
+the group refuse for ten seconds — rqlite's apply timeout — because the config
+change is itself a Raft entry and the group had not applied it yet. Retrying
+that write turned ten seconds into ninety, which is the same timeout repeating:
+the refusal was not a window the group was passing through, it was the state the
+group was in. `waitForGroup` now also requires the group to name a leader, and
+the write after a membership change is retried up to a deadline, but neither is
+what fixed it — stopping the removed member was, which is recorded above. What
+the test asserts is that the group resumes serving; asserting that it serves in
+the same instant was measuring the runner, not the group.
+
+Every assumption in this section — the shape of `/nodes`, the strict removal
+body, the 503 without a leader, the shrinking of the group afterwards — was
+checked against a real three-member rqlited before being written down, and the
+suite was then run against **v10.3.6**, the version the CI image pins, rather
+than only against the newest release.
 
 ## Raft mTLS between members
 
@@ -349,8 +450,12 @@ previous-delete response shape; `KV.RangeStream` is not implemented at all; the
 Cluster and Auth services and the remaining Maintenance calls have no handler,
 so the "etcd v3.7 compatible" claim does not hold for them; the driver's
 Snapshot/Reset/Restore are still unimplemented, so `k8e etcd-snapshot` style
-operational workflows are unavailable on this backend; dynamic member join and
-exit, and loss-of-quorum behaviour; removal of embedded-etcd production paths;
+operational workflows are unavailable on this backend, and no control-plane
+workflow calls the member removal yet; the compat layer's writes timing out for
+as long as they are retried after a member is removed, while the group keeps
+committing, which is described above and is not explained yet; a real network
+partition, as opposed to a member being dead; removal of embedded-etcd
+production paths;
 reset/snapshot/restore; the Go full suite and Kubernetes E2E on a normal Linux
 environment. M1 remains open.
 

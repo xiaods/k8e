@@ -185,9 +185,10 @@ func (d *Driver) configureRaftTLS(cfg *Config) error {
 // listening socket proves only that the process is alive: a node that has lost
 // quorum still accepts connections but rejects every linearizable read. KIP-29
 // requires readiness to reflect serviceability and to treat liveness as
-// distinct from quorum, so this asks rqlite for its readiness and for a known
-// leader before reporting ready, and performs a real request against the etcd
-// port so a compat layer that failed after startup is not reported healthy.
+// distinct from quorum, so this asks rqlite for its readiness, for a known
+// leader and for a quorum of voters before reporting ready, and confirms the
+// compat layer's etcd port still accepts a connection so a layer that died
+// after startup is not reported healthy.
 func (d *Driver) Test(ctx context.Context) error {
 	if d.control == nil {
 		return fmt.Errorf("tandem driver has no control config")
@@ -238,11 +239,45 @@ func (d *Driver) GetMembersClientURLs(context.Context) ([]string, error) {
 	return []string{endpoint}, nil
 }
 
-// RemoveSelf reports that leaving the cluster is not implemented. Returning
-// nil would make a node removal appear to succeed while the node stays a
-// member.
-func (d *Driver) RemoveSelf(context.Context) error {
-	return fmt.Errorf("tandem does not support removing a member; rqlite membership is managed with rqlite's own join and remove commands")
+// RemoveSelf takes this node out of the rqlite voting group.
+//
+// Returning nil without doing it would make a removal appear to have happened
+// while the node is still a member: the group keeps trying to reach it, and it
+// keeps counting towards quorum, so a later failure is blamed on a node that
+// was supposed to be gone.
+//
+// Removal is itself a Raft operation, so it needs a leader. Against a group
+// that has lost quorum it is refused here rather than attempted, and the
+// refusal names the counts — the remedy is to bring members back, not to retry.
+// A node that is not a member at all is already out, so that is a success.
+func (d *Driver) RemoveSelf(ctx context.Context) error {
+	if d.control == nil {
+		return fmt.Errorf("tandem driver has no control config")
+	}
+	cfg := d.supervisor.cfg
+	if cfg.RqliteHTTP == "" {
+		return fmt.Errorf("tandem cannot remove this node: the local rqlite node is not running, and removal has to be requested through a member")
+	}
+	if cfg.NodeID == "" {
+		return fmt.Errorf("tandem cannot remove this node: no rqlite node identity is configured")
+	}
+	client := newMembershipClient(rqliteURL(cfg.RqliteHTTP))
+	// Reading the group first is what makes the two failures distinguishable.
+	// If it cannot be read the removal is still attempted: rqlite's own answer
+	// is then the most the caller can be told.
+	if membership, err := client.nodes(ctx); err == nil {
+		if !membership.HasVoter(cfg.NodeID) {
+			return nil
+		}
+		if !membership.HasQuorum() {
+			return fmt.Errorf("tandem cannot remove %s: %w", cfg.NodeID, membership.QuorumError())
+		}
+	}
+	if err := client.remove(ctx, cfg.NodeID); err != nil {
+		return fmt.Errorf("tandem remove %s: %w", cfg.NodeID, err)
+	}
+	logrus.Infof("tandem: removed %s from the rqlite voting group", cfg.NodeID)
+	return nil
 }
 
 var _ managed.Driver = (*Driver)(nil)
