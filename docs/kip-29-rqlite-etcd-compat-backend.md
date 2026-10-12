@@ -433,9 +433,30 @@ layer is called architecture-complete.
   (§M2 stage 1 and 4 of the epic).
 * A local backup is `GET /db/backup`, which returns a valid SQLite database
   (verified by opening it and reading the committed rows with the `sqlite3`
-  Python module). Restore-into-a-fresh-data-dir (`POST /db/load`) and the
-  optional S3 target are M2/M3 work, and S3 must stay optional: no S3 means no
-  impact on normal operation.
+  Python module). The K8E driver implements both halves of the contract
+  (M2, §11):
+  * `Backup` streams `GET /db/backup[?compress][&vacuum]` to a temporary file
+    beside the destination and renames it into place only after it has verified
+    the `X-Stream-Error` trailer and the file header. A 200 status is
+    explicitly not treated as a complete backup: rqlite reports a failure after
+    the response headers in that trailing header, and a truncated image would
+    otherwise only be discovered during a restore.
+  * `RestoreFrom` loads the image into a node's rqlite store with `POST
+    /db/load` after expanding a compressed backup, and `Driver.Reset` rebuilds
+    a node as a standalone single-member store from that file. A reset or a
+    restore without `--cluster-reset-restore-path` is refused rather than
+    wiping the store: rqlite has no `force-new-cluster` equivalent, so the
+    only way back is a backup.
+  * Evidence: `TestTandemBackupRestoresAFreshStore` (`-tags=tandem_integration`,
+    real `rqlited`) restores plain and compressed backups into an empty data
+    directory and checks that the value, the create/mod revisions and the MVCC
+    history all survive; `pkg/tandem/backup_test.go` and
+    `pkg/tandem/snapshot_test.go` cover the stream/reload failure paths and the
+    `k8e etcd-snapshot` save/list/prune/delete protocol.
+* The S3 target is still M3 work and stays optional: no S3 means no impact on
+  normal operation. Until it exists the Tandem snapshot handler answers an S3
+  request with an explicit error rather than writing a local file and reporting
+  a success the operator would read as "uploaded".
 
 ### 8.3 Upstream dependency cost
 
@@ -582,11 +603,24 @@ owner of the behaviour; none of them returns an empty success, which is what
   matrix is complete and the differential/concurrency history checks pass. The
   **Zig port** of the delivered Go layer is the remaining M1 follow-up (§10),
   tracked gate by gate in `tandem/docs/m1-status.md`.
-* **M2** — K8E integration: the new driver, process hosting, bootstrap, certs,
-  configuration, build/release, explicit opt-in test backend, then the four
-  ordered E2E stages of the epic (safe recovery after failure; multi-node
-  failure handling; backup-restore; long-run stability) reusing the #612
-  tooling and criteria.
+* **M2 (in progress)** — K8E integration: the new driver, process hosting,
+  bootstrap, certs, configuration, build/release, explicit opt-in test backend,
+  then the four ordered E2E stages of the epic (safe recovery after failure;
+  multi-node failure handling; backup-restore; long-run stability) reusing the
+  #612 tooling and criteria.
+  * Delivered: the `pkg/tandem` driver and supervisor (both processes under
+    K8E's data directory, TLS for the etcd port and Raft, single-member and
+    three-member groups, join/leave/removal), and the backup half of stage 3:
+    `k8e etcd-snapshot` save/list/prune/delete over `/db/snapshot`,
+    `Backup`/`RestoreFrom` and the backup-driven `Reset` (§8.2). Stage 3's
+    restore evidence is `TestTandemBackupRestoresAFreshStore`; it restores into
+    an empty data directory, so "backup exists" is not mistaken for "backup
+    loads".
+  * Open: the optional S3 backup target (§8.2), the remaining stages' evidence
+    (fault-injection on the new backend, long-run stability) and the embedded
+    etcd comparison of RSS, CPU, I/O, tail latency and package size. The epic's
+    M3 gate — no switch of the default backend before production qualification —
+    is unchanged.
 * **M3** — migration of existing production clusters and the first release
   that may switch the default backend, with migration/rollback rehearsals.
 

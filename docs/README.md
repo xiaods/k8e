@@ -28,7 +28,7 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 | [KIP-6](kip-6-embedded-etcd-design.md) | Embedded etcd as sole datastore | Implemented — [KIP-29](kip-29-rqlite-etcd-compat-backend.md) proposes replacing the embedded etcd datastore with rqlite + an etcd v3 compatibility layer |
 | [KIP-7](kip-7-embedded-etcd-fuse.md) | Fuse official `embed.StartEtcd` (`pkg/embedw`) | Implemented |
 | [KIP-27](kip-27-bundled-cert-manager.md) | Default cert-manager v1.21.2 bundle and airgap images | Implemented |
-| [KIP-29](kip-29-rqlite-etcd-compat-backend.md) | rqlite + etcd v3 compatibility backend (epic #592) | Proposed — M0 (design + rqlite capability evidence) and M1 (etcd v3 compatibility layer, `pkg/rqlitecompat`) complete; Zig port and K8E integration open |
+| [KIP-29](kip-29-rqlite-etcd-compat-backend.md) | rqlite + etcd v3 compatibility backend (epic #592) | Proposed — M0 (design + rqlite capability evidence) and M1 (etcd v3 compatibility layer, `pkg/rqlitecompat`) complete; M2 K8E integration in progress (`pkg/tandem` driver: process hosting, membership, snapshot/restore); Zig port, optional S3 backup and the M2/M3 E2E gates open |
 
 ### Sandbox matrix (core)
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -38,10 +37,6 @@ func (d *Driver) IsInitialized() (bool, error) {
 	}
 	return info.Mode().IsRegular(), nil
 }
-func (d *Driver) Register(h http.Handler) (http.Handler, error) { return h, nil }
-func (d *Driver) Reset(context.Context, func() error) error {
-	return fmt.Errorf("tandem reset is not implemented")
-}
 
 // IsReset reports whether a cluster reset has already been performed. The
 // cluster uses this to decide whether post-reset recovery has to run — the
@@ -65,9 +60,15 @@ func (d *Driver) ResetFile() string {
 	}
 	return filepath.Join(d.control.DataDir, "tandem", "reset")
 }
-func (d *Driver) Start(ctx context.Context, _ *clientaccess.Info) error {
+
+// config builds the launch configuration for the supervised pair from the
+// control config. Start and Reset both need it: a reset restarts the same
+// process pair, and rebuilding the configuration in two places would let the
+// two drift — TLS in particular is assembled from several files and a
+// difference would be invisible until a member failed to join.
+func (d *Driver) config() (Config, error) {
 	if d.control == nil {
-		return fmt.Errorf("tandem driver has no control config")
+		return Config{}, fmt.Errorf("tandem driver has no control config")
 	}
 	cfg := Config{DataDir: filepath.Join(d.control.DataDir, "tandem"), Stdout: os.Stdout, Stderr: os.Stderr}
 	cfg.RqliteJoin = d.control.Datastore.TandemJoin
@@ -84,13 +85,21 @@ func (d *Driver) Start(ctx context.Context, _ *clientaccess.Info) error {
 		cfg.BootstrapExpect = len(cfg.RqlitePeers)
 	}
 	if err := d.configureRaftTLS(&cfg); err != nil {
-		return err
+		return Config{}, err
 	}
 	// Terminate the etcd port with the same certificates the apiserver and the
 	// bootstrap client present. KIP-29 requires the compatibility layer to
 	// serve mTLS; serving it in plaintext would both violate that contract and
 	// leave the datastore unauthenticated on any interface the port reaches.
 	if err := d.configureTLS(&cfg); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func (d *Driver) Start(ctx context.Context, _ *clientaccess.Info) error {
+	cfg, err := d.config()
+	if err != nil {
 		return err
 	}
 	if err := d.supervisor.Start(ctx, cfg); err != nil {
@@ -206,13 +215,72 @@ func (d *Driver) Test(ctx context.Context) error {
 	}
 	return conn.Close()
 }
-func (d *Driver) Restore(context.Context) error {
-	return fmt.Errorf("tandem restore is not implemented")
+
+// Restore loads the backup named by --cluster-reset-restore-path into this
+// node's rqlite store, replacing its contents. It is the restore half of the
+// backup contract: what "k8e etcd-snapshot" wrote can be read back. The file is
+// an rqlite (SQLite) image rather than an etcd snapshot, which is why KIP-29
+// records the etcd snapshot restore path as a call migration.
+func (d *Driver) Restore(ctx context.Context) error {
+	if d.control == nil {
+		return fmt.Errorf("tandem driver has no control config")
+	}
+	if d.control.ClusterResetRestorePath == "" {
+		return fmt.Errorf("tandem restore requires a backup path; restart with --cluster-reset-restore-path")
+	}
+	return d.supervisor.RestoreFrom(ctx, d.control.ClusterResetRestorePath)
 }
+
+// Reset rebuilds this node as a standalone Tandem store loaded from a backup.
+//
+// rqlite has no equivalent of etcd's force-new-cluster: a store that lost
+// quorum cannot be revived from its own files, only from a backup. A reset
+// without --cluster-reset-restore-path is therefore refused rather than wiping
+// the store, because the operator asking for one would silently lose every
+// object the node holds. A reset node also drops the peer set: it becomes its
+// own single-member group, and keeping the old address list would ask it to
+// join a group that no longer exists.
+func (d *Driver) Reset(ctx context.Context, rebootstrap func() error) error {
+	if d.control == nil {
+		return fmt.Errorf("tandem driver has no control config")
+	}
+	if d.control.ClusterResetRestorePath == "" {
+		return fmt.Errorf("tandem cannot reset without a backup: rqlite has no force-new-cluster, so restart with --cluster-reset-restore-path, or recover the group from its remaining members")
+	}
+	// The supervised pair may still be running; the store is about to be
+	// replaced, so stop it before anything touches the data directory.
+	if err := d.supervisor.Close(); err != nil {
+		return err
+	}
+	cfg, err := d.config()
+	if err != nil {
+		return err
+	}
+	cfg.RqlitePeers, cfg.RqliteJoin, cfg.BootstrapExpect = nil, "", 0
+	if err := os.RemoveAll(filepath.Join(cfg.DataDir, "rqlite")); err != nil {
+		return err
+	}
+	if err := d.supervisor.Start(ctx, cfg); err != nil {
+		return err
+	}
+	if err := d.supervisor.RestoreFrom(ctx, d.control.ClusterResetRestorePath); err != nil {
+		return err
+	}
+	if rebootstrap != nil {
+		if err := rebootstrap(); err != nil {
+			return err
+		}
+	}
+	// Touch the reset file last: it is what makes the next start skip the
+	// reset, so it must not exist before the restore it describes succeeded.
+	if err := os.WriteFile(d.ResetFile(), nil, 0600); err != nil {
+		return err
+	}
+	logrus.Infof("tandem: this node was reset to a standalone store from %s; restart it without --cluster-reset", d.control.ClusterResetRestorePath)
+	return nil
+}
+
 func (d *Driver) EndpointName() string { return "tandem" }
-func (d *Driver) Snapshot(context.Context) (*managed.SnapshotResult, error) {
-	return nil, fmt.Errorf("tandem snapshots are not implemented")
-}
 
 // ReconcileSnapshotData reports that snapshot reconciliation is not
 // implemented rather than returning nil, which the cluster treats as success.

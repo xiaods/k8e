@@ -448,10 +448,13 @@ Linux amd64 qualification.
 Remaining merge gates: complete compare/options semantics and the
 previous-delete response shape; `KV.RangeStream` is not implemented at all; the
 Cluster and Auth services and the remaining Maintenance calls have no handler,
-so the "etcd v3.7 compatible" claim does not hold for them; the driver's
-Snapshot/Reset/Restore are still unimplemented, so `k8e etcd-snapshot` style
-operational workflows are unavailable on this backend, and no control-plane
-workflow calls the member removal yet; the compat layer's writes timing out for
+so the "etcd v3.7 compatible" claim does not hold for them; the compatibility
+layer's own `Maintenance.Snapshot` still answers `Unimplemented`, and no
+control-plane workflow calls the member removal yet. The K8E driver's
+`Snapshot`/`Restore`/`Reset` are implemented (pkg/tandem/backup.go,
+snapshot.go), so `k8e etcd-snapshot` save/list/prune/delete work against this
+backend and a backup restores into a fresh data directory
+(`TestTandemBackupRestoresAFreshStore`); the compat layer's writes timing out for
 as long as they are retried after a member is removed, while the group keeps
 committing, which is described above and is not explained yet; a real network
 partition, as opposed to a member being dead; removal of embedded-etcd
@@ -479,9 +482,11 @@ with something that merely looks like a success, so they were deleted.
 
 Wiring any of them up later means implementing it against rqlite's own `/nodes`,
 `/status` and membership endpoints, not restoring the placeholder. The same
-applies to the driver's `Snapshot`/`Reset`/`Restore`: a rqlite backup is a
-SQLite file, not an etcd snapshot, so those operations have to be built against
-`/db/backup` and `/db/load`.
+applied to the driver's `Snapshot`/`Reset`/`Restore`: a rqlite backup is a
+SQLite file, not an etcd snapshot, so those operations are built against
+`/db/backup` and `/db/load` instead of the etcd snapshot protocol. The Zig
+layer's `Maintenance.Snapshot` RPC stays `Unimplemented` for the same reason,
+and the operational snapshot path is the K8E driver's (KIP-29 §8.2).
 
 `Maintenance.Status` was the exception and is now served. The apiserver calls it
 on every start, from `etcd3.New` through `CheckClient`, to read the endpoint
