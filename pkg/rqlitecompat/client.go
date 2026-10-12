@@ -1,22 +1,13 @@
-// Package rqlitecompat is the executable M0 prototype for Issue #614: the
-// minimal proof that rqlite's public HTTP API can express the etcd v3 storage
-// semantics the compatibility layer (M1) must provide.
+// Package rqlitecompat implements the etcd v3 compatibility layer of KIP-29
+// (Issue #616, epic #592). It terminates etcd v3 gRPC (+ mTLS) and stores all
+// state in rqlite through rqlite's public HTTP API; it never opens the SQLite
+// file and never bypasses rqlite.
 //
-// The prototype is deliberately small. It implements only what M0 has to
-// prove — atomic transactions with revision allocation, a response taken from
-// the same transaction that mutates, exactly-once replay of an uncertain
-// request, and explicit linearizable reads — and it is driven against a real
-// rqlited process by tests in this package.
-//
-// The etcd call surface the prototype mirrors was read from the tree and the
-// dependency sources, never from memory:
-//
-//   - k8s.io/apiserver/pkg/storage/etcd3 (store/watcher/compact/lease_manager)
-//   - go.etcd.io/etcd/client/v3/kubernetes (k3s fork used by the apiserver)
-//   - pkg/etcdstorage, pkg/etcd (K8E's own etcd users)
-//
-// See docs/kip-29-rqlite-etcd-compat-backend.md: the design, the pinned
-// rqlite version and Appendix A (the etcd API/semantics matrix).
+// Responsibilities (KIP-29 §3.2): the etcd protocol, MVCC, conditional
+// transactions, events, leases, compaction and error codes. rqlite owns
+// consensus, persistence and recovery. The layer always reads with
+// level=linearizable and writes through /db/request?transaction, so a
+// transaction is one SQLite transaction and one Raft log entry.
 package rqlitecompat
 
 import (
@@ -33,8 +24,8 @@ import (
 )
 
 // Timeouts passed to rqlite on every request. db_timeout bounds a single SQL
-// statement; timeout bounds a follower's forwarding wait for the leader
-// (rqlite default 30s) and linearizable_timeout bounds the quorum check.
+// statement; timeout bounds a follower's forwarding wait for the leader and
+// linearizable_timeout bounds the quorum check (KIP-29 §7).
 const (
 	dbTimeout           = "10s"
 	forwardTimeout      = "15s"
@@ -50,7 +41,6 @@ type Statement struct {
 }
 
 // StatementResult is the per-statement entry of the rqlite JSON response.
-// rows_affected is omitted by rqlite when zero.
 type StatementResult struct {
 	Error        string   `json:"error"`
 	RowsAffected int64    `json:"rows_affected"`
@@ -68,8 +58,8 @@ type Response struct {
 
 // Err is returned for any rqlite-level failure: a transport error, an HTTP
 // status >= 400, or a database error inside an HTTP 200 response. rqlite
-// signals database errors inside a 200 body, so status alone is never enough
-// (https://rqlite.io/docs/api/api/#handling-errors).
+// signals database errors inside a 200 body, so the status alone is never
+// enough (https://rqlite.io/docs/api/api/#handling-errors).
 type Err struct {
 	Endpoint string
 	Status   int
@@ -84,13 +74,12 @@ func (e *Err) Error() string {
 }
 
 // Transient reports whether retrying the request is meaningful: a transport
-// failure or a 4xx/5xx response by rqlite. rqlite also relays a failure to
-// reach the leader as **HTTP 200** with a connection error in the body
-// (verified against v10.3.5: `{"results":[],"error":"dial tcp
-// <leader>: connect: connection refused"}`, with the same text sometimes in
-// `results[i].error`), so the status alone is not enough to classify an
-// error — the message has to be inspected. Retrying is always safe for this
-// adapter because every mutation carries a request id and is de-duplicated.
+// failure or a 5xx response. rqlite also relays a failure to reach the leader
+// as HTTP 200 with a connection error in the body, so the status alone is not
+// enough to classify an error — the message is inspected too. A retried write
+// can be applied twice if the first attempt reached the leader and only its
+// response was lost; this layer therefore never retries a non-transient
+// database error and the caveat is recorded in KIP-29 as a follow-up.
 func (e *Err) Transient() bool {
 	if e.Status == 0 || e.Status >= 500 {
 		return true
@@ -103,9 +92,17 @@ func (e *Err) Transient() bool {
 	return false
 }
 
-// transientMarkers are the connectivity and leadership failures rqlite
-// reports. A database error (a SQLite message such as "no such table") is
+// transientMarkers are the connectivity, leadership and node-readiness
+// failures rqlite reports. A SQLite message such as "no such table" is
 // deliberately absent: those are permanent and must surface to the caller.
+//
+// "store not open" is rqlite's store-state error (ErrNotOpen) while a node's
+// store is closed: it is what a restarted member answers for the window
+// between "the Raft and HTTP listeners are up" and "the SQLite store is
+// open". The statement was never handed to SQLite, so failing over to the
+// next member is safe, and without the marker every client RPC that lands on
+// the restarting member fails with "rpc error: code = Unknown" instead of
+// being served by a healthy one (three-member failover).
 var transientMarkers = []string{
 	"connect: connection refused",
 	"connect: connection reset",
@@ -116,11 +113,12 @@ var transientMarkers = []string{
 	"transport is closing",
 	"no leader",
 	"leader not found",
+	"store not open",
 }
 
 // Blob converts raw bytes into the JSON form rqlite binds as a SQLite BLOB.
 // A Go []byte would marshal to base64 and rqlite would bind it as TEXT, so
-// keys and values must be sent as byte arrays.
+// every key and value must be sent as a byte array.
 func Blob(b []byte) []int {
 	if b == nil {
 		return nil
@@ -133,8 +131,8 @@ func Blob(b []byte) []int {
 }
 
 // Client talks to one or more rqlite nodes. Every request is sent to a single
-// endpoint; a transient failure fails over to the next node, which is what
-// keeps an adapter client working across a leader change.
+// endpoint; a transient failure fails over to the next node, which keeps the
+// layer working across a leader change.
 type Client struct {
 	endpoints []string
 	http      *http.Client
@@ -151,25 +149,17 @@ func NewClient(endpoints ...string) *Client {
 	}
 	return &Client{
 		endpoints: endpoints,
-		http: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+		http:      &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
-// SetTransport replaces the HTTP transport. Tests use it to drop a response
-// after rqlite has already committed the transaction.
-func (c *Client) SetTransport(rt http.RoundTripper) {
-	c.http.Transport = rt
-}
+// Endpoints returns the configured rqlite HTTP endpoints.
+func (c *Client) Endpoints() []string { return c.endpoints }
 
 // Requests is the number of HTTP requests this client issued.
 func (c *Client) Requests() int64 { return c.requests.Load() }
 
-// Reads is the number of read requests this client issued. There is no counter
-// for reads sent without a consistency level, because Client.Read always sends
-// an explicit `level=linearizable`: rqlite's default `weak` level is not
-// linearizable, and the tests check the level on the wire.
+// Reads is the number of explicit linearizable read requests.
 func (c *Client) Reads() int64 { return c.reads.Load() }
 
 // Write POSTs statements to /db/request with `transaction`, so the whole list
@@ -181,7 +171,7 @@ func (c *Client) Write(ctx context.Context, stmts ...Statement) (Response, error
 
 // Read runs SELECT statements with an explicit `linearizable` level: the node
 // records the Raft commit index, confirms leadership with a quorum and only
-// then reads the local database, so the result cannot be stale.
+// then reads the local database, so the result cannot be stale (KIP-29 §9).
 func (c *Client) Read(ctx context.Context, stmts ...Statement) (Response, error) {
 	path := "/db/query?level=linearizable&linearizable_timeout=" + linearizableTimeout +
 		"&blob_array&db_timeout=" + dbTimeout + "&timeout=" + forwardTimeout
@@ -256,17 +246,43 @@ func (c *Client) postOne(ctx context.Context, endpoint, path string, payload []b
 	return resp, nil
 }
 
-// NodeStatus is the subset of /status the harness needs to observe elections
-// and durability progress. Field paths follow the real v10.3.5 response:
-// store.node_id, store.leader.node_id, store.db_applied_index,
-// store.raft.applied_index and build.version.
+// Ready reports whether a node answers /readyz with 200 (node, leader, store
+// and db readiness).
+func (c *Client) Ready(ctx context.Context, endpoint string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/readyz", http.NoBody)
+	if err != nil {
+		return err
+	}
+	c.requests.Add(1)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return &Err{Endpoint: endpoint, Message: err.Error()}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return &Err{Endpoint: endpoint, Status: resp.StatusCode, Message: strings.TrimSpace(string(body))}
+	}
+	return nil
+}
+
+// SetTransport replaces the HTTP transport. Tests use it to drop a response
+// after rqlite has already committed a transaction, and to record the requests
+// that went on the wire.
+func (c *Client) SetTransport(rt http.RoundTripper) {
+	c.http.Transport = rt
+}
+
+// NodeStatus is the subset of /status the harness observes: the node identity,
+// the leader it knows and the applied indices. Field paths follow the real
+// v10.3.5 response: store.node_id, store.leader.node_id,
+// store.db_applied_index, store.raft.applied_index and build.version.
 type NodeStatus struct {
 	Store StoreStatus `json:"store"`
 	Build BuildStatus `json:"build"`
 }
 
-// StoreStatus is the store section of /status: the node identity, the leader
-// it knows and the applied indices the harness waits for after a restart.
+// StoreStatus is the store section of /status.
 type StoreStatus struct {
 	NodeID         string       `json:"node_id"`
 	Leader         LeaderStatus `json:"leader"`
@@ -315,27 +331,6 @@ func (c *Client) Status(ctx context.Context, endpoint string) (NodeStatus, error
 	}
 	return st, nil
 }
-
-// Ready reports whether a node answers /readyz with 200. rqlite checks node,
-// leader, store and db readiness there.
-func (c *Client) Ready(ctx context.Context, endpoint string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/readyz", http.NoBody)
-	if err != nil {
-		return err
-	}
-	c.requests.Add(1)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return &Err{Endpoint: endpoint, Message: err.Error()}
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return &Err{Endpoint: endpoint, Status: resp.StatusCode, Message: strings.TrimSpace(string(body))}
-	}
-	return nil
-}
-
 func encodeStatements(stmts []Statement) []any {
 	out := make([]any, 0, len(stmts))
 	for _, s := range stmts {

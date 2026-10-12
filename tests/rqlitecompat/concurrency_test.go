@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	compat "github.com/xiaods/k8e/pkg/rqlitecompat"
 )
 
 // TestAdapterHelperProcess is not a test: it is the child process the
@@ -32,7 +34,7 @@ func TestAdapterHelperProcess(t *testing.T) {
 	}
 	expect, _ := strconv.ParseInt(os.Getenv("RQLITE_M0_EXPECT"), 10, 64)
 
-	store := NewStore(NewClient(endpoints...))
+	store := NewStore(compat.NewClient(endpoints...))
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
