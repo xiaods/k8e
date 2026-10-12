@@ -479,6 +479,9 @@ YAML
 # If this Pod still reaches the network, the CNI is not enforcing NetworkPolicy.
 kubectl run netpol-probe --rm -it --restart=Never --image=curlimages/curl -- \
   curl -sS --max-time 5 https://example.com
+
+# The policy blocks egress for every Pod in that namespace until you remove it.
+kubectl delete networkpolicy deny-all-egress
 ```
 
 ### Key Environment Variables
