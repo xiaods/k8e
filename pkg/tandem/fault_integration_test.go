@@ -173,8 +173,12 @@ func TestTandemFaultBackupRestore(t *testing.T) {
 	}
 
 	// The supervised pair comes back and must serve the pre-backup state.
-	// Restart rqlite in the same directory, then the compat layer, then dial.
-	c.restartRqlite(t, m)
+	// After a restore, the data directory belongs to the temporary node
+	// (node-id "restore"), so the restarted rqlite must use that same
+	// node-id — rqlite refuses to open a store whose node-id does not
+	// match. -bootstrap-expect 1 makes it a single-member cluster, which
+	// is the shape after a restore.
+	c.restartRqliteSingle(t, m)
 	c.startTandem(t, m)
 	restored := c.client(t, m)
 	for i := 0; i < writes; i++ {
