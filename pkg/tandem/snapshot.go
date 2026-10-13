@@ -1,6 +1,7 @@
 package tandem
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,9 +19,7 @@ import (
 
 // rqliteBackupTimeout bounds a /db/backup download. A backup streams the whole
 // SQLite file, so this has to scale with database size rather than the one
-// second the readiness probes use. The supervisor's HealthTimeout is the
-// caller-configurable half of this; this is only the floor used by the
-// snapshot handler, which has no caller-provided deadline.
+// second the readiness probes use.
 const rqliteBackupTimeout = 10 * time.Minute
 
 // rqliteLoadTimeout bounds a /db/load upload. Loading a SQLite file replays it
@@ -66,6 +65,9 @@ func (s *Supervisor) Backup(ctx context.Context, base, dest string) error {
 	if err != nil {
 		return err
 	}
+	backupCtx, backupCancel := context.WithTimeout(ctx, rqliteBackupTimeout)
+	defer backupCancel()
+	req = req.WithContext(backupCtx)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("tandem backup request: %w", err)
@@ -121,6 +123,9 @@ func (s *Supervisor) Load(ctx context.Context, base, src string) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
+	loadCtx, loadCancel := context.WithTimeout(ctx, rqliteLoadTimeout)
+	defer loadCancel()
+	req = req.WithContext(loadCtx)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("tandem restore request: %w", err)
@@ -150,7 +155,7 @@ func isSQLiteFile(path string) (bool, error) {
 		}
 		return false, err
 	}
-	return string(header) == string(sqliteMagic), nil
+	return bytes.Equal(header, sqliteMagic), nil
 }
 
 // tandemSnapshotRetention prunes local backups past the configured count,

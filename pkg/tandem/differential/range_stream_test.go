@@ -54,16 +54,10 @@ func mergeStreamChunks(chunks []*clientv3.RangeStreamResponse) *etcdserverpb.Ran
 	return &etcdserverpb.RangeResponse{Header: header, Kvs: kvs, More: more, Count: count}
 }
 
-// TestDifferentialRangeStream compares Tandem's RangeStream output against
-// embedded etcd's. It writes a known set of keys, then streams them back and
-// confirms the merged result matches what the unary Range returns on both
-// backends — and that the two backends agree.
-func TestDifferentialRangeStream(t *testing.T) {
-	h := NewHarness(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	const n = 50
+// seedStreamKeys writes n sequential keys to both backends so the stream test
+// has a known set to read back.
+func seedStreamKeys(t *testing.T, ctx context.Context, h *Harness, n int) {
+	t.Helper()
 	for i := 0; i < n; i++ {
 		key := fmt.Sprintf("stream/key/%04d", i)
 		value := fmt.Sprintf("v-%d", i)
@@ -74,9 +68,67 @@ func TestDifferentialRangeStream(t *testing.T) {
 			t.Fatalf("seed tandem: %v", err)
 		}
 	}
+}
 
-	// Baseline: the unary Range on each backend must agree. This is the
-	// reference the stream is merged against.
+// streamResult holds the merged stream and the channel count from one backend.
+type streamResult struct {
+	merged  *etcdserverpb.RangeResponse
+	chunks  int
+}
+
+// runStream collects a GetStream from a client and merges the chunks.
+func runStream(t *testing.T, ctx context.Context, client *clientv3.Client) streamResult {
+	t.Helper()
+	stream, err := client.GetStream(ctx, "stream/key/",
+		clientv3.WithPrefix(),
+		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
+	)
+	if err != nil {
+		t.Fatalf("get stream: %v", err)
+	}
+	chunks := collectRangeStream(t, ctx, stream)
+	return streamResult{merged: mergeStreamChunks(chunks), chunks: len(chunks)}
+}
+
+// assertStreamMatchesUnary verifies the merged stream matches the unary range.
+func assertStreamMatchesUnary(t *testing.T, merged *etcdserverpb.RangeResponse, unaryCount int64) {
+	t.Helper()
+	if int64(len(merged.Kvs)) != unaryCount {
+		t.Fatalf("stream key count %d != unary count %d", len(merged.Kvs), unaryCount)
+	}
+	if merged.More {
+		t.Fatalf("terminal chunk has more=true")
+	}
+}
+
+// assertStreamsAgree verifies etcd and Tandem merged streams agree on keys/values.
+func assertStreamsAgree(t *testing.T, etcdMerged, tandemMerged *etcdserverpb.RangeResponse) {
+	t.Helper()
+	if len(etcdMerged.Kvs) != len(tandemMerged.Kvs) {
+		t.Fatalf("stream key count mismatch: etcd=%d tandem=%d", len(etcdMerged.Kvs), len(tandemMerged.Kvs))
+	}
+	for i := range etcdMerged.Kvs {
+		if string(etcdMerged.Kvs[i].Key) != string(tandemMerged.Kvs[i].Key) {
+			t.Fatalf("key %d mismatch: etcd=%q tandem=%q", i, etcdMerged.Kvs[i].Key, tandemMerged.Kvs[i].Key)
+		}
+		if string(etcdMerged.Kvs[i].Value) != string(tandemMerged.Kvs[i].Value) {
+			t.Fatalf("value %d mismatch: etcd=%q tandem=%q", i, etcdMerged.Kvs[i].Value, tandemMerged.Kvs[i].Value)
+		}
+	}
+}
+
+// TestDifferentialRangeStream compares Tandem's RangeStream output against
+// embedded etcd's. It writes a known set of keys, then streams them back and
+// confirms the merged result matches what the unary Range returns on both
+// backends — and that the two backends agree.
+func TestDifferentialRangeStream(t *testing.T) {
+	h := NewHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	seedStreamKeys(t, ctx, h, 50)
+
+	// Baseline: the unary Range on each backend must agree.
 	etcdUnary, err := h.Etcd.Client.Get(ctx, "stream/key/",
 		clientv3.WithPrefix(),
 		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
@@ -95,56 +147,13 @@ func TestDifferentialRangeStream(t *testing.T) {
 		t.Fatalf("unary count mismatch: etcd=%d tandem=%d", etcdUnary.Count, tandemUnary.Count)
 	}
 
-	// Stream from etcd.
-	etcdStream, err := h.Etcd.Client.GetStream(ctx, "stream/key/",
-		clientv3.WithPrefix(),
-		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
-	)
-	if err != nil {
-		t.Fatalf("etcd get stream: %v", err)
-	}
-	etcdChunks := collectRangeStream(t, ctx, etcdStream)
-	etcdMerged := mergeStreamChunks(etcdChunks)
+	etcdResult := runStream(t, ctx, h.Etcd.Client)
+	tandemResult := runStream(t, ctx, h.Tandem.Client)
 
-	// Stream from Tandem.
-	tandemStream, err := h.Tandem.Client.GetStream(ctx, "stream/key/",
-		clientv3.WithPrefix(),
-		clientv3.WithSort(clientv3.SortByKey, clientv3.SortAscend),
-	)
-	if err != nil {
-		t.Fatalf("tandem get stream: %v", err)
-	}
-	tandemChunks := collectRangeStream(t, ctx, tandemStream)
-	tandemMerged := mergeStreamChunks(tandemChunks)
+	assertStreamMatchesUnary(t, etcdResult.merged, etcdUnary.Count)
+	assertStreamMatchesUnary(t, tandemResult.merged, tandemUnary.Count)
+	assertStreamsAgree(t, etcdResult.merged, tandemResult.merged)
 
-	// The merged stream must match the unary range on each backend.
-	if int64(len(etcdMerged.Kvs)) != etcdUnary.Count {
-		t.Fatalf("etcd stream key count %d != unary count %d", len(etcdMerged.Kvs), etcdUnary.Count)
-	}
-	if int64(len(tandemMerged.Kvs)) != tandemUnary.Count {
-		t.Fatalf("tandem stream key count %d != unary count %d", len(tandemMerged.Kvs), tandemUnary.Count)
-	}
-
-	// Terminal chunk carries the header, more, and count.
-	if etcdMerged.More {
-		t.Fatalf("etcd terminal chunk has more=true")
-	}
-	if tandemMerged.More {
-		t.Fatalf("tandem terminal chunk has more=true")
-	}
-
-	// The two backends' merged streams must agree on key count and values.
-	if len(etcdMerged.Kvs) != len(tandemMerged.Kvs) {
-		t.Fatalf("stream key count mismatch: etcd=%d tandem=%d", len(etcdMerged.Kvs), len(tandemMerged.Kvs))
-	}
-	for i := range etcdMerged.Kvs {
-		if string(etcdMerged.Kvs[i].Key) != string(tandemMerged.Kvs[i].Key) {
-			t.Fatalf("key %d mismatch: etcd=%q tandem=%q", i, etcdMerged.Kvs[i].Key, tandemMerged.Kvs[i].Key)
-		}
-		if string(etcdMerged.Kvs[i].Value) != string(tandemMerged.Kvs[i].Value) {
-			t.Fatalf("value %d mismatch: etcd=%q tandem=%q", i, etcdMerged.Kvs[i].Value, tandemMerged.Kvs[i].Value)
-		}
-	}
-
-	t.Logf("RangeStream: etcd chunks=%d tandem chunks=%d keys=%d", len(etcdChunks), len(tandemChunks), len(tandemMerged.Kvs))
+	t.Logf("RangeStream: etcd chunks=%d tandem chunks=%d keys=%d",
+		etcdResult.chunks, tandemResult.chunks, len(tandemResult.merged.Kvs))
 }

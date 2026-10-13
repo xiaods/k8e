@@ -83,12 +83,10 @@ K8E_PID=$!
 # Wait for the kubeconfig to appear — that is when the apiserver is ready.
 echo "[soak] waiting for k8e to become ready..."
 for ((i = 0; i < 120; i++)); do
-    if [[ -f "${DATA_DIR}/kubeconfig" ]]; then
-        # Confirm the apiserver actually answers.
-        if curl -fsSk "https://127.0.0.1:6443/healthz" > /dev/null 2>&1; then
-            echo "[soak] k8e ready"
-            break
-        fi
+    # Confirm the kubeconfig exists AND the apiserver actually answers.
+    if [[ -f "${DATA_DIR}/kubeconfig" ]] && curl -fsSk "https://127.0.0.1:6443/healthz" > /dev/null 2>&1; then
+        echo "[soak] k8e ready"
+        break
     fi
     sleep 1
 done
