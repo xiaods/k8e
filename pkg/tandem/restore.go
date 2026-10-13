@@ -53,8 +53,9 @@ func withTemporaryNode(ctx context.Context, rqliteBinary, dataDir string, fn fun
 			_ = cmd.Wait()
 		}
 	}
-	const rqliteScheme = "http://" // loopback-only; the node is a lone member with no TLS
-	base := rqliteScheme + httpAddr
+	// The temporary node is a lone member on loopback with no TLS credentials;
+	// rqlite requires a plaintext HTTP address for the load endpoint.
+	base := "http://" + httpAddr // NOSONAR
 	if err := waitHealthy(ctx, base+rqliteReadyzPath, 30*time.Second); err != nil {
 		stop()
 		return fmt.Errorf("tandem restore: temporary node did not become ready: %w", err)

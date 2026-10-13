@@ -78,11 +78,11 @@ func (o *soakOracle) len() int {
 	return len(o.m)
 }
 
-func (o *soakOracle) spotCheck(t *testing.T, clients []*clientv3.Client, max int) (sampled, mismatches int) {
+func (o *soakOracle) spotCheck(t *testing.T, clients []*clientv3.Client, limit int) (sampled, mismatches int) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	for key, want := range o.m {
-		if sampled >= max {
+		if sampled >= limit {
 			break
 		}
 		cli := clients[sampled%len(clients)]
@@ -151,7 +151,7 @@ func runSoakTest(t *testing.T, c *cluster, clients []*clientv3.Client, duration 
 	go soakWriter(ctx, t, clients, oracle, errCh, done)
 	go soakReader(ctx, t, clients, oracle, errCh, done)
 	go soakWatcher(ctx, clients, oracle, errCh, done)
-	go soakSampler(done, rss, oracle)
+	go soakSampler(t, done, rss, oracle)
 
 	// Run for the configured duration, then stop the workers.
 	t.Logf("soak running for %s...", duration)
@@ -308,7 +308,8 @@ func soakWatcherCheckEvents(events []*clientv3.Event, oracle *soakOracle, errCh 
 }
 
 // soakSampler captures RSS periodically so growth can be trended.
-func soakSampler(done <-chan struct{}, rss *soakRSS, oracle *soakOracle) {
+func soakSampler(t *testing.T, done <-chan struct{}, rss *soakRSS, oracle *soakOracle) {
+	t.Helper()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {
