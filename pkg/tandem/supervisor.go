@@ -605,6 +605,13 @@ func (s *Supervisor) Membership(ctx context.Context) (Membership, error) {
 	return newMembershipClient(rqliteURL(s.cfg.RqliteHTTP)).nodes(ctx)
 }
 
+// HTTPAddr returns the base URL of the node this supervisor's rqlite is
+// listening on, so a backup or a status check can reach it without reading
+// the unexported config.
+func (s *Supervisor) HTTPAddr() string {
+	return rqliteURL(s.cfg.RqliteHTTP)
+}
+
 // readinessPollTimeout bounds a single Ready call. The caller retries, so this
 // only needs to be long enough to absorb a transient leader election.
 const readinessPollTimeout = 2 * time.Second

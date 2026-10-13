@@ -33,7 +33,7 @@ const rqliteLoadTimeout = 10 * time.Minute
 // SQLite file has to be refused before the store is destroyed.
 var sqliteMagic = []byte("SQLite format 3\x00")
 
-// Backup streams a consistent snapshot of the local rqlite node to dest.
+// Backup streams a consistent snapshot of the rqlite node at base to dest.
 //
 // rqlite's GET /db/backup serves the underlying SQLite file, which is the
 // closest thing to an etcd snapshot the rqlite backend has — the etcd snapshot
@@ -41,17 +41,17 @@ var sqliteMagic = []byte("SQLite format 3\x00")
 // pkg/tandem/differential/known_differences.go) because the formats are not
 // interchangeable. KIP-29 §7 maps this endpoint onto the K8E snapshot flow.
 //
-// The request goes to the node this process supervises. rqlite transparently
-// forwards a backup request from a follower to the leader, so a node that is
-// not the leader still produces a complete backup; noleader is deliberately
-// not requested, as a backup of one unreplicated follower would be a
-// point-in-time lie about the cluster.
+// The request goes to base, the address of the node this backup is for. rqlite
+// transparently forwards a backup request from a follower to the leader, so a
+// node that is not the leader still produces a complete backup; noleader is
+// deliberately not requested, as a backup of one unreplicated follower would be
+// a point-in-time lie about the cluster.
 //
 // A streaming endpoint cannot signal failure with a status code once the body
 // has started, so the caller checks X-Stream-Error on a short read.
-func (s *Supervisor) Backup(ctx context.Context, dest string) error {
-	if s.cfg.RqliteHTTP == "" {
-		return fmt.Errorf("tandem backup: no rqlite node is configured")
+func (s *Supervisor) Backup(ctx context.Context, base, dest string) error {
+	if base == "" {
+		return fmt.Errorf("tandem backup: no rqlite node address")
 	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
 		return fmt.Errorf("tandem backup directory: %w", err)
@@ -62,7 +62,7 @@ func (s *Supervisor) Backup(ctx context.Context, dest string) error {
 	}
 	defer out.Close()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rqliteURL(s.cfg.RqliteHTTP)+"/db/backup", http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/db/backup", http.NoBody)
 	if err != nil {
 		return err
 	}

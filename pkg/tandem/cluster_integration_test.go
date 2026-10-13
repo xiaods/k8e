@@ -1,4 +1,4 @@
-//go:build tandem_integration
+//go:build tandem_integration || tandem_fault
 
 package tandem
 
@@ -41,7 +41,10 @@ type clusterMember struct {
 	endpoint  string
 	tlsConfig *tls.Config
 
-	// extra holds the rqlite arguments that describe this member's place in
+	// supervisor is the running rqlite+zig pair the fault tests drive backup
+	// and restore through. It is nil when the test is exercising bare rqlite
+	// crashes via killRqlite, which is the layer those tests control.
+	supervisor Supervisor
 	// the group — a bootstrap for a founding member, a -join for one that
 	// arrives later. They are kept so a killed member can be brought back with
 	// exactly the command line it was started with.
@@ -716,6 +719,31 @@ func rqliteReady(httpAddr string) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// waitForVoter waits until the member reports itself as a voting member of a
+// group with a leader. It is lighter than waitForGroup — it does not require a
+// specific voter count — and is what a fault test needs to confirm a member has
+// re-joined after a restart before it writes.
+func (c *cluster) waitForVoter(ctx context.Context, member *clusterMember) {
+	c.t.Helper()
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		if rqliteReady(member.httpAddr) {
+			membership, err := newMembershipClient("http://" + member.httpAddr).nodes(ctx)
+			if err == nil && membership.HasVoter(member.id) && membership.HasLeader() {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			c.t.Fatalf("%s never became a voter with a leader", member.id)
+		}
+		select {
+		case <-ctx.Done():
+			c.t.Fatalf("%s voter wait cancelled: %v", member.id, ctx.Err())
+		case <-time.After(300 * time.Millisecond):
+		}
+	}
 }
 
 // TestTandemClusterDynamicMembership grows a running cluster and then takes the

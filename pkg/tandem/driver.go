@@ -463,7 +463,7 @@ func (d *Driver) Snapshot(ctx context.Context) (*managed.SnapshotResult, error) 
 	logrus.Infof("Saving tandem snapshot to %s", snapshotPath)
 
 	res := &managed.SnapshotResult{}
-	if err := d.supervisor.Backup(ctx, snapshotPath); err != nil {
+	if err := d.supervisor.Backup(ctx, d.supervisor.HTTPAddr(), snapshotPath); err != nil {
 		_ = os.Remove(snapshotPath)
 		return nil, err
 	}
