@@ -11,6 +11,7 @@ DATA_DIR=build/data
 CHARTS_DIR=build/static/charts
 NERDCTL_VERSION=2.0.0
 CILIUM_CHART_VERSION=${VERSION_CILIUM_CHART}
+RQLITE_VERSION=${VERSION_RQLITE#v}
 # The release CDNs queried below occasionally drop a connection mid-transfer,
 # and a single transient error should not fail the whole build.
 FETCH_ATTEMPTS=${FETCH_ATTEMPTS:-5}
@@ -21,6 +22,7 @@ rm -rf ${RUNC_DIR}
 rm -rf ${CONTAINERD_DIR}
 rm -rf ${HCSSHIM_DIR}
 mkdir -p ${DATA_DIR}
+mkdir -p ${DATA_DIR}/licenses
 mkdir -p ${CHARTS_DIR}
 mkdir -p bin
 
@@ -104,6 +106,71 @@ download_and_package_nerdctl() {
   tar -xzf "${tarball}" -C bin
 }
 
+# download_and_package_rqlite fetches the pinned rqlite release, verifies its
+# SHA-256 against the digest pinned in hack/version.sh, and lands rqlited and
+# rqlite in bin/. From there hack/package-cli packs them into the release
+# data.tar.zst, and resolveBinary finds them at runtime next to the k8e
+# executable — the same mechanism kubectl and crictl already use.
+#
+# The SHA-256 is checked because the rqlite release artifact is what the
+# Tandem backend starts and the apiserver stores cluster state through; a
+# tampered or truncated download is a supply-chain and a data-loss risk at
+# once. gzip -t only checks that the stream is a valid gzip — it does not
+# catch a wrong file or a truncated member inside, so the digest is the real
+# gate.
+download_and_package_rqlite() {
+  echo "download rqlite ${VERSION_RQLITE}..."
+  local arch
+  case ${ARCH} in
+    amd64)
+      arch=amd64
+      # Digests are published on the release page and returned by the GitHub
+      # releases API as asset.content_type=application/gzip digests. Update
+      # both arches together when VERSION_RQLITE changes.
+      expected_sha256="17df480e697e135641fc66aac6c2e7d938c021311e1a8500070e730ccdfa8aa0"
+      ;;
+    aarch64 | arm64)
+      arch=arm64
+      expected_sha256="55d6189a6544361cb3ee357f652534adf14a22af665c5784e22fe83c45c523e1"
+      ;;
+    *)
+      echo "[ERROR] rqlite has no prebuilt binary for ${ARCH}"
+      exit 1
+      ;;
+  esac
+  local tarball="${DATA_DIR}/rqlite-v${RQLITE_VERSION}-linux-${arch}.tar.gz"
+  download_artifact \
+    "https://github.com/rqlite/rqlite/releases/download/${VERSION_RQLITE}/rqlite-v${RQLITE_VERSION}-linux-${arch}.tar.gz" \
+    "${tarball}"
+  # fetch_to_file already confirmed the gzip is intact; this confirms it is
+  # the gzip we expected, not a redirect page that happened to compress.
+  actual_sha256="$(sha256sum "${tarball}" | awk '{print $1}')"
+  if [ "${actual_sha256}" != "${expected_sha256}" ]; then
+    echo "[ERROR] rqlite ${VERSION_RQLITE} ${arch} checksum mismatch:" >&2
+    echo "  expected ${expected_sha256}" >&2
+    echo "  actual   ${actual_sha256}" >&2
+    rm -f "${tarball}"
+    exit 1
+  fi
+  # --strip-components=1 drops the top-level directory (rqlite-v10.3.6-linux-amd64/)
+  # so rqlited and rqlite land directly in bin/, alongside k8e and kubectl.
+  tar -xzf "${tarball}" -C bin --strip-components=1
+  rm -f "${tarball}"
+  # rqlite is MIT-licensed. Stage its LICENSE alongside the binaries so the
+  # release package carries the attribution the license requires, in
+  # build/data/licenses/<name>.<version>.LICENSE — a separate file per
+  # dependency makes it easy to audit when the pinned versions change.
+  local license="${DATA_DIR}/licenses/rqlite.${RQLITE_VERSION}.LICENSE"
+  rm -f "${license}"
+  if curl -sfL --retry 3 --connect-timeout 15 \
+    -o "${license}" \
+    "https://raw.githubusercontent.com/rqlite/rqlite/${VERSION_RQLITE}/LICENSE"; then
+    echo "  saved rqlite LICENSE to ${license}"
+  else
+    echo "[WARN] could not fetch rqlite LICENSE from ${VERSION_RQLITE}; create ${license} manually" >&2
+  fi
+}
+
 download_and_package_cilium() {
   echo "download Cilium Helm chart..."
   download_artifact \
@@ -112,4 +179,5 @@ download_and_package_cilium() {
 }
 
 download_and_package_nerdctl
+download_and_package_rqlite
 download_and_package_cilium

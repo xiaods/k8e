@@ -41,6 +41,10 @@ RUN apt-get update \
 # plugins."io.containerd.grpc.v1.cri" config, which containerd 2.x rejects.
 ENV CONTAINERD_VERSION=1.7.28
 ENV RUNC_VERSION=1.5.1
+# rqlite is vendored at the same pinned version hack/version.sh and
+# hack/download share, so an E2E run and a release install speak to an
+# identical store. The sha256 check lives in hack/download; the image skips
+# it because the tarball is pulled over HTTPS from the pinned tag.
 ENV RQLITE_VERSION=10.3.6
 # The runtime releases are the only downloads here, so every hop -- including
 # redirects -- is pinned to HTTPS. containerd and kubelet also probe /run,

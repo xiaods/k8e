@@ -15,21 +15,26 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${root}"
+. ./hack/version.sh
 
-RQLITE_VERSION="v10.3.5"
+# VERSION_RQLITE is owned by hack/version.sh — every consumer of the pinned
+# release (hack/download, hack/e2e/Dockerfile, this harness) reads it from
+# there, so a version change is one edit instead of four.
+RQLITE_VERSION="${VERSION_RQLITE}"
 RQLITE_BASE_URL="${RQLITE_BASE_URL:-https://github.com/rqlite/rqlite/releases/download}"
 GO="${GO:-go}"
 
 # SHA-256 digests published on the release page of https://github.com/rqlite/rqlite
-# (also returned by the GitHub releases API as asset digests).
+# (also returned by the GitHub releases API as asset digests). Update both
+# arches together when VERSION_RQLITE changes in hack/version.sh.
 case "$(uname -s)/$(uname -m)" in
 Linux/x86_64 | Linux/amd64)
     asset="rqlite-${RQLITE_VERSION}-linux-amd64.tar.gz"
-    digest="edaef7580cd60f7f9d558cde2fb95011f6e356ff64da7167fb659ab4b6882014"
+    digest="17df480e697e135641fc66aac6c2e7d938c021311e1a8500070e730ccdfa8aa0"
     ;;
 Linux/aarch64 | Linux/arm64)
     asset="rqlite-${RQLITE_VERSION}-linux-arm64.tar.gz"
-    digest="23d5d09d34a9e2db54b2c21469aacb3b6563166e3d0d3901f4f4fb44990db99b"
+    digest="55d6189a6544361cb3ee357f652534adf14a22af665c5784e22fe83c45c523e1"
     ;;
 *)
     echo "[ERROR] no pinned rqlite build for $(uname -s)/$(uname -m); rqlite publishes linux tarballs only" >&2
