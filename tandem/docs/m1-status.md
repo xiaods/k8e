@@ -446,18 +446,30 @@ depend solely on manual runs. CI must pass on the pushed head before claiming
 Linux amd64 qualification.
 
 Remaining merge gates: complete compare/options semantics and the
-previous-delete response shape; `KV.RangeStream` is not implemented at all; the
-Cluster and Auth services and the remaining Maintenance calls have no handler,
-so the "etcd v3.7 compatible" claim does not hold for them; the driver's
-Snapshot/Reset/Restore are still unimplemented, so `k8e etcd-snapshot` style
-operational workflows are unavailable on this backend, and no control-plane
-workflow calls the member removal yet; the compat layer's writes timing out for
-as long as they are retried after a member is removed, while the group keeps
-committing, which is described above and is not explained yet; a real network
-partition, as opposed to a member being dead; removal of embedded-etcd
-production paths;
-reset/snapshot/restore; the Go full suite and Kubernetes E2E on a normal Linux
-environment. M1 remains open.
+previous-delete response shape; the Cluster and Auth services and the remaining
+Maintenance calls have no handler, so the "etcd v3.7 compatible" claim does not
+hold for them; no control-plane workflow calls the member removal yet; the compat
+layer's writes timing out for as long as they are retried after a member is
+removed, while the group keeps committing, which is described above and is not
+explained yet; a real network partition, as opposed to a member being dead;
+removal of embedded-etcd production paths; the Go full suite and Kubernetes E2E
+on a normal Linux environment. M1 remains open.
+
+### RangeStream (etcd 3.7+)
+
+`KV.RangeStream` is now routed on the wire in the Zig layer. The handler is
+server-streaming: the client sends one `RangeRequest` and the server streams
+multiple `RangeStreamResponse` chunks, each wrapping a partial `RangeResponse`.
+The header, `more`, and `count` fields are populated only on the terminal
+chunk; intermediate chunks carry key-value pairs only — applying
+`proto.Merge` across all chunks yields the same result as the unary `Range`.
+
+The handler pins the read revision on the first chunk so a commit mid-stream
+cannot make the chunks inconsistent, and it rejects `serializable`, `keys_only`,
+revision filters, and non-default sort orders the same way etcd's own
+`checkRangeStreamRequest` does. Chunk limits start at etcd's
+`initialStreamChunkLimit` (10) and double toward a response-size target. A
+differential test case is still needed to close the gate.
 
 The differential suite now runs in CI on every push, so a divergence between
 the two backends fails the build rather than waiting for a local run. It is a
@@ -478,10 +490,9 @@ into a false success. KIP-29 forbids answering a call the layer does not serve
 with something that merely looks like a success, so they were deleted.
 
 Wiring any of them up later means implementing it against rqlite's own `/nodes`,
-`/status` and membership endpoints, not restoring the placeholder. The same
-applies to the driver's `Snapshot`/`Reset`/`Restore`: a rqlite backup is a
-SQLite file, not an etcd snapshot, so those operations have to be built against
-`/db/backup` and `/db/load`.
+`/status` and membership endpoints, not restoring the placeholder. The driver's
+`Snapshot`/`Restore` are implemented against rqlite's `/db/backup` and `/db/load`
+and covered by `TestTandemFaultBackupRestore`.
 
 `Maintenance.Status` was the exception and is now served. The apiserver calls it
 on every start, from `etcd3.New` through `CheckClient`, to read the endpoint

@@ -1,6 +1,47 @@
 // Protobuf wire format tests
 const std = @import("std");
 const wire = @import("wire.zig");
+const messages = @import("messages.zig");
+
+test "RangeStreamResponse wraps RangeResponse as field 1" {
+    const testing = std.testing;
+
+    // RangeStreamResponse { range_response: RangeResponse { header: { revision: 5 }, count: 3, more: false } }
+    const resp = messages.RangeStreamResponse{
+        .range = .{
+            .header = .{ .revision = 5 },
+            .kvs = &[_]messages.KeyValue{},
+            .more = false,
+            .count = 3,
+        },
+    };
+    const bytes = try resp.encode(testing.allocator);
+    defer testing.allocator.free(bytes);
+
+    // Decode and verify the wrapper structure.
+    var r = wire.Reader.init(bytes);
+    const tag = try r.nextTag();
+    try testing.expectEqual(@as(u32, 1), tag.field); // range_response is field 1
+    try testing.expectEqual(.length_delimited, tag.wire_type);
+
+    // Inner RangeResponse: header (msg, field 1), more (bool, field 3), count (varint, field 4).
+    const inner = try r.readBytes();
+    var inner_r = wire.Reader.init(inner);
+
+    const hdr_tag = try inner_r.nextTag();
+    try testing.expectEqual(@as(u32, 1), hdr_tag.field); // header
+    const hdr_bytes = try inner_r.readBytes();
+    var hdr_r = wire.Reader.init(hdr_bytes);
+    const rev_tag = try hdr_r.nextTag();
+    try testing.expectEqual(@as(u32, 3), rev_tag.field); // revision in ResponseHeader
+    try testing.expectEqual(@as(i64, 5), @as(i64, @intCast(try hdr_r.readU64())));
+
+    const count_tag = try inner_r.nextTag();
+    try testing.expectEqual(@as(u32, 4), count_tag.field); // count
+    try testing.expectEqual(@as(i64, 3), @as(i64, @intCast(try inner_r.readU64())));
+
+    try testing.expect(!inner_r.hasMore());
+}
 
 test "varint edge cases" {
     const testing = std.testing;

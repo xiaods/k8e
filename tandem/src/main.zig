@@ -221,6 +221,7 @@ fn startGrpcLite(allocator: std.mem.Allocator, pipeline: *PipelineServer, config
     defer grpc_server.deinit();
     const paths = [_][]const u8{
         "/etcdserverpb.KV/Range",
+        "/etcdserverpb.KV/RangeStream",
         "/etcdserverpb.KV/Put",
         "/etcdserverpb.KV/DeleteRange",
         "/etcdserverpb.KV/Txn",
@@ -240,7 +241,11 @@ fn startGrpcLite(allocator: std.mem.Allocator, pipeline: *PipelineServer, config
     var endpoints: [paths.len]grpc_lite_adapter.UnaryEndpoint = undefined;
     for (paths, 0..) |path, i| {
         endpoints[i] = .{ .pipeline = pipeline, .path = path };
-        try grpc_lite_adapter.registerKV(&grpc_server, &endpoints[i]);
+        if (std.mem.eql(u8, path, "/etcdserverpb.KV/RangeStream")) {
+            try grpc_lite_adapter.registerRangeStream(&grpc_server, &endpoints[i]);
+        } else {
+            try grpc_lite_adapter.registerKV(&grpc_server, &endpoints[i]);
+        }
     }
     try grpc_lite_adapter.registerWatch(&grpc_server, &watch_endpoint);
     var keepalive_endpoint = grpc_lite_adapter.UnaryEndpoint{ .pipeline = pipeline, .path = "/etcdserverpb.Lease/LeaseKeepAlive" };

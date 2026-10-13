@@ -1,9 +1,11 @@
 const std = @import("std");
+const math = std.math;
 const grpc = @import("grpc_lite");
 const PipelineServer = @import("../pipeline.zig").PipelineServer;
 const processRequest = @import("../pipeline.zig").processRequest;
 const messages = @import("../proto/messages.zig");
 const watchEvent = @import("../pipeline.zig").watchEvent;
+const mvcc = @import("../storage/mvcc.zig");
 
 pub const UnaryEndpoint = struct {
     pipeline: *PipelineServer,
@@ -162,6 +164,211 @@ pub fn registerStream(server: *grpc.server.Server, endpoint: *UnaryEndpoint) !vo
         .on_message = streamMessage,
         .on_remote_end = streamEnd,
     });
+}
+
+// initialStreamChunkLimit is etcd's first chunk size for RangeStream; later
+// chunks grow or shrink towards a response-size target.
+const initialStreamChunkLimit: i64 = 10;
+
+pub fn registerRangeStream(server: *grpc.server.Server, endpoint: *UnaryEndpoint) !void {
+    try server.registerStream(endpoint.path, .{
+        .context = endpoint,
+        .on_start = streamStart,
+        .on_message = rangeStreamMessage,
+        .on_remote_end = streamEnd,
+    });
+}
+
+fn rangeStreamMessage(
+    opaque_endpoint: ?*anyopaque,
+    stream: grpc.stream.ServerStream,
+    _: *grpc.service.ServerContext,
+    request_data: []const u8,
+    compression: grpc.compression.Compression,
+) !grpc.stream.ReceiveAction {
+    if (compression != .identity) return error.UnsupportedCompression;
+    const endpoint: *UnaryEndpoint = @ptrCast(@alignCast(opaque_endpoint.?));
+    const pipeline = endpoint.pipeline;
+    const allocator = pipeline.allocator;
+
+    const req = messages.RangeRequest.decode(request_data) catch |err| {
+        try stream.send(@errorName(err), .{});
+        return .continue_receiving;
+    };
+    defer {
+        std.heap.page_allocator.free(req.key);
+        std.heap.page_allocator.free(req.range_end);
+    }
+
+    // etcd's RangeStream serves the default key ordering only and rejects
+    // revision filters the unary Range accepts.
+    if (req.sort_order != .NONE and !(req.sort_target == .KEY and req.sort_order == .ASCEND)) {
+        try stream.send(@errorName(error.InvalidRequest), .{});
+        return .continue_receiving;
+    }
+    if (req.min_mod_revision != 0 or req.max_mod_revision != 0 or
+        req.min_create_revision != 0 or req.max_create_revision != 0)
+    {
+        try stream.send(@errorName(error.InvalidRequest), .{});
+        return .continue_receiving;
+    }
+    if (req.serializable) {
+        try stream.send(@errorName(error.InvalidRequest), .{});
+        return .continue_receiving;
+    }
+    if (req.keys_only) {
+        try stream.send(@errorName(error.InvalidRequest), .{});
+        return .continue_receiving;
+    }
+
+    // count_only: single chunk with just the count.
+    if (req.count_only) {
+        return streamRangeCount(pipeline, &req, stream, allocator);
+    }
+
+    return streamRangeChunks(pipeline, &req, stream, allocator);
+}
+
+fn streamRangeCount(
+    pipeline: *PipelineServer,
+    req: *const messages.RangeRequest,
+    stream: grpc.stream.ServerStream,
+    allocator: std.mem.Allocator,
+) !grpc.stream.ReceiveAction {
+    const result = pipeline.storage.range(req.key, req.range_end, 0, req.revision, false, true) catch |err| {
+        try stream.send(@errorName(err), .{});
+        return .continue_receiving;
+    };
+    defer freeRangeResult(allocator, result);
+    try pipeline.storage.syncState();
+    const header_rev = if (result.count > 0) pipeline.buildHeader().revision else req.revision;
+    const response = messages.RangeStreamResponse{
+        .range = .{
+            .header = .{ .revision = header_rev },
+            .kvs = &[_]messages.KeyValue{},
+            .more = false,
+            .count = result.count,
+        },
+    };
+    const bytes = try response.encode(allocator);
+    defer allocator.free(bytes);
+    try stream.send(bytes, .{});
+    return .continue_receiving;
+}
+
+fn streamRangeChunks(
+    pipeline: *PipelineServer,
+    req: *const messages.RangeRequest,
+    stream: grpc.stream.ServerStream,
+    allocator: std.mem.Allocator,
+) !grpc.stream.ReceiveAction {
+    const total_limit: i64 = if (req.limit == 0) std.math.maxInt(i64) else req.limit;
+    var count: i64 = 0;
+    var header_rev: i64 = 0;
+
+    var limit: i64 = @min(initialStreamChunkLimit, total_limit);
+    var key = req.key;
+    const range_end = req.range_end;
+    var revision = req.revision;
+    var next_key: []u8 = &[_]u8{};
+
+    while (true) {
+        const result = pipeline.storage.range(key, range_end, limit, revision, false, false) catch |err| {
+            allocator.free(next_key);
+            try stream.send(@errorName(err), .{});
+            return .continue_receiving;
+        };
+
+        if (header_rev == 0) {
+            header_rev = pipeline.storage.current_revision;
+            if (revision == 0) {
+                revision = header_rev;
+            }
+        }
+        count += result.count;
+
+        const more = result.more and count != total_limit;
+
+        // Convert MVCCKeyValue[] to KeyValue[] for the proto response.
+        var kvs = try mvccToKeyValues(allocator, result.kvs);
+        defer {
+            for (kvs) |kv| {
+                allocator.free(kv.key);
+                allocator.free(kv.value);
+            }
+            allocator.free(kvs);
+        }
+        freeRangeResult(allocator, result);
+
+        var this_next_key: []u8 = &[_]u8{};
+        if (more and kvs.len > 0) {
+            // next key = last returned key + 0x00 (etcd's "continue after" sentinel)
+            const last = kvs[kvs.len - 1];
+            this_next_key = try allocator.alloc(u8, last.key.len + 1);
+            @memcpy(this_next_key[0..last.key.len], last.key);
+            this_next_key[last.key.len] = 0;
+        }
+
+        // Only the terminal chunk carries header/more/count; intermediate
+        // chunks carry just the key-value pairs.
+        const chunk = messages.RangeResponse{
+            .header = if (more) .{} else .{ .revision = header_rev },
+            .kvs = kvs,
+            .more = if (more) false else false,
+            .count = if (more) 0 else count,
+        };
+        const response = messages.RangeStreamResponse{ .range = chunk };
+        const bytes = try response.encode(allocator);
+        defer allocator.free(bytes);
+        try stream.send(bytes, .{});
+
+        // Free the KV slices now — encoding has copied them into bytes.
+        for (kvs) |kv| {
+            allocator.free(kv.key);
+            allocator.free(kv.value);
+        }
+        allocator.free(kvs);
+        kvs = &[_]messages.KeyValue{};
+
+        if (more and this_next_key.len > 0) {
+            allocator.free(next_key);
+            next_key = this_next_key;
+            key = next_key;
+            // Adjust next chunk limit — simple doubling up to a cap.
+            limit = @min(limit * 2, total_limit - count);
+            if (limit <= 0) break;
+        } else {
+            allocator.free(this_next_key);
+            allocator.free(next_key);
+            break;
+        }
+    }
+    return .continue_receiving;
+}
+
+/// Free a RangeResult's owned allocations.
+fn freeRangeResult(allocator: std.mem.Allocator, result: mvcc.RangeResult) void {
+    for (result.kvs) |kv| {
+        allocator.free(kv.key);
+        allocator.free(kv.value);
+    }
+    allocator.free(result.kvs);
+}
+
+/// Convert []MVCCKeyValue to the proto-layer []KeyValue (deep-copied).
+fn mvccToKeyValues(allocator: std.mem.Allocator, mvcc_kvs: []mvcc.MVCCKeyValue) ![]messages.KeyValue {
+    var kvs = try allocator.alloc(messages.KeyValue, mvcc_kvs.len);
+    for (mvcc_kvs, 0..) |src, i| {
+        kvs[i] = messages.KeyValue{
+            .key = try allocator.dupe(u8, src.key),
+            .create_revision = src.create_revision,
+            .mod_revision = src.mod_revision,
+            .version = src.version,
+            .value = try allocator.dupe(u8, src.value),
+            .lease = src.lease,
+        };
+    }
+    return kvs;
 }
 
 fn streamStart(_: ?*anyopaque, _: grpc.stream.ServerStream, _: *grpc.service.ServerContext) !void {}
