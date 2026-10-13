@@ -543,10 +543,14 @@ owner of the behaviour; none of them returns an empty success, which is what
 
 ### 10.3 Known M1 limitations (recorded, not hidden)
 
-* **`RangeStream` reads the matching keys before it sends the first chunk**, so
-  the layer's memory cost for a large range is O(matches) and a fully consumed
-  stream costs O(n²) chunk reads. `Count`/`more` on the terminal chunk require
-  the full match count; an incremental chunk reader is the M2/M3 scaling item.
+* **`RangeStream`** (Zig layer): streams chunks incrementally — each chunk
+  reads at most `limit` rows from rqlite and doubles the limit toward a
+  response-size target. The revision is pinned on the first chunk so a commit
+  mid-stream cannot make the chunks inconsistent. `serializable`, `keys_only`,
+  revision filters and non-default sort orders are rejected with
+  `InvalidArgument`, matching etcd's `checkRangeStreamRequest`. A differential
+  test case comparing streamed output to etcd's unary Range (merged) is still
+  needed to close the M2 regression guard.
 * **No request-id de-duplication** (§6): a client that retries the same
   write after a lost response can apply it twice. etcd itself does not promise
   cross-RPC exactly-once, but it does deduplicate internal retries; M1 records

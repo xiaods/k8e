@@ -232,6 +232,25 @@ pub const RangeResponse = struct {
     }
 };
 
+/// etcdserverpb.RangeStreamResponse (etcd 3.7+)
+///
+/// Wraps a partial RangeResponse; applying proto.Merge across all streamed
+/// chunks yields the same result as the unary Range RPC. The header, more,
+/// and count fields are populated only on the final chunk.
+pub const RangeStreamResponse = struct {
+    range: RangeResponse = .{},
+
+    pub fn encode(self: RangeStreamResponse, allocator: Allocator) ![]u8 {
+        // RangeStreamResponse { range_response: RangeResponse } — field 1,
+        // message-typed. The wrapper carries no fields of its own.
+        var w = wire.Writer.init(allocator);
+        const range_bytes = try self.range.encode(allocator);
+        defer allocator.free(range_bytes);
+        try w.msg(1, range_bytes);
+        return w.buf.toOwnedSlice(allocator);
+    }
+};
+
 /// etcdserverpb.PutRequest
 pub const PutRequest = struct {
     key: []const u8 = &[_]u8{},

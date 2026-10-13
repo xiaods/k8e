@@ -76,9 +76,9 @@ var KnownDifferences = []Difference{
 	},
 	{
 		Method:     "KV.RangeStream",
-		Observed:   "Not implemented; no handler and no route.",
-		Reason:     "The apiserver's EtcdRangeStream gate is Beta and on by default in 1.37, so this is a real gap rather than a cosmetic one, and the K8E call surface is not fully covered until it lands.",
-		Regression: "Nothing. If this ever stops differing it is because RangeStream shipped, which is an improvement to record rather than suppress.",
+		Observed:   "Implemented in the Zig layer. Server-streaming: one RangeRequest → multiple RangeStreamResponse chunks. The header, more, and count fields are populated only on the terminal chunk. Revision pinned on the first chunk.",
+		Reason:     "The apiserver's EtcdRangeStream gate is Beta and on by default in 1.37, so this is a required surface, not a cosmetic one. A differential test case still needs to verify the streaming chunks match etcd's unary Range merged result.",
+		Regression: "A differential test case that verifies streamed chunks match etcd's unary Range (proto.Merge across chunks). Until that lands, this is an implementation without a regression guard.",
 	},
 	{
 		Method:     "KV.Txn with a nested Txn",

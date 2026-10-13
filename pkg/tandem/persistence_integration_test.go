@@ -1,4 +1,4 @@
-//go:build tandem_integration
+//go:build tandem_integration || tandem_fault
 
 package tandem
 

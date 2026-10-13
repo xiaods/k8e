@@ -64,6 +64,14 @@ VERSION_CNIPLUGINS="v1.9.1-k3s1"
 
 VERSION_CILIUM_CHART="1.20.0"
 
+# rqlite powers the Tandem etcd-compatibility backend (KIP-29). One pinned
+# version, shared by every consumer: hack/download stages it into bin/ for the
+# release, hack/e2e/Dockerfile vendors it for the E2E image, and the M0/M1
+# evidence harnesses download and verify it. Changing this version means
+# re-running the M0/M1 differential suite — rqlite releases occasionally change
+# Raft semantics or the HTTP surface the compat layer speaks to.
+VERSION_RQLITE="v10.3.6"
+
 DEPENDENCIES_URL="https://raw.githubusercontent.com/kubernetes/kubernetes/${VERSION_K8S}/build/dependencies.yaml"
 if command -v yq >/dev/null 2>&1 && yq --version >/dev/null 2>&1; then
     VERSION_GOLANG="go"$(curl  --proto '=https' -sL --connect-timeout 5 --max-time 10 "${DEPENDENCIES_URL}" 2>/dev/null | yq e '.dependencies[] | select(.name == "golang: upstream version").version' - 2>/dev/null)
@@ -92,4 +100,4 @@ BINARY_POSTFIX=
 if [ ${OS} = windows ]; then
     BINARY_POSTFIX=.exe
 fi
-export VERSION VERSION_TAG VERSION_GOLANG VERSION_K8S VERSION_CRICTL VERSION_CONTAINERD VERSION_CNIPLUGINS VERSION_CILIUM_CHART VERSION_RUNC VERSION_HCSSHIM VERSION_CRI_DOCKERD PKG_CONTAINERD_K8E COMMIT TREE_STATE
+export VERSION VERSION_TAG VERSION_GOLANG VERSION_K8S VERSION_CRICTL VERSION_CONTAINERD VERSION_CNIPLUGINS VERSION_CILIUM_CHART VERSION_RUNC VERSION_HCSSHIM VERSION_CRI_DOCKERD VERSION_RQLITE PKG_CONTAINERD_K8E COMMIT TREE_STATE
