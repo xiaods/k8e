@@ -1,12 +1,18 @@
 package tandem
 
 import (
+	
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -21,6 +27,11 @@ import (
 type Driver struct {
 	control    *config.Control
 	supervisor Supervisor
+
+	// snapshotMu serializes backups and restores. A backup streams the whole
+	// SQLite file, so overlapping with a restore would race on the store and
+	// overlap with another backup would race on the output files.
+	snapshotMu sync.Mutex
 }
 
 func NewDriver() *Driver                                   { return &Driver{} }
@@ -38,7 +49,146 @@ func (d *Driver) IsInitialized() (bool, error) {
 	}
 	return info.Mode().IsRegular(), nil
 }
-func (d *Driver) Register(h http.Handler) (http.Handler, error) { return h, nil }
+// Register makes the Tandem snapshot API available on the cluster's database
+// HTTP handler. The k8e etcd-snapshot CLI POSTs a SnapshotRequest to
+// /db/snapshot; this handler dispatches save/list/prune/delete onto the
+// driver, mirroring the etcd handler in pkg/etcd/snapshot_handler.go so the
+// CLI and the retention controller work unchanged on this backend.
+//
+// The handler chains with the incoming handler: /db/snapshot goes to the
+// tandem dispatch, and everything else falls through, the same way the etcd
+// handler attaches under the mux router. pkg/cluster/managed.go calls
+// Register with the handler the cluster already built, and rechains the
+// result in.
+func (d *Driver) Register(h http.Handler) (http.Handler, error) {
+	mux := http.NewServeMux()
+	mux.Handle("/db/snapshot", d.snapshotHandler())
+	// Everything that is not /db/snapshot falls through to the cluster's
+	// existing handler. ServeMux has no NotFoundHandler, so this wrapper
+	// dispatches on the path instead.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/db/snapshot" {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		h.ServeHTTP(w, r)
+	}), nil
+}
+
+// snapshotHandler translates the CLI's SnapshotRequest into driver calls. Its
+// shape copies pkg/etcd/snapshot_handler.go's dispatch so the CLI, which
+// marshals the same request body, does not need to know which backend it is
+// talking to.
+func (d *Driver) snapshotHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req snapshotRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			http.Error(w, fmt.Sprintf("tandem: invalid snapshot request: %v", err), http.StatusBadRequest)
+			return
+		}
+		switch req.Operation {
+		case snapshotSave:
+			d.handleSaveSnapshot(w, r)
+		case snapshotList:
+			d.handleListSnapshots(w, r)
+		case snapshotPrune:
+			d.handlePruneSnapshots(w, r)
+		case snapshotDelete:
+			d.handleDeleteSnapshots(w, r, req.Name)
+		default:
+			http.Error(w, fmt.Sprintf("tandem: unknown snapshot operation %q", req.Operation), http.StatusBadRequest)
+		}
+	})
+}
+
+const (
+	snapshotSave   = "save"
+	snapshotList   = "list"
+	snapshotPrune  = "prune"
+	snapshotDelete = "delete"
+)
+
+// SnapshotRequest mirrors the k8e etcd-snapshot CLI's request shape. It is a
+// local type because importing pkg/etcd into the tandem driver would pull the
+// whole etcd dependency into the build.
+type snapshotRequest struct {
+	Operation string    `json:"operation"`
+	Name      []string  `json:"name,omitempty"`
+	Dir       *string   `json:"dir,omitempty"`
+	Compress  *bool     `json:"compress,omitempty"`
+	Retention *int      `json:"retention,omitempty"`
+}
+
+func writeSnapshotResponse(w http.ResponseWriter, res *managed.SnapshotResult) {
+	w.Header().Set("Content-Type", "application/json")
+	if res == nil {
+		res = &managed.SnapshotResult{}
+	}
+	json.NewEncoder(w).Encode(res)
+}
+
+func (d *Driver) handleSaveSnapshot(w http.ResponseWriter, r *http.Request) {
+	res, err := d.Snapshot(r.Context())
+	if err != nil {
+		logrus.Errorf("tandem snapshot failed: %v", err)
+		http.Error(w, fmt.Sprintf("tandem snapshot failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	writeSnapshotResponse(w, res)
+}
+
+func (d *Driver) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
+	dir, err := d.snapshotDir(false)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("tandem snapshot list: %v", err), http.StatusInternalServerError)
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		http.Error(w, fmt.Sprintf("tandem snapshot list: %v", err), http.StatusInternalServerError)
+		return
+	}
+	var res managed.SnapshotResult
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasPrefix(e.Name(), d.snapshotPrefix()) {
+			res.Created = append(res.Created, e.Name())
+		}
+	}
+	writeSnapshotResponse(w, &res)
+}
+
+func (d *Driver) handlePruneSnapshots(w http.ResponseWriter, r *http.Request) {
+	dir, err := d.snapshotDir(false)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("tandem snapshot prune: %v", err), http.StatusInternalServerError)
+		return
+	}
+	res := &managed.SnapshotResult{}
+	deleted, err := tandemSnapshotRetention(d.control.EtcdSnapshotRetention, d.snapshotPrefix(), dir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("tandem snapshot prune: %v", err), http.StatusInternalServerError)
+		return
+	}
+	res.Deleted = append(res.Deleted, deleted...)
+	writeSnapshotResponse(w, res)
+}
+
+func (d *Driver) handleDeleteSnapshots(w http.ResponseWriter, r *http.Request, names []string) {
+	dir, err := d.snapshotDir(false)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("tandem snapshot delete: %v", err), http.StatusInternalServerError)
+		return
+	}
+	res := &managed.SnapshotResult{}
+	for _, name := range names {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !os.IsNotExist(err) {
+			logrus.Warnf("tandem: failed to delete snapshot %s: %v", name, err)
+			continue
+		}
+		res.Deleted = append(res.Deleted, name)
+	}
+	writeSnapshotResponse(w, res)
+}
 func (d *Driver) Reset(context.Context, func() error) error {
 	return fmt.Errorf("tandem reset is not implemented")
 }
@@ -68,6 +218,19 @@ func (d *Driver) ResetFile() string {
 func (d *Driver) Start(ctx context.Context, _ *clientaccess.Info) error {
 	if d.control == nil {
 		return fmt.Errorf("tandem driver has no control config")
+	}
+	// A cluster reset with a restore path replaces the store before the
+	// supervised pair starts. rqlite's /db/load requires a node with no
+	// existing data and no other writes, so the load happens here, before any
+	// process touches the data directory. This mirrors the etcd driver's
+	// restore-before-start in pkg/etcd/etcd.go.
+	if d.control.ClusterResetRestorePath != "" {
+		if err := d.Restore(ctx); err != nil {
+			return fmt.Errorf("tandem restore: %w", err)
+		}
+		if err := os.WriteFile(d.ResetFile(), []byte{}, 0600); err != nil {
+			return fmt.Errorf("tandem: record reset: %w", err)
+		}
 	}
 	cfg := Config{DataDir: filepath.Join(d.control.DataDir, "tandem"), Stdout: os.Stdout, Stderr: os.Stderr}
 	cfg.RqliteJoin = d.control.Datastore.TandemJoin
@@ -206,12 +369,154 @@ func (d *Driver) Test(ctx context.Context) error {
 	}
 	return conn.Close()
 }
-func (d *Driver) Restore(context.Context) error {
-	return fmt.Errorf("tandem restore is not implemented")
+// Restore replaces the local store with the SQLite file named by
+// --cluster-reset-restore-path.
+//
+// This is the K8E restore entry point, and it runs before the store starts:
+// rqlite's POST /db/load replaces everything in the store and requires a fresh
+// cluster with no other write traffic, so loading into a node that is already
+// serving would destroy live data and race with the apiserver's writes. The
+// existing data directory is moved aside rather than deleted, so a restore
+// that turns out to be the wrong file leaves the operator a way back.
+//
+// The restore path must be a real SQLite file: /db/load accepts nothing else,
+// and accepting an etcd snapshot here — the formats are not interchangeable —
+// would destroy the store and fail inside rqlite, after the original was
+// already moved.
+func (d *Driver) Restore(ctx context.Context) error {
+	if d.control == nil {
+		return fmt.Errorf("tandem driver has no control config")
+	}
+	src := d.control.ClusterResetRestorePath
+	if src == "" {
+		return fmt.Errorf("tandem restore: no restore path was specified")
+	}
+	if _, err := os.Stat(src); err != nil {
+		return fmt.Errorf("tandem restore: %w", err)
+	}
+	if info, err := os.Stat(src); err == nil && info.IsDir() {
+		return fmt.Errorf("tandem restore: %s is a directory, not a snapshot file", src)
+	}
+	ok, err := isSQLiteFile(src)
+	if err != nil {
+		return fmt.Errorf("tandem restore: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("tandem restore: %s is not a SQLite database; a rqlite backup is required, and an etcd snapshot cannot be restored", src)
+	}
+
+	rqliteDir := filepath.Join(d.control.DataDir, "tandem", "rqlite")
+	oldDir := rqliteDir + "-old-" + strconv.Itoa(int(time.Now().Unix()))
+	if _, err := os.Stat(rqliteDir); err == nil {
+		if err := os.Rename(rqliteDir, oldDir); err != nil {
+			return fmt.Errorf("tandem restore: move existing data aside: %w", err)
+		}
+		logrus.Infof("Pre-restore tandem data moved to %s", oldDir)
+	}
+	// rqlite initializes a fresh store in an empty directory and then accepts
+	// the load. prepareDataDir refuses a directory holding foreign state, so
+	// the directory is created empty here rather than left to the load.
+	if err := os.MkdirAll(rqliteDir, 0700); err != nil {
+		return fmt.Errorf("tandem restore: %w", err)
+	}
+	// Load through a short-lived node, then stop it: the supervised pair that
+	// Start brings up later reopens the same directory. Loading into the
+	// running pair is not an option — it would replace the data the cluster
+	// is serving. resolveBinary is consulted first so an operator can point
+	// K8E at a rqlite that is not on PATH.
+	rqliteBinary := resolveBinary("rqlited", "K8E_RQLITED_BINARY")
+	return withTemporaryNode(ctx, rqliteBinary, rqliteDir, func(base string) error {
+		return (&Supervisor{}).Load(ctx, base, src)
+	})
 }
 func (d *Driver) EndpointName() string { return "tandem" }
-func (d *Driver) Snapshot(context.Context) (*managed.SnapshotResult, error) {
-	return nil, fmt.Errorf("tandem snapshots are not implemented")
+
+// Snapshot saves a backup of the local rqlite node.
+//
+// rqlite's GET /db/backup streams the underlying SQLite database, which is
+// the rqlite analogue of an etcd snapshot — the Maintenance.Snapshot RPC is
+// Unimplemented on this layer precisely because the two formats are not
+// interchangeable (see pkg/tandem/differential/known_differences.go). KIP-29
+// §7 maps this endpoint onto the K8E snapshot flow.
+//
+// The file lands in the same snapshot directory the etcd backend uses, so the
+// retention policy and the CLI's list/prune/delete operations work
+// unchanged. It is named with the same prefix and timestamp convention so an
+// operator's tooling cannot tell the backends apart from the filename.
+func (d *Driver) Snapshot(ctx context.Context) (*managed.SnapshotResult, error) {
+	if d.control == nil {
+		return nil, fmt.Errorf("tandem driver has no control config")
+	}
+	if !d.snapshotMu.TryLock() {
+		return nil, fmt.Errorf("tandem snapshot already in progress")
+	}
+	defer d.snapshotMu.Unlock()
+
+	snapshotDir, err := d.snapshotDir(true)
+	if err != nil {
+		return nil, err
+	}
+	nodeName := os.Getenv("NODE_NAME")
+	now := time.Now().Round(time.Second)
+	snapshotName := fmt.Sprintf("%s-%s-%d", d.snapshotPrefix(), nodeName, now.Unix())
+	snapshotPath := filepath.Join(snapshotDir, snapshotName)
+	logrus.Infof("Saving tandem snapshot to %s", snapshotPath)
+
+	res := &managed.SnapshotResult{}
+	if err := d.supervisor.Backup(ctx, snapshotPath); err != nil {
+		_ = os.Remove(snapshotPath)
+		return nil, err
+	}
+	info, err := os.Stat(snapshotPath)
+	if err != nil {
+		return nil, fmt.Errorf("tandem snapshot: %w", err)
+	}
+	res.Created = append(res.Created, snapshotName)
+	logrus.Infof("Saved tandem snapshot %s (%d bytes)", snapshotName, info.Size())
+
+	// Retention is shared with the etcd backend's local file policy. Failing
+	// to prune is not fatal — the snapshot is on disk either way.
+	deleted, err := tandemSnapshotRetention(d.control.EtcdSnapshotRetention, d.snapshotPrefix(), snapshotDir)
+	if err != nil {
+		logrus.Warnf("Failed to apply tandem snapshot retention policy: %v", err)
+	}
+	res.Deleted = append(res.Deleted, deleted...)
+	return res, nil
+}
+
+// snapshotDir resolves the directory backups are written to. It mirrors the
+// etcd backend's snapshotDir so a cluster that switches backends keeps one
+// backup location, and so the shared retention and listing code sees one
+// directory.
+func (d *Driver) snapshotDir(create bool) (string, error) {
+	dir := d.control.EtcdSnapshotDir
+	if dir == "" {
+		dir = filepath.Join(d.control.DataDir, "db", "snapshots")
+	}
+	s, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) && create {
+			return dir, os.MkdirAll(dir, 0700)
+		}
+		return "", err
+	}
+	if !s.IsDir() {
+		return "", fmt.Errorf("snapshot path %s is not a directory", dir)
+	}
+	return dir, nil
+}
+
+// snapshotPrefix is the name retention and pruning match backups by. It is
+// the configured snapshot name when one is set, so an operator's naming
+// convention applies to both backends, and otherwise a tandem-specific
+// default that does not collide with the etcd backend's "etcd-snapshot"
+// prefix — a directory holding both would otherwise prune one backend's
+// backups under the other's policy.
+func (d *Driver) snapshotPrefix() string {
+	if d.control.EtcdSnapshotName != "" {
+		return d.control.EtcdSnapshotName
+	}
+	return "tandem-snapshot"
 }
 
 // ReconcileSnapshotData reports that snapshot reconciliation is not
