@@ -5,8 +5,10 @@ package differential
 import (
 	"context"
 	"testing"
+	"time"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -139,4 +141,127 @@ func TestDifferentialLease(t *testing.T) {
 		},
 	}
 	runCase(t, h, revokeUnknown)
+}
+
+// TestDifferentialLeaseExpiry covers the TTL expiry axis the apiserver relies on
+// most: a leased key must vanish once its lease dies, and the delete must
+// arrive as a normal revision + Watch event rather than silently rewinding the
+// store.
+func TestDifferentialLeaseExpiry(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	h := NewHarness(t)
+
+	grantID := leaseID(200)
+	ttl := int64(2)
+	keys := []string{"diff/expiry/a", "diff/expiry/b"}
+
+	for _, be := range []*Backend{h.Etcd, h.Tandem} {
+		lease := pb.NewLeaseClient(be.Client.ActiveConnection())
+		if _, err := lease.LeaseGrant(ctx, &pb.LeaseGrantRequest{TTL: ttl, ID: grantID}); err != nil {
+			t.Fatalf("grant on %s: %v", be.Name, err)
+		}
+		for _, key := range keys {
+			if _, err := be.Client.Put(ctx, key, "v", clientv3.WithLease(clientv3.LeaseID(grantID))); err != nil {
+				t.Fatalf("attach %s on %s: %v", key, be.Name, err)
+			}
+		}
+		resp, err := be.Client.Get(ctx, "diff/expiry/", clientv3.WithPrefix())
+		if err != nil || resp.Count != int64(len(keys)) {
+			t.Fatalf("keys missing right after attach on %s: count=%d err=%v", be.Name, resp.Count, err)
+		}
+	}
+
+	etcdStart := revOf(t, ctx, h.Etcd.Client)
+	tandemStart := revOf(t, ctx, h.Tandem.Client)
+
+	deadline := time.Now().Add(30 * time.Second)
+	var etcdGone, tandemGone time.Time
+	for time.Now().Before(deadline) {
+		if etcdGone.IsZero() {
+			if resp, err := h.Etcd.Client.Get(ctx, "diff/expiry/", clientv3.WithPrefix()); err == nil && resp.Count == 0 {
+				etcdGone = time.Now()
+			}
+		}
+		if tandemGone.IsZero() {
+			if resp, err := h.Tandem.Client.Get(ctx, "diff/expiry/", clientv3.WithPrefix()); err == nil && resp.Count == 0 {
+				tandemGone = time.Now()
+			}
+		}
+		if !etcdGone.IsZero() && !tandemGone.IsZero() {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	if etcdGone.IsZero() {
+		t.Fatal("etcd did not auto-delete leased keys within 30s")
+	}
+	if tandemGone.IsZero() {
+		t.Fatal("tandem did not auto-delete leased keys within 30s")
+	}
+
+	etcdEnd := revOf(t, ctx, h.Etcd.Client)
+	tandemEnd := revOf(t, ctx, h.Tandem.Client)
+	if etcdEnd <= etcdStart {
+		t.Errorf("etcd revision did not advance after expiry: start=%d end=%d", etcdStart, etcdEnd)
+	}
+	if tandemEnd <= tandemStart {
+		t.Errorf("tandem revision did not advance after expiry: start=%d end=%d", tandemStart, tandemEnd)
+	}
+
+	watchCtx, watchCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer watchCancel()
+	etcdCh := h.Etcd.Client.Watch(watchCtx, "diff/expiry/", clientv3.WithPrefix(), clientv3.WithRev(etcdStart))
+	tandemCh := h.Tandem.Client.Watch(watchCtx, "diff/expiry/", clientv3.WithPrefix(), clientv3.WithRev(tandemStart))
+	time.Sleep(500 * time.Millisecond)
+	<-time.After(time.Until(deadline.Add(time.Second)))
+
+	etcdDeletes := collectDeleteEvents(t, etcdCh, len(keys))
+	tandemDeletes := collectDeleteEvents(t, tandemCh, len(keys))
+	if etcdDeletes != len(keys) {
+		t.Errorf("etcd watcher saw %d deletes, want %d", etcdDeletes, len(keys))
+	}
+	if tandemDeletes != len(keys) {
+		t.Errorf("tandem watcher saw %d deletes, want %d", tandemDeletes, len(keys))
+	}
+
+	t.Logf("LeaseExpiry: etcd gone=%s tandem gone=%s etcdRev %d->%d tandemRev %d->%d etcdDel=%d tandemDel=%d",
+		etcdGone.Format("15:04:05"), tandemGone.Format("15:04:05"), etcdStart, etcdEnd, tandemStart, tandemEnd, etcdDeletes, tandemDeletes)
+}
+
+func revOf(t *testing.T, ctx context.Context, client *clientv3.Client) int64 {
+	t.Helper()
+	resp, err := client.Get(ctx, "diff/expiry/")
+	if err != nil {
+		t.Fatalf("read revision: %v", err)
+	}
+	return resp.Header.Revision
+}
+
+func collectDeleteEvents(t *testing.T, ch clientv3.WatchChan, want int) int {
+	t.Helper()
+	count := 0
+	deadline := time.After(20 * time.Second)
+	for count < want {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return count
+			}
+			if resp.Err() != nil {
+				t.Logf("watch err: %v", resp.Err())
+				return count
+			}
+			for _, ev := range resp.Events {
+				if ev.Type == mvccpb.DELETE {
+					count++
+				}
+			}
+		case <-deadline:
+			return count
+		}
+	}
+	return count
 }

@@ -166,3 +166,71 @@ func compareEvents(etcdEvents, tandemEvents []watchEvent) string {
 	}
 	return ""
 }
+
+// TestDifferentialWatchSlowConsumer covers the backlog axis: a watcher that
+// falls behind must still receive every event with the correct key, value
+// and version — a slow reader must not lose or reorder history. This is the
+// m1-status "still to validate slow consumers" gap.
+func TestDifferentialWatchSlowConsumer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	h := NewHarness(t)
+
+	// Register the watcher, then flood writes without reading. The watcher
+	// channel buffers what it can; the rest stays in the store's history.
+	etcdCh := h.Etcd.Client.Watch(ctx, "slow/", clientv3.WithPrefix(), clientv3.WithPrevKV())
+	tandemCh := h.Tandem.Client.Watch(ctx, "slow/", clientv3.WithPrefix(), clientv3.WithPrevKV())
+
+	const total = 30
+	for i := 0; i < total; i++ {
+		key := fmt.Sprintf("slow/key%03d", i)
+		for _, be := range []*Backend{h.Etcd, h.Tandem} {
+			if _, err := be.Client.Put(ctx, key, fmt.Sprintf("v%d", i)); err != nil {
+				t.Fatalf("put %s on %s: %v", key, be.Name, err)
+			}
+		}
+	}
+
+	// Drain both channels and compare the event sets. Order and batching are
+	// not comparable, so the comparison is on the multiset of (key, value).
+	etcdEvents := drainWatch(t, ctx, etcdCh, total)
+	tandemEvents := drainWatch(t, ctx, tandemCh, total)
+
+	if len(etcdEvents) != total {
+		t.Fatalf("etcd watcher delivered %d events, want %d", len(etcdEvents), total)
+	}
+	if len(tandemEvents) != total {
+		t.Fatalf("tandem watcher delivered %d events, want %d", len(tandemEvents), total)
+	}
+	for i := range etcdEvents {
+		if etcdEvents[i].Key != tandemEvents[i].Key ||
+			etcdEvents[i].Value != tandemEvents[i].Value ||
+			etcdEvents[i].Version != tandemEvents[i].Version {
+			t.Errorf("slow consumer event %d: etcd=%+v tandem=%+v", i, etcdEvents[i], tandemEvents[i])
+		}
+	}
+}
+
+func drainWatch(t *testing.T, ctx context.Context, ch clientv3.WatchChan, want int) []watchEvent {
+	t.Helper()
+	var events []watchEvent
+	deadline := time.After(20 * time.Second)
+	for len(events) < want {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				t.Fatalf("watch closed after %d/%d events", len(events), want)
+			}
+			if resp.Err() != nil {
+				t.Fatalf("watch err: %v", resp.Err())
+			}
+			for _, ev := range resp.Events {
+				events = append(events, normalizeEvent(ev, resp.Header.Revision))
+			}
+		case <-deadline:
+			t.Fatalf("watch delivered %d/%d events", len(events), want)
+		}
+	}
+	return sortEvents(events)
+}
