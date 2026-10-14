@@ -14,8 +14,8 @@ called complete:
 | Compaction | watermark and historical-read boundary enforced | Verify interaction with concurrent readers and the SQL history/space reclamation path |
 | Maintenance | `Status` is served on the wire with a real version, db size and rqlite leader/raft state; `Snapshot` returns an explicit `Unimplemented` | The other Maintenance calls, the whole Cluster service and the whole Auth service have no handler. The placeholders that answered with constants were removed rather than registered |
 | Single/three member | three members form one voting group, replicate between compat layers, and keep serving after the leader's store dies; node identity, peer set, Raft port and Raft mTLS are configurable; members join and leave while the group runs, and a member cut off from its majority refuses to serve | A real network partition is still approximated by killing stores rather than by dropping packets; nothing in a control-plane workflow calls the removal yet |
-| Differential tests | running in CI against a real etcd; KV, revision, tombstone, watch-order, lease and error-code cases covered, and it found ten real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change, RangeStream under its feature gate, crash recovery |
-| Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Extend to multi-node crash recovery, concurrent histories and differential checks |
+| Differential tests | running in CI against a real etcd; KV, revision, tombstone, watch-order, lease and error-code cases covered, and it found ten real divergences (see below) | Still to cover: compaction with concurrent readers, lease expiry under leader change |
+| Recovery/concurrency | single-node restart, CAS and forced rqlite restart covered | Single-node crash recovery (SIGKILL + restart) is now differentially validated against embedded etcd; extend to multi-node crash recovery, concurrent histories and differential checks |
 
 ## Defects found and fixed in the M1 audit
 
