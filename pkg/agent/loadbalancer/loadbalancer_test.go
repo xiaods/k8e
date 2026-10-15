@@ -271,6 +271,20 @@ func Test_UnitFailUnreachable(t *testing.T) {
 	defer cancel()
 
 	serverAddr := "192.0.2.1:6443"
+	// The assertion below assumes the OS fails connections to unroutable
+	// addresses. Environments with a transparent proxy (TUN-mode VPN, Clash,
+	// etc.) complete the TCP handshake for *any* address — including
+	// TEST-NET-1 — and then blackhole the traffic, so the load balancer's
+	// backend dial succeeds, the ping waits for a response that never comes,
+	// and the test can only fail on its own timeout instead of on the dial
+	// error it means to observe. Probe the assumption first so the suite stays
+	// green where the behavior under test cannot be observed.
+	probe := net.Dialer{Timeout: 3 * time.Second}
+	if probeConn, probeErr := probe.Dial("tcp", serverAddr); probeErr == nil {
+		probeConn.Close()
+		t.Skipf("environment accepts connections to unroutable %s (transparent proxy?); skipping fail-fast test", serverAddr)
+	}
+
 	lb, err := New(ctx, tmpDir, SupervisorServiceName, "http://"+serverAddr, RandomPort, false)
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
