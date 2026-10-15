@@ -45,6 +45,7 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 | [KIP-14](kip-14-mtls-dynamic-cert-issuance.md) | mTLS dynamic client certs (Login RPC) | Implemented |
 | [KIP-17](kip-17-sandbox-cli-profiles-and-apikey-ttl.md) | CLI multi-profile + API key TTL | Implemented |
 | [KIP-28](kip-28-sandbox-gateway-trust-bootstrap.md) | Trust anchor bootstrap for the remote gRPC gateway | Proposed — M1 client trust chain + `--reset-trust`; M2 `/.well-known` CA distribution; M3 publicly-trusted gateway cert |
+| [KIP-30](kip-30-sandbox-mcp-productionization.md) | Sandbox MCP productionization — healthy default install, multi-node readiness, IP-only TLS | Proposed — M0 (default-skip + manual TLS) implemented and verified on a live cluster; M1–M3 open |
 
 ### Completeness / architecture reviews
 
@@ -87,6 +88,10 @@ Agent-facing repo conventions live under [`docs/agents/`](agents/). Those files 
 - **KIP-28** closes the remote-trust gap left by KIP-22 (correct SAN, untrusted issuer) and
   by KIP-27 (cert-manager present, but only wired to the `:443` listener). The next free
   integer is **KIP-29**.
+- **KIP-30** was drafted while KIP-29 was still open; both numbers are now used and the
+  next free integer is **KIP-31**. It is a follow-up to KIP-8 (making the MCP Deployment
+  runnable) rather than a revision of it — KIP-8's protocol and API-key design is
+  unchanged.
 
 ## How to add a KIP
 
