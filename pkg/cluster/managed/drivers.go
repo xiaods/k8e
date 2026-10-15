@@ -49,7 +49,7 @@ func Registered() []Driver {
 }
 
 // Default returns the driver used when an operator has not chosen a backend.
-// Embedded etcd stays the default until the M3 migration gate in issue #592.
+// Tandem (Zig etcd v3 compat layer over rqlite) is the sole managed backend.
 func Default() Driver {
 	return drivers[0]
 }
