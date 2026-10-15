@@ -75,6 +75,14 @@ spec:
     spec:
       serviceAccountName: k8e-mcp
       terminationGracePeriodSeconds: 45
+      # A small install runs everything on control-plane nodes. K8E does not
+      # taint them by default, but an operator that does (or runs a dedicated
+      # control plane) should not lose MCP scheduling.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -84,8 +92,13 @@ spec:
           type: RuntimeDefault
       containers:
         - name: mcp
-          image: k8e-mcp:local
-          imagePullPolicy: IfNotPresent
+          # Published by the release workflow (see .github/workflows/release.yml
+          # build-mcp-image). Source builds override at init time with
+          # `bash hack/init-sandbox-mcp.sh ... --image k8e-mcp:local`.
+          # imagePullPolicy is deliberately unset: kubelet defaults to Always
+          # for :latest (so a new release image is actually pulled) and
+          # IfNotPresent for a versioned or locally imported tag (air-gap).
+          image: ghcr.io/xiaods/k8e-mcp:latest
           command: [/usr/local/bin/k8e-sandbox-cli]
           args:
             - mcp-serve
@@ -182,6 +195,12 @@ spec:
   parentRefs:
     - name: e2b
       sectionName: https
+    - name: e2b
+      # Fallback for installs without the sandbox-e2b TLS Secret: the https
+      # listener reports Invalid there, which would make this route
+      # NotAllowedByListeners. Attaching to http too keeps /mcp reachable on
+      # a plain-HTTP install; point clients at https once sandbox-e2b exists.
+      sectionName: http
   rules:
     - matches:
         - path:

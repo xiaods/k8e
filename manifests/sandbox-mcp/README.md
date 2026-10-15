@@ -28,21 +28,31 @@ should have its own named record; names/created_at determine the stable identity
 Preserve created_at when rotating credentials. Do not reuse legacy key names for
 new users. Changing the Secret UID requires explicit ownership migration.
 
-Build and import the image into K8E containerd (OrbStack Docker images are not
-automatically available there):
+### Image
+
+The Deployment pulls `ghcr.io/xiaods/k8e-mcp:latest`, which the release
+workflow publishes (`.github/workflows/release.yml`, `build-mcp-image`) for
+linux/amd64 and linux/arm64. A connected install needs no build or import step.
+
+For a source build or an air-gapped node, build locally, import into the target
+node's containerd (OrbStack Docker images are not automatically available
+there), and pass `--image` so the Deployment uses the local tag:
 
 ```sh
 docker build -f manifests/sandbox-mcp/Dockerfile -t k8e-mcp:local .
 # Import into the target node's containerd (k8s.io namespace):
 docker save k8e-mcp:local | docker exec -i <k8e-node-container> ctr -n k8s.io images import -
+bash hack/init-sandbox-mcp.sh --kubeconfig /path/to/k8e.yaml \
+  --gateway-ca ... --gateway-cert ... --gateway-key ... \
+  --image k8e-mcp:local --apply
 ```
 
 The runtime image is a non-root `scratch` image containing the static CLI and
 the CA bundle required for gateway TLS verification. Importing an image only
 matters on an agent-enabled K8E (the control-plane-only OrbStack recovery
-harness has no node, so MCP pods cannot schedule there).
-
-For a registry deployment, replace the image with your published immutable digest.
+harness has no node, so MCP pods cannot schedule there). A registry deployment
+should pin an immutable digest instead: `--image
+ghcr.io/xiaods/k8e-mcp@sha256:<digest>`.
 
 ### Gateway mTLS material
 
@@ -82,7 +92,9 @@ existing API key Secret and the K8E API Gateway, creates the namespace, verifies
 or explicitly updates `sandbox-matrix/sandbox-e2b`, creates the gateway mTLS
 client Secret, applies the Deployment, Service, ReferenceGrant and HTTPRoute,
 then waits for the Deployment, the Gateway's `https` listener and route
-references. If the Deployment does not become ready it prints pod status,
+references. `--image` overrides the Deployment image (default
+`ghcr.io/xiaods/k8e-mcp:latest`) for locally built or air-gap-imported images.
+If the Deployment does not become ready it prints pod status,
 the deployment description and recent logs, then exits non-zero. Before
 reporting success, it makes an unauthenticated HTTPS request to `/mcp` and
 requires the MCP backend's expected `405` response; this verifies certificate
@@ -109,6 +121,16 @@ Gateway's namespace-local HTTPS listener. A narrow ReferenceGrant in `k8e-mcp`
 allows only that HTTPRoute kind and namespace to reference Service `k8e-mcp`.
 Authorization headers and MCP metadata pass through unchanged. Public DNS still
 points to the Gateway address and remains operator-managed.
+
+The HTTPRoute attaches to both the `https` and the `http` listener of the
+Gateway. The `http` attachment exists so a plain-HTTP install — one where the
+`sandbox-e2b` Secret does not exist yet and the `https` listener reports
+Invalid — still serves `/mcp` instead of the route being
+`NotAllowedByListeners`. Prefer `https` for real clients: the `http` path
+carries the `Authorization` header in plaintext. The Deployment also tolerates
+the `node-role.kubernetes.io/control-plane` (and legacy `master`) taint, so a
+single-node install — every node a control-plane node — schedules MCP without
+extra flags.
 
 Clients connect to the printed `https://YOUR_HOST/mcp` URL with
 `Authorization: Bearer <key>`.

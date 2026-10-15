@@ -180,6 +180,41 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ── MCP adapter image ────────────────────────────────────────────────
+  build-mcp-image:
+    name: Build MCP image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sanitize tag
+        id: tag
+        run: echo "value=$(echo '${{ github.ref_name }}' | tr '+' '-')" >> $GITHUB_OUTPUT
+      - name: Build and push MCP image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: manifests/sandbox-mcp/Dockerfile
+          # Same arches as the sandbox image: the Deployment may run on arm64
+          # nodes once the multi-node work in KIP-30 lands.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/xiaods/k8e-mcp:${{ steps.tag.outputs.value }}
+            ghcr.io/xiaods/k8e-mcp:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # ── Publish all artifacts on the GitHub Release ─────────────────────
   publish:
     name: Publish release assets

@@ -9,6 +9,7 @@ gateway_ca=""
 gateway_cert=""
 gateway_key=""
 hostname=""
+image=""
 apply=false
 
 usage() {
@@ -16,13 +17,15 @@ usage() {
 Usage: bash hack/init-sandbox-mcp.sh --kubeconfig FILE \
   --gateway-ca FILE --gateway-cert FILE --gateway-key FILE \
   [--public-cert FILE --public-key FILE] \
-  [--hostname MCP_PUBLIC_HOST] [--apply]
+  [--hostname MCP_PUBLIC_HOST] [--image MCP_IMAGE] [--apply]
 
 Uses existing K8E keys from sandbox-matrix/sandbox-apikeys. No OAuth server is
 needed. An existing sandbox-matrix/sandbox-e2b certificate is reused unless a
 new public certificate pair is supplied explicitly. The existing k8e API
 Gateway exposes https://HOST/mcp. Without --apply, validates local inputs only.
-The deployment uses k8e-mcp:local; import that image into K8E containerd first.
+The Deployment pulls ghcr.io/xiaods/k8e-mcp:latest (published by the release
+workflow); pass --image to point it elsewhere, e.g. --image k8e-mcp:local for a
+locally built image imported into K8E containerd.
 
 Set MCP_PROBE_API_KEY (environment, never argv) to additionally prove the
 authenticated MCP path by calling server/discover and requiring HTTP 200.
@@ -51,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --gateway-cert) gateway_cert="$2" ;;
     --gateway-key) gateway_key="$2" ;;
     --hostname) hostname="$2" ;;
+    --image) image="$2" ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift 2
@@ -102,9 +106,14 @@ if [[ -n "$public_cert" ]]; then
 fi
 kubectl "${kubectl_args[@]}" -n k8e-mcp create secret generic mcp-gateway-tls --from-file=ca.crt="$gateway_ca" --from-file=tls.crt="$gateway_cert" --from-file=tls.key="$gateway_key" --dry-run=client -o yaml | kubectl "${kubectl_args[@]}" apply --server-side --field-manager=k8e-mcp-init -f -
 # The server default-skips manifests/sandbox-mcp (pkg/server stageFiles): the
-# Deployment cannot become ready without this script's Secret and an
-# operator-imported image, so this apply is load-bearing, not redundant.
+# Deployment cannot become ready without this script's Secret, so this apply is
+# load-bearing, not redundant.
 kubectl "${kubectl_args[@]}" apply -f "$repo_root/manifests/sandbox-mcp/deployment.yaml"
+if [[ -n "$image" ]]; then
+  # The manifest ships the published image; --image is the override knob for
+  # locally built or air-gap-imported images.
+  kubectl "${kubectl_args[@]}" -n k8e-mcp set image deployment/k8e-mcp mcp="$image"
+fi
 kubectl "${kubectl_args[@]}" -n k8e-mcp rollout restart deployment/k8e-mcp
 if ! kubectl "${kubectl_args[@]}" -n k8e-mcp rollout status deployment/k8e-mcp --timeout=120s; then
   rollout_failure_diagnostics
