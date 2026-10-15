@@ -115,18 +115,20 @@ func (c *Cluster) registerDBHandlers(handler http.Handler) (http.Handler, error)
 
 // assignManagedDriver selects the managed datastore driver for this server.
 //
-// Issue #592 requires that embedded etcd stays the default backend until the
-// M3 migration gate, and that a new backend is only reachable by explicitly
-// opting in. Selection therefore prefers whichever driver already has an
-// initialized data dir on disk, so an existing cluster keeps its backend across
-// upgrades, and otherwise picks a driver only when the operator asked for a
-// managed datastore.
+// Selection prefers whichever driver already has an initialized data dir on
+// disk, so an existing cluster keeps its backend across upgrades, and
+// otherwise picks a driver only when the operator asked for a managed
+// datastore. SetControlConfig is called exactly once per driver to avoid
+// the 'control config already set' guard tripping on the second call.
 func (c *Cluster) assignManagedDriver(ctx context.Context) error {
+	configured := make(map[string]bool)
+
 	// A driver with an initialized data dir on disk owns this cluster already.
 	for _, driver := range managed.Registered() {
 		if err := driver.SetControlConfig(c.config); err != nil {
 			return err
 		}
+		configured[driver.EndpointName()] = true
 		initialized, err := driver.IsInitialized()
 		if err != nil {
 			return err
@@ -150,8 +152,11 @@ func (c *Cluster) assignManagedDriver(ctx context.Context) error {
 	if selected == nil {
 		return nil
 	}
-	if err := selected.SetControlConfig(c.config); err != nil {
-		return err
+	// Only call SetControlConfig if not already done in the loop above.
+	if !configured[selected.EndpointName()] {
+		if err := selected.SetControlConfig(c.config); err != nil {
+			return err
+		}
 	}
 	c.managedDB = selected
 	return nil
