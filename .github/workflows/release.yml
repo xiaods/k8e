@@ -155,6 +155,13 @@ jobs:
           sha256sum * 2>/dev/null | sort > SHA256SUMS
           echo "--- SHA256SUMS ---"
           cat SHA256SUMS
+      - name: Generate per-arch checksums for contrib/install.sh
+        run: |
+          cd release-artifacts
+          # install.sh verifies downloads against sha256sum-<ARCH>.txt and
+          # only greps the line for its own binary name, so the amd64 file
+          # needs a "k8e" entry. The server release is amd64-only today.
+          sha256sum k8e | awk '{print $1, "k8e"}' > sha256sum-amd64.txt
       - name: List artifacts
         run: ls -la release-artifacts/
       - name: Upload to release
@@ -169,4 +176,5 @@ jobs:
             release-artifacts/k8e-sandbox-cli-darwin-arm64
             release-artifacts/k8e-sandbox-cli-windows-amd64.exe
             release-artifacts/SHA256SUMS
+            release-artifacts/sha256sum-amd64.txt
           fail_on_unmatched_files: false
