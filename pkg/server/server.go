@@ -325,6 +325,28 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 		"%{K8E_VERSION}%":                 version.Version,
 	}
 
+	// The MCP adapter is opt-in: the k8e-mcp Deployment staged by
+	// manifests/sandbox-mcp needs an operator-imported image (k8e-mcp:local,
+	// built from the repo, not shipped in the release) and gateway mTLS
+	// client material (hack/init-sandbox-mcp.sh creates mcp-gateway-tls via
+	// the same API-key Login every other client uses) — the server cannot
+	// self-provision either. Staging the manifest by default would lay down
+	// pods that can never become ready (FailedMount / ImagePullBackOff).
+	// init-sandbox-mcp.sh applies the manifest directly once the
+	// prerequisites exist, so the watcher must not stage it. Skipping is
+	// fail-closed: Stage also removes copies written by earlier releases.
+	if controlConfig.Skips == nil {
+		controlConfig.Skips = map[string]bool{}
+	}
+	if _, ok := controlConfig.Skips["sandbox-mcp"]; !ok {
+		// Directory key stops every asset under manifests/sandbox-mcp (the
+		// manifest plus the inert Dockerfile/README) from staging; the
+		// file-level key additionally triggers Stage's fail-closed removal
+		// of a previously staged deployment.yaml.
+		controlConfig.Skips["sandbox-mcp"] = true
+		controlConfig.Skips["sandbox-mcp/deployment.yaml"] = true
+	}
+
 	// The e2b HTTP :3676 and sandbox gRPC :50051 servers embed in the
 	// k8e-server host process; e2b-gateway.yaml bridges them into the
 	// cluster via headless Service + Endpoints. The Endpoints address must

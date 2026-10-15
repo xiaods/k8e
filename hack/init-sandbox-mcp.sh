@@ -101,6 +101,9 @@ if [[ -n "$public_cert" ]]; then
   kubectl "${kubectl_args[@]}" -n sandbox-matrix create secret tls sandbox-e2b --cert="$public_cert" --key="$public_key" --dry-run=client -o yaml | kubectl "${kubectl_args[@]}" apply --server-side --field-manager=k8e-mcp-init -f -
 fi
 kubectl "${kubectl_args[@]}" -n k8e-mcp create secret generic mcp-gateway-tls --from-file=ca.crt="$gateway_ca" --from-file=tls.crt="$gateway_cert" --from-file=tls.key="$gateway_key" --dry-run=client -o yaml | kubectl "${kubectl_args[@]}" apply --server-side --field-manager=k8e-mcp-init -f -
+# The server default-skips manifests/sandbox-mcp (pkg/server stageFiles): the
+# Deployment cannot become ready without this script's Secret and an
+# operator-imported image, so this apply is load-bearing, not redundant.
 kubectl "${kubectl_args[@]}" apply -f "$repo_root/manifests/sandbox-mcp/deployment.yaml"
 kubectl "${kubectl_args[@]}" -n k8e-mcp rollout restart deployment/k8e-mcp
 if ! kubectl "${kubectl_args[@]}" -n k8e-mcp rollout status deployment/k8e-mcp --timeout=120s; then

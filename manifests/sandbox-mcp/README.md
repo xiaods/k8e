@@ -6,6 +6,16 @@ Gateway API entry. MCP runs as an independent deployment. The existing
 MCP Service over cluster-internal HTTP. No OAuth issuer, introspection service,
 resource configuration or OAuth client secret is required.
 
+The deployment is **opt-in**: the K8E server does not stage this manifest by
+default (see `pkg/server` `stageFiles`). Every default install ran a
+`k8e-mcp` Deployment whose pods could never become ready — the
+`mcp-gateway-tls` Secret and the `k8e-mcp:local` image below do not exist
+until an operator provides them — so the manifest is only applied by
+`hack/init-sandbox-mcp.sh` once its prerequisites are in place. Skipping is
+fail-closed: upgrading a server removes a previously staged copy, and a
+one-time cleanup of the old Deployment (`kubectl -n k8e-mcp delete
+deployment k8e-mcp`) finishes the transition.
+
 Create a named key using the existing K8E server command:
 
 ```sh
