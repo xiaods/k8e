@@ -7,6 +7,7 @@ import (
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
 	sandboxgrpc "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc"
+	sandboxpb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,9 +43,12 @@ func fakeSandboxClients() (dynamic.Interface, kubernetes.Interface) {
 	scheme.AddKnownTypeWithName(gvk("SandboxWarmPoolList"), &unstructured.UnstructuredList{})
 	scheme.AddKnownTypeWithName(gvk("SandboxMatrix"), &unstructured.Unstructured{})
 	scheme.AddKnownTypeWithName(gvk("SandboxMatrixList"), &unstructured.UnstructuredList{})
+	scheme.AddKnownTypeWithName(gvk("SandboxSession"), &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(gvk("SandboxSessionList"), &unstructured.UnstructuredList{})
 	listKinds := map[schema.GroupVersionResource]string{
 		warmPoolGVR:    "SandboxWarmPoolList",
 		localMatrixGVR: "SandboxMatrixList",
+		sessionGVR:     "SandboxSessionList",
 	}
 	return dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds), kubefake.NewSimpleClientset()
 }
@@ -150,18 +154,18 @@ func TestRecycleUnhealthyWarmPods(t *testing.T) {
 }
 
 func TestNewWarmPod_RuntimeClassLabel(t *testing.T) {
-	pod := newWarmPod(defaultCfg(), "kata", 0)
+	pod := newWarmPod(defaultCfg(), "kata", 0, "workspace-warm-test")
 	if pod.Labels[sandboxgrpc.LabelRuntimeClass] != "kata" {
 		t.Fatalf("expected runtime-class label kata, got %v", pod.Labels)
 	}
 }
 
 func TestNewWarmPod_IdleTTLAnnotation(t *testing.T) {
-	pod := newWarmPod(defaultCfg(), "gvisor", 300)
+	pod := newWarmPod(defaultCfg(), "gvisor", 300, "workspace-warm-test")
 	if pod.Annotations[podIdleTTLAnnotation] != "300" {
 		t.Fatalf("expected idle-ttl annotation 300, got %v", pod.Annotations)
 	}
-	plain := newWarmPod(defaultCfg(), "gvisor", 0)
+	plain := newWarmPod(defaultCfg(), "gvisor", 0, "workspace-warm-test")
 	if _, present := plain.Annotations[podIdleTTLAnnotation]; present {
 		t.Fatal("expected no idle-ttl annotation when TTL unset")
 	}
@@ -544,28 +548,28 @@ func TestUpdateSandboxMatrixStatus_WritesMetrics(t *testing.T) {
 }
 
 func TestWarmPodSpec_RuntimeClass(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg())
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
 	if spec.RuntimeClassName == nil || *spec.RuntimeClassName != "gvisor" {
 		t.Fatalf("expected runtimeClassName=gvisor, got %v", spec.RuntimeClassName)
 	}
 }
 
 func TestWarmPodSpec_EmptyRuntimeClass(t *testing.T) {
-	spec := warmPodSpec("", defaultCfg())
+	spec := warmPodSpec("", defaultCfg(), "workspace-warm-test")
 	if spec.RuntimeClassName != nil {
 		t.Fatalf("expected nil runtimeClassName, got %v", spec.RuntimeClassName)
 	}
 }
 
 func TestWarmPodSpec_Image(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg())
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
 	if spec.Containers[0].Image != "ghcr.io/xiaods/k8e-sandbox:latest" {
 		t.Fatalf("unexpected image: %s", spec.Containers[0].Image)
 	}
 }
 
 func TestWarmPodSpec_Resources(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg())
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
 	limits := spec.Containers[0].Resources.Limits
 	if limits.Cpu().String() != "500m" {
 		t.Fatalf("unexpected cpu: %s", limits.Cpu().String())
@@ -579,7 +583,7 @@ func TestWarmPodSpec_CustomResources(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.DefaultCPU = "2"
 	cfg.DefaultMemory = "2Gi"
-	spec := warmPodSpec("kata", cfg)
+	spec := warmPodSpec("kata", cfg, "workspace-warm-test")
 	if spec.Containers[0].Resources.Limits.Cpu().String() != "2" {
 		t.Fatalf("unexpected cpu: %s", spec.Containers[0].Resources.Limits.Cpu().String())
 	}
@@ -589,14 +593,14 @@ func TestWarmPodSpec_CustomResources(t *testing.T) {
 }
 
 func TestWarmPodSpec_RestartPolicy(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg())
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
 	if spec.RestartPolicy != corev1.RestartPolicyNever {
 		t.Fatalf("expected RestartPolicyNever, got %s", spec.RestartPolicy)
 	}
 }
 
 func TestWarmPodSpec_SandboxdPort(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg())
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
 	if len(spec.Containers[0].Ports) == 0 || spec.Containers[0].Ports[0].ContainerPort != 2024 {
 		t.Fatalf("expected port 2024, got %v", spec.Containers[0].Ports)
 	}
@@ -634,5 +638,111 @@ func TestApplyDefaults(t *testing.T) {
 	}
 	if cfg.Namespace != "sandbox-matrix" {
 		t.Errorf("Namespace: got %s", cfg.Namespace)
+	}
+}
+
+// PVC pairing: the pool provisions one workspace claim per warm pod and
+// retires it with the pod. Without the pairing a claim would either dangle
+// bound-less or a claimed session would find no persistent workspace.
+
+func TestCreateWarmPodWithWorkspacePairsClaimAndPod(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+
+	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0); err != nil {
+		t.Fatalf("create warm pod: %v", err)
+	}
+
+	pods, err := k8s.CoreV1().Pods(testNS).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods.Items) != 1 {
+		t.Fatalf("expected 1 warm pod, got %d", len(pods.Items))
+	}
+	claim := sandboxgrpc.WorkspacePVCOf(&pods.Items[0])
+	if claim == "" {
+		t.Fatal("expected the warm pod to boot with a workspace claim")
+	}
+	if _, err := k8s.CoreV1().PersistentVolumeClaims(testNS).Get(ctx, claim, metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected the pod's workspace claim %s to exist: %v", claim, err)
+	}
+
+	// A second pod must get its own claim, not share the first one's.
+	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0); err != nil {
+		t.Fatalf("create second warm pod: %v", err)
+	}
+	pvcs, err := k8s.CoreV1().PersistentVolumeClaims(testNS).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pvcs.Items) != 2 {
+		t.Fatalf("expected one claim per warm pod (2), got %d", len(pvcs.Items))
+	}
+}
+
+func TestDeleteWarmPodRetiresItsClaim(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+
+	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0); err != nil {
+		t.Fatalf("create warm pod: %v", err)
+	}
+	pods, err := k8s.CoreV1().Pods(testNS).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := pods.Items[0]
+	claim := sandboxgrpc.WorkspacePVCOf(&pod)
+	if claim == "" {
+		t.Fatal("expected the warm pod to boot with a workspace claim")
+	}
+
+	deleteWarmPod(ctx, k8s, testNS, &pod)
+
+	if _, err := k8s.CoreV1().Pods(testNS).Get(ctx, pod.Name, metav1.GetOptions{}); err == nil {
+		t.Fatal("expected the warm pod to be deleted")
+	}
+	if _, err := k8s.CoreV1().PersistentVolumeClaims(testNS).Get(ctx, claim, metav1.GetOptions{}); err == nil {
+		t.Fatalf("expected the claim %s to be retired with its pod", claim)
+	}
+}
+
+// GC: a paused session still owns its workspace claim — every session is
+// persistent now — so expiry must reclaim it, or a paused-and-forgotten
+// session leaks 1Gi forever.
+
+func TestGCExpiredSessions_ReclaimsPausedSessionPVC(t *testing.T) {
+	ctx := context.Background()
+	dyn, k8s := fakeSandboxClients()
+	orch := sandboxgrpc.NewOrchestrator(k8s, dyn, testNS)
+
+	sess, err := orch.CreateSession(ctx, &sandboxpb.CreateSessionRequest{SessionId: "gc-paused"})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	claim := sess.Status.WorkspacePVC
+	if claim == "" {
+		t.Fatal("expected a PVC-backed session")
+	}
+	if err := orch.PauseSession(ctx, sess.Name); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	// Backdate the expiry like the GC tick would see it.
+	u, err := dyn.Resource(sessionGVR).Namespace(testNS).Get(ctx, sess.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := u.Object["status"].(map[string]interface{})
+	st["expiresAt"] = "2000-01-01T00:00:00Z"
+	dyn.Resource(sessionGVR).Namespace(testNS).UpdateStatus(ctx, u, metav1.UpdateOptions{}) //nolint:errcheck
+
+	gcExpiredSessions(ctx, orch, testNS)
+
+	if _, err := dyn.Resource(sessionGVR).Namespace(testNS).Get(ctx, sess.Name, metav1.GetOptions{}); err == nil {
+		t.Fatal("expected the expired paused session to be GC'd")
+	}
+	if _, err := k8s.CoreV1().PersistentVolumeClaims(testNS).Get(ctx, claim, metav1.GetOptions{}); err == nil {
+		t.Fatalf("expected the paused session's claim %s to be reclaimed, not leaked", claim)
 	}
 }

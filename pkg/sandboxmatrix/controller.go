@@ -3,6 +3,7 @@ package sandboxmatrix
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"strconv"
@@ -21,11 +22,13 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	sandboxgrpc "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc"
 )
 
 var warmPoolGVR = schema.GroupVersionResource{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxwarmpools"}
 var localMatrixGVR = schema.GroupVersionResource{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}
+var sessionGVR = schema.GroupVersionResource{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxsessions"}
 
 const tlsDir = "/var/lib/k8e/server/tls"
 
@@ -222,7 +225,7 @@ func recycleUnhealthyWarmPods(ctx context.Context, k8s kubernetes.Interface, nam
 			continue
 		}
 		logrus.Infof("sandbox-matrix: recycle warm pod %s (%s for %v)", pod.Name, reason, age.Round(time.Second))
-		deleteWarmPod(ctx, k8s, namespace, pod.Name)
+		deleteWarmPod(ctx, k8s, namespace, pod)
 	}
 }
 
@@ -271,9 +274,17 @@ func podUnschedulable(pod *corev1.Pod) bool {
 	return false
 }
 
-func deleteWarmPod(ctx context.Context, k8s kubernetes.Interface, namespace, name string) {
-	if err := k8s.CoreV1().Pods(namespace).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-		logrus.Warnf("sandbox-matrix: recycle delete %s: %v", name, err)
+func deleteWarmPod(ctx context.Context, k8s kubernetes.Interface, namespace string, pod *corev1.Pod) {
+	// The claim was provisioned at pod boot — a running pod's volumes cannot be
+	// swapped — and has no life apart from it: delete them as a pair.
+	claim := sandboxgrpc.WorkspacePVCOf(pod)
+	if err := k8s.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		logrus.Warnf("sandbox-matrix: recycle delete %s: %v", pod.Name, err)
+	}
+	if claim != "" {
+		if derr := k8s.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, claim, metav1.DeleteOptions{}); derr != nil && !apierrors.IsNotFound(derr) {
+			logrus.Warnf("sandbox-matrix: delete workspace PVC %s of %s: %v", claim, pod.Name, derr)
+		}
 	}
 }
 
@@ -323,11 +334,48 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool uns
 		if maxPods >= 0 && int64(len(allPods.Items))+i+1 > maxPods {
 			break
 		}
-		pod := newWarmPod(cfg, runtimeClass, idleTTL)
-		if _, err := k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		if err := createWarmPodWithWorkspace(ctx, k8s, cfg, runtimeClass, idleTTL); err != nil {
 			logrus.Debugf("sandbox-matrix: create warm pod: %v", err)
 		}
 	}
+}
+
+// createWarmPodWithWorkspace provisions a blank workspace PVC and boots a warm
+// pod with it attached. The claim follows the pod through claim and release
+// (sandboxd wipes it on release) and is deleted with the pod — it is what
+// turns a claimed warm pod into a persistent session without giving up the
+// pool's fast start.
+func createWarmPodWithWorkspace(ctx context.Context, k8s kubernetes.Interface, cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds int64) error {
+	// The claim name is chosen up front (rather than GenerateName) so the pod
+	// can attach it at boot; client-go's fake ignores GenerateName, and the
+	// single leader-elected controller creates these sequentially, so a
+	// nanosecond suffix is unique in practice.
+	claimName := fmt.Sprintf("%s%d", sandboxgrpc.WarmWorkspacePVCPrefix, time.Now().UnixNano())
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      claimName,
+			Namespace: cfg.Namespace,
+			Labels:    map[string]string{sandboxgrpc.LabelState: sandboxgrpc.StateWarm},
+		},
+		Spec: sandboxgrpc.WorkspacePVCSpec(),
+	}
+	created, err := k8s.CoreV1().PersistentVolumeClaims(cfg.Namespace).Create(ctx, pvc, metav1.CreateOptions{})
+	if err != nil {
+		return err
+	}
+	pod := newWarmPod(cfg, runtimeClass, idleTTLSeconds, created.Name)
+	// Explicit name (not GenerateName) so the pair is addressable even on
+	// clients that ignore GenerateName; see the claim-name note above.
+	pod.Name = fmt.Sprintf("sandbox-warm-%d", time.Now().UnixNano())
+	if _, err := k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		// The pod never exists; the claim would dangle bound-less. Best-effort
+		// cleanup keeps the next reconcile pass honest.
+		if delErr := k8s.CoreV1().PersistentVolumeClaims(cfg.Namespace).Delete(ctx, created.Name, metav1.DeleteOptions{}); delErr != nil {
+			logrus.Warnf("sandbox-matrix: cleanup workspace PVC %s: %v", created.Name, delErr)
+		}
+		return err
+	}
+	return nil
 }
 
 // trimWarmPods deletes up to count surplus warm pods, least valuable first:
@@ -394,12 +442,7 @@ func deleteSurplusWarmPod(ctx context.Context, k8s kubernetes.Interface, namespa
 	if current.Labels[sandboxgrpc.LabelState] != sandboxgrpc.StateWarm {
 		return false
 	}
-	if err := k8s.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil {
-		if !apierrors.IsNotFound(err) {
-			logrus.Warnf("sandbox-matrix: trim warm pod %s: %v", pod.Name, err)
-		}
-		return false
-	}
+	deleteWarmPod(ctx, k8s, namespace, current)
 	logrus.Infof("sandbox-matrix: trim surplus warm pod %s (pool above target)", pod.Name)
 	return true
 }
@@ -454,7 +497,7 @@ const podIdleTTLAnnotation = "sandbox.k8e.io/idle-ttl-seconds"
 
 // newWarmPod creates a warm pod spec with the correct labels and runtime.
 // idleTTLSeconds > 0 stamps the per-pool idle TTL override onto the pod.
-func newWarmPod(cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds int64) *corev1.Pod {
+func newWarmPod(cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds int64, pvcName string) *corev1.Pod {
 	annotations := sandboxgrpc.GvisorAnnotations(runtimeClass)
 	if idleTTLSeconds > 0 {
 		if annotations == nil {
@@ -472,7 +515,7 @@ func newWarmPod(cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds in
 			},
 			Annotations: annotations,
 		},
-		Spec: warmPodSpec(runtimeClass, cfg),
+		Spec: warmPodSpec(runtimeClass, cfg, pvcName),
 	}
 }
 
@@ -685,9 +728,11 @@ func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dy
 	dyn.Resource(localMatrixGVR).Namespace(cfg.Namespace).UpdateStatus(ctx, matrix, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
-func warmPodSpec(runtimeClass string, cfg config.SandboxConfig) corev1.PodSpec {
-	// Warm pool pods use EmptyDir (no PVC) — pass empty pvcName
-	return sandboxgrpc.SandboxPodSpec(runtimeClass, "" /* no PVC */, cfg.DefaultCPU, cfg.DefaultMemory, cfg.DefaultImage)
+func warmPodSpec(runtimeClass string, cfg config.SandboxConfig, pvcName string) corev1.PodSpec {
+	// Warm pool pods boot with their workspace PVC attached: a running pod's
+	// volumes cannot be swapped, so the claim must exist at boot for a claimed
+	// warm pod to be a persistent session (fast start AND a PVC workspace).
+	return sandboxgrpc.SandboxPodSpec(runtimeClass, pvcName, cfg.DefaultCPU, cfg.DefaultMemory, cfg.DefaultImage)
 }
 
 func runGCLoop(ctx context.Context, orch *sandboxgrpc.Orchestrator, namespace string) {
@@ -704,14 +749,19 @@ func runGCLoop(ctx context.Context, orch *sandboxgrpc.Orchestrator, namespace st
 }
 
 func gcExpiredSessions(ctx context.Context, orch *sandboxgrpc.Orchestrator, namespace string) {
-	sessions, err := orch.ListActiveSessions(ctx, namespace)
+	sessions, err := orch.ListAllSessions(ctx, namespace)
 	if err != nil {
 		return
 	}
 	now := time.Now()
 	for _, s := range sessions {
 		if s.Status.ExpiresAt != nil && s.Status.ExpiresAt.Time.Before(now) {
-			logrus.Infof("sandbox-matrix: GC session %s (expired at %s)", s.Name, s.Status.ExpiresAt.Time)
+			// A paused session still owns its PVC; GC it too or the claim leaks.
+			// Terminating sessions are already on the way out.
+			if s.Status.Phase != sandboxv1.SandboxPhaseActive && s.Status.Phase != sandboxv1.SandboxPhasePaused {
+				continue
+			}
+			logrus.Infof("sandbox-matrix: GC session %s (phase %s, expired at %s)", s.Name, s.Status.Phase, s.Status.ExpiresAt.Time)
 			if err := orch.DestroySession(ctx, s.Name); err != nil {
 				logrus.Warnf("sandbox-matrix: GC destroy %s: %v", s.Name, err)
 			}
@@ -843,7 +893,5 @@ func reapIfIdle(ctx context.Context, k8s kubernetes.Interface, namespace string,
 		return
 	}
 	logrus.Infof("sandbox-matrix: reap idle pod %s (idle %v, ttl %ds)", pod.Name, now.Sub(t).Round(time.Second), ttl)
-	if delErr := k8s.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); delErr != nil {
-		logrus.Warnf("sandbox-matrix: reap delete %s: %v", pod.Name, delErr)
-	}
+	deleteWarmPod(ctx, k8s, namespace, pod)
 }

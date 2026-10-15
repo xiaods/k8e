@@ -68,6 +68,17 @@ func mustCreateSession(t *testing.T, o *Orchestrator, id string) *sandboxv1.Sand
 	return sess
 }
 
+// mustSessionToUnstructured wraps sessionToUnstructured for tests that build a
+// session CRD directly instead of going through CreateSession.
+func mustSessionToUnstructured(t *testing.T, sess *sandboxv1.SandboxSession) *unstructured.Unstructured {
+	t.Helper()
+	u, err := sessionToUnstructured(sess)
+	if err != nil {
+		t.Fatalf("convert session %s: %v", sess.Name, err)
+	}
+	return u
+}
+
 // setSessionExpiry backdates or future-dates a session's expiresAt via UpdateStatus.
 func setSessionExpiry(t *testing.T, o *Orchestrator, sessName, expiresAt string) {
 	t.Helper()
@@ -83,7 +94,8 @@ func setSessionExpiry(t *testing.T, o *Orchestrator, sessName, expiresAt string)
 }
 
 // warmTestPod builds a Running warm pod fixture for claim-path tests.
-// The pod is labeled with runtimeClass "gvisor" (the session default).
+// The pod is labeled with runtimeClass "gvisor" (the session default) and
+// boots with its workspace PVC attached, the shape the PVC-backed pool uses.
 func warmTestPod(name, ip string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -96,6 +108,12 @@ func warmTestPod(name, ip string) *corev1.Pod {
 			Annotations: map[string]string{},
 		},
 		Spec: corev1.PodSpec{
+			Volumes: []corev1.Volume{{
+				Name: "workspace",
+				VolumeSource: corev1.VolumeSource{
+					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace-" + name},
+				},
+			}},
 			Containers: []corev1.Container{{Name: "sandbox", Ports: []corev1.ContainerPort{{ContainerPort: 2024}}}},
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: ip},
@@ -429,18 +447,27 @@ func TestCreateSession_CreatesPVC(t *testing.T) {
 	}
 }
 
-func TestCreateSession_Ephemeral_NoPVC(t *testing.T) {
+func TestCreateSession_TenantlessFallsIntoDefaultAndIsPersistent(t *testing.T) {
 	o := newTestOrchestrator()
-	sess := mustCreateSession(t, o, "eph-test") // no tenant → ephemeral
-	if sess.Status.WorkspacePVC != "" {
-		t.Fatalf("expected no WorkspacePVC for ephemeral session, got %q", sess.Status.WorkspacePVC)
+	ctx := context.Background()
+
+	sess := mustCreateSession(t, o, "eph-test") // no tenant → default bucket, still PVC-backed
+	if sess.Spec.TenantID != "default" {
+		t.Fatalf("expected empty tenant normalized to %q, got %q", "default", sess.Spec.TenantID)
 	}
-	pvcs, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).List(context.Background(), metav1.ListOptions{})
+	if sess.Status.WorkspacePVC == "" {
+		t.Fatal("expected every session to be PVC-backed, got empty WorkspacePVC")
+	}
+
+	named, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "team-test", TenantId: "team-a"})
 	if err != nil {
-		t.Fatalf("list pvcs: %v", err)
+		t.Fatalf(msgCreate, err)
 	}
-	if len(pvcs.Items) != 0 {
-		t.Fatalf("expected no PVCs for ephemeral session, got %d", len(pvcs.Items))
+	if named.Spec.TenantID != "team-a" {
+		t.Fatalf("expected explicit tenant preserved, got %q", named.Spec.TenantID)
+	}
+	if named.Status.WorkspacePVC == "" {
+		t.Fatal("expected tenant session to be PVC-backed")
 	}
 }
 
@@ -1147,14 +1174,37 @@ func TestPauseSessionReleasesPodKeepsPVC(t *testing.T) {
 	}
 }
 
-func TestPauseSessionEphemeralRefused(t *testing.T) {
+func TestPauseSessionLegacyEmptyDirRefused(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()
-	// Ephemeral session (no tenant → no PVC).
-	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: "sess-ephemeral"})
-	if err != nil {
-		t.Fatalf(msgCreate, err)
+	// A legacy session from the EmptyDir era: pod booted with no claim and the
+	// status carries no WorkspacePVC. Pause must refuse rather than delete the
+	// pod and silently lose the workspace.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sandbox-sess-legacy",
+			Namespace: sandboxNS,
+			Labels:    map[string]string{labelState: stateActive, labelSessionID: "sess-legacy"},
+		},
+		Spec: corev1.PodSpec{
+			Volumes:    []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+			Containers: []corev1.Container{{Name: "sandbox", Ports: []corev1.ContainerPort{{ContainerPort: 2024}}}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "10.0.0.7"},
 	}
+	if _, err := o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	sess := &sandboxv1.SandboxSession{
+		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
+		ObjectMeta: metav1.ObjectMeta{Name: "sess-legacy", Namespace: sandboxNS},
+		Spec:       sandboxv1.SandboxSessionSpec{RuntimeClass: "gvisor"},
+		Status:     sandboxv1.SandboxSessionStatus{Phase: sandboxv1.SandboxPhaseActive, PodName: pod.Name},
+	}
+	if _, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Create(ctx, mustSessionToUnstructured(t, sess), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
 	pauseErr := o.PauseSession(ctx, sess.Name)
 	if pauseErr == nil {
 		t.Fatal("ephemeral session must refuse pause (EmptyDir would lose files)")
@@ -1228,5 +1278,121 @@ func TestPauseSessionNonActiveRefused(t *testing.T) {
 	}
 	if _, rerr := o.ResumeSession(ctx, sess.Name); rerr == nil {
 		t.Fatal("resume of an Active (non-paused) session must be refused")
+	}
+}
+
+// Claim-side ownership: a claimed warm pod's workspace claim follows the
+// session — the status records it, and the claim carries the session label so
+// destroy (and only destroy) can tell a session-owned claim from a pool-owned
+// one.
+
+func TestClaimWarmPod_ClaimInheritsWorkspacePVC(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Create(ctx, &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "workspace-warm-pvc", Namespace: sandboxNS},
+	}, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, warmTestPod("warm-pvc", "10.0.0.5"), metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "claim-pvc")
+	if sess.Status.WorkspacePVC != "workspace-warm-pvc" {
+		t.Fatalf("expected claim to inherit the pod's workspace PVC, got %q", sess.Status.WorkspacePVC)
+	}
+	pvc, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, "workspace-warm-pvc", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get workspace PVC: %v", err)
+	}
+	if pvc.Labels[labelSessionID] != "claim-pvc" {
+		t.Fatalf("expected the claim to be stamped with the claiming session, got %v", pvc.Labels)
+	}
+}
+
+func TestClaimWarmPod_LegacyEmptyDirPodIsNotClaimed(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	o.warmPodHealthCheck = func(ctx context.Context, pod *corev1.Pod) bool { return true }
+
+	// An EmptyDir-era warm pod: unclaimable, because its workspace dies with
+	// the pod and would silently demote the session to ephemeral.
+	legacy := warmTestPod("warm-legacy", "10.0.0.6")
+	legacy.Spec.Volumes = []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}}
+	o.k8s.CoreV1().Pods(sandboxNS).Create(ctx, legacy, metav1.CreateOptions{}) //nolint:errcheck
+
+	sess := mustCreateSession(t, o, "claim-legacy")
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, sess.Status.PodName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get session pod: %v", err)
+	}
+	if pod.Name == "warm-legacy" {
+		t.Fatal("expected the EmptyDir warm pod to be skipped by the claim path")
+	}
+	if sess.Status.WorkspacePVC == "" {
+		t.Fatal("expected the cold-started session to be PVC-backed")
+	}
+}
+
+// Destroy-side ownership: a paused session's pod is gone, so its claim would
+// leak bound-forever unless destroy deletes it — while a live session's claim
+// recirculates with the pod, and a sub-agent child must never delete the
+// parent's claim it shares.
+
+func TestDestroySession_PausedDeletesWorkspacePVC(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	sess := mustCreateSession(t, o, "destroy-paused")
+
+	if err := o.PauseSession(ctx, sess.Name); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if err := o.DestroySession(ctx, sess.Name); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, sess.Status.WorkspacePVC, metav1.GetOptions{}); err == nil {
+		t.Fatalf("expected the paused session's claim %s to be deleted on destroy", sess.Status.WorkspacePVC)
+	}
+}
+
+func TestDestroySession_ChildKeepsParentWorkspacePVC(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	parent := mustCreateSession(t, o, "parent-share")
+
+	child, err := o.RunSubAgent(ctx, &pb.RunSubAgentRequest{
+		ParentSessionId: "parent-share",
+		AgentType:       "coding",
+	})
+	if err != nil {
+		t.Fatalf("run sub-agent: %v", err)
+	}
+
+	// The child shares the parent's claim; destroying the child must not
+	// delete it. The child has no pod of its own, which is exactly the paused
+	// shape that would otherwise trigger the claim deletion.
+	if err := o.DestroySession(ctx, child.SessionId); err != nil {
+		t.Fatalf("destroy child: %v", err)
+	}
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, parent.Status.WorkspacePVC, metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected the parent's claim %s to survive the child's destroy: %v", parent.Status.WorkspacePVC, err)
+	}
+}
+
+func TestReleasePod_UnlabelsWorkspacePVC(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	sess := mustCreateSession(t, o, "release-pvc")
+	setupPodForRelease(ctx, t, o, sess.Status.PodName)
+
+	o.releasePod(ctx, sess.Status.PodName)
+
+	pvc, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, sess.Status.WorkspacePVC, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get workspace PVC: %v", err)
+	}
+	if _, has := pvc.Labels[labelSessionID]; has {
+		t.Fatalf("expected the released pod's claim to carry no session label, got %v", pvc.Labels)
 	}
 }

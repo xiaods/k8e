@@ -57,6 +57,24 @@ const (
 	stateWarm         = "warm"
 	stateActive       = "active"
 
+	// defaultTenantID is the bucket a session falls into when the caller sends
+	// no tenant. The CLI sends this value client-side by default
+	// (pkg/sandboxcli/session.go), so server-side normalization keeps the CLI
+	// and MCP paths in one scope instead of two.
+	defaultTenantID = "default"
+	// workspaceVolumeName is the pod volume mounted at /workspace by sandboxd;
+	// its backing claim is what makes a session persistent.
+	workspaceVolumeName = "workspace"
+	// workspacePVCPrefix names session-owned claims: "workspace-<sessionID>".
+	workspacePVCPrefix = "workspace-"
+	// workspacePVCStorageClass/workspacePVCSize are the storage shape of every
+	// workspace claim, session-owned or pool-owned.
+	workspacePVCStorageClass = "local-path"
+	workspacePVCSize         = "1Gi"
+	// WarmWorkspacePVCPrefix generates names for pool-owned workspace claims,
+	// provisioned one-per-warm-pod by the warm-pool controller.
+	WarmWorkspacePVCPrefix = "workspace-warm-"
+
 	// LabelState is the pod label key for sandbox state (warm/active).
 	LabelState = labelState
 	// StateWarm marks a pod as a pre-warmed sandbox.
@@ -377,11 +395,22 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	if err := validateSecretRefs(req.SecretRefs); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "secret_refs: %v", err)
 	}
+	// A session is always tenant-scoped: an empty caller tenant means the
+	// shared default bucket — the same value the CLI sends by default — so the
+	// CLI and the MCP adapter land in one scope instead of two. Isolation
+	// (allowed hosts, sub-agent boundaries, listing) is tenant-based; storage
+	// no longer is: every session is PVC-backed now, because a warm claim
+	// carries its own pre-provisioned workspace claim.
+	tenantID := req.TenantId
+	if tenantID == "" {
+		tenantID = defaultTenantID
+	}
+
 	session := &sandboxv1.SandboxSession{
 		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
 		ObjectMeta: metav1.ObjectMeta{Name: sessionID, Namespace: o.namespace},
 		Spec: sandboxv1.SandboxSessionSpec{
-			TenantID:     req.TenantId,
+			TenantID:     tenantID,
 			AllowedHosts: allowedHosts,
 			RuntimeClass: runtimeClass,
 			Depth:        0,
@@ -403,19 +432,12 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 		return nil, status.Errorf(codes.Internal, "create session %s: empty response", sessionID)
 	}
 
-	// Persistent sessions (tenant set) get a dedicated workspace PVC, mounted via a
-	// cold-start pod. Ephemeral sessions claim a warm pod backed by EmptyDir, so no
-	// PVC is created — a warm pod's volume is fixed at boot and cannot be swapped.
-	var pvcName string
-	if req.TenantId != "" {
-		p, pvcErr := o.ensureWorkspacePVC(ctx, sessionID)
-		if pvcErr != nil {
-			return nil, pvcErr
-		}
-		pvcName = p
-	}
-
-	pod, err := o.claimOrCreatePod(ctx, sessionID, runtimeClass, pvcName, matrixCPU, matrixMemory)
+	// Every session is persistent: prefer a warm pod (its workspace PVC was
+	// provisioned at pod boot and comes with the claim), else cold-start with a
+	// dedicated session PVC attached. A running pod's volumes are fixed at boot,
+	// so persistency cannot be added after the fact — the pool exists to make it
+	// cheap.
+	pod, pvcName, err := o.claimOrCreatePod(ctx, sessionID, runtimeClass, "" /* claim-or-provision */, matrixCPU, matrixMemory)
 	if err != nil {
 		return nil, err
 	}
@@ -474,7 +496,17 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 		}
 	}
 
-	// 4. Delete Session CRD (pod and PVC survive, return to pool)
+	// 4. Delete the workspace claim when no pod returned to the pool. A live
+	// pod keeps its PVC: sandboxd wipes it and the pod recirculates. But a
+	// paused session's pod is already gone, and a crashed session's pod never
+	// came back — their claims would leak bound-forever. Ownership is the
+	// session label on the claim (set at claim time): a sub-agent child shares
+	// its parent's claim and must never delete it.
+	if session.Status.WorkspacePVC != "" && podIP == "" {
+		o.deleteSessionWorkspacePVC(ctx, session.Status.WorkspacePVC, sessionID)
+	}
+
+	// 5. Delete Session CRD (pod and PVC survive, return to pool)
 	return o.dynamic.Resource(sessionGVR).Namespace(o.namespace).Delete(ctx, sessionID, metav1.DeleteOptions{})
 }
 
@@ -564,11 +596,22 @@ func (o *Orchestrator) releasePod(ctx context.Context, podName string) {
 	pod.Labels[labelState] = StateResetting
 	delete(pod.Labels, labelSessionID)
 	o.k8s.CoreV1().Pods(o.namespace).Update(ctx, pod, metav1.UpdateOptions{}) //nolint:errcheck
+	// The claim follows the pod back into the pool: drop the session label so a
+	// later destroy of this session cannot delete a claim another session may
+	// already have claimed.
+	o.setWorkspacePVCSession(ctx, workspacePVCOf(pod), "")
 }
 
 // ListActiveSessions returns all Active SandboxSessions in the given namespace.
 func (o *Orchestrator) ListActiveSessions(ctx context.Context, namespace string) ([]*sandboxv1.SandboxSession, error) {
 	return o.listSessions(ctx, namespace, string(sandboxv1.SandboxPhaseActive))
+}
+
+// ListAllSessions returns every session in the namespace regardless of phase.
+// The GC needs it: a paused session still owns its workspace PVC, and its
+// expiry timer keeps running while paused.
+func (o *Orchestrator) ListAllSessions(ctx context.Context, namespace string) ([]*sandboxv1.SandboxSession, error) {
+	return o.listSessions(ctx, namespace, "all")
 }
 
 // listSessions returns sessions in namespace filtered by phase.
@@ -629,14 +672,13 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 		return nil, status.Errorf(codes.PermissionDenied, "max depth %d reached", maxDepth)
 	}
 
-	// Sub-agents share the parent's workspace for file-based IPC, which requires the
-	// parent to own a real PVC. A warm-claimed (ephemeral) parent runs on EmptyDir
-	// and cannot share storage, so reject rather than silently provision an unshared
-	// PVC the parent can't see. Create the parent with a tenant_id to enable this.
+	// Sub-agents share the parent's workspace for file-based IPC, which requires
+	// the parent to own a real PVC. Every session since the PVC-backed warm pool
+	// owns one, so this only fires for a legacy parent booted on EmptyDir.
 	parentPVC := parent.Status.WorkspacePVC
 	if parentPVC == "" {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"parent session %s has no shared workspace; create it with a tenant_id to enable sub-agents", req.ParentSessionId)
+			"parent session %s has no shared workspace (legacy EmptyDir pod)", req.ParentSessionId)
 	}
 
 	childID := fmt.Sprintf("%s-sub-%d", req.ParentSessionId, time.Now().UnixNano())
@@ -920,11 +962,13 @@ func (o *Orchestrator) updateSessionStatus(ctx context.Context, session *sandbox
 	}
 }
 
-func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeClass, pvcName, cpu, memory string) (*corev1.Pod, error) {
+func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeClass, pvcName, cpu, memory string) (*corev1.Pod, string, error) {
 	start := time.Now()
-	// Only ephemeral sessions (no PVC) may adopt a warm pod: warm pods boot with an
-	// EmptyDir volume, and a running pod's volumes cannot be changed to mount a
-	// session PVC. Persistent sessions therefore cold-start with the PVC attached.
+	// A caller that already owns a PVC (resume) must cold-start with it
+	// attached: warm pods boot with their own pre-provisioned claim and a
+	// running pod's volumes cannot be swapped, so a warm claim and its PVC are
+	// inseparable. A caller without one claims a warm pod — the claim comes
+	// with it.
 	if pvcName == "" {
 		warm, err := o.k8s.CoreV1().Pods(o.namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: labelState + "=" + stateWarm,
@@ -945,6 +989,13 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 				if rc := pod.Labels[labelRuntimeClass]; rc != "" && rc != runtimeClass {
 					continue
 				}
+				// A warm pod without a workspace claim predates the PVC-backed pool
+				// (EmptyDir era); claiming it would hand the session no persistent
+				// workspace. Left unclaimed, the idle reaper retires it and the
+				// pool refills with PVC-backed pods.
+				if workspacePVCOf(pod) == "" {
+					continue
+				}
 				// atomic claim: use resourceVersion for optimistic locking
 				pod.Labels[labelState] = stateActive
 				pod.Labels[labelSessionID] = sessionID
@@ -955,11 +1006,22 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 					if o.OnWarmClaim != nil {
 						o.OnWarmClaim()
 					}
-					return updated, nil
+					claim := workspacePVCOf(updated)
+					// Ownership: destroy only reclaims a claim that carries this
+					// session's label; an unlabeled claim belongs to the pool.
+					o.setWorkspacePVCSession(ctx, claim, sessionID)
+					return updated, claim, nil
 				}
 				// conflict means another request claimed it first — try next warm pod
 			}
 		}
+		// Nothing claimable: provision the session's own claim and cold-start
+		// with it attached.
+		p, pvcErr := o.ensureWorkspacePVC(ctx, sessionID)
+		if pvcErr != nil {
+			return nil, "", pvcErr
+		}
+		pvcName = p
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -978,7 +1040,7 @@ func (o *Orchestrator) claimOrCreatePod(ctx context.Context, sessionID, runtimeC
 	if cerr == nil {
 		o.recordClaim(start, false)
 	}
-	return created, cerr
+	return created, pvcName, cerr
 }
 
 func sandboxPodSpec(runtimeClass, pvcName, cpu, memory string) corev1.PodSpec {
@@ -1061,12 +1123,12 @@ func GvisorAnnotations(runtimeClass string) map[string]string {
 
 // PauseSession releases a sandbox's pod (CPU/memory) while keeping the
 // workspace PVC and the Session CRD, so a later ResumeSession comes back
-// with the filesystem intact — E2B pause semantics (KIP-18). Only
-// persistent sessions (tenant set, PVC-backed) can pause; an ephemeral
-// session's EmptyDir volume dies with the pod, so pausing it would silently
-// lose the workspace — the honest refusal matches CubeSandbox's "delete a
-// paused sandbox does not wake it" and Dormice's pause memory:false
-// (filesystem only) semantics.
+// with the filesystem intact — E2B pause semantics (KIP-18). Every session
+// since the PVC-backed warm pool is pauseable; the one refusal left is a
+// legacy session whose workspace is still an EmptyDir (pod booted before
+// the pool carried claims): pausing it would silently lose the workspace.
+// The honest refusal matches Dormice's pause memory:false (filesystem
+// only) semantics — pause without a persistent filesystem is not pause.
 func (o *Orchestrator) PauseSession(ctx context.Context, sessionID string) error {
 	session, err := o.getSession(ctx, sessionID)
 	if err != nil {
@@ -1076,40 +1138,35 @@ func (o *Orchestrator) PauseSession(ctx context.Context, sessionID string) error
 		return status.Errorf(codes.FailedPrecondition,
 			"session %s is not active (phase=%s)", sessionID, session.Status.Phase)
 	}
-	if session.Spec.TenantID == "" && session.Status.WorkspacePVC == "" {
-		return status.Errorf(codes.FailedPrecondition,
-			"session %s is ephemeral (no workspace PVC); pause requires a persistent session", sessionID)
-	}
-	// Ensure a PVC exists so resume can attach the same workspace.
-	pvcName := session.Status.WorkspacePVC
-	if pvcName == "" {
-		pvcName, err = o.ensureWorkspacePVC(ctx, sessionID)
-		if err != nil {
-			return status.Errorf(codes.Internal, "pause: ensure workspace PVC: %v", err)
+	// The live pod is the authority on the workspace's backing volume: a
+	// session whose status lost the claim but still runs on a claimed pod can
+	// self-heal here instead of being refused.
+	var pod *corev1.Pod
+	if _, name := o.findPodBySession(ctx, sessionID); name != "" {
+		if p, gerr := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, name, metav1.GetOptions{}); gerr == nil {
+			pod = p
 		}
+	}
+	if session.Status.WorkspacePVC == "" && pod != nil {
+		session.Status.WorkspacePVC = workspacePVCOf(pod)
+	}
+	if session.Status.WorkspacePVC == "" {
+		return status.Errorf(codes.FailedPrecondition,
+			"session %s has an EmptyDir workspace (legacy pod); pause requires a PVC-backed session", sessionID)
 	}
 
 	// Delete the pod (CPU/memory released); the PVC and CRD survive.
-	podIP, podName := o.findPodBySession(ctx, sessionID)
-	if podIP == "" && session.Status.PodName != "" {
-		pod, gerr := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, session.Status.PodName, metav1.GetOptions{})
-		if gerr == nil {
-			podIP = pod.Status.PodIP
-			podName = pod.Name
-		}
-	}
-	if podName != "" {
-		// Best-effort workspace flush would belong here (none exists yet);
-		// the PVC persists regardless.
-		if derr := o.k8s.CoreV1().Pods(o.namespace).Delete(ctx, podName, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
-			return status.Errorf(codes.Internal, "pause: delete pod %s: %v", podName, derr)
+	// A best-effort workspace flush would belong here (none exists yet);
+	// the PVC persists regardless.
+	if pod != nil {
+		if derr := o.k8s.CoreV1().Pods(o.namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
+			return status.Errorf(codes.Internal, "pause: delete pod %s: %v", pod.Name, derr)
 		}
 	}
 
 	session.Status.Phase = sandboxv1.SandboxPhasePaused
 	session.Status.PodName = ""
 	session.Status.PodIP = ""
-	session.Status.WorkspacePVC = pvcName
 	o.updateSessionStatus(ctx, session)
 	// Delete the session CNP so the paused sandbox exposes no ports.
 	o.deleteCNP(ctx, session)
@@ -1133,10 +1190,11 @@ func (o *Orchestrator) ResumeSession(ctx context.Context, sessionID string) (*co
 			"session %s has no workspace PVC; cannot resume", sessionID)
 	}
 
-	// Re-create the pod with the same PVC. A persistent session always
-	// cold-starts (warm pods boot with EmptyDir and cannot swap volumes).
+	// Re-create the pod with the same PVC attached: a running pod's volumes are
+	// fixed at boot, so resume always cold-starts (Dormice's pause memory:false:
+	// filesystem survives, in-memory state does not).
 	matrixCPU, matrixMemory := o.matrixResourceDefaults(ctx)
-	pod, perr := o.claimOrCreatePod(ctx, sessionID, session.Spec.RuntimeClass,
+	pod, _, perr := o.claimOrCreatePod(ctx, sessionID, session.Spec.RuntimeClass,
 		session.Status.WorkspacePVC, matrixCPU, matrixMemory)
 	if perr != nil {
 		return nil, status.Errorf(codes.Internal, "resume: create pod: %v", perr)
@@ -1163,29 +1221,102 @@ func (o *Orchestrator) matrixResourceDefaults(ctx context.Context) (cpu, memory 
 	return cpu, memory
 }
 
+// workspacePVCOf returns the claim backing the pod's workspace volume, or ""
+// when the workspace is not PVC-backed (EmptyDir-era pods kept the old shape).
+func workspacePVCOf(pod *corev1.Pod) string {
+	if pod == nil {
+		return ""
+	}
+	for i := range pod.Spec.Volumes {
+		v := &pod.Spec.Volumes[i]
+		if v.Name == workspaceVolumeName && v.PersistentVolumeClaim != nil {
+			return v.PersistentVolumeClaim.ClaimName
+		}
+	}
+	return ""
+}
+
+// WorkspacePVCOf returns the claim backing the pod's workspace volume, or "".
+// Exported for the warm-pool controller, which owns the lifecycle of pool claims.
+func WorkspacePVCOf(pod *corev1.Pod) string { return workspacePVCOf(pod) }
+
+// WorkspacePVCSpec is the storage shape of every workspace claim —
+// session-owned or pool-owned: 1Gi local-path, ReadWriteOnce. Exported for the
+// warm-pool controller, which provisions one claim per warm pod.
+func WorkspacePVCSpec() corev1.PersistentVolumeClaimSpec {
+	storageClass := workspacePVCStorageClass
+	return corev1.PersistentVolumeClaimSpec{
+		AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+		StorageClassName: &storageClass,
+		Resources: corev1.VolumeResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceStorage: resource.MustParse(workspacePVCSize),
+			},
+		},
+	}
+}
+
+// setWorkspacePVCSession labels a workspace claim as owned by a session, or —
+// with an empty sessionID — clears that label when the pod returns to the pool.
+// The label is the ownership boundary destroy relies on: only a claim that
+// still carries the session's label may be deleted on destroy.
+func (o *Orchestrator) setWorkspacePVCSession(ctx context.Context, pvcName, sessionID string) {
+	if pvcName == "" {
+		return
+	}
+	pvc, err := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	if pvc.Labels == nil {
+		pvc.Labels = map[string]string{}
+	}
+	if sessionID == "" {
+		if _, has := pvc.Labels[labelSessionID]; !has {
+			return
+		}
+		delete(pvc.Labels, labelSessionID)
+	} else {
+		if pvc.Labels[labelSessionID] == sessionID {
+			return
+		}
+		pvc.Labels[labelSessionID] = sessionID
+	}
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Update(ctx, pvc, metav1.UpdateOptions{}); err != nil {
+		logrus.Warnf("sandbox: relabel workspace PVC %s: %v", pvcName, err)
+	}
+}
+
+// deleteSessionWorkspacePVC deletes a session's workspace claim, but only when
+// the claim still carries that session's label — a shared (sub-agent parent)
+// or already-recirculated claim is never deleted here.
+func (o *Orchestrator) deleteSessionWorkspacePVC(ctx context.Context, pvcName, sessionID string) {
+	pvc, err := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		return // gone already — destroy is idempotent
+	}
+	if pvc.Labels[labelSessionID] != sessionID {
+		return
+	}
+	if derr := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Delete(ctx, pvcName, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
+		logrus.Warnf("sandbox: delete workspace PVC %s of session %s: %v", pvcName, sessionID, derr)
+	}
+}
+
 // ensureWorkspacePVC creates a PVC for the session workspace if it doesn't exist.
 func (o *Orchestrator) ensureWorkspacePVC(ctx context.Context, sessionID string) (string, error) {
-	pvcName := "workspace-" + sessionID
+	pvcName := workspacePVCPrefix + sessionID
 	_, err := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Get(ctx, pvcName, metav1.GetOptions{})
 	if err == nil {
 		return pvcName, nil
 	}
-	storageClass := "local-path"
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pvcName,
 			Namespace: o.namespace,
 			Labels:    map[string]string{labelSessionID: sessionID},
 		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes:      []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-			StorageClassName: &storageClass,
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse("1Gi"),
-				},
-			},
-		},
+		Spec: WorkspacePVCSpec(),
 	}
 	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Create(ctx, pvc, metav1.CreateOptions{}); err != nil {
 		return "", fmt.Errorf("create workspace PVC: %w", err)

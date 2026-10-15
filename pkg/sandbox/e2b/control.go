@@ -280,7 +280,7 @@ func validTimeout(seconds int) bool {
 
 // handlePause implements POST /sandboxes/:id/pause. Backed by the gateway's
 // PauseSession RPC: the pod (CPU/memory) is released, the workspace PVC and
-// session survive. An ephemeral (EmptyDir) sandbox cannot pause without
+// session survive. A legacy (EmptyDir-era) sandbox cannot pause without
 // losing its files — the gateway refuses with FailedPrecondition, surfaced
 // here as 409 (CubeSandbox's "sandbox cannot be paused").
 func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
