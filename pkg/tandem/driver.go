@@ -259,10 +259,15 @@ func (d *Driver) Start(ctx context.Context, _ *clientaccess.Info) error {
 	if err := d.supervisor.Start(ctx, cfg); err != nil {
 		return err
 	}
-	// Point the apiserver at the compat layer's mTLS endpoint. The server
-	// reads --etcd-servers from Datastore.Endpoint; without this the
-	// apiserver fails with 'etcd-servers must be specified'.
-	d.control.Datastore.Endpoint = fmt.Sprintf("https://%s", cfg.TandemListen)
+	// Point the apiserver at the address the compat layer actually bound:
+	// the server reads --etcd-servers from Datastore.Endpoint, and the CLI's
+	// pre-start default is only a guess. TandemListen is filled in by
+	// withDefaults inside Supervisor.Start, so the resolved value lives on the
+	// supervisor's config — the local cfg is the pre-default copy, and reading
+	// it yields an empty host, i.e. --etcd-servers=https://, which the
+	// apiserver can never dial. This mirrors the etcd driver's startClient,
+	// which likewise overwrites the endpoint once the listener is up.
+	d.control.Datastore.Endpoint = fmt.Sprintf("https://%s", d.supervisor.cfg.TandemListen)
 	// Record successful startup inside the datastore directory so restart can
 	// use local bootstrap data even when the original join server is offline.
 	if err := os.WriteFile(filepath.Join(cfg.DataDir, "rqlite", "initialized"), nil, 0600); err != nil {
