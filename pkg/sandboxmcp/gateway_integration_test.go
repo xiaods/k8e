@@ -74,7 +74,8 @@ func TestGatewayWithKubernetesMock(t *testing.T) {
 
 	core := kubefake.NewSimpleClientset(
 		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "mock-node"}, Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("8Gi")}}},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "warm", Namespace: "sandbox-matrix", Labels: map[string]string{"sandbox.k8e.io/state": "warm", "sandbox.k8e.io/runtime-class": "gvisor"}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "127.0.0.1", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "warm", Namespace: "sandbox-matrix", Labels: map[string]string{"sandbox.k8e.io/state": "warm", "sandbox.k8e.io/runtime-class": "gvisor"}}, Spec: corev1.PodSpec{Volumes: []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "workspace-warm"}}}}}, Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "127.0.0.1", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "workspace-warm", Namespace: "sandbox-matrix"}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "sandbox-apikeys", Namespace: "sandbox-matrix", UID: "mock-secret"}, Data: map[string][]byte{"keys.json": []byte(`{"alice":"alice-key","bob":"bob-key"}`)}},
 	)
 	installConfigMapCAS(core)
