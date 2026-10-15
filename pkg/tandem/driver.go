@@ -259,6 +259,10 @@ func (d *Driver) Start(ctx context.Context, _ *clientaccess.Info) error {
 	if err := d.supervisor.Start(ctx, cfg); err != nil {
 		return err
 	}
+	// Point the apiserver at the compat layer's mTLS endpoint. The server
+	// reads --etcd-servers from Datastore.Endpoint; without this the
+	// apiserver fails with 'etcd-servers must be specified'.
+	d.control.Datastore.Endpoint = fmt.Sprintf("https://%s", cfg.TandemListen)
 	// Record successful startup inside the datastore directory so restart can
 	// use local bootstrap data even when the original join server is offline.
 	if err := os.WriteFile(filepath.Join(cfg.DataDir, "rqlite", "initialized"), nil, 0600); err != nil {
