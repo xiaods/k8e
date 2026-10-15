@@ -46,10 +46,18 @@ warn()  { echo "[WARN]  $*" >&2; }
 fatal() { echo "[ERROR] $*" >&2; exit 1; }
 
 # ── gVisor runtime ────────────────────────────────────────────────────────────
+# Follows the official "Latest release" tarball method:
+# https://gvisor.dev/docs/user_guide/install/#latest-release
+# Since 2026-07 gVisor releases are multi-file bundles: runsc and
+# containerd-shim-runsc-v1 plus a gvisor-bin/ directory of sidecar binaries
+# that runsc looks up next to its own binary. The legacy bare-binary URLs
+# (runsc, containerd-shim-runsc-v1) no longer exist.
 install_gvisor() {
-    # Require BOTH runsc and the containerd shim (the apt package ships runsc only)
-    if command -v runsc >/dev/null 2>&1 && command -v containerd-shim-runsc-v1 >/dev/null 2>&1; then
-        info "gVisor already installed: $(runsc version 2>/dev/null | head -1)"
+    # Require runsc, the containerd shim AND the gvisor-bin/ sidecar directory.
+    # Legacy binary-only installs are completed, not skipped.
+    if command -v runsc >/dev/null 2>&1 && command -v containerd-shim-runsc-v1 >/dev/null 2>&1 \
+        && [ -d "$(dirname "$(command -v runsc)")/gvisor-bin" ]; then
+        info "gVisor already installed: $(runsc --version 2>/dev/null | head -1)"
         return
     fi
 
@@ -57,8 +65,12 @@ install_gvisor() {
         warn "curl/sha512sum not found, skipping gVisor install"
         return
     fi
+    if ! command -v tar >/dev/null 2>&1; then
+        warn "tar not found, skipping gVisor install"
+        return
+    fi
 
-    info "Installing gVisor (runsc + containerd-shim-runsc-v1)..."
+    info "Installing gVisor (runsc + containerd-shim-runsc-v1 + gvisor-bin sidecars)..."
 
     ARCH=$(uname -m)
     case "${ARCH}" in
@@ -67,26 +79,52 @@ install_gvisor() {
         *) warn "Unsupported architecture for gVisor: ${ARCH}, skipping"; return ;;
     esac
 
-    URL="https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}"
-    TMP_DIR=$(mktemp -d)
-    trap 'rm -rf "${TMP_DIR}"' EXIT
+    # gVisor's release bucket ships the bundle in both zstd and bzip2 forms.
+    # Prefer zstd (~4x smaller) when the host can decode it, else fall back to bz2.
+    if command -v zstd >/dev/null 2>&1 || tar --zstd --help >/dev/null 2>&1; then
+        TARBALL=gvisor.tar.zstd
+    else
+        TARBALL=gvisor.tar.bz2
+    fi
 
-    for f in runsc runsc.sha512 containerd-shim-runsc-v1 containerd-shim-runsc-v1.sha512; do
-        if ! https_fetch -fsSL -o "${TMP_DIR}/${f}" "${URL}/${f}"; then
+    URL="https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}"
+    GV_TMP=$(mktemp -d)
+    trap 'rm -rf "${GV_TMP}"' EXIT
+
+    for f in "${TARBALL}" "${TARBALL}.sha512"; do
+        if ! https_fetch -fsSL -o "${GV_TMP}/${f}" "${URL}/${f}"; then
             warn "Failed to download ${f} from ${URL}, skipping gVisor install"
             return
         fi
     done
 
-    if ! (cd "${TMP_DIR}" && sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512); then
+    if ! (cd "${GV_TMP}" && sha512sum -c "${TARBALL}.sha512"); then
         warn "gVisor checksum verification failed, skipping install"
         return
     fi
 
-    chmod +x "${TMP_DIR}/runsc" "${TMP_DIR}/containerd-shim-runsc-v1"
-    $SUDO mv "${TMP_DIR}/runsc" "${TMP_DIR}/containerd-shim-runsc-v1" /usr/local/bin/
+    # runsc resolves gvisor-bin/ relative to its own binary, so extract the
+    # whole bundle into BIN_DIR (alongside the k8e binaries) and keep the
+    # files together — do not relocate runsc alone.
+    if [ "${TARBALL}" = "gvisor.tar.zstd" ] && tar --zstd --help >/dev/null 2>&1; then
+        if ! $SUDO tar --zstd -xf "${GV_TMP}/${TARBALL}" -C "${BIN_DIR}"; then
+            warn "Failed to extract ${TARBALL}, skipping gVisor install"
+            return
+        fi
+    elif [ "${TARBALL}" = "gvisor.tar.zstd" ]; then
+        # tar without libzstd: decode through the zstd CLI
+        if ! $SUDO zstd -dc "${GV_TMP}/${TARBALL}" | $SUDO tar -xf - -C "${BIN_DIR}"; then
+            warn "Failed to extract ${TARBALL}, skipping gVisor install"
+            return
+        fi
+    else
+        if ! $SUDO tar -xjf "${GV_TMP}/${TARBALL}" -C "${BIN_DIR}"; then
+            warn "Failed to extract ${TARBALL}, skipping gVisor install"
+            return
+        fi
+    fi
 
-    info "gVisor installed: $(runsc version 2>/dev/null | head -1)"
+    info "gVisor installed: $("${BIN_DIR}/runsc" --version 2>/dev/null | head -1)"
 }
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -520,6 +558,12 @@ eval set -- $(escape "${INSTALL_K8E_EXEC}") $(quote "$@")
     echo "  Kubeconfig:   /etc/k8e/k8e.yaml"
     echo "  Token:        ${K8E_TOKEN:-ilovek8e}"
     echo "  Sandbox:      ${K8E_SANDBOX_ENDPOINT:-127.0.0.1:50051}"
+    if command -v runsc >/dev/null 2>&1; then
+        echo "  gVisor:       $(runsc --version 2>/dev/null | head -1)"
+    else
+        echo "  gVisor:       not installed — sandbox pods will stay Pending."
+        echo "                Install it manually: https://gvisor.dev/docs/user_guide/install/"
+    fi
     echo ""
     echo "  Verify:"
     echo "    export KUBECONFIG=/etc/k8e/k8e.yaml"
