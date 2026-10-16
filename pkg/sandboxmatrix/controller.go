@@ -128,6 +128,9 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		if !cfg.SkipEndpointSliceController {
 			go runEndpointSliceLoop(leaderCtx, k8s, cfg)
 		}
+		// KIP-30 M3.3: mirror sandbox.k8e.io/runtime-classes node annotations
+		// to labels so warm-pod nodeAffinity can match them.
+		go runNodeRuntimeLabelLoop(leaderCtx, k8s)
 	})
 
 	if _, err := os.Stat("/dev/kvm"); err == nil {
@@ -246,6 +249,12 @@ func recycleUnhealthyWarmPods(ctx context.Context, k8s kubernetes.Interface, nam
 		if reason == "" {
 			continue
 		}
+		// KIP-30 M3.3: surface the scheduler's own reason before retiring the
+		// pod, so the pool status and the operator can see why warm pods never
+		// became ready instead of watching a silent delete/recreate churn.
+		if msg := warmPodUnschedulableReason(pod); msg != "" {
+			annotateUnschedulableWarmPod(ctx, k8s, namespace, pod, msg)
+		}
 		logrus.Infof("sandbox-matrix: recycle warm pod %s (%s for %v)", pod.Name, reason, age.Round(time.Second))
 		deleteWarmPod(ctx, k8s, namespace, pod)
 	}
@@ -324,6 +333,19 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool uns
 
 	targetSize := poolTargetSize(adaptiveTarget(configuredSize, minSize, maxSize, boost), maxPods)
 
+	// KIP-30 M3.3: only schedule onto nodes that can run this runtime class,
+	// plus any pool-level nodeSelector. affinity is nil (no constraint) when
+	// no node is annotated for the class, which keeps single-node installs
+	// scheduling freely.
+	poolNodeSelector, _ := specMap["nodeSelector"].(map[string]interface{})
+	nodeSelector := map[string]string{}
+	for k, v := range poolNodeSelector {
+		if s, ok := v.(string); ok {
+			nodeSelector[k] = s
+		}
+	}
+	affinity := warmPodNodeAffinity(ctx, k8s, runtimeClass)
+
 	allPods, err := k8s.CoreV1().Pods(cfg.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: sandboxgrpc.LabelState,
 	})
@@ -356,7 +378,7 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool uns
 		if maxPods >= 0 && int64(len(allPods.Items))+i+1 > maxPods {
 			break
 		}
-		if err := createWarmPodWithWorkspace(ctx, k8s, cfg, runtimeClass, idleTTL); err != nil {
+		if err := createWarmPodWithWorkspace(ctx, k8s, cfg, runtimeClass, idleTTL, affinity, nodeSelector); err != nil {
 			logrus.Debugf("sandbox-matrix: create warm pod: %v", err)
 		}
 	}
@@ -367,7 +389,7 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool uns
 // (sandboxd wipes it on release) and is deleted with the pod — it is what
 // turns a claimed warm pod into a persistent session without giving up the
 // pool's fast start.
-func createWarmPodWithWorkspace(ctx context.Context, k8s kubernetes.Interface, cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds int64) error {
+func createWarmPodWithWorkspace(ctx context.Context, k8s kubernetes.Interface, cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds int64, affinity *corev1.NodeAffinity, nodeSelector map[string]string) error {
 	// The claim name is chosen up front (rather than GenerateName) so the pod
 	// can attach it at boot; client-go's fake ignores GenerateName, and the
 	// single leader-elected controller creates these sequentially, so a
@@ -385,7 +407,7 @@ func createWarmPodWithWorkspace(ctx context.Context, k8s kubernetes.Interface, c
 	if err != nil {
 		return err
 	}
-	pod := newWarmPod(cfg, runtimeClass, idleTTLSeconds, created.Name)
+	pod := newWarmPod(cfg, runtimeClass, idleTTLSeconds, created.Name, affinity, nodeSelector)
 	// Explicit name (not GenerateName) so the pair is addressable even on
 	// clients that ignore GenerateName; see the claim-name note above.
 	pod.Name = fmt.Sprintf("sandbox-warm-%d", time.Now().UnixNano())
@@ -519,7 +541,7 @@ const podIdleTTLAnnotation = "sandbox.k8e.io/idle-ttl-seconds"
 
 // newWarmPod creates a warm pod spec with the correct labels and runtime.
 // idleTTLSeconds > 0 stamps the per-pool idle TTL override onto the pod.
-func newWarmPod(cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds int64, pvcName string) *corev1.Pod {
+func newWarmPod(cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds int64, pvcName string, affinity *corev1.NodeAffinity, nodeSelector map[string]string) *corev1.Pod {
 	annotations := sandboxgrpc.GvisorAnnotations(runtimeClass)
 	if idleTTLSeconds > 0 {
 		if annotations == nil {
@@ -537,7 +559,7 @@ func newWarmPod(cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds in
 			},
 			Annotations: annotations,
 		},
-		Spec: warmPodSpec(runtimeClass, cfg, pvcName),
+		Spec: warmPodSpec(runtimeClass, cfg, pvcName, affinity, nodeSelector),
 	}
 }
 
@@ -747,14 +769,36 @@ func updateSandboxMatrixStatus(ctx context.Context, k8s kubernetes.Interface, dy
 	status["claimedFromWarm"] = claimedWarm
 	status["coldStarts"] = coldStarts
 	status["avgClaimLatencyMs"] = avgLatency
+	// KIP-30 M3.3: distinct scheduler reasons for Pending warm pods, so an
+	// operator sees "why is my pool not ready" in the status instead of
+	// inferring it from a delete/recreate churn.
+	reasons := poolNotReadyReasons(warmPods.Items)
+	if len(reasons) > 0 {
+		status["notReadyReasons"] = reasons
+	} else {
+		delete(status, "notReadyReasons")
+	}
 	dyn.Resource(localMatrixGVR).Namespace(cfg.Namespace).UpdateStatus(ctx, matrix, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
-func warmPodSpec(runtimeClass string, cfg config.SandboxConfig, pvcName string) corev1.PodSpec {
+func warmPodSpec(runtimeClass string, cfg config.SandboxConfig, pvcName string, affinity *corev1.NodeAffinity, nodeSelector map[string]string) corev1.PodSpec {
 	// Warm pool pods boot with their workspace PVC attached: a running pod's
 	// volumes cannot be swapped, so the claim must exist at boot for a claimed
 	// warm pod to be a persistent session (fast start AND a PVC workspace).
-	return sandboxgrpc.SandboxPodSpec(runtimeClass, pvcName, cfg.DefaultCPU, cfg.DefaultMemory, cfg.DefaultImage)
+	spec := sandboxgrpc.SandboxPodSpec(runtimeClass, pvcName, cfg.DefaultCPU, cfg.DefaultMemory, cfg.DefaultImage)
+	// KIP-30 M3.3: runtime-class affinity (from mirrored node labels) and the
+	// pool's own nodeSelector keep warm pods off nodes that cannot run them.
+	if affinity != nil {
+		spec.Affinity = &corev1.Affinity{NodeAffinity: affinity}
+	}
+	if len(nodeSelector) > 0 {
+		merged := map[string]string{}
+		for k, v := range nodeSelector {
+			merged[k] = v
+		}
+		spec.NodeSelector = merged
+	}
+	return spec
 }
 
 func runGCLoop(ctx context.Context, orch *sandboxgrpc.Orchestrator, namespace string) {

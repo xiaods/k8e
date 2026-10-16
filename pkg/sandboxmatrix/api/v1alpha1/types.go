@@ -127,6 +127,11 @@ type SandboxWarmPoolSpec struct {
 	// IdleTTLSeconds overrides the warm-pod idle reaping TTL for pods created
 	// from this pool. Defaults to SandboxMatrix.sessionTTL * 2 when unset.
 	IdleTTLSeconds int `json:"idleTTLSeconds,omitempty"`
+	// NodeSelector constrains which nodes pool pods may land on (KIP-30 M3.3).
+	// Merged into the warm pod spec's nodeSelector; the controller additionally
+	// adds a required affinity on nodes whose sandbox.k8e.io/runtime-classes
+	// annotation covers the pool's RuntimeClass (mirrored to node labels).
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
 type SandboxWarmPoolStatus struct {
