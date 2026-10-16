@@ -58,6 +58,7 @@ func main() {
 		sandboxcli.ExposedCommand(),
 		sandboxcli.AllowHostsCommand(),
 		sandboxcli.BenchmarkCommand(),
+		sandboxcli.TLSCommand(),
 	}
 	// M9 catalog: emits the full command surface (single source for SDK stubs).
 	commands = append(commands, sandboxcli.CatalogCommand(commands))

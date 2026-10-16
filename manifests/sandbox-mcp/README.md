@@ -9,7 +9,7 @@ resource configuration or OAuth client secret is required.
 The deployment is **opt-in**: the K8E server does not stage this manifest by
 default (see `pkg/server` `stageFiles`). Every default install ran a
 `k8e-mcp` Deployment whose pods could never become ready — the
-`mcp-gateway-tls` Secret and the `k8e-mcp:local` image below do not exist
+`mcp-bootstrap` Secret and the `k8e-mcp:local` image below do not exist
 until an operator provides them — so the manifest is only applied by
 `hack/init-sandbox-mcp.sh` once its prerequisites are in place. Skipping is
 fail-closed: upgrading a server removes a previously staged copy, and a
@@ -42,9 +42,7 @@ there), and pass `--image` so the Deployment uses the local tag:
 docker build -f manifests/sandbox-mcp/Dockerfile -t k8e-mcp:local .
 # Import into the target node's containerd (k8s.io namespace):
 docker save k8e-mcp:local | docker exec -i <k8e-node-container> ctr -n k8s.io images import -
-bash hack/init-sandbox-mcp.sh --kubeconfig /path/to/k8e.yaml \
-  --gateway-ca ... --gateway-cert ... --gateway-key ... \
-  --image k8e-mcp:local --apply
+bash hack/init-sandbox-mcp.sh --kubeconfig /path/to/k8e.yaml --image k8e-mcp:local --apply
 ```
 
 The runtime image is a non-root `scratch` image containing the static CLI and
@@ -54,46 +52,63 @@ harness has no node, so MCP pods cannot schedule there). A registry deployment
 should pin an immutable digest instead: `--image
 ghcr.io/xiaods/k8e-mcp@sha256:<digest>`.
 
-### Gateway mTLS material
+### Gateway identity (KIP-30 M2)
 
-`mcp-serve` reaches the sandbox gRPC gateway with a client certificate signed by
-the sandbox CA. Bootstrap that pair from the same API key you created above —
-the CLI performs the gateway `Login` handshake and writes `ca.crt`, `client.crt`
-and `client.key`:
+`mcp-serve` reaches the sandbox gRPC gateway with a client certificate signed
+by the sandbox CA. Since M2 the adapter **enrolls its own identity at
+startup**: `hack/init-sandbox-mcp.sh` ships the sandbox CA
+(`/var/lib/k8e/server/tls/sandbox-ca.crt` by default; non-secret — a CA exists
+to be distributed) and one API key in Secret `k8e-mcp/mcp-bootstrap`; the
+adapter performs the gateway `Login` handshake itself and caches the resulting
+identity in ConfigMap `k8e-mcp/mcp-client-cert` (`ca.crt` / `tls.crt` /
+`tls.key`).
+
+The cache is what makes restarts, rollouts and upgrades cheap: a warm cache
+serves the identity with **zero Login calls and no API key needed**, so
+`K8E_MCP_BOOTSTRAP_API_KEY` can be unset after the first enrollment. The
+client certificate is issued with the standard 90-day TTL; a restart within
+30 days of expiry re-enrolls, **reusing the cached private key** so the
+identity (and the server's ledger entry) stays stable. First-writer-wins on
+the ConfigMap means N replicas of one Deployment share one identity. To force
+a brand-new identity, delete `k8e-mcp/mcp-client-cert`.
+
+The API key is only consumed on cold starts and renewals. Rotate it in
+`sandbox-matrix/sandbox-apikeys` and update the Secret; in-flight enrolled
+certificates remain valid until their own TTL.
 
 ```sh
-K8E_SANDBOX_CERT_DIR=/path/to/gateway-mtls \
-  k8e-sandbox-cli connect --endpoint <gateway-host>:50051 \
-  --apikey <bare-key-from-sandbox-apikey-create> --skip-skill
+bash hack/init-sandbox-mcp.sh --kubeconfig /path/to/k8e.yaml --apply
+# or choose the key explicitly (environment, never argv):
+MCP_BOOTSTRAP_API_KEY=<bare-key> \
+  bash hack/init-sandbox-mcp.sh --kubeconfig /path/to/k8e.yaml --apply
 ```
 
-Pass those three files as `--gateway-ca/--gateway-cert/--gateway-key` below. The
-files are the adapter's own backend identity: keep them out of source control and
-treat the directory as secret material. The gateway only verifies that a client
-certificate is present and unrevoked; the MCP adapter, not gRPC mTLS, is what
-enforces per-resource ownership (see `pkg/sandboxmcp/README.md`).
+The trust model is fail-closed: with no CA and no cached identity, the adapter
+**refuses to send the API key** unless `--insecure-bootstrap` /
+`K8E_MCP_INSECURE_BOOTSTRAP` is set explicitly (trust-on-first-use, pinned to
+the CA the server presents on first contact).
 
-Initialize using authorized gateway mTLS files. If the API Gateway already has
-the `sandbox-matrix/sandbox-e2b` TLS Secret, omit `--public-cert` and
-`--public-key`. Supply both options to install or deliberately update that
-shared Gateway certificate:
+Operators who pre-generate pairs keep the pre-M2 path: `--gateway-ca`,
+`--gateway-cert` and `--gateway-key` (all three, files, mounted by the
+operator) skip enrollment entirely. The two modes are mutually exclusive.
 
-```sh
-bash hack/init-sandbox-mcp.sh --kubeconfig /path/to/k8e.yaml \
-  --gateway-ca /path/to/gateway/ca.crt \
-  --gateway-cert /path/to/gateway/tls.crt --gateway-key /path/to/gateway/tls.key \
-  --public-cert /path/to/public/tls.crt --public-key /path/to/public/tls.key \
-  --hostname mcp.example.com \
-  --apply
-```
+### Tenant scoping
+
+`K8E_MCP_TENANT` scopes every session the adapter creates to one tenant
+(tenants are the isolation unit; API keys are only credentials). Empty keeps
+the pre-M2 behavior — sessions land in the server-side shared `default` bucket,
+which is single-tenant only. Run one Deployment per tenant for more, each with
+its own `mcp-bootstrap` Secret namespace copy and its own state namespace.
 
 Without `--apply`, only local input checks run. With it, the script verifies the
 existing API key Secret and the K8E API Gateway, creates the namespace, verifies
-or explicitly updates `sandbox-matrix/sandbox-e2b`, creates the gateway mTLS
-client Secret, applies the Deployment, Service, ReferenceGrant and HTTPRoute,
-then waits for the Deployment, the Gateway's `https` listener and route
-references. `--image` overrides the Deployment image (default
-`ghcr.io/xiaods/k8e-mcp:latest`) for locally built or air-gap-imported images.
+or explicitly updates `sandbox-matrix/sandbox-e2b`, picks an enrollment key
+(`MCP_BOOTSTRAP_API_KEY` or the first active key in `keys.json`), creates
+`k8e-mcp/mcp-bootstrap` (CA + key), applies the Deployment, Service,
+ReferenceGrant and HTTPRoute, then waits for the Deployment, the Gateway's
+`https` listener and route references. `--image` overrides the Deployment image
+(default `ghcr.io/xiaods/k8e-mcp:latest`) for locally built or air-gap-imported
+images.
 If the Deployment does not become ready it prints pod status,
 the deployment description and recent logs, then exits non-zero. Before
 reporting success, it makes an unauthenticated HTTPS request to `/mcp` and
@@ -112,11 +127,14 @@ certificate and DNS record. When omitted, the script uses the first address from
 contains that IP.
 
 RBAC grants ConfigMap get/create/update in `k8e-mcp`, plus get on exactly
-`sandbox-matrix/sandbox-apikeys`. The deployment uses two replicas and a disruption
+`sandbox-matrix/sandbox-apikeys`. The identity ConfigMap `mcp-client-cert` is
+covered by an explicit resourceName rule. The deployment uses two replicas and a disruption
 budget, non-root execution and a read-only filesystem. `/healthz` reports process
 health only; `/readyz` additionally verifies the ConfigMap state store and the
 sandbox gateway, so a replica that cannot serve tool calls leaves Service
-endpoints instead of accepting traffic. The HTTPRoute lives in `sandbox-matrix` so it can attach to the
+endpoints instead of accepting traffic. The startup probe is a plain TCP check —
+it passes once the listener is up, before enrollment completes; readiness is
+what fails a replica whose identity cannot be established. The HTTPRoute lives in `sandbox-matrix` so it can attach to the
 Gateway's namespace-local HTTPS listener. A narrow ReferenceGrant in `k8e-mcp`
 allows only that HTTPRoute kind and namespace to reference Service `k8e-mcp`.
 Authorization headers and MCP metadata pass through unchanged. Public DNS still

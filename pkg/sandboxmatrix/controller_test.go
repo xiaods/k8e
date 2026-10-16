@@ -154,18 +154,18 @@ func TestRecycleUnhealthyWarmPods(t *testing.T) {
 }
 
 func TestNewWarmPod_RuntimeClassLabel(t *testing.T) {
-	pod := newWarmPod(defaultCfg(), "kata", 0, "workspace-warm-test")
+	pod := newWarmPod(defaultCfg(), "kata", 0, "workspace-warm-test", nil, nil)
 	if pod.Labels[sandboxgrpc.LabelRuntimeClass] != "kata" {
 		t.Fatalf("expected runtime-class label kata, got %v", pod.Labels)
 	}
 }
 
 func TestNewWarmPod_IdleTTLAnnotation(t *testing.T) {
-	pod := newWarmPod(defaultCfg(), "gvisor", 300, "workspace-warm-test")
+	pod := newWarmPod(defaultCfg(), "gvisor", 300, "workspace-warm-test", nil, nil)
 	if pod.Annotations[podIdleTTLAnnotation] != "300" {
 		t.Fatalf("expected idle-ttl annotation 300, got %v", pod.Annotations)
 	}
-	plain := newWarmPod(defaultCfg(), "gvisor", 0, "workspace-warm-test")
+	plain := newWarmPod(defaultCfg(), "gvisor", 0, "workspace-warm-test", nil, nil)
 	if _, present := plain.Annotations[podIdleTTLAnnotation]; present {
 		t.Fatal("expected no idle-ttl annotation when TTL unset")
 	}
@@ -548,28 +548,28 @@ func TestUpdateSandboxMatrixStatus_WritesMetrics(t *testing.T) {
 }
 
 func TestWarmPodSpec_RuntimeClass(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test", nil, nil)
 	if spec.RuntimeClassName == nil || *spec.RuntimeClassName != "gvisor" {
 		t.Fatalf("expected runtimeClassName=gvisor, got %v", spec.RuntimeClassName)
 	}
 }
 
 func TestWarmPodSpec_EmptyRuntimeClass(t *testing.T) {
-	spec := warmPodSpec("", defaultCfg(), "workspace-warm-test")
+	spec := warmPodSpec("", defaultCfg(), "workspace-warm-test", nil, nil)
 	if spec.RuntimeClassName != nil {
 		t.Fatalf("expected nil runtimeClassName, got %v", spec.RuntimeClassName)
 	}
 }
 
 func TestWarmPodSpec_Image(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test", nil, nil)
 	if spec.Containers[0].Image != "ghcr.io/xiaods/k8e-sandbox:latest" {
 		t.Fatalf("unexpected image: %s", spec.Containers[0].Image)
 	}
 }
 
 func TestWarmPodSpec_Resources(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test", nil, nil)
 	limits := spec.Containers[0].Resources.Limits
 	if limits.Cpu().String() != "500m" {
 		t.Fatalf("unexpected cpu: %s", limits.Cpu().String())
@@ -583,7 +583,7 @@ func TestWarmPodSpec_CustomResources(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.DefaultCPU = "2"
 	cfg.DefaultMemory = "2Gi"
-	spec := warmPodSpec("kata", cfg, "workspace-warm-test")
+	spec := warmPodSpec("kata", cfg, "workspace-warm-test", nil, nil)
 	if spec.Containers[0].Resources.Limits.Cpu().String() != "2" {
 		t.Fatalf("unexpected cpu: %s", spec.Containers[0].Resources.Limits.Cpu().String())
 	}
@@ -593,14 +593,14 @@ func TestWarmPodSpec_CustomResources(t *testing.T) {
 }
 
 func TestWarmPodSpec_RestartPolicy(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test", nil, nil)
 	if spec.RestartPolicy != corev1.RestartPolicyNever {
 		t.Fatalf("expected RestartPolicyNever, got %s", spec.RestartPolicy)
 	}
 }
 
 func TestWarmPodSpec_SandboxdPort(t *testing.T) {
-	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test")
+	spec := warmPodSpec("gvisor", defaultCfg(), "workspace-warm-test", nil, nil)
 	if len(spec.Containers[0].Ports) == 0 || spec.Containers[0].Ports[0].ContainerPort != 2024 {
 		t.Fatalf("expected port 2024, got %v", spec.Containers[0].Ports)
 	}
@@ -649,7 +649,7 @@ func TestCreateWarmPodWithWorkspacePairsClaimAndPod(t *testing.T) {
 	ctx := context.Background()
 	k8s := kubefake.NewSimpleClientset()
 
-	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0); err != nil {
+	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0, nil, nil); err != nil {
 		t.Fatalf("create warm pod: %v", err)
 	}
 
@@ -669,7 +669,7 @@ func TestCreateWarmPodWithWorkspacePairsClaimAndPod(t *testing.T) {
 	}
 
 	// A second pod must get its own claim, not share the first one's.
-	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0); err != nil {
+	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0, nil, nil); err != nil {
 		t.Fatalf("create second warm pod: %v", err)
 	}
 	pvcs, err := k8s.CoreV1().PersistentVolumeClaims(testNS).List(ctx, metav1.ListOptions{})
@@ -685,7 +685,7 @@ func TestDeleteWarmPodRetiresItsClaim(t *testing.T) {
 	ctx := context.Background()
 	k8s := kubefake.NewSimpleClientset()
 
-	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0); err != nil {
+	if err := createWarmPodWithWorkspace(ctx, k8s, defaultCfg(), "gvisor", 0, nil, nil); err != nil {
 		t.Fatalf("create warm pod: %v", err)
 	}
 	pods, err := k8s.CoreV1().Pods(testNS).List(ctx, metav1.ListOptions{})

@@ -169,6 +169,13 @@ spec:
               minSize: {type: integer, minimum: 0}
               maxSize: {type: integer, minimum: 0}
               idleTTLSeconds: {type: integer, minimum: 0}
+              # KIP-30 M3.3: constrain which nodes pool pods may land on.
+              # Merged into the warm pod nodeSelector; the controller adds a
+              # required affinity on nodes annotated with the pool's
+              # RuntimeClass (sandbox.k8e.io/runtime-classes: gvisor,kata).
+              nodeSelector:
+                type: object
+                additionalProperties: {type: string}
               templateRef:
                 type: object
                 properties:

@@ -89,7 +89,7 @@ func TestStageSkipsRemovesStaleCopy(t *testing.T) {
 // TestStageSkipsSandboxMCPDefault verifies the opt-in manifest set for the
 // MCP adapter: applying manifests/sandbox-mcp by default lays down a
 // k8e-mcp Deployment whose pods can never become ready (missing
-// mcp-gateway-tls Secret and the unpublished k8e-mcp:local image), so the
+// mcp-bootstrap Secret and the unpublished k8e-mcp:local image), so the
 // server default-skips the whole directory and hack/init-sandbox-mcp.sh
 // applies the manifest directly once the prerequisites exist. Skipping must
 // also remove copies written by earlier releases.

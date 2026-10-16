@@ -326,10 +326,11 @@ func stageFiles(ctx context.Context, sc *Context, controlConfig *config.Control)
 	}
 
 	// The MCP adapter is opt-in: the k8e-mcp Deployment staged by
-	// manifests/sandbox-mcp needs an operator-imported image (k8e-mcp:local,
-	// built from the repo, not shipped in the release) and gateway mTLS
-	// client material (hack/init-sandbox-mcp.sh creates mcp-gateway-tls via
-	// the same API-key Login every other client uses) — the server cannot
+	// manifests/sandbox-mcp needs an operator-provided image
+	// (ghcr.io/xiaods/k8e-mcp by default, or an imported local one) and a
+	// bootstrap Secret (hack/init-sandbox-mcp.sh creates mcp-bootstrap:
+	// sandbox CA + one API key; the adapter then enrolls its own gateway
+	// identity, KIP-30 M2) — the server cannot
 	// self-provision either. Staging the manifest by default would lay down
 	// pods that can never become ready (FailedMount / ImagePullBackOff).
 	// init-sandbox-mcp.sh applies the manifest directly once the
