@@ -1,13 +1,8 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0f2027,50:203a43,100:2c5364&height=200&section=header&text=K8E%20🚀&fontSize=80&fontColor=ffffff&fontAlignY=38&desc=Open%20Source%20Agentic%20AI%20Sandbox%20Matrix&descAlignY=60&descSize=22&animation=fadeIn" width="100%"/>
+<img src="https://k8e.sh/images/k8e-mark-on-dark.svg" alt="K8E" width="120" height="120" />
+
 <br/>
-
-<a href="https://git.io/typing-svg">
-  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=22&pause=1000&color=00D4FF&center=true&vCenter=true&width=700&lines=Open+Source+Agentic+AI+Sandbox+Matrix+%F0%9F%A4%96;Secure+Isolated+Agent+Execution+at+Scale+%F0%9F%94%92;Up+and+Running+in+60+Seconds+%E2%9A%A1;Single+Binary+%3C+100MB+%F0%9F%93%A6;E2B+SDK+Compatible+%F0%9F%A4%9D" alt="Typing SVG" />
-</a>
-
-<br/><br/>
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue?style=for-the-badge&logo=apache&logoColor=white)](https://github.com/xiaods/k8e/blob/main/LICENSE)
@@ -30,28 +25,11 @@ curl -sfL https://k8e.sh/install.sh | sh -
 
 ---
 
-## 📖 Table of Contents
-
-| # | Section |
-|---|---------|
-| 1 | [🤖 What is K8E?](#-what-is-k8e) |
-| 2 | [🏗️ Architecture](#️-architecture) |
-| 3 | [⚙️ Components](#️-components) |
-| 4 | [🚀 Quick Start](#-quick-start) |
-| 5 | [🔒 Sandbox Runtime Setup](#-sandbox-runtime-setup) |
-| 6 | [🤖 Sandbox CLI](#-sandbox-cli) |
-| 7 | [🖥️ Advanced Installation](#️-advanced-installation) |
-| 8 | [🆚 K8E vs Other Sandbox Platforms](#️-k8e-vs-other-sandbox-platforms) |
-| 9 | [🤝 Contributing](#-contributing) |
-| 10 | [🙏 Acknowledgments](#-acknowledgments) |
-
----
-
 ## 🤖 What is K8E?
 
 **K8E** is the **Open Source Agentic AI Sandbox Matrix** — a self-hosted sandbox platform for running secure, isolated AI agent workloads at scale, packaged as a single binary under 100MB.
 
-As autonomous AI agents increasingly generate and execute untrusted code, robust sandboxing infrastructure is no longer optional. K8E ships everything needed to spin up a production-grade cluster in under 60 seconds, with first-class primitives for agent isolation, resource governance, and ephemeral execution environments — purpose-built for the AI era.
+As autonomous AI agents increasingly generate and execute untrusted code, robust sandboxing infrastructure is no longer optional. K8E ships everything needed to spin up a production-grade cluster in under 60 seconds, with first-class primitives for agent isolation, resource governance, and persistent execution environments — purpose-built for the AI era.
 
 > 🔒 **One cluster. Many agents. Zero trust between them.**
 
@@ -62,7 +40,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | 🔒 **Hardware Isolation** | Pluggable runtimes: gVisor (default), Kata Containers, Firecracker microVM |
 | 🌐 **Network Policies** | Bundled Cilium enforces the standard `networking.k8s.io/v1` NetworkPolicy API by default — plus eBPF `toFQDNs` egress control per session; `allowed_hosts` enforced via `--cilium-dns-proxy` (KIP-16 M10) |
 | ⚖️ **Resource Quotas** | CPU/memory caps per agent session to prevent runaway costs |
-| 🗑️ **Ephemeral Workspaces** | Auto-cleanup after agent session ends; per-session workspace isolation for sub-agents (KIP-16 M1) |
+| 💾 **Persistent Workspaces** | Every session carries a PVC workspace (1Gi local-path by default); warm pods boot with their claim pre-provisioned — fast start *and* durable files |
 | 🧠 **Warm Pool** | Pre-booted sandbox pods for sub-500ms session claim latency; application-layer readiness handshake, adaptive sizing, per-session background-run caps |
 | 📸 **Content-Addressed Snapshots** | SHA-256 CAS layerstore with zstd compression, chunked multi-layer manifests, incremental `--base` restore, server-side registry, autosquash (KIP-16 M2) |
 | 📜 **Exec Transcripts** | File-backed, windowed, offset-resumable command transcripts — `k8e-sandbox-cli log` (KIP-16 M4) |
@@ -70,7 +48,9 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
 | 🔄 **Sub-agent Reuse** | Sub-agents share the parent pod + workspace; isolated reset (KIP-16 M1) |
 | 🧾 **CLI Catalog** | Machine-readable command/flag surface for SDK generation — `catalog` (KIP-16 M9) |
 | 🤝 **agent-sandbox compatible** | Works with [`kubernetes-sigs/agent-sandbox`](https://github.com/kubernetes-sigs/agent-sandbox) |
-| 🔄 **SKILL + CLI** | AI agents (claude code, codex, pi) connect via `k8e-sandbox-cli` CLI commands |
+| 🔄 **SKILL + CLI + MCP** | AI agents (Claude Code, Codex, Pi) connect via `k8e-sandbox-cli` or the `/k8e-sandbox` skill |
+
+📚 **Full documentation: [k8e.sh/guide](https://k8e.sh/guide/what-is-k8e.html)** — guides, CLI reference, and examples live on the official site.
 
 ---
 
@@ -92,7 +72,7 @@ As autonomous AI agents increasingly generate and execute untrusted code, robust
    ┌───────────▼───────────┐   ┌────────────────┐
    │   SANDBOX POD         │   │   SANDBOX POD  │
    │   gVisor / Kata / FC  │ … │   (isolated)   │
-   │   agent's code + fs   │   │                │
+   │   agent's code + PVC  │   │                │
    └───────────────────────┘   └────────────────┘
         eBPF per-session network policy between all of them
 ```
@@ -106,46 +86,24 @@ door instead of raw infrastructure access.
 
 ---
 
-## ⚙️ Components
-
-<div align="center">
-
-| Component | Purpose |
-|---|---|
-| 🚪 **Sandbox Gateway** | Single gRPC (mTLS) + E2B-compatible HTTP door: sessions, exec, files, PTY terminals, exposure, snapshots |
-| 🛡️ **gVisor / Kata / Firecracker** | Pluggable sandbox isolation runtimes (user-space kernel / lightweight VMs / microVMs) |
-| 🔷 **Cilium (eBPF)** | Default CNI — enforces the standard NetworkPolicy API plus per-session egress control, no proxy process |
-| 🧠 **Warm Pool Controller** | Pre-booted sandbox pods, adaptive sizing, sub-500ms claims |
-| 🤖 **k8e-sandbox-cli** | Standalone agent CLI — connect, run, expose, snapshots (`catalog` for SDK generation) |
-| 🔌 **dsh plugin family** | `@k8e-sandbox/*` npm packages — DeepSeek Harness integration with model-surface tools |
-
-</div>
-
----
-
 ## 🚀 Quick Start
 
 ### Step 1 — Install a Sandbox Runtime (recommended: before K8E)
 
-Install the runtime shim **before** K8E so it is auto-detected on first startup. **gVisor is recommended** — no KVM required.
+**gVisor is recommended** — no KVM required:
 
 ```bash
-# Download runsc + containerd-shim-runsc-v1 directly from the gVisor release bucket (requires wget)
 ARCH=$(uname -m)   # x86_64 on most servers, aarch64 on ARM
 URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
 
-wget ${URL}/runsc ${URL}/runsc.sha512 \
-     ${URL}/containerd-shim-runsc-v1 ${URL}/containerd-shim-runsc-v1.sha512
-
-sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512   # both must print OK
-chmod +x runsc containerd-shim-runsc-v1
-sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin/
-ls -l /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1   # verify both installed
+wget ${URL}/gvisor.tar.zstd ${URL}/gvisor.tar.zstd.sha512
+sha512sum -c gvisor.tar.zstd.sha512   # must print OK
+sudo tar --zstd -xf gvisor.tar.zstd -C /usr/local/bin
 ```
 
-> K8E detects `runsc` at startup and automatically injects the gVisor stanza into its containerd config (`/var/lib/k8e/agent/etc/containerd/config.toml`). Do **not** run `runsc install` — K8E manages its own containerd configuration.
+> K8E detects `runsc` at startup and automatically injects the gVisor stanza into its containerd config. Do **not** run `runsc install` — K8E manages its own containerd configuration.
 
-> Need stronger isolation? See [Sandbox Runtime Setup](#-sandbox-runtime-setup) for Kata Containers and Firecracker.
+> Need stronger isolation? Kata Containers and Firecracker are covered in the [Sandbox Runtime Setup guide](https://k8e.sh/guide/sandbox-runtime-setup.html).
 
 ### Step 2 — Install K8E
 
@@ -160,38 +118,23 @@ k8e-sandbox-cli status        # -> {"available": true, ...}
 k8e-sandbox-cli run 'echo hello from the sandbox'
 ```
 
-(Optionally, with `KUBECONFIG=/etc/k8e/k8e.yaml`: `kubectl -n sandbox-matrix get pods` shows the warm-pool pods.)
+### Step 4 — Connect Your AI Agent
 
-### Step 4 — Download Sandbox CLI & Connect Your AI Agent
-
-Download the standalone sandbox CLI, authenticate, and install the skill into your agent:
+Download the standalone sandbox CLI, authenticate, and install the `/k8e-sandbox` skill into your agent:
 
 ```bash
-# Download sandbox CLI (~44MB) — pick your platform suffix
-#   k8e-sandbox-cli-linux-amd64 / linux-arm64 / darwin-amd64 / darwin-arm64 / windows-amd64.exe
+# 1. Download (~44MB) — pick your platform suffix
+#    k8e-sandbox-cli-linux-amd64 / linux-arm64 / darwin-arm64 / windows-amd64.exe
 curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
 chmod +x k8e-sandbox-cli-linux-amd64
 
-# Symlink the plain command name to the downloaded file (do not rename)
-ln -s k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli
-
-# Create an API key on the server (default TTL 30 days; use --ttl never for non-expiring)
+# 2. Create an API key on the server (default TTL 30 days; --ttl never for non-expiring)
 k8e sandbox-apikey create my-agent
 # → {"name":"my-agent","key":"k8e-abc123...","ttl_days":30,"expires_at":"..."}
 
-# Connect: authenticate (mTLS) + install /k8e-sandbox skill into agent harnesses
-./k8e-sandbox-cli --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
-
-# Optional multi-cluster profiles (~/.k8e/sandbox/profiles.yaml — not server /etc/k8e/config.yaml)
-# See docs/kip-17-sandbox-cli-profiles-and-apikey-ttl.md
-# ./k8e-sandbox-cli --profile prod connect --apikey k8e-...
+# 3. Connect: mTLS auth + install the skill into Claude Code / Codex / Pi
+./k8e-sandbox-cli-linux-amd64 --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
 ```
-
-> **Local usage:** If you're on the same machine as the K8E server, the CLI auto-discovers TLS certs — just run `k8e-sandbox-cli connect`.
-
-Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}` (Windows: `k8e-sandbox-cli-windows-amd64.exe`, symlink via `mklink k8e-sandbox-cli.exe k8e-sandbox-cli-windows-amd64.exe`)
-
-> **One binary, two names:** the downloaded `k8e-sandbox-cli-linux-amd64` file **is** the `k8e-sandbox-cli` command the skill uses. `connect` symlinks it to `~/.local/bin/k8e-sandbox-cli` (on PATH) and installs the `/k8e-sandbox` skill into your agent harnesses, so every skill example (`k8e-sandbox-cli run ...`) is the same file you just downloaded.
 
 Then ask your agent naturally:
 
@@ -199,327 +142,25 @@ Then ask your agent naturally:
 
 The agent executes `k8e-sandbox-cli run` automatically — no session management needed.
 
-Supported agents: **claude code**, **codex**, **pi**.
-
----
-
-## 🔒 Sandbox Runtime Setup
-
-K8E auto-detects installed runtimes and registers the corresponding `RuntimeClass`. Choose based on your isolation requirements:
-
-| Runtime | Isolation | Requirement | Boot time |
-|---|---|---|---|
-| **gVisor** | Syscall interception (userspace kernel) | None | ~10ms |
-| **Kata Containers** | VM-backed (QEMU) | Nested virt or bare metal | ~500ms |
-| **Firecracker** | Hardware microVM (KVM) | `/dev/kvm` | ~125ms |
-
-### gVisor — Recommended Default
-
-```bash
-# Download runsc + containerd-shim-runsc-v1 directly from the gVisor release bucket (requires wget)
-ARCH=$(uname -m)   # x86_64 on most servers, aarch64 on ARM
-URL=https://storage.googleapis.com/gvisor/releases/release/latest/${ARCH}
-
-wget ${URL}/runsc ${URL}/runsc.sha512 \
-     ${URL}/containerd-shim-runsc-v1 ${URL}/containerd-shim-runsc-v1.sha512
-
-sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512   # both must print OK
-chmod +x runsc containerd-shim-runsc-v1
-sudo mv runsc containerd-shim-runsc-v1 /usr/local/bin/
-ls -l /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1   # verify both installed
-```
-
-> Do **not** run `runsc install` — K8E manages its own containerd config at `/var/lib/k8e/agent/etc/containerd/config.toml` and auto-injects the gVisor stanza on startup.
-
-### Kata Containers
-
-```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/kata-containers/kata-containers/main/utils/kata-manager.sh) install-packages"
-kata-runtime check
-```
-
-### Firecracker (requires `/dev/kvm`)
-
-```bash
-ls /dev/kvm   # verify KVM is available
-
-# Install firecracker-containerd shim + devmapper snapshotter
-# See: https://github.com/firecracker-microvm/firecracker-containerd
-mkdir -p /var/lib/firecracker-containerd/runtime
-# Place hello-vmlinux.bin and default-rootfs.img here
-```
-
-### Apply Changes
-
-Install runtimes **before** starting K8E for zero-restart setup. If K8E is already running, restart it after installing a new runtime shim:
-
-```bash
-systemctl restart k8e
-kubectl get runtimeclass
-# NAME          HANDLER       AGE
-# gvisor        runsc         10s
-# kata          kata-qemu     10s
-# firecracker   firecracker   10s   ← only if /dev/kvm present
-```
-
----
-
-## 🤖 Sandbox CLI
-
-`k8e-sandbox-cli` is a standalone binary (~44MB) that gives AI agents direct access to K8E sandbox infrastructure — no server install needed.
-
-```
-AI Agent (claude code / codex / pi)
-    │  shell command
-    ▼
-k8e-sandbox-cli run "print('hello')" --lang python
-    │  gRPC (TLS)
-    ▼
-sandbox-grpc-gateway:50051
-    │
-    ▼
-Isolated Pod (gVisor / Kata / Firecracker)
-```
-
-### Install the Skill
-
-**On the server**, create an API key for secure remote access:
-
-```bash
-k8e sandbox-apikey create my-agent
-# → {"name":"my-agent","key":"k8e-abc123..."}
-```
-
-**On the client**, download the standalone CLI, log in, and install the skill:
-
-```bash
-# 1. Download the platform-specific binary (~44MB)
-#    k8e-sandbox-cli-linux-amd64 / linux-arm64 / darwin-amd64 / darwin-arm64 / windows-amd64.exe
-curl -sLO https://github.com/xiaods/k8e/releases/latest/download/k8e-sandbox-cli-linux-amd64
-chmod +x k8e-sandbox-cli-linux-amd64
-
-# 2. Symlink the plain command name to the downloaded file (do not rename)
-ln -s k8e-sandbox-cli-linux-amd64 k8e-sandbox-cli
-
-# 3. Connect: mTLS auth + install /k8e-sandbox skill into Claude/Codex/Pi
-#    Note: --endpoint and --apikey are global flags, placed before the subcommand
-./k8e-sandbox-cli --endpoint <server-ip>:50051 --apikey k8e-abc123... connect
-```
-
-Platform binaries: `k8e-sandbox-cli-{darwin,linux,windows}-{amd64,arm64}` (Windows: `k8e-sandbox-cli-windows-amd64.exe`, symlink via `mklink k8e-sandbox-cli.exe k8e-sandbox-cli-windows-amd64.exe`)
-
-> **One binary, two names:** the downloaded `k8e-sandbox-cli-linux-amd64` file **is** the `k8e-sandbox-cli` command the skill uses — the symlink is just a plain-name alias to the same file. `connect` installs the `/k8e-sandbox` skill, so every skill example (`k8e-sandbox-cli run ...`) is the same file you just downloaded.
-
-Then in your agent harness:
-
-```text
-/k8e-sandbox <goal>
-```
-
-Or ask naturally: *"Run this Python snippet in a sandbox"* — the skill drives `k8e-sandbox-cli run`.
-
-### Available Commands
-
-| Command | Description |
-|---|---|
-| `k8e-sandbox-cli --profile <name> …` | Use named profile from `~/.k8e/sandbox/profiles.yaml` (KIP-17; not `/etc/k8e/config.yaml`) |
-| `k8e-sandbox-cli connect` | Connect local/remote gateway and install `/k8e-sandbox` agent skill |
-| `k8e-sandbox-cli connect --skill-only` | Re-install agent skill only (no gateway dial) |
-| `k8e-sandbox-cli login` | Authenticate only (mTLS cert; no skill install) |
-| `k8e-sandbox-cli run <code>` | Run code or shell command (auto-creates/manages session) |
-| `k8e-sandbox-cli status` | Check sandbox service availability and current session |
-| `k8e-sandbox-cli create` | Create a new session (custom runtime, egress, manifest, git-repo) |
-| `k8e-sandbox-cli destroy <sid>` | Destroy a session and free resources |
-| `k8e-sandbox-cli write <sid> <path>` | Write file to `/workspace` (content via stdin) |
-| `k8e-sandbox-cli read <sid> <path>` | Read file from `/workspace` |
-| `k8e-sandbox-cli list <sid>` | List files in `/workspace` (filter by `--since` timestamp) |
-| `k8e-sandbox-cli subagent <parent-sid>` | Spawn child sandbox under parent session (max depth 1) |
-| `k8e-sandbox-cli confirm <sid> <action>` | Gate irreversible action on human approval |
-| `k8e-sandbox-cli approve <approval-id>` | Approve a pending confirm request |
-| `k8e sandbox-apikey create <name> [--ttl 30d\|never]` | Create API key (default TTL **30 days**) |
-| `k8e sandbox-apikey list` | List API key names + expiry (secrets not shown) |
-| `k8e sandbox-apikey delete <name>` | Delete an API key (server-side) |
-
-See [pkg/sandboxcli/skills/k8e-sandbox/SKILL.md](pkg/sandboxcli/skills/k8e-sandbox/SKILL.md) and [docs/kip-17-sandbox-cli-profiles-and-apikey-ttl.md](docs/kip-17-sandbox-cli-profiles-and-apikey-ttl.md).
-
-### Quick Examples
-
-```bash
-# Run Python code (auto-creates session)
-k8e-sandbox-cli run "print('hello')" --lang python
-
-# Shell command (default lang=bash)
-k8e-sandbox-cli run "ls -la /workspace"
-
-# TypeScript — type annotations run via tsx
-k8e-sandbox-cli run "const nums: number[] = [1, 2, 3]; console.log(nums.reduce((a, b) => a + b, 0))" --lang ts
-
-# Multi-line TypeScript via stdin (interfaces, async/await)
-k8e-sandbox-cli run --lang ts <<'EOF'
-interface User { name: string; age: number }
-
-async function oldest(users: User[]): Promise<User> {
-  return users.reduce((a, b) => (a.age > b.age ? a : b));
-}
-
-const users: User[] = [{ name: "Ada", age: 36 }, { name: "Linus", age: 54 }];
-oldest(users).then((u) => console.log(`Oldest: ${u.name} (${u.age})`));
-EOF
-
-# Multi-line via stdin
-k8e-sandbox-cli run --lang python <<'EOF'
-for i in range(10):
-    print(i)
-EOF
-
-# Default egress: pypi.org, files.pythonhosted.org, registry.npmjs.org,
-#   objects.githubusercontent.com, github.com, raw.githubusercontent.com
-SID=$(k8e-sandbox-cli create | jq -r .session_id)
-k8e-sandbox-cli write $SID /workspace/script.py <<'PYEOF'
-import pandas as pd
-print(pd.__version__)
-PYEOF
-k8e-sandbox-cli run "pip install pandas" --session-id $SID
-k8e-sandbox-cli run "python3 /workspace/script.py" --session-id $SID
-
-# Create session with custom runtime and egress
-SID=$(k8e-sandbox-cli create --runtime firecracker --allowed-hosts pypi.org,github.com | jq -r .session_id)
-
-# Clone git repo at session creation
-SID=$(k8e-sandbox-cli create --git-repo https://github.com/user/repo.git --git-ref main | jq -r .session_id)
-
-# Stream long-running output
-k8e-sandbox-cli run "python3 train.py" --session-id $SID --raw
-
-# Tenant-based cross-process session reuse
-k8e-sandbox-cli run "echo hello" --tenant my-project
-```
-
-### Configuration Overrides
-
-The CLI auto-discovers the local cluster via TLS. For remote clusters, use `k8e-sandbox-cli login` once to set up mTLS credentials. Override when needed:
-
-```bash
-# Remote cluster: log in once (creates ~/.k8e/sandbox/{client.crt,client.key,ca.crt})
-k8e-sandbox-cli --endpoint 10.0.0.1:50051 --apikey k8e-abc123... login
-
-# After login, subsequent commands work without --apikey:
-k8e-sandbox-cli run "echo hello"
-
-# Or via environment variables:
-K8E_SANDBOX_ENDPOINT=10.0.0.1:50051 K8E_SANDBOX_APIKEY=k8e-abc123... k8e-sandbox-cli login
-
-# Override endpoint per-command:
-K8E_SANDBOX_ENDPOINT=10.0.0.2:50051 k8e-sandbox-cli run "echo hello"
-```
-
----
-
-## 🖥️ Advanced Installation
-
-### Add a Worker Node
-
-```bash
-# Get token from server node
-cat /var/lib/k8e/server/node-token
-
-# On worker machine
-curl -sfL https://k8e.sh/install.sh | \
-  K8E_TOKEN=<token> \
-  K8E_URL=https://<server-ip>:6443 \
-  INSTALL_K8E_EXEC="agent" \
-  sh -
-```
-
-### Disable Sandbox Matrix
-
-```bash
-curl -sfL https://k8e.sh/install.sh | INSTALL_K8E_EXEC="server --disable-sandbox-matrix" sh -
-```
-
-### Network Policy Enforcement
-
-K8E ships **Cilium** as its default CNI, so the standard Kubernetes
-`NetworkPolicy` API (`networking.k8s.io/v1`) is **enforced by default** — no
-extra component, CNI plugin or configuration is required. (That is stronger
-than a flannel-only default: flannel is a pure L3 overlay with no policy
-engine.)
-
-> ⚠️ **Without a policy-capable CNI, `NetworkPolicy` is a silent no-op.**
-> The API server *accepts and stores* `NetworkPolicy` objects whether or not
-> any CNI implements them — enforcement is a dataplane concern the API
-> deliberately does not model. There is no error, no warning and no event, and
-> `kubectl get networkpolicy` still reports the object as present.
-
-This applies when K8E runs with `--disable-cilium`: the bundled Cilium is
-gone, so you must supply your own CNI — and if that CNI has no policy engine
-(flannel is the classic example), `NetworkPolicy` objects are silent no-ops:
-
-```bash
-# Cilium off: install a policy-capable CNI yourself (e.g. Cilium or Calico),
-# or treat every NetworkPolicy object as documentation only.
-curl -sfL https://k8e.sh/install.sh | INSTALL_K8E_EXEC="server --disable-cilium" sh -
-```
-
-To check enforcement yourself, apply a deny-all egress policy and probe from a
-Pod in the same namespace:
-
-```bash
-kubectl apply -f - <<'YAML'
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: deny-all-egress
-  namespace: default
-spec:
-  podSelector: {}
-  policyTypes: [Egress]
-YAML
-
-# If this Pod still reaches the network, the CNI is not enforcing NetworkPolicy.
-kubectl run netpol-probe --rm -it --restart=Never --image=curlimages/curl -- \
-  curl -sS --max-time 5 https://example.com
-
-# The policy blocks egress for every Pod in that namespace until you remove it.
-kubectl delete networkpolicy deny-all-egress
-```
-
-### Key Environment Variables
-
-```bash
-K8E_TOKEN=<secret>              # cluster join token
-K8E_URL=https://<server>:6443   # server URL (agent nodes)
-K8E_KUBECONFIG_OUTPUT=<path>    # kubeconfig output path
-```
+> 📖 **Tutorial walkthroughs, the full command reference, and configuration
+> details live in the [Sandbox CLI guide](https://k8e.sh/guide/sandbox-cli.html)
+> and [Sandbox Examples](https://k8e.sh/guide/sandbox-examples.html) on the
+> official docs site.**
 
 ---
 
 ## 🆚 K8E vs Other Sandbox Platforms
 
-How K8E compares to mainstream sandboxes for AI agents:
-
-<div align="center">
-
-| | K8E 🚀 | [E2B](https://e2b.dev) | [Daytona](https://daytona.io) | [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) (k8s-sig) | DIY gVisor/Firecracker |
+| | K8E 🚀 | [E2B](https://e2b.dev) | [Daytona](https://daytona.io) | [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) | DIY gVisor/Firecracker |
 |---|---|---|---|---|---|
 | Self-hosted, single binary | ✅ <100MB | ⚠️ Heavy (per-env VM images) | ✅ | ❌ needs a K8s cluster | ❌ you build it |
-| Isolation runtimes | ✅ **gVisor / Kata / Firecracker** — pluggable | Firecracker microVMs | ✅ microVM/containers | K8s RuntimeClass (gVisor/Kata/…) | one runtime |
-| E2B SDK compatibility | ✅ native (official SDKs unmodified) | ✅ native | ❌ own API | ❌ | ❌ build your own API |
-| Agent CLI + skill surface | ✅ `k8e-sandbox-cli` (+ dsh plugin tools) | SDK only | CLI + SDK | CRDs only | ❌ |
-| Warm pool (sub-500ms claims) | ✅ built-in, adaptive sizing | ✅ managed | ⚠️ | ⚠️ manual scaling | ❌ roll your own |
-| Expose agent services via gateway URL | ✅ `expose` + live `allow-hosts` egress policy | ✅ hosted URLs | ⚠️ | ❌ roll your own Ingress | ❌ |
-| Content-addressed snapshots | ✅ incremental restore + registry | ✅ hosted | ⚠️ | ❌ | ❌ |
+| Isolation runtimes | ✅ **gVisor / Kata / Firecracker** — pluggable | Firecracker microVMs | ✅ microVM/containers | K8s RuntimeClass | one runtime |
+| E2B SDK compatibility | ✅ native (official SDKs unmodified) | ✅ native | ❌ own API | ❌ | ❌ |
+| Warm pool (sub-500ms claims) | ✅ built-in, adaptive sizing | ✅ managed | ⚠️ | ⚠️ manual scaling | ❌ |
 | Per-session network policy (eBPF) | ✅ Cilium, live-configurable | managed (fixed) | ⚠️ | ⚠️ NetworkPolicy | hand-written |
-| PTY terminals for agents | ✅ first-class (`spawnTerminal`) | ✅ | ✅ | ❌ | ❌ |
 | License | Apache 2.0 | Apache 2.0 (hosted core paid) | Apache 2.0 | Apache 2.0 | — |
 
-</div>
-
-### When to choose K8E
-
-- You want **E2B-style sandboxes but self-hosted** — same official SDKs, your infrastructure, no per-seat pricing.
-- Your agents need a **rich tool surface beyond "run code"**: PTY terminals, snapshots, service exposure, and live egress policy — all through one audited gateway.
-- You want **pluggable isolation** (swap gVisor ↔ Kata ↔ Firecracker per session) instead of being locked to one microVM stack.
+**When to choose K8E:** you want E2B-style sandboxes but self-hosted, with a rich tool surface beyond "run code" — PTY terminals, snapshots, service exposure, and live egress policy, all through one audited gateway.
 
 ---
 
@@ -552,8 +193,6 @@ Apache License 2.0 — see [LICENSE](https://github.com/xiaods/k8e/blob/main/LIC
 
 ## 🙏 Acknowledgments
 
-<div align="center">
-
 | Project | Contribution |
 |---|---|
 | 🐄 [**K3s**](https://github.com/k3s-io/k3s) | Lightweight Kubernetes foundation that inspired K8E |
@@ -562,19 +201,15 @@ Apache License 2.0 — see [LICENSE](https://github.com/xiaods/k8e/blob/main/LIC
 | 🤖 [**agent-sandbox**](https://github.com/kubernetes-sigs/agent-sandbox) | Kubernetes-native agent sandboxing primitives |
 | 🌐 [**CNCF**](https://cncf.io) | Fostering the open-source cloud native ecosystem |
 
-</div>
-
 ---
 
 <div align="center">
-
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:2c5364,50:203a43,100:0f2027&height=120&section=footer&animation=fadeIn" width="100%"/>
 
 **k8e.sh — Open Source Agentic AI Sandbox Matrix**
 
 [![GitHub](https://img.shields.io/badge/GitHub-xiaods%2Fk8e-181717?style=for-the-badge&logo=github)](https://github.com/xiaods/k8e)
 [![Website](https://img.shields.io/badge/Website-k8e.sh-00D4FF?style=for-the-badge&logo=googlechrome&logoColor=white)](https://k8e.sh)
-[![Docs](https://img.shields.io/badge/Docs-k8e.sh%2Fdocs-green?style=for-the-badge&logo=gitbook&logoColor=white)](https://k8e.sh/docs/)
+[![Docs](https://img.shields.io/badge/Docs-k8e.sh%2Fdocs-green?style=for-the-badge&logo=gitbook&logoColor=white)](https://k8e.sh/guide/what-is-k8e.html)
 
 *If K8E powers your agents, give us a ⭐ — it means the world to us!*
 
