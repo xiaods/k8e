@@ -163,8 +163,26 @@ func (in *SandboxWarmPool) DeepCopyInto(out *SandboxWarmPool) {
 	*out = *in
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
-	out.Spec = in.Spec
+	in.Spec.DeepCopyInto(&out.Spec)
 	out.Status = in.Status
+}
+func (in *SandboxWarmPoolSpec) DeepCopyInto(out *SandboxWarmPoolSpec) {
+	*out = *in
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
+}
+func (in *SandboxWarmPoolSpec) DeepCopy() *SandboxWarmPoolSpec {
+	if in == nil {
+		return nil
+	}
+	out := new(SandboxWarmPoolSpec)
+	in.DeepCopyInto(out)
+	return out
 }
 func (in *SandboxWarmPoolList) DeepCopy() *SandboxWarmPoolList {
 	if in == nil {

@@ -18,6 +18,13 @@ rules:
   - apiGroups: [""]
     resources: [configmaps]
     verbs: [get, create, update]
+  # The enrolled gateway identity (KIP-30 M2): ca.crt/tls.crt/tls.key in one
+  # ConfigMap, written by mcp-serve itself at startup. Listed explicitly so the
+  # dependency survives any future narrowing of the rule above.
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [mcp-client-cert]
+    verbs: [get, create, update]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -104,12 +111,35 @@ spec:
             - mcp-serve
             - --listen=:8080
             - --gateway=sandbox-grpc-gateway.sandbox-matrix.svc:50051
-            - --gateway-ca=/credentials/gateway/ca.crt
-            - --gateway-cert=/credentials/gateway/tls.crt
-            - --gateway-key=/credentials/gateway/tls.key
+            # Trust anchor for the first Login handshake: the sandbox CA
+            # (non-secret; a CA exists to be distributed). Mounted read-only
+            # from the mcp-bootstrap Secret created by
+            # hack/init-sandbox-mcp.sh. Once one Login has succeeded, the CA
+            # is cached in the identity ConfigMap and this file is only
+            # consulted again on re-enrollment.
+            - --gateway-ca=/bootstrap/ca.crt
             - --api-key-namespace=sandbox-matrix
             - --api-key-secret=sandbox-apikeys
             - --state-namespace=k8e-mcp
+          env:
+            # K8E_MCP_BOOTSTRAP_API_KEY (KIP-30 M2): at startup mcp-serve
+            # enrolls its own gateway client certificate from this key —
+            # one Login per cold identity, cached in ConfigMap
+            # k8e-mcp/mcp-client-cert so restarts and rollouts keep one
+            # identity until its 90-day TTL nears. A Secret ref, never a
+            # literal: reading the pod env equals reading the key.
+            - name: K8E_MCP_BOOTSTRAP_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-bootstrap
+                  key: apikey
+                  optional: false
+            # K8E_MCP_TENANT scopes every session this instance creates to one
+            # tenant (isolation boundary). Empty keeps the pre-M2 behavior —
+            # sessions land in the server-side shared "default" bucket, which
+            # is single-tenant only. One Deployment per tenant for more.
+            - name: K8E_MCP_TENANT
+              value: ""
           ports:
             - name: http
               containerPort: 8080
@@ -143,13 +173,17 @@ spec:
             tcpSocket:
               port: http
           volumeMounts:
-            - name: gateway-tls
-              mountPath: /credentials/gateway
+            - name: bootstrap
+              mountPath: /bootstrap
               readOnly: true
       volumes:
-        - name: gateway-tls
+        # mcp-bootstrap carries the sandbox CA (ca.crt) and one API key
+        # (apikey); created by hack/init-sandbox-mcp.sh from the server's
+        # /var/lib/k8e/server/tls/sandbox-ca.crt and an existing key in
+        # sandbox-matrix/sandbox-apikeys.
+        - name: bootstrap
           secret:
-            secretName: mcp-gateway-tls
+            secretName: mcp-bootstrap
 ---
 apiVersion: v1
 kind: Service

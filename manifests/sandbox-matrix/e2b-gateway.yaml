@@ -23,10 +23,13 @@
 #     and the sandbox gRPC gateway
 #     enabled (0.0.0.0:50051)
 #
-# Both host services are bridged into the cluster via headless Service +
-# discovery.k8s.io/v1 EndpointSlice pointing at --advertise-address (KIP-21:
-# never loopback — Kubernetes does not allow loopback Endpoint addresses),
-# because they run in the k8e-server host process, not as pods.
+# Both host services are bridged into the cluster via headless Services,
+# because they run in the k8e-server host process, not as pods. The
+# sandbox-grpc-gateway EndpointSlice is owned by the leader-gated
+# sandboxmatrix controller (KIP-30 M3.1: one endpoint per server node's
+# routable addresses, reconciled from live cluster state); the e2b-server
+# slice is staged statically from --advertise-address (KIP-21: never
+# loopback — Kubernetes does not allow loopback Endpoint addresses).
 ---
 
 apiVersion: v1
@@ -47,26 +50,11 @@ spec:
   - name: grpc
     port: 50051
     protocol: TCP
----
-apiVersion: discovery.k8s.io/v1
-kind: EndpointSlice
-metadata:
-  name: sandbox-grpc-gateway
-  namespace: %{SANDBOX_NAMESPACE}%
-  labels:
-    kubernetes.io/service-name: sandbox-grpc-gateway
-    endpointslice.kubernetes.io/managed-by: k8e
-    app.kubernetes.io/managed-by: k8e
-addressType: IPv4
-endpoints:
-- addresses:
-  - "%{ADVERTISE_IP}%"
-  conditions:
-    ready: true
-ports:
-- name: grpc
-  port: 50051
-  protocol: TCP
+# The sandbox-grpc-gateway EndpointSlice is NOT staged here (KIP-30 M3.1):
+# the leader-gated sandboxmatrix controller owns it and writes one endpoint
+# per server node's routable addresses, so HA membership follows the live
+# cluster instead of a stage-time %{ADVERTISE_IP}%. The Service below is the
+# stable name both the TCPRoute and in-cluster clients dial.
 ---
 apiVersion: v1
 kind: Service
@@ -88,6 +76,9 @@ spec:
   - name: http
     port: 3676
     protocol: TCP
+# e2b-server keeps its staged EndpointSlice: it is a single host-process
+# service (embedded e2b in the k8e-server process), unlike the gRPC gateway
+# which HA-deploys on every server node.
 ---
 apiVersion: discovery.k8s.io/v1
 kind: EndpointSlice

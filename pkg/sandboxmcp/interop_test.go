@@ -38,7 +38,7 @@ func TestIndependentPythonClient(t *testing.T) {
 	directory := t.TempDir()
 	statePath := filepath.Join(directory, "state.json")
 	for _, phase := range []string{"before", "after"} {
-		service, err := NewService(backend, store)
+		service, err := NewService(backend, store, "")
 		if err != nil {
 			t.Fatal(err)
 		}

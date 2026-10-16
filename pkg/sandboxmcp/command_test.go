@@ -30,6 +30,34 @@ func TestValidateServeOptionsRejectsIncompleteTLS(t *testing.T) {
 	}
 }
 
+func TestValidateServeOptionsAcceptsEnrollmentMode(t *testing.T) {
+	noGatewayPair := map[string]string{"gateway-cert": "", "gateway-key": ""}
+	if err := validateServeOptions(testServeContextWith(t, "", "", mergeStrings(noGatewayPair, map[string]string{"bootstrap-api-key": "e2b-key"}))); err != nil {
+		t.Fatalf("bootstrap API key should satisfy gateway access: %v", err)
+	}
+	if err := validateServeOptions(testServeContextWith(t, "", "", noGatewayPair)); err == nil ||
+		!strings.Contains(err.Error(), "bootstrap-api-key") {
+		t.Fatalf("neither gateway material nor bootstrap key must fail: %v", err)
+	}
+	// An explicit client pair needs the CA file — the enrollment path is the
+	// only one that may discover a trust anchor from a warm cache.
+	explicit := mergeStrings(noGatewayPair, map[string]string{"gateway-cert": "client.crt", "gateway-key": "client.key", "gateway-ca": ""})
+	if err := validateServeOptions(testServeContextWith(t, "", "", explicit)); err == nil {
+		t.Fatal("explicit gateway pair without --gateway-ca must fail")
+	}
+}
+
+func mergeStrings(a, b map[string]string) map[string]string {
+	merged := make(map[string]string, len(a)+len(b))
+	for name, value := range a {
+		merged[name] = value
+	}
+	for name, value := range b {
+		merged[name] = value
+	}
+	return merged
+}
+
 func TestReadinessReflectsDependencies(t *testing.T) {
 	authenticate := func(*http.Request) (Principal, error) { return Principal{ID: "a"}, nil }
 	healthy := false
@@ -67,15 +95,28 @@ func TestReadinessReflectsDependencies(t *testing.T) {
 
 func testServeContext(t *testing.T, cert, key string) *cli.Context {
 	t.Helper()
+	return testServeContextWith(t, cert, key, nil)
+}
+
+func testServeContextWith(t *testing.T, cert, key string, overrides map[string]string) *cli.Context {
+	t.Helper()
 	set := flag.NewFlagSet("mcp-serve", flag.ContinueOnError)
 	values := map[string]string{
 		"tls-cert": cert, "tls-key": key,
 		"api-key-namespace": "sandbox-matrix", "api-key-secret": "sandbox-apikeys",
 		"gateway": "sandbox-grpc-gateway:50051", "gateway-ca": "ca.crt",
 		"gateway-cert": "client.crt", "gateway-key": "client.key",
-		"state-namespace": "k8e-mcp",
+		"state-namespace": "k8e-mcp", "cert-cache": defaultCertCacheName,
+		"bootstrap-api-key": "", "insecure-bootstrap": "false", "tenant": "",
+	}
+	for name, value := range overrides {
+		values[name] = value
 	}
 	for name, value := range values {
+		if name == "insecure-bootstrap" {
+			set.Bool(name, value == "true", "")
+			continue
+		}
 		set.String(name, value, "")
 	}
 	return cli.NewContext(cli.NewApp(), set, nil)

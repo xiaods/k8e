@@ -135,7 +135,7 @@ func TestGatewayWithKubernetesMock(t *testing.T) {
 
 func newGatewayHandler(t *testing.T, connection *grpc.ClientConn, store RecordStore, authenticate Authenticate) *Server {
 	t.Helper()
-	service, err := NewService(pb.NewSandboxServiceClient(connection), store)
+	service, err := NewService(pb.NewSandboxServiceClient(connection), store, "")
 	if err != nil {
 		t.Fatal(err)
 	}

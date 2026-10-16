@@ -49,22 +49,26 @@ func TestE2BGatewayAPIManifestsStaged(t *testing.T) {
 		"port: 3676",
 	})
 	assertNoneContain(t, gw, "e2b-gateway.yaml", []string{"kind: Deployment", "kind: Endpoints"})
-	for _, ep := range []string{"e2b-server", "sandbox-grpc-gateway"} {
-		assertContains(t, gw, "kubernetes.io/service-name: "+ep, "e2b-gateway.yaml")
-	}
-	assertCount(t, gw, "kind: EndpointSlice", 2, "e2b-gateway.yaml")
-	assertCount(t, gw, "addressType: IPv4", 2, "e2b-gateway.yaml")
+	// Only the e2b-server slice is staged (KIP-30 M3.1); the gateway slice is
+	// controller-owned, so its service-name label lives only in the controller.
+	assertContains(t, gw, "kubernetes.io/service-name: e2b-server", "e2b-gateway.yaml")
+	assertContains(t, gw, "name: sandbox-grpc-gateway", "e2b-gateway.yaml")
+	assertCount(t, gw, "kind: EndpointSlice", 1, "e2b-gateway.yaml")
+	assertCount(t, gw, "addressType: IPv4", 1, "e2b-gateway.yaml")
 
-	// KIP-21: the EndpointSlice addresses must come from the %{ADVERTISE_IP}%
+	// KIP-21: the e2b-server EndpointSlice addresses must come from the
+	// %{ADVERTISE_IP}%
 	// template (resolved at stage time to a routable host address), and the
 	// manifest must never contain a literal loopback — Kubernetes does not
 	// allow loopback endpoint addresses (unreachable from pods).
 	//
-	// KIP-24 one-click expose: a third %{ADVERTISE_IP}% occurrence pins the
+	// KIP-24 one-click expose: the third %{ADVERTISE_IP}% occurrence pins the
 	// Gateway's LoadBalancer address (spec.addresses, type IPAddress) to the
 	// same host private IP, and a fourth scopes the CiliumLoadBalancerIPPool
 	// (/32) that LB-IPAM requires before it will actually assign that IP —
-	// no MetalLB, no <pending> external-IP.
+	// no MetalLB, no <pending> external-IP. (Two occurrences used to live in
+	// the two staged EndpointSlices; the gateway slice moved to the
+	// controller in KIP-30 M3.1.)
 	assertCount(t, gw, "%{ADVERTISE_IP}%", 4, "e2b-gateway.yaml")
 	assertContains(t, gw, "type: IPAddress", "e2b-gateway.yaml")
 	assertContains(t, gw, "kind: CiliumLoadBalancerIPPool", "e2b-gateway.yaml")
@@ -139,13 +143,17 @@ func TestE2BPoolShape(t *testing.T) {
 	})
 }
 
-// TestE2BEndpointSlicesBothParsed guards against silently-dropped YAML
-// documents (a missing --- separator merged the e2b-server EndpointSlice into
-// the pool doc, which made the parser emit ONE EndpointSlice — Gateway→e2b
-// 'no healthy upstream' on every fresh install).
-func TestE2BEndpointSlicesBothParsed(t *testing.T) {
+// TestE2BEndpointSliceParsed guards against silently-dropped YAML documents
+// (a missing --- separator merged the e2b-server EndpointSlice into the pool
+// doc, which made the parser emit ZERO EndpointSlices — Gateway→e2b
+// 'no healthy upstream' on every fresh install). KIP-30 M3.1: only the
+// e2b-server slice is staged now; the gateway slice is controller-owned.
+func TestE2BEndpointSliceParsed(t *testing.T) {
 	content := assetBytes(t, "sandbox-matrix/e2b-gateway.yaml")
-	if got := bytes.Count(content, []byte("kind: EndpointSlice")); got != 2 {
-		t.Fatalf("expected 2 EndpointSlice docs in manifest, got %d", got)
+	if got := bytes.Count(content, []byte("kind: EndpointSlice")); got != 1 {
+		t.Fatalf("expected 1 EndpointSlice doc in manifest, got %d", got)
+	}
+	if !bytes.Contains(content, []byte("kubernetes.io/service-name: e2b-server")) {
+		t.Fatal("the staged slice must belong to e2b-server")
 	}
 }
