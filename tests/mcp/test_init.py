@@ -17,6 +17,7 @@ class InitTests(unittest.TestCase):
                 'printf "%s\\n" "$*" >> "$MCP_INIT_TEST_LOG"\n'
                 'case "$*" in\n'
                 '  *"get secret sandbox-e2b -o jsonpath="*) printf "Y2VydA==" ;;\n'
+                '  *"get secret sandbox-apikeys -o jsonpath="*) printf "W3sia2V5IjogImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCAibmFtZSI6ICJhZ2VudCIsICJzdGF0ZSI6ICJhY3RpdmUifV0=" ;;\n'
                 '  *"get gateway e2b -o jsonpath="*) printf "203.0.113.10" ;;\n'
                 '  *" -f -"*) cat >/dev/null ;;\n'
                 '  *"--dry-run=client"*) printf "{}\\n" ;;\n'
@@ -29,8 +30,11 @@ class InitTests(unittest.TestCase):
             curl.chmod(0o700)
             credential = temporary / "input"
             credential.write_text("test-only-private-material")
+            # KIP-30 M2: the script stages only the sandbox CA and one API key
+            # (k8e-mcp/mcp-bootstrap); there is no --gateway-cert/--gateway-key
+            # anymore because mcp-serve enrolls its own pair.
             arguments = ["bash", str(root / "hack/init-sandbox-mcp.sh")]
-            for option in ["kubeconfig", "public-cert", "public-key", "gateway-ca", "gateway-cert", "gateway-key"]:
+            for option in ["kubeconfig", "gateway-ca", "public-cert", "public-key"]:
                 arguments += ["--" + option, str(credential)]
             environment = dict(os.environ, PATH=str(temporary) + os.pathsep + os.environ["PATH"], MCP_INIT_TEST_LOG=str(log))
             preview = subprocess.run(arguments, env=environment, cwd=temporary, capture_output=True, text=True)
@@ -45,6 +49,8 @@ class InitTests(unittest.TestCase):
             self.assertNotIn("oauth", calls)
             self.assertIn("-n sandbox-matrix create secret tls sandbox-e2b", calls)
             self.assertNotIn("create secret tls mcp-public-tls", calls)
+            self.assertIn("create secret generic mcp-bootstrap", calls)
+            self.assertNotIn("mcp-gateway-tls", calls)
             self.assertIn(str(root / "manifests/sandbox-mcp/deployment.yaml"), calls)
             self.assertIn("rollout status deployment/k8e-mcp", calls)
             self.assertIn("condition=Programmed gateway/e2b", calls)
@@ -66,7 +72,7 @@ class InitTests(unittest.TestCase):
 
             log.write_text("")
             reuse_arguments = ["bash", str(root / "hack/init-sandbox-mcp.sh")]
-            for option in ["kubeconfig", "gateway-ca", "gateway-cert", "gateway-key"]:
+            for option in ["kubeconfig", "gateway-ca"]:
                 reuse_arguments += ["--" + option, str(credential)]
             reused = subprocess.run(reuse_arguments + ["--apply"], env=environment, cwd=temporary, capture_output=True, text=True)
             self.assertEqual(reused.returncode, 0, reused.stderr)
