@@ -145,6 +145,11 @@ jobs:
     name: Build sandbox image
     runs-on: ubuntu-latest
     needs: build-k8e
+    env:
+      # docker/build-push-action uploads the exported build record as a run
+      # artifact (*.dockerbuild) by default. Keep the run's artifacts limited
+      # to what the publish job downloads by name/pattern.
+      DOCKER_BUILD_RECORD_UPLOAD: false
     permissions:
       contents: read
       packages: write
@@ -184,6 +189,9 @@ jobs:
   build-mcp-image:
     name: Build MCP image
     runs-on: ubuntu-latest
+    env:
+      # Same as build-sandbox-image: no *.dockerbuild build-record artifact.
+      DOCKER_BUILD_RECORD_UPLOAD: false
     permissions:
       contents: read
       packages: write
@@ -221,25 +229,35 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-k8e, build-k8e-arm64, build-sandbox-cli]
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v6
+      # Select artifacts explicitly. Without name/artifact-ids/pattern the
+      # step downloads every artifact in the run, including the *.dockerbuild
+      # build records the image jobs would otherwise upload. The two k8e
+      # artifacts both contain a file named "k8e", so they are downloaded into
+      # separate paths; a single flat merge would make them clobber each other.
+      - name: Download k8e amd64 artifact
+        uses: actions/download-artifact@v8
         with:
+          name: k8e
           path: release-artifacts
+      - name: Download k8e arm64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: k8e-arm64
+          path: tmp-k8e-arm64
+      - name: Download sandbox-cli artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: sandbox-cli-*
           merge-multiple: true
-      - name: Restore k8e arch assets
+          path: release-artifacts
+      - name: Stage release assets
         run: |
-          # Each arch job uploaded its k8e binary under its own artifact name
-          # (k8e, k8e-arm64); download-artifact@v6 with merge-multiple: true
-          # places them at <name>/k8e. install.sh on arm64 fetches k8e-arm64
-          # by that exact asset name, so land both binaries with arch suffix.
-          mv release-artifacts/k8e/k8e release-artifacts/k8e.bin
-          mv release-artifacts/k8e-arm64/k8e release-artifacts/k8e-arm64.bin
-          rm -rf release-artifacts/k8e release-artifacts/k8e-arm64
-          mv release-artifacts/k8e.bin release-artifacts/k8e
-          mv release-artifacts/k8e-arm64.bin release-artifacts/k8e-arm64
-          # sha256sum-amd64.txt below needs the plain name; k8e-amd64 keeps
-          # the release SHA256SUMS entries unambiguous across arches.
-          cp release-artifacts/k8e release-artifacts/k8e-amd64
+          # download-artifact@v8 extracts a single named artifact flat into
+          # its path, so the arm64 binary landed at tmp-k8e-arm64/k8e. Publish
+          # it as k8e-arm64: contrib/install.sh on aarch64 requests exactly
+          # that asset name.
+          mv tmp-k8e-arm64/k8e release-artifacts/k8e-arm64
+          rm -rf tmp-k8e-arm64
       - name: Generate unified SHA256SUMS
         run: |
           cd release-artifacts
@@ -249,13 +267,12 @@ jobs:
       - name: Generate per-arch checksums for contrib/install.sh
         run: |
           cd release-artifacts
-          # install.sh verifies downloads against sha256sum-<ARCH>.txt (grep
-          # for its own binary name), so each arch file needs the suffix the
-          # install script requests: the amd64 job publishes plain k8e; arm64
-          # publishes k8e-arm64.
-          sha256sum k8e-amd64 | awk '{print $1, $2}' > sha256sum-amd64.txt
-          sed 's/k8e-amd64/k8e-arm64/' sha256sum-amd64.txt > sha256sum-arm64.txt
-          sed -i 's/^k8e-amd64/k8e/' sha256sum-amd64.txt
+          # install.sh fetches sha256sum-<ARCH>.txt, greps the binary name for
+          # that arch (k8e on amd64, k8e-arm64 on aarch64) and aborts the
+          # install on a digest mismatch, so each file must carry that arch's
+          # real digest.
+          sha256sum k8e | awk '{print $1, $2}' > sha256sum-amd64.txt
+          sha256sum k8e-arm64 | awk '{print $1, $2}' > sha256sum-arm64.txt
       - name: List artifacts
         run: ls -la release-artifacts/
       - name: Upload to release
