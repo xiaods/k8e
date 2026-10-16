@@ -287,6 +287,13 @@ type SandboxConfig struct {
 	// loopback). It is both the Cilium Gateway LoadBalancer address (one-click
 	// expose on bare metal) and the default host for exposed-service URLs.
 	AdvertiseIP string
+	// SkipEndpointSliceController disables the leader-gated
+	// sandbox-grpc-gateway EndpointSlice reconciler (KIP-30 M3.1): the
+	// reconciler owns the slice and writes one endpoint per server node's
+	// routable addresses, replacing the staged single-address slice. Set
+	// true for operators who manage the object externally (MetalLB-style
+	// VIP fronting, cloud LB membership).
+	SkipEndpointSliceController bool
 	// SkipTLSMirror disables the leader-gated sandbox-e2b TLS mirror loop
 	// (KIP-30 M3.2): the loop mirrors /var/lib/k8e/server/tls/sandbox-server
 	// {.crt,.key} into the sandbox-e2b Secret so the Gateway https listener is

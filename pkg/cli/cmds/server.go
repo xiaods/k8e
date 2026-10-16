@@ -129,6 +129,7 @@ type Server struct {
 	SandboxAdvertiseHostname string
 	SandboxExposeBaseURL     string
 	SkipTLSMirror            bool
+	SkipEndpointSlice        bool
 }
 
 var (
@@ -626,6 +627,12 @@ var ServerFlags = []cli.Flag{
 		Usage:       "(sandbox) External DNS name or IP remote clients use to reach the sandbox gRPC gateway (added to the server cert SANs). Required in AWS/remote setups where the host's interfaces only carry private IPs — set it to the public domain or EIP, e.g. sandbox.example.com or 203.0.113.10. Must be a bare DNS name or IP: no scheme, port, path, or whitespace. K8E_SANDBOX_ADVERTISED_HOSTNAME",
 		Destination: &ServerConfig.SandboxAdvertiseHostname,
 		EnvVar:      "K8E_SANDBOX_ADVERTISED_HOSTNAME",
+	},
+	&cli.BoolFlag{
+		Name:        "skip-sandbox-endpointslice-controller",
+		Usage:       "(sandbox) Disable the leader-gated sandbox-grpc-gateway EndpointSlice reconciler (KIP-30 M3.1). The reconciler owns the slice and writes one endpoint per server node's routable addresses, replacing the staged single-address slice. Set this when you manage the object externally (MetalLB-style VIP fronting, cloud LB membership). K8E_SKIP_ENDPOINTSLICE_CONTROLLER",
+		Destination: &ServerConfig.SkipEndpointSlice,
+		EnvVar:      "K8E_SKIP_ENDPOINTSLICE_CONTROLLER",
 	},
 	&cli.BoolFlag{
 		Name:        "skip-sandbox-tls-mirror",

@@ -254,6 +254,7 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 		AdvertiseHostname:     cfg.SandboxAdvertiseHostname,
 		ExposeBaseURL:         cfg.SandboxExposeBaseURL,
 		SkipTLSMirror:         cfg.SkipTLSMirror,
+		SkipEndpointSliceController: cfg.SkipEndpointSlice,
 	}
 	serverConfig.ControlConfig.EtcdExposeMetrics = cfg.EtcdExposeMetrics
 	serverConfig.ControlConfig.EtcdDisableSnapshots = cfg.EtcdDisableSnapshots

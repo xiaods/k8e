@@ -30,7 +30,10 @@ var warmPoolGVR = schema.GroupVersionResource{Group: sandboxgrpc.SandboxAPIGroup
 var localMatrixGVR = schema.GroupVersionResource{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxmatrices"}
 var sessionGVR = schema.GroupVersionResource{Group: sandboxgrpc.SandboxAPIGroup, Version: "v1alpha1", Resource: "sandboxsessions"}
 
-const tlsDir = "/var/lib/k8e/server/tls"
+// tlsDir is where the server writes its sandbox CA + gateway cert pair. A var
+// (not const) so tests can repoint it at a temp dir; production never
+// reassigns it.
+var tlsDir = "/var/lib/k8e/server/tls"
 
 // Register starts the SandboxMatrix controller and gRPC gateway.
 func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, cfg config.SandboxConfig) error {
@@ -119,6 +122,12 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		if !cfg.SkipTLSMirror {
 			go runTLSMirrorLoop(leaderCtx, k8s, cfg.Namespace)
 		}
+		// KIP-30 M3.1: the leader owns the gateway EndpointSlice, so HA
+		// membership is reconciled from live cluster state instead of the
+		// staged single-address template.
+		if !cfg.SkipEndpointSliceController {
+			go runEndpointSliceLoop(leaderCtx, k8s, cfg)
+		}
 	})
 
 	if _, err := os.Stat("/dev/kvm"); err == nil {
@@ -131,8 +140,12 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	if cfg.SkipTLSMirror {
 		tlsMirrorState = "off (--skip-sandbox-tls-mirror)"
 	}
-	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s tls-mirror=%s)",
-		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName, tlsMirrorState)
+	endpointSliceState := "on"
+	if cfg.SkipEndpointSliceController {
+		endpointSliceState = "off (--skip-sandbox-endpointslice-controller)"
+	}
+	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s tls-mirror=%s endpointslice=%s)",
+		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName, tlsMirrorState, endpointSliceState)
 	return nil
 }
 
