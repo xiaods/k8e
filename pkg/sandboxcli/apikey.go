@@ -171,9 +171,26 @@ func apiKeyCreateCommand() cli.Command {
 				out["ttl_days"] = nil
 			}
 			printJSON(out)
+			printMCPConfig(ctx, key)
 			return nil
 		},
 	}
+}
+
+// printMCPConfig emits the copy-pasteable MCP client config block (KIP-30
+// M3.4) to stdout after the key JSON, when an MCP URL can be resolved. Silently
+// skipped otherwise: a guessed URL in a paste-ready block is worse than none.
+func printMCPConfig(ctx *cli.Context, key string) {
+	resolved, err := ResolveConn(ctx.GlobalString("endpoint"), "", ctx.GlobalString("profile"), "")
+	if err != nil || resolved == nil {
+		return
+	}
+	block := mcpConfigBlock(ctx, resolved.Endpoint, key)
+	if block == nil {
+		return
+	}
+	fmt.Println("mcp client config:")
+	printJSON(block)
 }
 
 func apiKeyListCommand() cli.Command {
@@ -202,6 +219,15 @@ func apiKeyListCommand() cli.Command {
 				items = append(items, item)
 			}
 			printJSON(map[string]any{"keys": items})
+			// KIP-30 M3.4: list prints the config block too — reconnecting a
+			// client later needs the same paste-ready snippet.
+			if len(items) > 0 {
+				if first, ok := items[0]["name"].(string); ok {
+					if rec, ok := store[first]; ok && !rec.Expired(now) {
+						printMCPConfig(ctx, rec.Key)
+					}
+				}
+			}
 			return nil
 		},
 	}
