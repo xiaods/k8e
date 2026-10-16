@@ -109,11 +109,16 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	caps := &capacityCache{}
 	go runLeaderGated(ctx, k8s, cfg, func(leaderCtx context.Context) {
 		// Each reconciler is a blocking loop; start them concurrently so a
-		// leader runs all four.
+		// leader runs all of them. The TLS mirror loop (KIP-30 M3.2) is the
+		// opt-out one: operators who manage the sandbox-e2b Secret
+		// externally (cert-manager, purchased cert) disable it.
 		go runWarmPoolReconciler(leaderCtx, k8s, dyn, cfg, refillTrigger, orch, caps)
 		go runResettingDetector(leaderCtx, k8s, cfg.Namespace)
 		go runIdlePodReaper(leaderCtx, k8s, dyn, cfg)
 		go runGCLoop(leaderCtx, orch, cfg.Namespace)
+		if !cfg.SkipTLSMirror {
+			go runTLSMirrorLoop(leaderCtx, k8s, cfg.Namespace)
+		}
 	})
 
 	if _, err := os.Stat("/dev/kvm"); err == nil {
@@ -122,8 +127,12 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		logrus.Info("sandbox-matrix: /dev/kvm not found, Firecracker RuntimeClass skipped")
 	}
 
-	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s)",
-		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName)
+	tlsMirrorState := "on"
+	if cfg.SkipTLSMirror {
+		tlsMirrorState = "off (--skip-sandbox-tls-mirror)"
+	}
+	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s tls-mirror=%s)",
+		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName, tlsMirrorState)
 	return nil
 }
 
