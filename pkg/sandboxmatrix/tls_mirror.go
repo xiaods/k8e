@@ -63,13 +63,8 @@ const (
 
 // e2bTLSPaths returns the server cert pair to mirror. The paths are fixed at
 // the tlsDir the gRPC gateway itself uses, so both share one source of truth.
-// tlsDirOverride (test-only, nil in production) repoints the directory.
 func e2bTLSPaths() (crtPath, keyPath string) {
-	dir := tlsDir
-	if tlsDirOverride != nil {
-		dir = *tlsDirOverride
-	}
-	return dir + "/sandbox-server.crt", dir + "/sandbox-server.key"
+	return tlsDir + "/sandbox-server.crt", tlsDir + "/sandbox-server.key"
 }
 
 // runTLSMirrorLoop reconciles sandbox-e2b from the server cert pair until ctx

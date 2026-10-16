@@ -84,13 +84,12 @@ func tlsMirrorFixture(t *testing.T, dir, name string, notAfter time.Time) (strin
 }
 
 // withTLSDir repoints e2bTLSPaths at a test directory for one test. tlsDir is
-// a const in production; the test binary compiles with the tlsdir_test build
-// tag which swaps it for a var (see tls_mirror_tlsdir_test.go).
+// a package var solely so this works; production never reassigns it.
 func withTLSDir(t *testing.T, dir string) {
 	t.Helper()
-	original := tlsDirOverride
-	tlsDirOverride = &dir
-	t.Cleanup(func() { tlsDirOverride = original })
+	original := tlsDir
+	tlsDir = dir
+	t.Cleanup(func() { tlsDir = original })
 }
 
 func TestReconcileTLSMirrorCreatesSecretWhenAbsent(t *testing.T) {
