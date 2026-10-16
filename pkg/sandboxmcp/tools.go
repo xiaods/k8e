@@ -18,9 +18,15 @@ import (
 )
 
 // Service exposes sandbox gRPC operations as authenticated MCP tools.
+// tenant (KIP-30 M2) scopes every session this adapter creates: one MCP
+// Deployment is the boundary of one tenant, so sessions do not all land in the
+// shared default bucket. Empty keeps the pre-M2 behavior — the server
+// normalizes it to "default" — which is only correct for a single-tenant
+// install.
 type Service struct {
 	backend pb.SandboxServiceClient
 	store   RecordStore
+	tenant  string
 }
 
 type arguments struct {
@@ -34,12 +40,13 @@ type arguments struct {
 	Timeout       int32  `json:"timeout,omitempty"`
 }
 
-// NewService creates a tool service backed by the sandbox gateway and durable state.
-func NewService(backend pb.SandboxServiceClient, store RecordStore) (*Service, error) {
+// NewService creates a tool service backed by the sandbox gateway and durable
+// state. Sessions carry tenant as their isolation scope.
+func NewService(backend pb.SandboxServiceClient, store RecordStore, tenant string) (*Service, error) {
 	if backend == nil || store == nil {
 		return nil, errors.New("backend and durable store required")
 	}
-	return &Service{backend: backend, store: store}, nil
+	return &Service{backend: backend, store: store, tenant: strings.TrimSpace(tenant)}, nil
 }
 
 // Tools returns the sandbox tool definitions bound to this service.
@@ -266,7 +273,7 @@ func (service *Service) createSandbox(ctx context.Context, principal Principal, 
 	if _, err := service.store.Create(ctx, recordKey("session", record.SessionID), Record{Owner: principal.ID, State: "owned", SessionID: record.SessionID}); err != nil {
 		return CallResult{}, err
 	}
-	response, err := service.backend.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: record.SessionID, RuntimeClass: "gvisor"})
+	response, err := service.backend.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: record.SessionID, TenantId: service.tenant, RuntimeClass: "gvisor"})
 	if err != nil {
 		return CallResult{}, err
 	}

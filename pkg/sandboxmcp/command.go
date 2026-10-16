@@ -38,6 +38,10 @@ const (
 	flagGatewayKey      = "gateway-key"
 	flagStateNamespace  = "state-namespace"
 	flagKubeconfig      = "kubeconfig"
+	flagBootstrapAPIKey = "bootstrap-api-key"
+	flagInsecureBoot    = "insecure-bootstrap"
+	flagCertCache       = "cert-cache"
+	flagTenant          = "tenant"
 )
 
 // Command returns the mcp-serve CLI command and its deployment-facing options.
@@ -54,6 +58,14 @@ func Command() cli.Command {
 		cli.StringFlag{Name: flagGatewayCert, EnvVar: "K8E_MCP_GATEWAY_CERT"},
 		cli.StringFlag{Name: flagGatewayKey, EnvVar: "K8E_MCP_GATEWAY_KEY"},
 		cli.StringFlag{Name: flagStateNamespace, EnvVar: "K8E_MCP_STATE_NAMESPACE"},
+		// KIP-30 M2: enroll the adapter's own gateway identity from an API key
+		// at startup, caching it in a ConfigMap so restarts and rollouts reuse
+		// one identity. Sets of flags remain mutually sufficient: either an
+		// explicit client pair, or the bootstrap API key.
+		cli.StringFlag{Name: flagBootstrapAPIKey, EnvVar: "K8E_MCP_BOOTSTRAP_API_KEY"},
+		cli.BoolFlag{Name: flagInsecureBoot, EnvVar: "K8E_MCP_INSECURE_BOOTSTRAP"},
+		cli.StringFlag{Name: flagCertCache, Value: defaultCertCacheName, EnvVar: "K8E_MCP_CERT_CACHE"},
+		cli.StringFlag{Name: flagTenant, EnvVar: "K8E_MCP_TENANT"},
 		cli.StringFlag{Name: flagKubeconfig, EnvVar: "KUBECONFIG"},
 	}
 	return cli.Command{Name: "mcp-serve", Usage: "Serve MCP using K8E API keys and an explicit mTLS sandbox gateway", Flags: flags, Action: serveCommand}
@@ -63,15 +75,17 @@ func serveCommand(command *cli.Context) error {
 	if err := validateServeOptions(command); err != nil {
 		return err
 	}
-	connection, err := connectGateway(command)
-	if err != nil {
-		return err
-	}
-	defer connection.Close()
+	// Kubernetes connects first: a bootstrap-mode start needs the ConfigMap
+	// client for the identity cache before it dials the gateway.
 	core, err := connectKubernetes(command)
 	if err != nil {
 		return err
 	}
+	connection, err := connectGateway(command, core)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
 	handler, err := buildHandler(command, connection, core)
 	if err != nil {
 		return err
@@ -115,10 +129,20 @@ func readinessHandler(server *Server) http.HandlerFunc {
 }
 
 func validateServeOptions(command *cli.Context) error {
-	for _, name := range []string{flagAPIKeyNamespace, flagAPIKeySecret, flagGateway, flagGatewayCA, flagGatewayCert, flagGatewayKey, flagStateNamespace} {
+	for _, name := range []string{flagAPIKeyNamespace, flagAPIKeySecret, flagGateway, flagStateNamespace} {
 		if command.String(name) == "" {
 			return errors.New("required MCP option: --" + name)
 		}
+	}
+	explicitPair := command.String(flagGatewayCert) != "" && command.String(flagGatewayKey) != ""
+	if command.String(flagGatewayCert) != "" != (command.String(flagGatewayKey) != "") {
+		return errors.New("MCP gateway TLS requires both --" + flagGatewayCert + " and --" + flagGatewayKey)
+	}
+	if explicitPair && command.String(flagGatewayCA) == "" {
+		return errors.New("explicit gateway TLS requires --" + flagGatewayCA)
+	}
+	if !explicitPair && command.String(flagBootstrapAPIKey) == "" {
+		return errors.New("MCP gateway access requires either --" + flagGatewayCert + "/--" + flagGatewayKey + " or --" + flagBootstrapAPIKey)
 	}
 	if (command.String(flagTLSCert) == "") != (command.String(flagTLSKey) == "") {
 		return errors.New("MCP TLS requires both --" + flagTLSCert + " and --" + flagTLSKey)
@@ -126,7 +150,16 @@ func validateServeOptions(command *cli.Context) error {
 	return nil
 }
 
-func connectGateway(command *cli.Context) (*grpc.ClientConn, error) {
+func connectGateway(command *cli.Context, core typedcore.CoreV1Interface) (*grpc.ClientConn, error) {
+	if command.String(flagGatewayCert) != "" && command.String(flagGatewayKey) != "" {
+		return dialExplicitGateway(command)
+	}
+	return dialEnrolledGateway(command, core)
+}
+
+// dialExplicitGateway uses an operator-provided client pair (the pre-M2
+// mcp-gateway-tls Secret), verified against the given CA file.
+func dialExplicitGateway(command *cli.Context) (*grpc.ClientConn, error) {
 	certificate, err := tls.LoadX509KeyPair(command.String(flagGatewayCert), command.String(flagGatewayKey))
 	if err != nil {
 		return nil, err
@@ -138,6 +171,33 @@ func connectGateway(command *cli.Context) (*grpc.ClientConn, error) {
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(rootPEM) {
 		return nil, errors.New("gateway CA has no certificates")
+	}
+	return grpc.NewClient(command.String(flagGateway), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, Certificates: []tls.Certificate{certificate}})))
+}
+
+// dialEnrolledGateway boots the adapter's identity from the identity cache or
+// an API-key enrollment, then dials with the resulting mTLS material. A
+// --cert-cache value of "" disables the cache: every start enrolls fresh.
+func dialEnrolledGateway(command *cli.Context, core typedcore.CoreV1Interface) (*grpc.ClientConn, error) {
+	var cache IdentityCache
+	if name := command.String(flagCertCache); name != "" {
+		bound, err := NewConfigMapIdentityCache(core.ConfigMaps(command.String(flagStateNamespace)), name)
+		if err != nil {
+			return nil, err
+		}
+		cache = bound
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bootstrapTimeout)
+	defer cancel()
+	certificate, roots, err := ensureGatewayIdentity(ctx, cache, EnrollmentConfig{
+		Endpoint: command.String(flagGateway),
+		APIKey:   command.String(flagBootstrapAPIKey),
+		CAFile:   command.String(flagGatewayCA),
+		Insecure: command.Bool(flagInsecureBoot),
+		Device:   "k8e-mcp",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mcp-serve gateway identity: %w", err)
 	}
 	return grpc.NewClient(command.String(flagGateway), grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, Certificates: []tls.Certificate{certificate}})))
 }
@@ -162,7 +222,7 @@ func buildHandler(command *cli.Context, connection *grpc.ClientConn, core typedc
 	if err != nil {
 		return nil, err
 	}
-	service, err := NewService(pb.NewSandboxServiceClient(connection), store)
+	service, err := NewService(pb.NewSandboxServiceClient(connection), store, command.String(flagTenant))
 	if err != nil {
 		return nil, err
 	}

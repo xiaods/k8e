@@ -131,7 +131,7 @@ func runRecoveryChild(t *testing.T, core typedcore.CoreV1Interface, phase, names
 	}
 	store, _ := NewKubernetesStore(core.ConfigMaps(namespace))
 	backend := &testBackend{}
-	service, err := NewService(backend, store)
+	service, err := NewService(backend, store, "")
 	if err != nil {
 		t.Fatal(err)
 	}

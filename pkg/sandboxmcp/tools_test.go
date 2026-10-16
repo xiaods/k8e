@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -56,6 +57,7 @@ type testBackend struct {
 	pb.SandboxServiceClient
 	sync.Mutex
 	creates, execs, polls int
+	lastTenant            string
 	lastTimeout           int32
 	lostReply             bool
 }
@@ -64,6 +66,7 @@ func (backend *testBackend) CreateSession(_ context.Context, request *pb.CreateS
 	backend.Lock()
 	defer backend.Unlock()
 	backend.creates++
+	backend.lastTenant = request.TenantId
 	return &pb.CreateSessionResponse{SessionId: request.SessionId}, nil
 }
 func (backend *testBackend) Exec(_ context.Context, request *pb.ExecRequest, _ ...grpc.CallOption) (*pb.ExecResponse, error) {
@@ -116,7 +119,7 @@ func serviceFixture(t *testing.T) (*Service, *testStore, *testBackend, string) {
 	t.Helper()
 	store := &testStore{records: map[string]Record{}}
 	backend := &testBackend{}
-	service, err := NewService(backend, store)
+	service, err := NewService(backend, store, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,9 +130,30 @@ func serviceFixture(t *testing.T) (*Service, *testStore, *testBackend, string) {
 	return service, store, backend, resultObject(t, result)["session_id"].(string)
 }
 
+func TestCreateSessionCarriesTenantScope(t *testing.T) {
+	// KIP-30 M2: one MCP Deployment is one tenant boundary. An adapter without
+	// --tenant keeps the pre-M2 behavior (the server normalizes empty to
+	// "default"), an adapter with one scopes every created session.
+	for _, tenant := range []string{"", "tenant-a", " tenant-b "} {
+		store := &testStore{records: map[string]Record{}}
+		backend := &testBackend{}
+		service, err := NewService(backend, store, tenant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := invoke(t, service, "alice", "sandbox_create", map[string]any{"operation_id": "create"}); err != nil {
+			t.Fatal(err)
+		}
+		expected := strings.TrimSpace(tenant)
+		if backend.lastTenant != expected {
+			t.Fatalf("tenant %q: CreateSession got TenantId %q, want %q", tenant, backend.lastTenant, expected)
+		}
+	}
+}
+
 func TestSharedStoreDeduplicatesAcrossReplicas(t *testing.T) {
 	service, store, backend, sessionID := serviceFixture(t)
-	other, _ := NewService(backend, store)
+	other, _ := NewService(backend, store, "")
 	var group sync.WaitGroup
 	for index := 0; index < 32; index++ {
 		group.Add(1)
@@ -225,7 +249,7 @@ func TestUnknownSubmissionNeverRunsAgain(t *testing.T) {
 			}
 			store.failUpdate = false
 			backend.lostReply = false
-			restarted, _ := NewService(backend, store)
+			restarted, _ := NewService(backend, store, "")
 			result, err = invoke(t, restarted, "alice", "sandbox_exec", args)
 			if err != nil {
 				t.Fatal(err)

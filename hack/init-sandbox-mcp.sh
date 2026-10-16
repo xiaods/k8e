@@ -6,8 +6,6 @@ kubeconfig=""
 public_cert=""
 public_key=""
 gateway_ca=""
-gateway_cert=""
-gateway_key=""
 hostname=""
 image=""
 apply=false
@@ -15,17 +13,26 @@ apply=false
 usage() {
   cat <<'EOF'
 Usage: bash hack/init-sandbox-mcp.sh --kubeconfig FILE \
-  --gateway-ca FILE --gateway-cert FILE --gateway-key FILE \
+  [--gateway-ca FILE] \
   [--public-cert FILE --public-key FILE] \
   [--hostname MCP_PUBLIC_HOST] [--image MCP_IMAGE] [--apply]
 
-Uses existing K8E keys from sandbox-matrix/sandbox-apikeys. No OAuth server is
-needed. An existing sandbox-matrix/sandbox-e2b certificate is reused unless a
+MCP enrolls its own gateway identity (KIP-30 M2): the only material this
+script provides is the sandbox CA (defaults to
+/var/lib/k8e/server/tls/sandbox-ca.crt) and one API key from
+sandbox-matrix/sandbox-apikeys; k8e-mcp/mcp-bootstrap is the Secret that
+carries both into the Deployment. No client certificate pair is generated,
+staged or mounted.
+
+Set MCP_BOOTSTRAP_API_KEY (environment, never argv) to enroll with a specific
+key. Otherwise the first active key named in keys.json is used.
+
+An existing sandbox-matrix/sandbox-e2b certificate is reused unless a
 new public certificate pair is supplied explicitly. The existing k8e API
-Gateway exposes https://HOST/mcp. Without --apply, validates local inputs only.
-The Deployment pulls ghcr.io/xiaods/k8e-mcp:latest (published by the release
-workflow); pass --image to point it elsewhere, e.g. --image k8e-mcp:local for a
-locally built image imported into K8E containerd.
+Gateway exposes https://HOST/mcp. Without --apply, validates local inputs
+only. The Deployment pulls ghcr.io/xiaods/k8e-mcp:latest (published by the
+release workflow); pass --image to point it elsewhere, e.g. --image
+k8e-mcp:local for a locally built image imported into K8E containerd.
 
 Set MCP_PROBE_API_KEY (environment, never argv) to additionally prove the
 authenticated MCP path by calling server/discover and requiring HTTP 200.
@@ -37,7 +44,7 @@ rollout_failure_diagnostics() {
   kubectl "${kubectl_args[@]}" -n k8e-mcp get pods -o wide >&2 || true
   kubectl "${kubectl_args[@]}" -n k8e-mcp describe deployment/k8e-mcp >&2 || true
   kubectl "${kubectl_args[@]}" -n k8e-mcp logs deployment/k8e-mcp --all-containers --tail=40 >&2 || true
-  echo "check that --gateway-ca/--gateway-cert/--gateway-key are a valid, unexpired mTLS client pair for the sandbox gateway" >&2
+  echo "check that --gateway-ca is the sandbox CA and the bootstrap key exists in sandbox-matrix/sandbox-apikeys" >&2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -51,8 +58,6 @@ while [[ $# -gt 0 ]]; do
     --public-cert) public_cert="$2" ;;
     --public-key) public_key="$2" ;;
     --gateway-ca) gateway_ca="$2" ;;
-    --gateway-cert) gateway_cert="$2" ;;
-    --gateway-key) gateway_key="$2" ;;
     --hostname) hostname="$2" ;;
     --image) image="$2" ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -60,7 +65,12 @@ while [[ $# -gt 0 ]]; do
   shift 2
 done
 
-for file in "$kubeconfig" "$gateway_ca" "$gateway_cert" "$gateway_key"; do
+# The sandbox CA on a K8E server host is a fixed, non-secret path: it exists
+# so every client can trust the gateway. Defaulting keeps the common
+# (script-on-the-server) invocation free of file flags.
+gateway_ca="${gateway_ca:-/var/lib/k8e/server/tls/sandbox-ca.crt}"
+
+for file in "$kubeconfig" "$gateway_ca"; do
   [[ -n "$file" && -r "$file" && -s "$file" ]] || { echo "required nonempty readable file: $file" >&2; exit 2; }
 done
 if [[ -n "$public_cert" || -n "$public_key" ]]; then
@@ -72,6 +82,7 @@ fi
 command -v kubectl >/dev/null || { echo "kubectl is required" >&2; exit 2; }
 command -v curl >/dev/null || { echo "curl is required" >&2; exit 2; }
 command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 2; }
+command -v grep >/dev/null || { echo "grep is required" >&2; exit 2; }
 if [[ -n "$hostname" ]]; then
   valid_host=false
   if [[ ${#hostname} -le 253 && "$hostname" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]; then
@@ -104,7 +115,37 @@ kubectl "${kubectl_args[@]}" create namespace k8e-mcp --dry-run=client -o yaml |
 if [[ -n "$public_cert" ]]; then
   kubectl "${kubectl_args[@]}" -n sandbox-matrix create secret tls sandbox-e2b --cert="$public_cert" --key="$public_key" --dry-run=client -o yaml | kubectl "${kubectl_args[@]}" apply --server-side --field-manager=k8e-mcp-init -f -
 fi
-kubectl "${kubectl_args[@]}" -n k8e-mcp create secret generic mcp-gateway-tls --from-file=ca.crt="$gateway_ca" --from-file=tls.crt="$gateway_cert" --from-file=tls.key="$gateway_key" --dry-run=client -o yaml | kubectl "${kubectl_args[@]}" apply --server-side --field-manager=k8e-mcp-init -f -
+
+# The enrollment key: MCP_BOOTSTRAP_API_KEY selects one explicitly, otherwise
+# the first active key named in keys.json is reused (python3 preferred, a
+# grep fallback for minimal images). argv is never used for secrets.
+bootstrap_key="${MCP_BOOTSTRAP_API_KEY:-}"
+if [[ -z "$bootstrap_key" ]]; then
+  keys_json="$(kubectl "${kubectl_args[@]}" -n sandbox-matrix get secret sandbox-apikeys -o jsonpath='{.data.keys}')"
+  [[ -n "$keys_json" ]] || { echo "sandbox-apikeys has no keys" >&2; exit 1; }
+  if command -v python3 >/dev/null; then
+    bootstrap_key="$(printf %s "$keys_json" | base64 -d | python3 -c 'import json,sys
+for entry in json.load(sys.stdin):
+    if entry.get("state") == "active":
+        print(entry["key"]); break
+')" || bootstrap_key=""
+  else
+    # Alternate key/state output lines; key precedes state in each entry.
+    while IFS= read -r key_line && IFS= read -r state_line; do
+      if [[ "$state_line" == *active* ]]; then
+        bootstrap_key="${key_line//[^0-9a-f]/}"
+        break
+      fi
+    done < <(printf '%s' "$keys_json" | base64 -d | grep -oE '"(key|state)" *: *"[^"]*"')
+  fi
+fi
+[[ -n "$bootstrap_key" ]] || { echo "no unexpired API key found in sandbox-matrix/sandbox-apikeys (set MCP_BOOTSTRAP_API_KEY to choose one)" >&2; exit 1; }
+
+# k8e-mcp/mcp-bootstrap is all the Deployment needs to enroll: the sandbox CA
+# (non-secret; distributed to every client) and one API key. mcp-serve
+# performs the Login itself and caches the resulting identity in ConfigMap
+# k8e-mcp/mcp-client-cert.
+kubectl "${kubectl_args[@]}" -n k8e-mcp create secret generic mcp-bootstrap --from-file=ca.crt="$gateway_ca" --from-literal=apikey="$bootstrap_key" --dry-run=client -o yaml | kubectl "${kubectl_args[@]}" apply --server-side --field-manager=k8e-mcp-init -f -
 # The server default-skips manifests/sandbox-mcp (pkg/server stageFiles): the
 # Deployment cannot become ready without this script's Secret, so this apply is
 # load-bearing, not redundant.
