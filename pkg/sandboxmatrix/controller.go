@@ -40,24 +40,7 @@ var tlsDir = "/var/lib/k8e/server/tls"
 // Register starts the SandboxMatrix controller and gRPC gateway.
 func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, cfg config.SandboxConfig) error {
 	// Apply defaults
-	if cfg.DefaultRuntime == "" {
-		cfg.DefaultRuntime = "gvisor"
-	}
-	if cfg.DefaultImage == "" {
-		cfg.DefaultImage = "ghcr.io/xiaods/k8e-sandbox:latest"
-	}
-	if cfg.DefaultCPU == "" {
-		cfg.DefaultCPU = "500m"
-	}
-	if cfg.DefaultMemory == "" {
-		cfg.DefaultMemory = "512Mi"
-	}
-	if cfg.GRPCPort == 0 {
-		cfg.GRPCPort = 50051
-	}
-	if cfg.Namespace == "" {
-		cfg.Namespace = config.DefaultSandboxNamespace
-	}
+	applySandboxConfigDefaults(&cfg)
 
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
@@ -73,12 +56,7 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	// claim, instead of waiting up to 10s for the next poll tick.
 	refillTrigger := make(chan struct{}, 1)
 	orch := sandboxgrpc.NewOrchestrator(k8s, dyn, cfg.Namespace)
-	orch.OnWarmClaim = func() {
-		select {
-		case refillTrigger <- struct{}{}:
-		default: // already a refill pending
-		}
-	}
+	orch.OnWarmClaim = makeWarmPoolRefillTrigger(refillTrigger)
 
 	// The gRPC gateway is stateless and multi-node-safe: start it on every
 	// server. The reconcilers (warm pool, idle reaper, resetting detector,
@@ -116,27 +94,69 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 		startLeaderReconcilers(leaderCtx, k8s, dyn, cfg, refillTrigger, orch, caps)
 	})
 
+	logFirecrackerRuntimeSupport()
+
+	tlsMirrorState := onState(!cfg.SkipTLSMirror, "--skip-sandbox-tls-mirror")
+	endpointSliceState := onState(!cfg.SkipEndpointSliceController, "--skip-sandbox-endpointslice-controller")
+	nodeRuntimeLabelState := onState(!cfg.SkipNodeRuntimeLabels, "--skip-node-runtime-labels")
+	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s tls-mirror=%s endpointslice=%s node-runtime-labels=%s)",
+		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName, tlsMirrorState, endpointSliceState, nodeRuntimeLabelState)
+	return nil
+}
+
+// applySandboxConfigDefaults fills in cfg fields left unspecified by the caller
+// / environment, so Register does not need one branch per field (SonarCloud
+// GO-R1005).
+func applySandboxConfigDefaults(cfg *config.SandboxConfig) {
+	if cfg.DefaultRuntime == "" {
+		cfg.DefaultRuntime = "gvisor"
+	}
+	if cfg.DefaultImage == "" {
+		cfg.DefaultImage = "ghcr.io/xiaods/k8e-sandbox:latest"
+	}
+	if cfg.DefaultCPU == "" {
+		cfg.DefaultCPU = "500m"
+	}
+	if cfg.DefaultMemory == "" {
+		cfg.DefaultMemory = "512Mi"
+	}
+	if cfg.GRPCPort == 0 {
+		cfg.GRPCPort = 50051
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = config.DefaultSandboxNamespace
+	}
+}
+
+// makeWarmPoolRefillTrigger wraps refillTrigger (a size-1 buffered channel) in a
+// non-blocking send so a second warm claim does not block the gRPC thread while
+// one refill is already pending.
+func makeWarmPoolRefillTrigger(refillTrigger chan<- struct{}) func() {
+	return func() {
+		select {
+		case refillTrigger <- struct{}{}:
+		default: // already a refill pending
+		}
+	}
+}
+
+// logFirecrackerRuntimeSupport reports whether the host supports the Firecracker
+// RuntimeClass so operators see the capability at startup.
+func logFirecrackerRuntimeSupport() {
 	if _, err := os.Stat("/dev/kvm"); err == nil {
 		logrus.Info("sandbox-matrix: /dev/kvm detected, Firecracker RuntimeClass enabled")
 	} else {
 		logrus.Info("sandbox-matrix: /dev/kvm not found, Firecracker RuntimeClass skipped")
 	}
+}
 
-	tlsMirrorState := "on"
-	if cfg.SkipTLSMirror {
-		tlsMirrorState = "off (--skip-sandbox-tls-mirror)"
+// onState renders the operator-facing "on"/"off (--skip-...)" string used in
+// the controller startup log line.
+func onState(enabled bool, flag string) string {
+	if !enabled {
+		return "off (" + flag + ")"
 	}
-	endpointSliceState := "on"
-	if cfg.SkipEndpointSliceController {
-		endpointSliceState = "off (--skip-sandbox-endpointslice-controller)"
-	}
-	nodeRuntimeLabelState := "on"
-	if cfg.SkipNodeRuntimeLabels {
-		nodeRuntimeLabelState = "off (--skip-node-runtime-labels)"
-	}
-	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s tls-mirror=%s endpointslice=%s node-runtime-labels=%s)",
-		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName, tlsMirrorState, endpointSliceState, nodeRuntimeLabelState)
-	return nil
+	return "on"
 }
 
 // startLeaderReconcilers launches every leader-gated reconciler loop. Extracted
