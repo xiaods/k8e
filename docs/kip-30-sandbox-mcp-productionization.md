@@ -288,9 +288,10 @@ reconciliation and session GC):
   template — so a node joining or leaving updates the slice in reconcile time,
   and there is no last-writer-wins drift because only the lease holder writes.
 - The staged `e2b-gateway.yaml` keeps the Service/Route objects but drops the
-  static single-address EndpointSlice; the controller adopts the object with a
-  `app.kubernetes.io/managed-by: k8e-sandboxmatrix` label and a dedicated field
-  manager, so a hand-edited slice is corrected, not silently overwritten.
+  static single-address EndpointSlice; the controller reconciles the object
+  keyed on the `app.kubernetes.io/managed-by: k8e-sandboxmatrix` label, using
+  optimistic-concurrency update (retry on conflict) rather than server-side
+  apply, so a hand-edited slice is corrected, not silently overwritten.
 - `K8E_SKIP_ENDPOINTSLICE_CONTROLLER` (default false) keeps an escape hatch for
   operators who manage the object externally (e.g. MetalLB-style VIP fronting).
 
@@ -304,11 +305,12 @@ prerequisites:
 
 - On each reconcile (and on cert-file change via the existing fsnotify-style
   deploy watcher event source, or a 10-minute sync): read the pair, check the
-  fingerprint against the Secret, server-side-apply with field manager
-  `k8e-sandbox-tls-mirror` and label
-  `app.kubernetes.io/managed-by: k8e-sandbox-tls-mirror`.
+  fingerprint against the Secret, and update with optimistic concurrency
+  (retry on conflict) when the Secret carries the
+  `app.kubernetes.io/managed-by: k8e-sandbox-tls-mirror` label (or is absent),
+  leaving hand-created Secrets untouched.
 - **Ownership is opt-in by absence:** the loop takes over only when the Secret
-  is missing **or** already carries our label/field manager. A hand-created
+  is missing **or** already carries our label. A hand-created
   `sandbox-e2b` (cert-manager `Certificate`, a purchased cert, an operator's
   file) is never touched — exactly the conflict semantics `hack/init-sandbox-mcp.sh`
   already practice. This is what the manual M0 verification exercised end to end.
