@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -394,10 +396,9 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool uns
 // pool's fast start.
 func createWarmPodWithWorkspace(ctx context.Context, k8s kubernetes.Interface, cfg config.SandboxConfig, runtimeClass string, idleTTLSeconds int64, affinity *corev1.NodeAffinity, nodeSelector map[string]string) error {
 	// The claim name is chosen up front (rather than GenerateName) so the pod
-	// can attach it at boot; client-go's fake ignores GenerateName, and the
-	// single leader-elected controller creates these sequentially, so a
-	// nanosecond suffix is unique in practice.
-	claimName := fmt.Sprintf("%s%d", sandboxgrpc.WarmWorkspacePVCPrefix, time.Now().UnixNano())
+	// can attach it at boot; client-go's fake ignores GenerateName. A UUID
+	// suffix avoids collisions from clock skew or concurrent reconcilers.
+	claimName := fmt.Sprintf("%s%s", sandboxgrpc.WarmWorkspacePVCPrefix, uuid.NewString()[:8])
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      claimName,
@@ -413,7 +414,7 @@ func createWarmPodWithWorkspace(ctx context.Context, k8s kubernetes.Interface, c
 	pod := newWarmPod(cfg, runtimeClass, idleTTLSeconds, created.Name, affinity, nodeSelector)
 	// Explicit name (not GenerateName) so the pair is addressable even on
 	// clients that ignore GenerateName; see the claim-name note above.
-	pod.Name = fmt.Sprintf("sandbox-warm-%d", time.Now().UnixNano())
+	pod.Name = fmt.Sprintf("sandbox-warm-%s", uuid.NewString()[:8])
 	if _, err := k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		// The pod never exists; the claim would dangle bound-less. Best-effort
 		// cleanup keeps the next reconcile pass honest.
