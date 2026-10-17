@@ -307,10 +307,13 @@ func podUnschedulable(pod *corev1.Pod) bool {
 
 func deleteWarmPod(ctx context.Context, k8s kubernetes.Interface, namespace string, pod *corev1.Pod) {
 	// The claim was provisioned at pod boot — a running pod's volumes cannot be
-	// swapped — and has no life apart from it: delete them as a pair.
+	// swapped — and has no life apart from it: delete them as a pair. Only
+	// retire the claim after the pod delete has been accepted, so a failed pod
+	// delete does not orphan a claim that the (still-live) pod still mounts.
 	claim := sandboxgrpc.WorkspacePVCOf(pod)
 	if err := k8s.CoreV1().Pods(namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 		logrus.Warnf("sandbox-matrix: recycle delete %s: %v", pod.Name, err)
+		return
 	}
 	if claim != "" {
 		if derr := k8s.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, claim, metav1.DeleteOptions{}); derr != nil && !apierrors.IsNotFound(derr) {
