@@ -27,6 +27,7 @@ package sandboxmatrix
 
 import (
 	"context"
+	"bytes"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -144,6 +145,13 @@ func reconcileTLSMirror(ctx context.Context, k8s kubernetes.Interface, namespace
 	}
 	if !mirrorOwns(secret) {
 		logrus.Debugf("sandbox-tls-mirror: %s is externally managed; leaving it untouched", e2bTLSSecretName)
+		return
+	}
+	// Short-circuit: if the Secret already carries the same cert/key pair, skip
+	// the write — the 10-minute safety-net sweep and fsnotify events otherwise
+	// rewrite an unchanged Secret on every tick.
+	if bytes.Equal(secret.Data[corev1.TLSCertKey], certPEM) &&
+		bytes.Equal(secret.Data[corev1.TLSPrivateKeyKey], keyPEM) {
 		return
 	}
 	updateMirroredSecret(ctx, k8s, secret, certPEM, keyPEM, leaf)
