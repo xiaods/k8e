@@ -156,6 +156,19 @@ func reconcileEndpointSlice(ctx context.Context, k8s kubernetes.Interface, cfg c
 	updateEndpointSlice(ctx, k8s, cfg, desired, current)
 }
 
+// endpointSliceAddressType picks IPv4 vs IPv6 based on the first address.
+// EndpointSlice requires a single AddressType for all endpoints, so a mixed
+// cluster falls back to IPv4 (the common case) and IPv6-only installs get an
+// IPv6 slice.
+func endpointSliceAddressType(addresses []string) discoveryv1.AddressType {
+	for _, a := range addresses {
+		if ip := net.ParseIP(a); ip != nil && ip.To4() == nil {
+			return discoveryv1.AddressTypeIPv6
+		}
+	}
+	return discoveryv1.AddressTypeIPv4
+}
+
 func desiredEndpointSlice(cfg config.SandboxConfig, addresses []string) *discoveryv1.EndpointSlice {
 	endpoints := make([]discoveryv1.Endpoint, 0, len(addresses))
 	for _, address := range addresses {
@@ -173,7 +186,7 @@ func desiredEndpointSlice(cfg config.SandboxConfig, addresses []string) *discove
 				"app.kubernetes.io/managed-by": "k8e-sandboxmatrix",
 			},
 		},
-		AddressType: discoveryv1.AddressTypeIPv4,
+		AddressType: endpointSliceAddressType(addresses),
 		Endpoints:   endpoints,
 		Ports: []discoveryv1.EndpointPort{{
 			Name:     ptrString(endpointSlicePortName),
