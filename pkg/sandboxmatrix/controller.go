@@ -40,24 +40,7 @@ var tlsDir = "/var/lib/k8e/server/tls"
 // Register starts the SandboxMatrix controller and gRPC gateway.
 func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, cfg config.SandboxConfig) error {
 	// Apply defaults
-	if cfg.DefaultRuntime == "" {
-		cfg.DefaultRuntime = "gvisor"
-	}
-	if cfg.DefaultImage == "" {
-		cfg.DefaultImage = "ghcr.io/xiaods/k8e-sandbox:latest"
-	}
-	if cfg.DefaultCPU == "" {
-		cfg.DefaultCPU = "500m"
-	}
-	if cfg.DefaultMemory == "" {
-		cfg.DefaultMemory = "512Mi"
-	}
-	if cfg.GRPCPort == 0 {
-		cfg.GRPCPort = 50051
-	}
-	if cfg.Namespace == "" {
-		cfg.Namespace = config.DefaultSandboxNamespace
-	}
+	applySandboxConfigDefaults(&cfg)
 
 	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
@@ -73,12 +56,7 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 	// claim, instead of waiting up to 10s for the next poll tick.
 	refillTrigger := make(chan struct{}, 1)
 	orch := sandboxgrpc.NewOrchestrator(k8s, dyn, cfg.Namespace)
-	orch.OnWarmClaim = func() {
-		select {
-		case refillTrigger <- struct{}{}:
-		default: // already a refill pending
-		}
-	}
+	orch.OnWarmClaim = makeWarmPoolRefillTrigger(refillTrigger)
 
 	// The gRPC gateway is stateless and multi-node-safe: start it on every
 	// server. The reconcilers (warm pool, idle reaper, resetting detector,
@@ -113,45 +91,99 @@ func Register(ctx context.Context, k8s kubernetes.Interface, kubeconfig string, 
 
 	caps := &capacityCache{}
 	go runLeaderGated(ctx, k8s, cfg, func(leaderCtx context.Context) {
-		// Each reconciler is a blocking loop; start them concurrently so a
-		// leader runs all of them. The TLS mirror loop (KIP-30 M3.2) is the
-		// opt-out one: operators who manage the sandbox-e2b Secret
-		// externally (cert-manager, purchased cert) disable it.
-		go runWarmPoolReconciler(leaderCtx, k8s, dyn, cfg, refillTrigger, orch, caps)
-		go runResettingDetector(leaderCtx, k8s, cfg.Namespace)
-		go runIdlePodReaper(leaderCtx, k8s, dyn, cfg)
-		go runGCLoop(leaderCtx, orch, cfg.Namespace)
-		if !cfg.SkipTLSMirror {
-			go runTLSMirrorLoop(leaderCtx, k8s, cfg.Namespace)
-		}
-		// KIP-30 M3.1: the leader owns the gateway EndpointSlice, so HA
-		// membership is reconciled from live cluster state instead of the
-		// staged single-address template.
-		if !cfg.SkipEndpointSliceController {
-			go runEndpointSliceLoop(leaderCtx, k8s, cfg)
-		}
-		// KIP-30 M3.3: mirror sandbox.k8e.io/runtime-classes node annotations
-		// to labels so warm-pod nodeAffinity can match them.
-		go runNodeRuntimeLabelLoop(leaderCtx, k8s)
+		startLeaderReconcilers(leaderCtx, k8s, dyn, cfg, refillTrigger, orch, caps)
 	})
 
+	logFirecrackerRuntimeSupport()
+
+	tlsMirrorState := onState(!cfg.SkipTLSMirror, "--skip-sandbox-tls-mirror")
+	endpointSliceState := onState(!cfg.SkipEndpointSliceController, "--skip-sandbox-endpointslice-controller")
+	nodeRuntimeLabelState := onState(!cfg.SkipNodeRuntimeLabels, "--skip-node-runtime-labels")
+	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s tls-mirror=%s endpointslice=%s node-runtime-labels=%s)",
+		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName, tlsMirrorState, endpointSliceState, nodeRuntimeLabelState)
+	return nil
+}
+
+// applySandboxConfigDefaults fills in cfg fields left unspecified by the caller
+// / environment, so Register does not need one branch per field (SonarCloud
+// GO-R1005).
+func applySandboxConfigDefaults(cfg *config.SandboxConfig) {
+	if cfg.DefaultRuntime == "" {
+		cfg.DefaultRuntime = "gvisor"
+	}
+	if cfg.DefaultImage == "" {
+		cfg.DefaultImage = "ghcr.io/xiaods/k8e-sandbox:latest"
+	}
+	if cfg.DefaultCPU == "" {
+		cfg.DefaultCPU = "500m"
+	}
+	if cfg.DefaultMemory == "" {
+		cfg.DefaultMemory = "512Mi"
+	}
+	if cfg.GRPCPort == 0 {
+		cfg.GRPCPort = 50051
+	}
+	if cfg.Namespace == "" {
+		cfg.Namespace = config.DefaultSandboxNamespace
+	}
+}
+
+// makeWarmPoolRefillTrigger wraps refillTrigger (a size-1 buffered channel) in a
+// non-blocking send so a second warm claim does not block the gRPC thread while
+// one refill is already pending.
+func makeWarmPoolRefillTrigger(refillTrigger chan<- struct{}) func() {
+	return func() {
+		select {
+		case refillTrigger <- struct{}{}:
+		default: // already a refill pending
+		}
+	}
+}
+
+// logFirecrackerRuntimeSupport reports whether the host supports the Firecracker
+// RuntimeClass so operators see the capability at startup.
+func logFirecrackerRuntimeSupport() {
 	if _, err := os.Stat("/dev/kvm"); err == nil {
 		logrus.Info("sandbox-matrix: /dev/kvm detected, Firecracker RuntimeClass enabled")
 	} else {
 		logrus.Info("sandbox-matrix: /dev/kvm not found, Firecracker RuntimeClass skipped")
 	}
+}
 
-	tlsMirrorState := "on"
-	if cfg.SkipTLSMirror {
-		tlsMirrorState = "off (--skip-sandbox-tls-mirror)"
+// onState renders the operator-facing "on"/"off (--skip-...)" string used in
+// the controller startup log line.
+func onState(enabled bool, flag string) string {
+	if !enabled {
+		return "off (" + flag + ")"
 	}
-	endpointSliceState := "on"
-	if cfg.SkipEndpointSliceController {
-		endpointSliceState = "off (--skip-sandbox-endpointslice-controller)"
+	return "on"
+}
+
+// startLeaderReconcilers launches every leader-gated reconciler loop. Extracted
+// from Register to keep its cyclomatic complexity low (SonarCloud GO-R1005).
+func startLeaderReconcilers(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig, refillTrigger <-chan struct{}, orch *sandboxgrpc.Orchestrator, caps *capacityCache) {
+	// Each reconciler is a blocking loop; start them concurrently so a
+	// leader runs all of them. The TLS mirror loop (KIP-30 M3.2) is the
+	// opt-out one: operators who manage the sandbox-e2b Secret externally
+	// (cert-manager, purchased cert) disable it.
+	go runWarmPoolReconciler(ctx, k8s, dyn, cfg, refillTrigger, orch, caps)
+	go runResettingDetector(ctx, k8s, cfg.Namespace)
+	go runIdlePodReaper(ctx, k8s, dyn, cfg)
+	go runGCLoop(ctx, orch, cfg.Namespace)
+	if !cfg.SkipTLSMirror {
+		go runTLSMirrorLoop(ctx, k8s, cfg.Namespace)
 	}
-	logrus.Infof("sandbox-matrix: controller started (runtime=%s namespace=%s grpc-port=%d leader-election=%s tls-mirror=%s endpointslice=%s)",
-		cfg.DefaultRuntime, cfg.Namespace, cfg.GRPCPort, leaderElectionLeaseName, tlsMirrorState, endpointSliceState)
-	return nil
+	// KIP-30 M3.1: the leader owns the gateway EndpointSlice, so HA
+	// membership is reconciled from live cluster state instead of the
+	// staged single-address template.
+	if !cfg.SkipEndpointSliceController {
+		go runEndpointSliceLoop(ctx, k8s, cfg)
+	}
+	// KIP-30 M3.3: mirror sandbox.k8e.io/runtime-classes node annotations
+	// to labels so warm-pod nodeAffinity can match them.
+	if !cfg.SkipNodeRuntimeLabels {
+		go runNodeRuntimeLabelLoop(ctx, k8s)
+	}
 }
 
 func runWarmPoolReconciler(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, cfg config.SandboxConfig, refill <-chan struct{}, orch *sandboxgrpc.Orchestrator, caps *capacityCache) {
