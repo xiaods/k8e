@@ -415,7 +415,8 @@ func createWarmPodWithWorkspace(ctx context.Context, k8s kubernetes.Interface, c
 	// Explicit name (not GenerateName) so the pair is addressable even on
 	// clients that ignore GenerateName; see the claim-name note above.
 	pod.Name = fmt.Sprintf("sandbox-warm-%s", uuid.NewString()[:8])
-	if _, err := k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+	createdPod, err := k8s.CoreV1().Pods(cfg.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
 		// The pod never exists; the claim would dangle bound-less. Best-effort
 		// cleanup keeps the next reconcile pass honest.
 		if delErr := k8s.CoreV1().PersistentVolumeClaims(cfg.Namespace).Delete(ctx, created.Name, metav1.DeleteOptions{}); delErr != nil {
@@ -423,8 +424,28 @@ func createWarmPodWithWorkspace(ctx context.Context, k8s kubernetes.Interface, c
 		}
 		return err
 	}
+	// Set the pod as owner of the PVC so the apiserver garbage-collects the
+	// claim if the pod is deleted out-of-band (e.g. kubectl delete pod),
+	// preventing orphaned PVCs. Best-effort: a failure leaves the existing
+	// code-path (deleteWarmPod) as the cleanup mechanism.
+	ownerRef := metav1.OwnerReference{
+		APIVersion: "v1",
+		Kind:       "Pod",
+		Name:       createdPod.Name,
+		UID:        createdPod.UID,
+		Controller: boolPtr(true),
+	}
+	pvcToUpdate, gerr := k8s.CoreV1().PersistentVolumeClaims(cfg.Namespace).Get(ctx, created.Name, metav1.GetOptions{})
+	if gerr == nil {
+		pvcToUpdate.OwnerReferences = []metav1.OwnerReference{ownerRef}
+		if _, uerr := k8s.CoreV1().PersistentVolumeClaims(cfg.Namespace).Update(ctx, pvcToUpdate, metav1.UpdateOptions{}); uerr != nil {
+			logrus.Debugf("sandbox-matrix: set ownerReference on PVC %s: %v", created.Name, uerr)
+		}
+	}
 	return nil
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 // trimWarmPods deletes up to count surplus warm pods, least valuable first:
 // pods the scheduler could not place or that never became ready, then the pod
