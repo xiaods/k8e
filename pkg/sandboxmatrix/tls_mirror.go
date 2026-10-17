@@ -26,8 +26,9 @@
 package sandboxmatrix
 
 import (
-	"context"
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -153,6 +154,24 @@ func reconcileTLSMirror(ctx context.Context, k8s kubernetes.Interface, namespace
 	if bytes.Equal(secret.Data[corev1.TLSCertKey], certPEM) &&
 		bytes.Equal(secret.Data[corev1.TLSPrivateKeyKey], keyPEM) {
 		return
+	}
+
+	// Fingerprint check: if the Secret carries our label but its cert no longer
+	// matches what we would write AND the on-disk cert has not changed since the
+	// Secret was written, treat it as tampering and leave it untouched. A
+	// legitimate rotation (on-disk cert changed) is allowed through.
+	// We detect rotation by comparing the leaf's NotAfter against the Secret's
+	// expiry annotation; a mismatch means the on-disk cert rotated.
+	secretExpiry := secret.Annotations["k8e.sh/tls-mirror-expires"]
+	currentExpiry := leaf.NotAfter.UTC().Format(time.RFC3339)
+	if len(secret.Data[corev1.TLSCertKey]) > 0 && secretExpiry == currentExpiry {
+		got := sha256.Sum256(secret.Data[corev1.TLSCertKey])
+		want := sha256.Sum256(certPEM)
+		if got != want {
+			logrus.Warnf("sandbox-tls-mirror: %s cert fingerprint mismatch (got %x, want %x); leaving untouched",
+				e2bTLSSecretName, got[:8], want[:8])
+			return
+		}
 	}
 	updateMirroredSecret(ctx, k8s, secret, certPEM, keyPEM, leaf)
 }
