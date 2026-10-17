@@ -302,6 +302,11 @@ type SandboxConfig struct {
 	// (cert-manager, purchased cert, operator file) is never touched. Set to
 	// true for operators who manage that Secret externally.
 	SkipTLSMirror bool
+	// SkipNodeRuntimeLabels disables the leader-gated mirror of the
+	// sandbox.k8e.io/runtime-classes node annotation to the
+	// sandbox.k8e.io/runtime-class-<class> node labels (KIP-30 M3.3). Set
+	// true when node labels are managed externally.
+	SkipNodeRuntimeLabels bool
 }
 
 type Control struct {

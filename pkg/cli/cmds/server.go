@@ -130,6 +130,7 @@ type Server struct {
 	SandboxExposeBaseURL     string
 	SkipTLSMirror            bool
 	SkipEndpointSlice        bool
+	SkipNodeRuntimeLabels    bool
 }
 
 var (
@@ -639,6 +640,12 @@ var ServerFlags = []cli.Flag{
 		Usage:       "(sandbox) Disable the leader-gated mirror of the sandbox server cert pair into the sandbox-e2b Secret (KIP-30 M3.2). The loop only takes over when the Secret is absent or already carries its label/field manager — set this when you manage that Secret externally (cert-manager, purchased cert, operator file). K8E_SKIP_SANDBOX_TLS_MIRROR",
 		Destination: &ServerConfig.SkipTLSMirror,
 		EnvVar:      "K8E_SKIP_SANDBOX_TLS_MIRROR",
+	},
+	&cli.BoolFlag{
+		Name:        "skip-node-runtime-labels",
+		Usage:       "(sandbox) Disable the leader-gated mirror of the sandbox.k8e.io/runtime-classes node annotation to sandbox.k8e.io/runtime-class-<class> node labels (KIP-30 M3.3). Set this when node labels are managed externally. K8E_SKIP_NODE_RUNTIME_LABELS",
+		Destination: &ServerConfig.SkipNodeRuntimeLabels,
+		EnvVar:      "K8E_SKIP_NODE_RUNTIME_LABELS",
 	},
 	&cli.StringFlag{
 		Name:        "sandbox-expose-base-url",
