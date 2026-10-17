@@ -1146,6 +1146,13 @@ func (o *Orchestrator) PauseSession(ctx context.Context, sessionID string) error
 		if p, gerr := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, name, metav1.GetOptions{}); gerr == nil {
 			pod = p
 		}
+	} else if session.Status.PodName != "" {
+		// label selector failed (apiserver hiccup, missing label): fall back to
+		// the pod name recorded on the session, mirroring DestroySession, so an
+		// active session's pod is not silently left running as an orphan.
+		if p, gerr := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, session.Status.PodName, metav1.GetOptions{}); gerr == nil {
+			pod = p
+		}
 	}
 	if session.Status.WorkspacePVC == "" && pod != nil {
 		session.Status.WorkspacePVC = workspacePVCOf(pod)
@@ -1153,6 +1160,14 @@ func (o *Orchestrator) PauseSession(ctx context.Context, sessionID string) error
 	if session.Status.WorkspacePVC == "" {
 		return status.Errorf(codes.FailedPrecondition,
 			"session %s has an EmptyDir workspace (legacy pod); pause requires a PVC-backed session", sessionID)
+	}
+	// An active session with no discoverable pod is an inconsistent state:
+	// marking it Paused would orphan the (possibly still running) pod. Refuse
+	// instead of silently succeeding, so callers (auto-pause, HTTP handler)
+	// can retry or destroy.
+	if pod == nil && session.Status.PodName != "" {
+		return status.Errorf(codes.Internal,
+			"pause: pod %s not found for active session %s", session.Status.PodName, sessionID)
 	}
 
 	// Delete the pod (CPU/memory released); the PVC and CRD survive.
