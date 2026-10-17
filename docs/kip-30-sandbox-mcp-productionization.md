@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-10-15 | Proposed — M0 (default-skip + manual TLS path) and M1 (published image + HTTP fallback + tolerations) implemented and verified on a live single-node cluster; M2–M3 open |
+| @xiaods | 2026-10-17 | Implemented — M0 (default-skip + manual TLS), M1 (published image + HTTP fallback + tolerations), M2 (self-bootstrap + tenant-scoped sessions), M3.1 (leader-gated EndpointSlice), M3.2 (TLS mirror), M3.3 (warm-pool node/runtime awareness), M3.4 (CLI config block + tls export-ca) |
 
 **Relates to**: [KIP-8](kip-8-skill-cli-replace-mcp.md) (MCP over API key — this
 KIP makes its Deployment actually runnable), [KIP-21](kip-21-host-advertise-ip-resolution.md)

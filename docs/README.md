@@ -45,7 +45,7 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 | [KIP-14](kip-14-mtls-dynamic-cert-issuance.md) | mTLS dynamic client certs (Login RPC) | Implemented |
 | [KIP-17](kip-17-sandbox-cli-profiles-and-apikey-ttl.md) | CLI multi-profile + API key TTL | Implemented |
 | [KIP-28](kip-28-sandbox-gateway-trust-bootstrap.md) | Trust anchor bootstrap for the remote gRPC gateway | Proposed — M1 client trust chain + `--reset-trust`; M2 `/.well-known` CA distribution; M3 publicly-trusted gateway cert |
-| [KIP-30](kip-30-sandbox-mcp-productionization.md) | Sandbox MCP productionization — healthy default install, multi-node readiness, IP-only TLS | Proposed — M0 (default-skip + manual TLS) implemented and verified on a live cluster; M1–M3 open |
+| [KIP-30](kip-30-sandbox-mcp-productionization.md) | Sandbox MCP productionization — healthy default install, multi-node readiness, IP-only TLS | Implemented — M0–M3.4 (default-skip, published image + HTTP fallback + tolerations, self-bootstrap + tenant sessions, leader-gated EndpointSlice, TLS mirror, warm-pool node/runtime awareness, CLI config block + tls export-ca) |
 
 ### Completeness / architecture reviews
 
