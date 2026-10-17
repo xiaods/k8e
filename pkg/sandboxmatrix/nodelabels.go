@@ -39,6 +39,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 )
 
 const (
@@ -166,7 +167,16 @@ func syncNodeRuntimeLabels(ctx context.Context, k8s kubernetes.Interface, node *
 	}
 	updated := node.DeepCopy()
 	updated.Labels = labels
-	if _, err := k8s.CoreV1().Nodes().Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest, gerr := k8s.CoreV1().Nodes().Get(ctx, node.Name, metav1.GetOptions{})
+		if gerr != nil {
+			return gerr
+		}
+		latest.Labels = labels
+		_, uerr := k8s.CoreV1().Nodes().Update(ctx, latest, metav1.UpdateOptions{})
+		return uerr
+	})
+	if err != nil {
 		logrus.Warnf("sandbox-nodelabels: update %s: %v", node.Name, err)
 	}
 }
