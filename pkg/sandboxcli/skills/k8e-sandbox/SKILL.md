@@ -197,6 +197,14 @@ k8e-sandbox-cli --profile prod run 'echo hi'
 
 Priority: flags → env → profile → last-connect fallback (`~/.k8e/sandbox/config.json`) → defaults. Flag/env pairs: `--endpoint`/`K8E_SANDBOX_ENDPOINT`, `--apikey`/`K8E_SANDBOX_APIKEY`, `--profile`/`K8E_SANDBOX_PROFILE`. The cert dir has **no flag**: `K8E_SANDBOX_CERT_DIR` → profile `cert_dir` → `~/.k8e/sandbox`. Other env: `K8E_SANDBOX_SESSION_ID`, `K8E_SANDBOX_TENANT`, `K8E_SANDBOX_DEVICE_NAME`, `K8E_SANDBOX_CONFIG` (profile file path).
 
+**IP-only gateways (KIP-30).** When the gateway is reached by IP rather than
+DNS, clients (curl, e2b SDK, MCP) must trust the sandbox CA explicitly. Fetch it
+with `k8e-sandbox-cli tls export-ca` (`--output -` for stdout) and point callers
+at it via `NODE_EXTRA_CA_CERTS`, `--cacert`, or a system store. The CA is also
+served as a ConfigMap (`sandbox-ca` in the `sandbox-matrix` namespace) for
+off-server clients. Combined with KIP-28's `/.well-known` distribution this
+covers IP-only installs.
+
 ## Procedure (always)
 
 ### 1. Pre-flight
@@ -250,7 +258,7 @@ k8e-sandbox-cli run "python3 -m http.server 8080 --bind 127.0.0.1" --background
 k8e-sandbox-cli expose 8080     # -> {"url":"http://<gateway>/k8e/expose/<sid>/8080/",...}
 ```
 
-Useful commands: `run`, `write`, `read`, `list`, `push`, `pull`, `create`, `get`, `sessions`, `destroy`, `status`, `log`, `events`, `ps`, `poll`, `subagent`, `confirm`, `approve`, `snapshot`, `benchmark`, `catalog`, `expose`, `unexpose`, `exposed`, `allow-hosts`, `doctor`, `login`, `mcp-serve`.
+Useful commands: `run`, `write`, `read`, `list`, `push`, `pull`, `create`, `get`, `sessions`, `destroy`, `status`, `log`, `events`, `ps`, `poll`, `subagent`, `confirm`, `approve`, `snapshot`, `benchmark`, `catalog`, `expose`, `unexpose`, `exposed`, `allow-hosts`, `doctor`, `login`, `tls`, `mcp-serve`.
 
 ### 4. Report
 
@@ -288,7 +296,7 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey <64-hex key> --ca-
 | `k8e-sandbox-cli mcp-serve` | Serve the sandbox MCP endpoint for MCP-capable agents (`--listen`, `--gateway`, TLS + API-key flags) |
 | `k8e-sandbox-cli status` | Gateway + session probe |
 | `k8e-sandbox-cli run <code>` | Exec in sandbox (`--lang`, `--timeout` seconds — default 30, `--raw`, `--session-id`, `--tenant`, `--background`, `--manifest`, `--git-repo`/`--git-ref`/`--git-path`, `--allowed-hosts`) |
-| `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`, `--manifest`, `--git-repo`) |
+| `k8e-sandbox-cli create` | Manual session (`--runtime`, `--env`, `--secret`, `--allowed-hosts`, `--manifest`, `--git-repo`/`--git-ref`/`--git-path`) |
 | `k8e-sandbox-cli get <sid>` | Session introspection (phase, runtime, env keys) |
 | `k8e-sandbox-cli sessions` | List sessions |
 | `k8e-sandbox-cli write/read/list` | Workspace files (`write --mode`, `read --raw`); `list --since <unix-ts>` returns only files modified after that timestamp |
@@ -310,6 +318,7 @@ k8e-sandbox-cli connect --endpoint <server-ip>:50051 --apikey <64-hex key> --ca-
 | `k8e-sandbox-cli exposed` | List live exposures for the session (`--session-id`) |
 | `k8e-sandbox-cli allow-hosts <hosts...>` | Freely set the session egress allowlist, live (`--hosts` replace, `--add`, `--remove`, `--clear`; `--session-id`) |
 | `k8e-sandbox-cli benchmark` | Warm-pool latency metrics (`--pool-size`, `--iterations`) |
+| `k8e-sandbox-cli tls export-ca` | Write the sandbox gateway CA to `~/.k8e/sandbox-ca.crt` (or `--output` / `-` for stdout) so IP-only gateways / MCP / e2b clients can trust it |
 | `k8e-sandbox-cli catalog` | Emit machine-readable command surface (SDK generation) |
 | `k8e-sandbox-cli destroy <sid>` | Tear down session |
 
