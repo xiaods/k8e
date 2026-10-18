@@ -16,7 +16,7 @@ binary under 100MB. Kubernetes is the substrate; the product on top of it is a
   `firecracker`
 - a gRPC `SandboxService` (34 RPCs) behind `sandbox-grpc-gateway:50051` with
   mTLS
-- `k8e-sandbox-cli` — the CLI an agent drives from a shell (24 subcommands)
+- `k8e-sandbox-cli` — the CLI an agent drives from a shell (30 top-level commands)
 - an E2B-compatible HTTP surface, an MCP adapter, and skills/plugins for Claude
   Code, Codex, Pi and DeepSeek Harness (dsh)
 
@@ -44,7 +44,7 @@ The build is a **Zig build graph** (`build.zig`) driving Go compilation;
 │   ├── sandboxmatrix/       # the core: warm-pool + session reconciliation,
 │   │                        #   leader.go (Lease), ratelimit/, api/v1alpha1 CRDs,
 │   │                        #   grpc/ (SandboxService impl + orchestrator + pb/)
-│   ├── sandboxcli/          # the 24 subcommands + skills/k8e-sandbox/SKILL.md
+│   ├── sandboxcli/          # the 30 top-level commands + skills/k8e-sandbox/SKILL.md
 │   ├── sandbox/             # client/ (gRPC + TLS discovery), apikey/, e2b/
 │   ├── sandboxmcp/          # MCP HTTP adapter (`mcp-serve`)
 │   ├── sandboxlayer/        # CAS snapshot layerstore
