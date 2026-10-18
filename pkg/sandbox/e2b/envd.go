@@ -302,33 +302,39 @@ func (s *Server) runProcessStream(r *http.Request, sandboxID string, rec *Proces
 	go func() {
 		defer close(done)
 		pidSeen := false
+		handleFrame := func(out []byte) {
+			if len(out) == 0 {
+				return
+			}
+			// The first frame carries the in-sandbox pid
+			// ({"pid":N}) so /exec/stdin and /exec/signal can address
+			// the real process; the closing {"exit":N} frame carries
+			// the exit code. Everything else is output.
+			if !pidSeen {
+				if pid := parsePidFrame(out); pid != nil {
+					s.processes.SetGuestPID(rec.PID, *pid)
+					pidSeen = true
+					return
+				}
+				pidSeen = true
+			}
+			if code := parseExitFrame(out); code != nil {
+				exitCh <- *code
+				return
+			}
+			s.processes.Broadcast(rec.PID, ChannelStdout, out)
+		}
 		for {
 			chunk, recvErr := stream.Recv()
 			if recvErr != nil {
 				break
 			}
-			if out := framer.push(chunk.Chunk); len(out) > 0 {
-				// The first frame carries the in-sandbox pid
-				// ({"pid":N}) so /exec/stdin and /exec/signal can address
-				// the real process; the closing {"exit":N} frame carries
-				// the exit code. Everything else is output.
-				if !pidSeen {
-					if pid := parsePidFrame(out); pid != nil {
-						s.processes.SetGuestPID(rec.PID, *pid)
-						pidSeen = true
-						continue
-					}
-					pidSeen = true
-				}
-				if code := parseExitFrame(out); code != nil {
-					exitCh <- *code
-					continue
-				}
-				s.processes.Broadcast(rec.PID, ChannelStdout, out)
+			for _, frame := range framer.pushFrames(chunk.Chunk) {
+				handleFrame(frame)
 			}
 		}
 		if out := framer.drain(); len(out) > 0 {
-			s.processes.Broadcast(rec.PID, ChannelStdout, out)
+			handleFrame(out)
 		}
 	}()
 	<-done
@@ -800,7 +806,7 @@ func statEntryToInfo(e *statEntry, fallbackPath string) map[string]any {
 		"mode":         e.Mode,
 		"owner":        strconv.Itoa(e.UID),
 		"group":        strconv.Itoa(e.GID),
-		"modifiedTime": strconv.FormatInt(e.Mtime, 10),
+		"modifiedTime": time.Unix(e.Mtime, 0).UTC().Format(time.RFC3339),
 		"name":         baseName(e.Name),
 	}
 	switch e.Type {

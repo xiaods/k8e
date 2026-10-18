@@ -273,8 +273,20 @@ type sseFramer struct {
 }
 
 func (f *sseFramer) push(chunk string) []byte {
-	f.buf = append(f.buf, chunk...)
+	frames := f.pushFrames(chunk)
 	var out []byte
+	for _, frame := range frames {
+		out = append(out, frame...)
+	}
+	return out
+}
+
+// pushFrames appends a chunk and returns each complete SSE frame payload as a
+// separate byte slice (preserving frame boundaries). A partial trailing frame
+// stays in the buffer for the next call or drain.
+func (f *sseFramer) pushFrames(chunk string) [][]byte {
+	f.buf = append(f.buf, chunk...)
+	var frames [][]byte
 	for {
 		idx := indexOf(f.buf, "\n\n")
 		if idx < 0 {
@@ -282,9 +294,11 @@ func (f *sseFramer) push(chunk string) []byte {
 		}
 		line := f.buf[:idx]
 		f.buf = f.buf[idx+2:]
-		out = append(out, stripDataPrefix(line)...)
+		payload := stripDataPrefix(line)
+		cp := append([]byte(nil), payload...)
+		frames = append(frames, cp)
 	}
-	return out
+	return frames
 }
 
 func (f *sseFramer) drain() []byte {
