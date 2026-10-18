@@ -118,6 +118,17 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
         }
     }
 
+    // Parent: reap the wrapper once it exits so it does not linger as a zombie.
+    // main.setupSignals no longer auto-reaps (a real SIGCHLD handler is what
+    // keeps exec exit codes observable), so this site now drains its child
+    // itself. The wait status is deliberately discarded: completion is
+    // communicated through the exit_code file the BG_WRAPPER EXIT trap writes,
+    // which handleBgPoll reads. Only the zombie matters here.
+    {
+        const reaper = std.Thread.spawn(.{}, reapBackground, .{@as(i32, @intCast(pid))}) catch null;
+        if (reaper) |t| t.detach();
+    }
+
     var resp_buf: [256]u8 = undefined;
     const resp = try std.fmt.bufPrint(&resp_buf, "{{\"status\":\"started\",\"run_id\":\"{s}\"}}", .{req.run_id});
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
@@ -255,6 +266,20 @@ fn unixSeconds() i64 {
 // run's entire process group (the child called setpgid, so pgid == pid), so a
 // service started by the wrapper dies with it instead of surviving the kill as
 // an orphan holding its port.
+/// reapBackground blocks until the background wrapper exits and collects
+/// its status. Runs detached; exists purely to keep the pid from becoming a
+/// zombie now that SIGCHLD no longer auto-reaps.
+fn reapBackground(pid: i32) void {
+    var status: u32 = 0;
+    _ = std.os.linux.syscall4(
+        .wait4,
+        @as(usize, @bitCast(@as(isize, @intCast(pid)))),
+        @intFromPtr(&status),
+        0,
+        0,
+    );
+}
+
 fn spawnTimeoutKiller(pid: i32, timeout_sec: u32, run_dir: [:0]u8, allocator: std.mem.Allocator) void {
     defer allocator.free(run_dir);
     const ts = std.os.linux.timespec{ .sec = @as(isize, @intCast(timeout_sec)), .nsec = 0 };

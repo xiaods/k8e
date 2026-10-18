@@ -254,11 +254,28 @@ pub fn writeResponse(client_fd: i32, status: []const u8, content_type: []const u
 }
 
 fn setupSignals() void {
-    // Ignore SIGCHLD to auto-reap zombies as PID 1
+    // Install a REAL (non-SIG_IGN) SIGCHLD handler rather than SIG_IGN +
+    // SA_NOCLDWAIT. Both SIG_IGN and SA_NOCLDWAIT make the kernel auto-reap
+    // children, which means wait4 on any child returns -ECHILD and leaves the
+    // status word untouched — every exec's exit code silently collapsed to the
+    // caller's fallback (-1 on the streaming path, 0 on the buffered one).
+    //
+    // A real handler keeps children waitable, so the exit-code paths in
+    // exec.zig / pty.zig / venv.zig recover the real status. Zombie reaping is
+    // then each fork site's responsibility: exec, pty and venv already wait,
+    // and background.zig now drains its own child (see reapBackground).
+    //
+    // SA_RESTART keeps the daemon's blocking syscalls (accept, read) from
+    // failing with EINTR every time a command finishes.
     const sa = std.os.linux.Sigaction{
-        .handler = .{ .handler = std.os.linux.SIG.IGN },
+        .handler = .{ .handler = sigchldNoop },
         .mask = std.mem.zeroes(std.os.linux.sigset_t),
-        .flags = std.os.linux.SA.NOCLDWAIT,
+        .flags = std.os.linux.SA.RESTART,
     };
     _ = std.os.linux.sigaction(std.os.linux.SIG.CHLD, &sa, null);
 }
+
+/// sigchldNoop receives SIGCHLD so the kernel leaves the child's wait status
+/// for its parent to collect. It does no work: reaping happens at each fork
+/// site's explicit wait, which is what lets the exit code survive.
+fn sigchldNoop(_: std.os.linux.SIG) callconv(.c) void {}
