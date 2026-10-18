@@ -40,5 +40,5 @@ const k8eFigletStr = `
 | $$ \  $$|  $$$$$$/|  $$$$$$$
 |__/  \__/ \______/  \_______/
                               
-Get Kubernetes cluster the easy way.
+K8E - Isolated sandboxes for untrusted agent code, sandbox-ready Kubernetes.
 `
