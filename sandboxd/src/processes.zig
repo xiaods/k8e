@@ -68,7 +68,7 @@ pub fn handleProcesses(allocator: std.mem.Allocator, client_fd: i32, query: []co
 /// (DebugAllocator aborts on cross-allocator frees; /processes crashed).
 fn readComm(allocator: std.mem.Allocator, pid: []const u8) ?[]u8 {
     var path_buf: [64]u8 = undefined;
-    const path = std.fmt.bufPrintSentinel(&path_buf, "/proc/{s}/comm", .{pid}) catch return null;
+    const path =  std.fmt.bufPrintSentinel(&path_buf, "/proc/{s}/comm", .{pid}, 0) catch return null;
 
     const fd_raw = std.os.linux.open(path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
     const fd: isize = @bitCast(fd_raw);
@@ -88,7 +88,7 @@ fn readComm(allocator: std.mem.Allocator, pid: []const u8) ?[]u8 {
 /// readState returns the first char of /proc/<pid>/stat state field ("R"/"S"/...).
 fn readState(pid: []const u8) ?u8 {
     var path_buf: [64]u8 = undefined;
-    const path = std.fmt.bufPrintSentinel(&path_buf, "/proc/{s}/stat", .{pid}) catch return null;
+    const path =  std.fmt.bufPrintSentinel(&path_buf, "/proc/{s}/stat", .{pid}, 0) catch return null;
 
     const fd_raw = std.os.linux.open(path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
     const fd: isize = @bitCast(fd_raw);

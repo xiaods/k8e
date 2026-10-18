@@ -37,14 +37,14 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
 
     // Ensure background directories exist (paths must be null-terminated for syscalls).
     var run_dir_buf: [512]u8 = undefined;
-    const run_dir = try std.fmt.bufPrintSentinel(&run_dir_buf, "{s}/{s}", .{ BG_DIR, req.run_id });
+    const run_dir = try  std.fmt.bufPrintSentinel(&run_dir_buf, "{s}/{s}", .{ BG_DIR, req.run_id }, 0);
     _ = std.os.linux.mkdir(@ptrCast(BG_DIR.ptr), 0o755);
     _ = std.os.linux.mkdir(run_dir.ptr, 0o755);
 
     // Record the real start time (unix seconds).
     {
         var started_path: [600]u8 = undefined;
-        const sp = std.fmt.bufPrintSentinel(&started_path, "{s}/started_at", .{run_dir}) catch unreachable;
+        const sp =  std.fmt.bufPrintSentinel(&started_path, "{s}/started_at", .{run_dir}, 0) catch unreachable;
         const fd = std.os.linux.open(sp.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
         if (fd >= 0) {
             var ts_buf: [24]u8 = undefined;
@@ -76,9 +76,9 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
 
         // Child: redirect stdout/stderr to files, then exec the wrapper.
         var stdout_path: [600]u8 = undefined;
-        const sp = std.fmt.bufPrintSentinel(&stdout_path, "{s}/stdout", .{run_dir}) catch std.os.linux.exit(1);
+        const sp =  std.fmt.bufPrintSentinel(&stdout_path, "{s}/stdout", .{run_dir}, 0) catch std.os.linux.exit(1);
         var stderr_path: [600]u8 = undefined;
-        const ep = std.fmt.bufPrintSentinel(&stderr_path, "{s}/stderr", .{run_dir}) catch std.os.linux.exit(1);
+        const ep =  std.fmt.bufPrintSentinel(&stderr_path, "{s}/stderr", .{run_dir}, 0) catch std.os.linux.exit(1);
 
         const stdout_fd = std.os.linux.open(sp.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
         const stderr_fd = std.os.linux.open(ep.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
@@ -88,12 +88,12 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
         _ = std.os.linux.close(@intCast(stderr_fd));
 
         var cwd_buf: [4096]u8 = undefined;
-        const cwd_z = std.fmt.bufPrintSentinel(&cwd_buf, "{s}", .{req.workdir}) catch "/workspace";
+        const cwd_z =  std.fmt.bufPrintSentinel(&cwd_buf, "{s}", .{req.workdir}, 0) catch "/workspace";
         _ = std.os.linux.chdir(cwd_z);
 
         // Record the pid so poll can report "running" before completion.
         var pid_path: [600]u8 = undefined;
-        const pp = std.fmt.bufPrintSentinel(&pid_path, "{s}/pid", .{run_dir}) catch std.os.linux.exit(1);
+        const pp =  std.fmt.bufPrintSentinel(&pid_path, "{s}/pid", .{run_dir}, 0) catch std.os.linux.exit(1);
         const pid_fd = std.os.linux.open(pp.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
         if (pid_fd >= 0) {
             var pb: [16]u8 = undefined;
@@ -108,7 +108,7 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
 
     // Parent: arm a timeout killer if requested.
     if (req.timeout > 0) {
-        const run_dir_owned = allocator.dupeZ(u8, run_dir) catch null;
+        const run_dir_owned = std.fmt.allocPrintSentinel(allocator, "{s}", .{run_dir}, 0) catch null;
         if (run_dir_owned) |owned| {
             const watcher = std.Thread.spawn(.{}, spawnTimeoutKiller, .{ @as(i32, @intCast(pid)), req.timeout, owned, allocator }) catch blk: {
                 allocator.free(owned);
@@ -136,18 +136,18 @@ pub fn handleBgPoll(allocator: std.mem.Allocator, client_fd: i32, run_id: []cons
     var path_buf: [600]u8 = undefined;
 
     // Terminal state: exit_code present.
-    const exit_path = try std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}/exit_code", .{ BG_DIR, run_id });
+    const exit_path = try  std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}/exit_code", .{ BG_DIR, run_id }, 0);
     if (readFileZ(allocator, exit_path.ptr, 32)) |exit_data| {
         defer allocator.free(exit_data);
         const exit_code = std.fmt.parseInt(i32, std.mem.trim(u8, exit_data, &std.ascii.whitespace), 10) catch 0;
 
         var sp_buf: [600]u8 = undefined;
-        const stdout_path = try std.fmt.bufPrintSentinel(&sp_buf, "{s}/{s}/stdout", .{ BG_DIR, run_id });
+        const stdout_path = try  std.fmt.bufPrintSentinel(&sp_buf, "{s}/{s}/stdout", .{ BG_DIR, run_id }, 0);
         const stdout_raw = readFileZ(allocator, stdout_path.ptr, 10 * 1024 * 1024) orelse try allocator.dupe(u8, "");
         defer allocator.free(stdout_raw);
 
         var ep_buf: [600]u8 = undefined;
-        const stderr_path = try std.fmt.bufPrintSentinel(&ep_buf, "{s}/{s}/stderr", .{ BG_DIR, run_id });
+        const stderr_path = try  std.fmt.bufPrintSentinel(&ep_buf, "{s}/{s}/stderr", .{ BG_DIR, run_id }, 0);
         const stderr_raw = readFileZ(allocator, stderr_path.ptr, 10 * 1024 * 1024) orelse try allocator.dupe(u8, "");
         defer allocator.free(stderr_raw);
 
@@ -164,7 +164,7 @@ pub fn handleBgPoll(allocator: std.mem.Allocator, client_fd: i32, run_id: []cons
     }
 
     // Running: pid recorded but no exit_code yet.
-    const pid_path = try std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}/pid", .{ BG_DIR, run_id });
+    const pid_path = try  std.fmt.bufPrintSentinel(&path_buf, "{s}/{s}/pid", .{ BG_DIR, run_id }, 0);
     if (readFileZ(allocator, pid_path.ptr, 16)) |pid_data| {
         allocator.free(pid_data);
         var resp_buf: [256]u8 = undefined;
@@ -214,14 +214,14 @@ pub fn killAllRuns(allocator: std.mem.Allocator) void {
             if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
 
             var exit_path_buf: [600]u8 = undefined;
-            const exit_path = std.fmt.bufPrintSentinel(&exit_path_buf, "{s}/{s}/exit_code", .{ BG_DIR, name }) catch continue;
+            const exit_path =  std.fmt.bufPrintSentinel(&exit_path_buf, "{s}/{s}/exit_code", .{ BG_DIR, name }, 0) catch continue;
             if (readFileZ(allocator, exit_path.ptr, 32)) |recorded| {
                 allocator.free(recorded);
                 continue; // already finished on its own
             }
 
             var pid_path_buf: [600]u8 = undefined;
-            const pid_path = std.fmt.bufPrintSentinel(&pid_path_buf, "{s}/{s}/pid", .{ BG_DIR, name }) catch continue;
+            const pid_path =  std.fmt.bufPrintSentinel(&pid_path_buf, "{s}/{s}/pid", .{ BG_DIR, name }, 0) catch continue;
             const raw = readFileZ(allocator, pid_path.ptr, 32) orelse continue;
             defer allocator.free(raw);
             const pid = std.fmt.parseInt(i32, std.mem.trim(u8, raw, " \n\r\t"), 10) catch continue;
@@ -261,7 +261,7 @@ fn spawnTimeoutKiller(pid: i32, timeout_sec: u32, run_dir: [:0]u8, allocator: st
     _ = std.os.linux.nanosleep(&ts, null);
 
     var exit_path_buf: [600]u8 = undefined;
-    const exit_path = std.fmt.bufPrintSentinel(&exit_path_buf, "{s}/exit_code", .{run_dir}) catch return;
+    const exit_path =  std.fmt.bufPrintSentinel(&exit_path_buf, "{s}/exit_code", .{run_dir}, 0) catch return;
 
     // If the command already finished, leave its recorded exit code untouched.
     const probe = std.os.linux.open(exit_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);

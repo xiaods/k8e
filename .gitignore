@@ -39,5 +39,6 @@ zig-out
 /sandboxcli
 /tandem/bin
 /tandem/zig-pkg
+/.cni-build
 /tandem/a.o
 /.pi/

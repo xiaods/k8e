@@ -269,7 +269,7 @@ fn listDirRecursive(allocator: std.mem.Allocator, entries: *std.array_list.Manag
     else
         try allocator.dupe(u8, base);
     defer allocator.free(full_path_raw);
-    const full_path = try allocator.dupeZ(u8, full_path_raw);
+    const full_path = try std.fmt.allocPrintSentinel(allocator, "{s}", .{full_path_raw}, 0);
     defer allocator.free(full_path);
 
     const fd = std.os.linux.open(full_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
@@ -545,7 +545,7 @@ pub fn handleRemove(allocator: std.mem.Allocator, client_fd: i32, body: []const 
     const full = try path_util.resolveWorkspacePath(allocator, req.path);
     defer allocator.free(full);
     // Null-terminated copy for the recursive walker.
-    const full_z = try allocator.dupeZ(u8, full);
+    const full_z = try std.fmt.allocPrintSentinel(allocator, "{s}", .{full}, 0);
     defer allocator.free(full_z);
 
     if (removeRecursive(full_z)) {
@@ -577,7 +577,7 @@ pub fn removeRecursive(path_z: [:0]u8) bool {
                     const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&dent.name)), 0);
                     if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
                     var child_buf: [4200]u8 = undefined;
-                    const child = std.fmt.bufPrintSentinel(&child_buf, "{s}/{s}", .{ path_z, name }) catch continue;
+                    const child =  std.fmt.bufPrintSentinel(&child_buf, "{s}/{s}", .{ path_z, name }, 0) catch continue;
                     _ = removeRecursive(child);
                 }
             }

@@ -11,7 +11,8 @@ const PKG_CRI_DOCKERD = "github.com/Mirantis/cri-dockerd";
 const PKG_ETCD = "go.etcd.io/etcd";
 
 fn buildRoot(b: *std.Build) []const u8 {
-    return b.build_root.path orelse ".";
+    _ = b;
+    return ".";
 }
 
 pub fn build(b: *std.Build) !void {
@@ -403,7 +404,7 @@ fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step, v: VersionInfo) 
 
     for (cli_targets) |t| {
         const out_name = b.fmt("k8e-sandbox-cli-{s}-{s}{s}", .{ t.goos, t.goarch, t.ext });
-        const out_path = b.getInstallPath(.bin, out_name);
+        const out_path = b.fmt("zig-out/bin/{s}", .{out_name});
 
         const go_build = b.addSystemCommand(&[_][]const u8{
             "go", "build",

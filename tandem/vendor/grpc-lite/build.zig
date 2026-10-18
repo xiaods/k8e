@@ -244,7 +244,7 @@ pub fn build(b: *std.Build) void {
             )
         else
             null;
-        const zig_header_path = b.pathJoin(&.{ b.graph.zig_lib_directory.path.?, "zig.h" });
+        const zig_header_path = "zig.h";
         const install_zig_header = b.addInstallFileWithDir(
             .{ .cwd_relative = zig_header_path },
             .header,
@@ -1091,8 +1091,8 @@ fn addCpuCycles(
     var declarations: []const u8 = "";
     var entries: []const u8 = "";
     for (options) |option| {
-        const symbol = b.dupe(option);
-        std.mem.replaceScalar(u8, symbol, '-', '_');
+        const symbol = b.allocator.dupe(u8, option) catch @panic("OOM");
+        _ = std.mem.replaceScalar(u8, symbol, '-', '_');
         declarations = b.fmt(
             \\{s}extern long long cpucycles_ticks_{s}_setup(void);
             \\extern long long cpucycles_ticks_{s}(void);
@@ -1126,8 +1126,8 @@ fn addCpuCycles(
         .flags = &.{ "-std=gnu99", "-D_GNU_SOURCE=1", "-fwrapv", "-fvisibility=hidden" },
     });
     for (options) |option| {
-        const symbol = b.dupe(option);
-        std.mem.replaceScalar(u8, symbol, '-', '_');
+        const symbol = b.allocator.dupe(u8, option) catch @panic("OOM");
+        _ = std.mem.replaceScalar(u8, symbol, '-', '_');
         module.addCSourceFile(.{
             .file = dependency.path(b.fmt("cpucycles/{s}.c", .{option})),
             .flags = &.{

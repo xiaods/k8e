@@ -34,10 +34,8 @@ pub fn handleReset(allocator: std.mem.Allocator, client_fd: i32) !void {
     while (i > 0) {
         i -= 1;
         const entry = paths.items[i];
-        const full_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ workspace_path, entry });
-        defer allocator.free(full_path);
-        const full_z = try allocator.dupeZ(u8, full_path);
-        defer allocator.free(full_z);
+        var full_z_buf: [4096]u8 = undefined;
+        const full_z = std.fmt.bufPrintSentinel(&full_z_buf, "{s}/{s}", .{ workspace_path, entry }, 0) catch return error.PathTooLong;
         // Try rmdir (for directories), then unlink (for files)
         _ = std.os.linux.rmdir(full_z.ptr);
         _ = std.os.linux.unlink(full_z.ptr);
@@ -54,8 +52,8 @@ fn collectPaths(allocator: std.mem.Allocator, paths: *std.array_list.Managed([]c
     else
         try allocator.dupe(u8, base);
     defer allocator.free(full_raw);
-    const full_z = try allocator.dupeZ(u8, full_raw);
-    defer allocator.free(full_z);
+    var full_z_buf: [4096]u8 = undefined;
+    const full_z = std.fmt.bufPrintSentinel(&full_z_buf, "{s}", .{full_raw}, 0) catch return error.PathTooLong;
 
     const fd = std.os.linux.open(full_z.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
     if (fd < 0) {

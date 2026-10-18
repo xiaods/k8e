@@ -14,7 +14,7 @@ test "CPU profiler is available" {
     if (!perf.has_cpu_profiler) return error.SkipZigTest;
     const pid = std.os.linux.getpid();
     var cpu_path_buffer: [128]u8 = undefined;
-    const cpu_profile = try std.fmt.bufPrintZ(
+    const cpu_profile = try std.fmt.bufPrintSentinel(
         &cpu_path_buffer,
         "/tmp/grpc-lite-gperftools-test-{d}.prof",
         .{pid},
@@ -38,7 +38,7 @@ test "heap profiler is available with tcmalloc" {
 
     const pid = std.os.linux.getpid();
     var heap_prefix_buffer: [128]u8 = undefined;
-    const heap_prefix = try std.fmt.bufPrintZ(
+    const heap_prefix = try std.fmt.bufPrintSentinel(
         &heap_prefix_buffer,
         "/tmp/grpc-lite-gperftools-test-{d}-heap",
         .{pid},

@@ -7,7 +7,7 @@ const std = @import("std");
 /// .ptr. Caller owns the memory.
 pub fn resolveWorkspacePath(allocator: std.mem.Allocator, path: []const u8) ![:0]u8 {
     if (std.mem.startsWith(u8, path, "/")) {
-        return allocator.dupeZ(u8, path);
+        return std.fmt.allocPrintSentinel(allocator, "{s}", .{path}, 0);
     }
     return std.fmt.allocPrintSentinel(allocator, "/workspace/{s}", .{path}, 0);
 }

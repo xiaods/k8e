@@ -39,14 +39,13 @@ pub const RunProtocStep = struct {
         const generator = options.generator orelse buildGenerator(owner, target);
         self.* = .{
             .step = std.Build.Step.init(.{
-                .id = .check_file,
+                .tag = .run,
                 .name = "run protoc",
                 .owner = owner,
-                .makeFn = make,
             }),
             .source_files = dupeLazyPaths(owner, options.source_files),
             .include_directories = dupeLazyPaths(owner, options.include_directories),
-            .destination_directory = options.destination_directory.dupe(owner),
+            .destination_directory = options.destination_directory.dupe(owner.graph),
             .generator = generator,
             .generator_bin = generator.getEmittedBin(),
             .protoc_override_bin = options.protoc,
@@ -165,7 +164,7 @@ fn protocDependencyName() []const u8 {
 
 fn dupeLazyPaths(b: *std.Build, paths: []const std.Build.LazyPath) []std.Build.LazyPath {
     const copies = b.allocator.alloc(std.Build.LazyPath, paths.len) catch @panic("OOM");
-    for (copies, paths) |*copy, path| copy.* = path.dupe(b);
+    for (copies, paths) |*copy, path| copy.* = path.dupe(b.graph);
     return copies;
 }
 

@@ -27,7 +27,7 @@ pub fn append(session_id: []const u8, event: []const u8, extra: []const u8) void
 /// appendAt is append with an explicit event dir (testable).
 pub fn appendAt(dir: []const u8, session_id: []const u8, event: []const u8, extra: []const u8) void {
     var path_buf: [512]u8 = undefined;
-    const path = std.fmt.bufPrintSentinel(&path_buf, "{s}/events.ndjson", .{dir}) catch return;
+    const path =  std.fmt.bufPrintSentinel(&path_buf, "{s}/events.ndjson", .{dir}, 0) catch return;
 
     _ = std.os.linux.mkdir(@ptrCast(dir.ptr), 0o755);
 
@@ -64,7 +64,7 @@ fn rotateIfNeeded(path: [:0]const u8) !void {
 
     // events.ndjson -> events.ndjson.1 (overwrite old generation)
     var old_buf: [512]u8 = undefined;
-    const old_path = std.fmt.bufPrintSentinel(&old_buf, "{s}.1", .{path}) catch return;
+    const old_path =  std.fmt.bufPrintSentinel(&old_buf, "{s}.1", .{path}, 0) catch return;
     _ = std.os.linux.rename(path.ptr, old_path.ptr);
 }
 
@@ -85,7 +85,7 @@ pub fn readTail(allocator: std.mem.Allocator, max_lines: usize, out: *std.array_
 /// readTailAt is readTail with an explicit event dir (testable).
 pub fn readTailAt(allocator: std.mem.Allocator, dir: []const u8, max_lines: usize, out: *std.array_list.Managed(u8)) void {
     var path_buf: [512]u8 = undefined;
-    const path = std.fmt.bufPrintSentinel(&path_buf, "{s}/events.ndjson", .{dir}) catch return;
+    const path =  std.fmt.bufPrintSentinel(&path_buf, "{s}/events.ndjson", .{dir}, 0) catch return;
 
     const fd_raw = std.os.linux.open(path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY }, 0);
     const fd: isize = @bitCast(fd_raw);

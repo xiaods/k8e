@@ -81,7 +81,7 @@ pub const Adapter = struct {
         hints.ai_socktype = c.SOCK_STREAM;
         hints.ai_protocol = c.IPPROTO_TCP;
         var service_buffer: [6]u8 = undefined;
-        const service = try std.fmt.bufPrintZ(&service_buffer, "{d}", .{port});
+        const service = try std.fmt.bufPrintSentinel(&service_buffer, "{d}", .{port});
         c.ares_getaddrinfo(self.channel, host.ptr, service.ptr, &hints, onResolved, self);
         self.rescheduleTimeout();
     }
