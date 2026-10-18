@@ -194,11 +194,14 @@ func (s *Server) infoView(sess *pb.GetSessionResponse, state sandboxState) map[s
 		"diskSizeMB":  s.defaultDiskMB,
 		"envdVersion": EnvdVersion,
 	}
-	// endAt is the projected kill deadline — omitted for never-timeout
-	// sandboxes rather than fabricated (CubeSandbox's honest absence; a
-	// fabricated year-out would read as "expires soon" to SDK arithmetic).
+	// endAt is the projected kill deadline. The E2B SDK data model treats
+	// it as a required field (it parses it with isoparse), so never-timeout
+	// sandboxes answer with a far-future sentinel instead of omitting it —
+	// omission made getInfo()/list() fail with KeyError in the SDK.
 	if endAt := s.registry.deadlineOf(sess.SessionId); !endAt.IsZero() {
 		view["endAt"] = endAt.Format(time.RFC3339)
+	} else {
+		view["endAt"] = time.Now().Add(100 * 365 * 24 * time.Hour).UTC().Format(time.RFC3339)
 	}
 	return view
 }
