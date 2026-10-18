@@ -26,8 +26,20 @@ jobs:
     needs: full-validation
     permissions:
       contents: read
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-linux-gnu
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    env:
+      GRPC_LITE_TRANSPILED_C_TARGET: ${{ matrix.target }}
     steps:
       - name: Checkout event commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,7 +59,7 @@ jobs:
           test "$version" = "$config"
 
       - name: Install pinned mise and Zig
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
         with:
           version: 2026.7.14
 
@@ -66,9 +78,9 @@ jobs:
           test "$(jq -r .project_version "manifest-check/$root/manifest.json")" = "${GITHUB_REF_NAME#v}"
 
       - name: Upload validated bundle
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: grpc-lite-transpiled-c-release
+          name: grpc-lite-transpiled-c-release-${{ matrix.arch }}
           path: .zig-cache/transpiled-c-dist/*
           if-no-files-found: error
           include-hidden-files: true
@@ -79,8 +91,20 @@ jobs:
     needs: package
     permissions:
       contents: read
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+            target: x86_64-linux-gnu
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-linux-gnu
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    env:
+      GRPC_LITE_TRANSPILED_C_TARGET: ${{ matrix.target }}
     steps:
       - name: Checkout event commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,9 +118,9 @@ jobs:
           docker version
 
       - name: Download validated bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: grpc-lite-transpiled-c-release
+          name: grpc-lite-transpiled-c-release-${{ matrix.arch }}
           path: bundle-dist
 
       - name: Test exact bundle
@@ -118,9 +142,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Download validated bundle
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: grpc-lite-transpiled-c-release
+          pattern: grpc-lite-transpiled-c-release-*
+          merge-multiple: true
           path: bundle-dist
 
       - name: Create, verify, and publish workflow draft
@@ -132,12 +157,14 @@ jobs:
           marker='<!-- grpc-lite-transpiled-c-workflow-owned -->'
           tag=$GITHUB_REF_NAME
           archives=(bundle-dist/*.tar.gz)
-          test "${#archives[@]}" -eq 1
-          archive=${archives[0]}
-          root=$(basename "$archive" .tar.gz)
-          manifest_commit=$(tar -xOf "$archive" "$root/manifest.json" | jq -r .source_commit)
-          test "$manifest_commit" = "$GITHUB_SHA"
-          (cd bundle-dist && sha256sum --check "$(basename "$archive").sha256")
+          test "${#archives[@]}" -eq 2
+          manifest_commit=$GITHUB_SHA
+          for arch in x86_64 arm64; do
+            archive="bundle-dist/grpc-lite-transpiled-c-${tag#v}-linux-$arch.tar.gz"
+            root=$(basename "$archive" .tar.gz)
+            test "$(tar -xOf "$archive" "$root/manifest.json" | jq -r .source_commit)" = "$manifest_commit"
+            (cd bundle-dist && sha256sum --check "$(basename "$archive").sha256")
+          done
 
           require_current_tag() {
             local object_json object_type object_sha
@@ -161,7 +188,7 @@ jobs:
             require_current_tag
             gh release create "$tag" --verify-tag --draft --title "$tag" \
               --notes "$marker
-          Generated-only C bundle for insecure Linux x86_64."
+          Generated-only C bundle for insecure Linux x86_64 and ARM64."
             release_json=$(gh release view "$tag" --json isDraft,body)
           fi
           is_draft=$(jq -r .isDraft <<<"$release_json")

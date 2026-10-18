@@ -6,6 +6,7 @@ export TZ=UTC
 umask 022
 
 project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$project_root/tools/transpiled_c_target.sh"
 output_dir=${1:-"$project_root/transpiled"}
 
 if [[ $# -gt 1 ]]; then
@@ -54,7 +55,7 @@ mkdir -p "$output_dir" "$cache_dir" "$global_cache_dir"
 (
     cd "$project_root"
     taskset -c "$selected_cpu" zig build transpile-c -j1 \
-        -Dtarget=x86_64-linux-gnu \
+        -Dtarget="$transpiled_c_target" \
         -Dtranspile-c=true \
         -Dprotobuf=true \
         -Doptimize=ReleaseSafe \
@@ -66,7 +67,10 @@ mkdir -p "$output_dir" "$cache_dir" "$global_cache_dir"
 )
 
 # Zig's x86 clone assembly uses LLVM-style comments, which GNU as rejects.
-perl -pi -e 's{// SYS_}{# SYS_}g' "$output_dir/src/protoc-gen-grpc_lite_cpp.c"
+# AArch64 uses // comments natively; rewriting them would break its assembly.
+if [[ "$transpiled_c_target" == x86_64-linux-gnu ]]; then
+    perl -pi -e 's{// SYS_}{# SYS_}g' "$output_dir/src/protoc-gen-grpc_lite_cpp.c"
+fi
 
 # Zig 0.16 emits unstable numeric suffixes for these otherwise identical tuple
 # types. Canonicalize the C identifiers so clean transpilation is reproducible.
@@ -85,7 +89,7 @@ cat >"$output_dir/manifest.json" <<EOF
   "source_commit": "$commit",
   "dirty": $dirty,
   "zig_version": "$actual_zig",
-  "target": "x86_64-linux-gnu",
+  "target": "$transpiled_c_target",
   "optimization": "ReleaseSafe",
   "tls": false
 }

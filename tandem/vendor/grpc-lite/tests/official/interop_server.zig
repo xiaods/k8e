@@ -5,6 +5,7 @@ const testing = @import("grpc_testing");
 const Config = struct {
     port: u16 = 10000,
     use_tls: bool = false,
+    client_ca_file: []const u8 = "",
     tls_cert_file: []const u8 = "",
     tls_key_file: []const u8 = "",
 };
@@ -458,6 +459,12 @@ pub fn main(init: std.process.Init) !void {
         null;
     defer if (private_key) |bytes| init.gpa.free(bytes);
 
+    const client_ca_file_pem = if (config.client_ca_file.len != 0)
+        try std.Io.Dir.cwd().readFileAlloc(init.io, config.client_ca_file, init.gpa, .limited(4 * 1024 * 1024))
+    else
+        null;
+    defer if (client_ca_file_pem) |bytes| init.gpa.free(bytes);
+
     var service = Service.init(init.gpa);
     defer service.deinit();
     var server = try grpc.Server.init(init.gpa, .{
@@ -466,6 +473,7 @@ pub fn main(init: std.process.Init) !void {
         .tls = if (certificate) |cert| .{
             .certificate_chain_pem = cert,
             .private_key_pem = private_key.?,
+            .client_ca_certificates_pem = client_ca_file_pem,
         } else null,
     });
     defer server.deinit();
@@ -537,6 +545,8 @@ fn parseArgs(args: []const []const u8) !Config {
             index += 1;
             if (index >= args.len) return error.MissingPort;
             config.port = try std.fmt.parseInt(u16, args[index], 10);
+        } else if (std.mem.startsWith(u8, arg, "--client_ca_file=")) {
+            config.client_ca_file = arg["--client_ca_file=".len..];
         } else if (std.mem.startsWith(u8, arg, "--use_tls=")) {
             config.use_tls = try parseBool(arg["--use_tls=".len..]);
         } else if (std.mem.eql(u8, arg, "--use_tls")) {
@@ -557,6 +567,7 @@ fn parseArgs(args: []const []const u8) !Config {
             return error.UnknownArgument;
         }
     }
+    if (!config.use_tls and config.client_ca_file.len != 0) return error.ClientVerificationRequiresTls;
     if (config.use_tls and config.tls_cert_file.len == 0) return error.MissingTlsCertFile;
     if (config.use_tls and config.tls_key_file.len == 0) return error.MissingTlsKeyFile;
     return config;

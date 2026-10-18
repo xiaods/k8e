@@ -58,3 +58,11 @@ wheels for Linux x86_64 and aarch64. The harness builds a minimal local image fr
 multi-architecture Python base pinned by manifest digest; it does not depend on the
 upstream interop image registry or a live grpc checkout. Docker is required for this
 suite. See `third_party/grpc-http2-test/UPSTREAM.md` for provenance and update rules.
+
+### Mutual TLS
+
+`mise run interop-tls` also tests native Zig client/server mutual TLS against
+grpc-go: client identity presentation, required client verification, rejection of
+missing/untrusted/expired identities, and unary/streaming calls to a grpc-go mTLS
+server. Test-only client credentials live in `src/testdata/mtls`; regenerate them
+with `bash src/testdata/mtls/generate.sh` (OpenSSL required). Never deploy these keys.

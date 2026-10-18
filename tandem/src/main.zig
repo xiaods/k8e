@@ -210,8 +210,11 @@ fn startGrpcLite(allocator: std.mem.Allocator, pipeline: *PipelineServer, config
         .tls = if (cert != null and key != null) .{
             .certificate_chain_pem = cert.?,
             .private_key_pem = key.?,
-            .ca_certificates_pem = ca,
-            .require_client_certificate = config.require_client_cert,
+            // v0.5.0 dropped the standalone require_client_certificate field:
+            // mTLS is now driven by whether client_ca_certificates_pem is
+            // non-null. Passing null disables client verification, which is
+            // exactly require_client_cert=false.
+            .client_ca_certificates_pem = if (config.require_client_cert) ca else null,
         } else null,
     };
 

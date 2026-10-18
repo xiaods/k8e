@@ -16,9 +16,7 @@ sanitize_c=${12}
 enable_gperftools=${13}
 enable_tcmalloc=${14}
 
-c_flags=(-fvisibility=hidden -include limits.h)
-
-mkdir -p "$build_dir"
+c_flags=(-fvisibility=hidden)
 
 if [[ "$sanitize_thread" == true && "$sanitize_c" == true ]]; then
     printf 'ThreadSanitizer and UndefinedBehaviorSanitizer are mutually exclusive\n' >&2
@@ -41,109 +39,37 @@ if [[ "$sanitize_thread" == true || "$sanitize_c" == true ]]; then
     c_flags+=(-g)
 fi
 
-build_zig_static() {
-    local library=$1
-    local include_dir=$2
-    local source_glob=$3
-    local archive="$build_dir/lib/lib${library}.a"
-    local object_dir="$build_dir/objects"
-    mkdir -p "$object_dir" "$(dirname "$archive")"
-    case "$library" in
-        nghttp2)
-            cat >"$build_dir/config.h" <<'EOF'
-#define HAVE_ARPA_INET_H 1
-#define HAVE_NETINET_IN_H 1
-#define HAVE_NETDB_H 1
-#define HAVE_SYS_SOCKET_H 1
-#define HAVE_SYS_UIO_H 1
-#define HAVE_SYS_IOCTL_H 1
-#define HAVE_ERRNO_H 1
-#define HAVE_UNISTD_H 1
-#define HAVE_TIME_H 1
-#define HAVE_CLOCK_GETTIME_MONOTONIC 1
-#define HAVE_FCNTL_H 1
-#define HAVE_FCNTL_O_NONBLOCK 1
-#define HAVE_WRITEV 1
-#define RECVFROM_TYPE_ARG3 size_t
-#define SEND_TYPE_ARG1 int
-#define SEND_TYPE_ARG2 const void *
-#define SEND_TYPE_ARG3 size_t
-#define SEND_TYPE_ARG4 int
-#define HAVE_PF_INET6 1
-#define HAVE_AF_INET6 1
-#define HAVE_STRUCT_SOCKADDR_IN6 1
-#define HAVE_STRUCT_ADDRINFO 1
-EOF
-            mkdir -p "$build_dir/include/nghttp2"
-            sed -e 's/@PACKAGE_VERSION@/1.61.0/g' \
-                -e 's/@PACKAGE_VERSION_NUM@/0x013d00/g' \
-                "$source_dir/lib/includes/nghttp2/nghttp2ver.h.in" \
-                >"$build_dir/include/nghttp2/nghttp2ver.h"
-            ;;
-        cares)
-            cat >"$build_dir/ares_config.h" <<'EOF'
-#define HAVE_ARPA_INET_H 1
-#define HAVE_NETINET_IN_H 1
-#define HAVE_NETDB_H 1
-#define HAVE_SYS_SOCKET_H 1
-#define HAVE_SYS_SELECT_H 1
-#define HAVE_SYS_TIME_H 1
-#define HAVE_SYS_UIO_H 1
-#define HAVE_SYS_IOCTL_H 1
-#define HAVE_ERRNO_H 1
-#define HAVE_UNISTD_H 1
-#define HAVE_TIME_H 1
-#define HAVE_CLOCK_GETTIME_MONOTONIC 1
-#define HAVE_FCNTL_H 1
-#define HAVE_FCNTL_O_NONBLOCK 1
-#define HAVE_WRITEV 1
-#define RECVFROM_TYPE_ARG3 size_t
-#define SEND_TYPE_ARG1 int
-#define SEND_TYPE_ARG2 const void *
-#define SEND_TYPE_ARG3 size_t
-#define SEND_TYPE_ARG4 int
-#define HAVE_STRUCT_TIMEVAL 1
-#define HAVE_IPV6 1
-#define HAVE_PF_INET6 1
-#define HAVE_AF_INET6 1
-#define HAVE_STRUCT_SOCKADDR_IN6 1
-#define HAVE_STRUCT_ADDRINFO 1
-EOF
-            ;;
-    esac
-
-    sources=()
-    while IFS= read -r source; do
-        sources+=("$source")
-    done < <(find "$source_dir/$source_glob" -type f -name '*.c' | sort)
-    if [[ ${#sources[@]} -eq 0 ]]; then
-        printf 'no C sources found for %s\n' "$library" >&2
-        exit 1
-    fi
-
-    objects=()
-    for source in "${sources[@]}"; do
-        object="$object_dir/$(basename "${source%.c}").o"
-        "$zig_exe" cc -target "$target_triple" "${c_flags[@]}" \
-            -I"$build_dir" -I"$build_dir/include" -I"$include_dir" -I"$source_dir" -I"$source_dir/src" -I"$source_dir/src/lib" -I"$source_dir/src/lib/include" \
-            -D_GNU_SOURCE -DHAVE_CONFIG_H=0 -c "$source" -o "$object"
-        objects+=("$object")
-    done
-    "$zig_exe" ar rcs "$archive" "${objects[@]}"
-}
+common_options=(
+    -S "$source_dir"
+    -B "$build_dir"
+    -G Ninja
+    "-DCMAKE_BUILD_TYPE=$build_type"
+    "-DCMAKE_C_FLAGS=${c_flags[*]}"
+    "-DCMAKE_CXX_FLAGS=${c_flags[*]}"
+    -DBUILD_SHARED_LIBS=OFF
+)
 
 case "$library" in
     nghttp2)
-        build_zig_static nghttp2 "$source_dir/lib/includes" lib
-        mkdir -p "$build_dir/lib/includes"
-        cp -a "$source_dir/lib/includes/." "$build_dir/lib/includes/"
-        exit 0
+        CC="$cc" CXX="$cxx" cmake "${common_options[@]}" \
+            -DENABLE_LIB_ONLY=ON \
+            -DENABLE_APP=OFF \
+            -DENABLE_EXAMPLES=OFF \
+            -DENABLE_HPACK_TOOLS=OFF \
+            -DENABLE_DOC=OFF \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_STATIC_LIBS=ON
         ;;
     cares)
-        build_zig_static cares "$source_dir/include" src/lib
-        mkdir -p "$build_dir/include"
-        cp -a "$source_dir/include/." "$build_dir/include/"
-        exit 0
+        CC="$cc" CXX="$cxx" cmake "${common_options[@]}" \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DCARES_STATIC=ON \
+            -DCARES_SHARED=OFF \
+            -DCARES_INSTALL=OFF \
+            -DCARES_BUILD_TESTS=OFF \
+            -DCARES_BUILD_CONTAINER_TESTS=OFF \
+            -DCARES_BUILD_TOOLS=OFF \
+            -DCARES_THREADS=ON
         ;;
     mbedtls)
         source_copy="$build_dir/source"
@@ -182,11 +108,54 @@ case "$library" in
         exit 0
         ;;
     gperftools)
-        printf 'gperftools is not supported by the Zig-only native builder\n' >&2
-        exit 1
+        enable_heap_profiler=false
+        if [[ "$enable_gperftools" == true && "$enable_tcmalloc" == true ]]; then
+            enable_heap_profiler=true
+        fi
+        CC="$cc" CXX="$cxx" cmake "${common_options[@]}" \
+            -DBUILD_TESTING=OFF \
+            -DGPERFTOOLS_BUILD_CPU_PROFILER="$enable_gperftools" \
+            -DGPERFTOOLS_BUILD_HEAP_PROFILER="$enable_heap_profiler" \
+            -DGPERFTOOLS_BUILD_DEBUGALLOC=OFF \
+            -Dgperftools_build_minimal=OFF \
+            -Dgperftools_build_benchmark=OFF \
+            -Dgperftools_enable_libunwind=OFF \
+            -Dgperftools_enable_frame_pointers=ON
+        if [[ "$enable_heap_profiler" == true ]]; then
+            targets=(tcmalloc profiler)
+            archives=(libtcmalloc.a libprofiler.a libstacktrace.a liblow_level_alloc.a libcommon.a)
+        elif [[ "$enable_tcmalloc" == true ]]; then
+            targets=(tcmalloc_minimal)
+            archives=(libtcmalloc_minimal.a libcommon.a)
+        else
+            targets=(profiler)
+            archives=(libprofiler.a libstacktrace.a libcommon.a)
+        fi
+        cmake --build "$build_dir" --target "${targets[@]}"
+        archive="$build_dir/libgrpc_lite_gperftools.a"
+        rm -f "$archive"
+        {
+            printf 'CREATE %s\n' "$archive"
+            for dependency in "${archives[@]}"; do
+                printf 'ADDLIB %s/%s\n' "$build_dir" "$dependency"
+            done
+            printf 'SAVE\nEND\n'
+        } | "$zig_exe" ar -M
+        gperftools_define=0
+        tcmalloc_define=0
+        [[ "$enable_gperftools" == true ]] && gperftools_define=1
+        [[ "$enable_tcmalloc" == true ]] && tcmalloc_define=1
+        "$zig_exe" cc -target "$target_triple" "${c_flags[@]}" \
+            -DGRPC_LITE_ENABLE_GPERFTOOLS="$gperftools_define" \
+            -DGRPC_LITE_ENABLE_TCMALLOC="$tcmalloc_define" \
+            -c "$force_link_source" \
+            -o "$build_dir/gperftools_force_link.o"
+        exit 0
         ;;
     *)
         printf 'unsupported native library: %s\n' "$library" >&2
         exit 1
         ;;
 esac
+
+cmake --build "$build_dir"

@@ -94,6 +94,7 @@ pub const Channel = channel.Channel;
 pub const ChannelOptions = channel.Options;
 pub const ReconnectOptions = channel.ReconnectOptions;
 pub const ClientTlsOptions = channel.TlsOptions;
+pub const ClientTlsIdentity = channel.TlsIdentity;
 pub const Metadata = metadata.Metadata;
 pub const MetadataEntry = metadata.Entry;
 pub const Server = server.Server;

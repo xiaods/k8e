@@ -11,6 +11,7 @@ if [[ $# -ne 1 ]]; then
 fi
 
 project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$project_root/tools/transpiled_c_target.sh"
 dist_dir=$(mkdir -p "$1" && cd "$1" && pwd)
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/grpc-lite-package-transpiled-c.XXXXXX")
 cleanup() {
@@ -64,7 +65,7 @@ if [[ "$actual_files" != "$expected_files" ]]; then
     exit 1
 fi
 
-python3 - "$work_dir/generated/manifest.json" "$zon_version" "$actual_zig" "$project_root" <<'PY'
+python3 - "$work_dir/generated/manifest.json" "$zon_version" "$actual_zig" "$project_root" "$transpiled_c_target" <<'PY'
 import json
 import subprocess
 import sys
@@ -78,7 +79,7 @@ expected = {
     "dirty": bool(subprocess.check_output(
         ["git", "status", "--porcelain"], cwd=sys.argv[4], text=True).strip()),
     "zig_version": sys.argv[3],
-    "target": "x86_64-linux-gnu",
+    "target": sys.argv[5],
     "optimization": "ReleaseSafe",
     "tls": False,
 }
@@ -86,7 +87,7 @@ if value != expected:
     raise SystemExit(f"manifest mismatch: expected {expected!r}, got {value!r}")
 PY
 
-root="grpc-lite-transpiled-c-$zon_version-linux-x86_64"
+root="grpc-lite-transpiled-c-$zon_version-linux-$transpiled_c_arch"
 mkdir -p "$work_dir/stage/$root/include" "$work_dir/stage/$root/src"
 cp "$work_dir/generated/manifest.json" "$work_dir/stage/$root/manifest.json"
 cp "$work_dir/generated/include/zig.h" "$work_dir/stage/$root/include/zig.h"

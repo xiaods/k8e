@@ -66,7 +66,15 @@ threadlocal var receiving_http2_impl: ?*Impl = null;
 
 pub const TlsOptions = struct {
     ca_certificates_pem: []const u8,
+    /// Client certificate for mutual TLS, presented when the server requests one.
+    identity: ?TlsIdentity = null,
     handshake_timeout_ns: u64 = 10 * std.time.ns_per_s,
+};
+
+/// PEM certificate chain and unencrypted PEM private key; parsed during `Channel.init`.
+pub const TlsIdentity = struct {
+    certificate_chain_pem: []const u8,
+    private_key_pem: []const u8,
 };
 
 pub const ReconnectOptions = struct {
@@ -243,6 +251,10 @@ pub const Channel = struct {
                 impl.tls_config = try tls_record.Config.createClient(
                     impl.allocator,
                     tls_options.ca_certificates_pem,
+                    if (tls_options.identity) |identity| .{
+                        .certificate_chain_pem = identity.certificate_chain_pem,
+                        .private_key_pem = identity.private_key_pem,
+                    } else null,
                 );
             }
         }
@@ -7865,6 +7877,58 @@ test "channel and server exchange a unary call over TLS" {
     try std.testing.expectEqualStrings("secure", result.payload);
 }
 
+test "channel and server exchange a unary call over mutual TLS" {
+    if (!build_options.tls) return error.SkipZigTest;
+    const server = @import("server.zig");
+    const service = @import("service.zig");
+    const certificate = @embedFile("testdata/localhost-cert.pem");
+    const private_key = @embedFile("testdata/localhost-key.pem");
+
+    const Handler = struct {
+        fn handle(
+            _: *@This(),
+            allocator: std.mem.Allocator,
+            _: *service.ServerContext,
+            request: []const u8,
+        ) !service.UnaryResponse {
+            return service.UnaryResponse.ok(allocator, request);
+        }
+    };
+
+    var handler = Handler{};
+    var test_server = try server.Server.init(std.testing.allocator, .{
+        .tls = .{
+            .certificate_chain_pem = certificate,
+            .private_key_pem = private_key,
+            .client_ca_certificates_pem = @embedFile("testdata/mtls/ca.pem"),
+        },
+    });
+    defer test_server.deinit();
+    try test_server.registerUnary(
+        "/test.Tls/Unary",
+        service.UnaryHandler.bind(Handler, &handler, Handler.handle),
+    );
+    try test_server.start();
+
+    var runtime = try Runtime.init();
+    defer runtime.deinit();
+    var target_buffer: [32]u8 = undefined;
+    const target = try std.fmt.bufPrint(&target_buffer, "localhost:{d}", .{try test_server.port()});
+    var channel = try Channel.init(std.testing.allocator, target, .{
+        .runtime = &runtime,
+        .tls = .{ .ca_certificates_pem = certificate, .identity = .{
+            .certificate_chain_pem = @embedFile("testdata/mtls/client.pem"),
+            .private_key_pem = @embedFile("testdata/mtls/client-key.pem"),
+        } },
+    });
+    defer channel.deinit();
+
+    var result = try channel.callUnary(std.testing.allocator, "/test.Tls/Unary", "secure", .{});
+    defer result.deinit();
+    try std.testing.expect(result.status.isOk());
+    try std.testing.expectEqualStrings("secure", result.payload);
+}
+
 test "TLS channel replaces a server-idle connection for a later RPC" {
     if (!build_options.tls) return error.SkipZigTest;
     const server = @import("server.zig");
@@ -7897,7 +7961,7 @@ test "TLS channel replaces a server-idle connection for a later RPC" {
         fn dump(self: *@This(), err: anyerror) void {
             self.mutex.lockUncancelable(syncIo());
             defer self.mutex.unlock(syncIo());
-            std.debug.print("TLS idle replacement failed: {s} (idle=20ms sleep=100ms high=16 low=8 dropped={d})\n{s}", .{
+            std.debug.print("TLS idle replacement failed: {s} (idle=1000ms replacement_wait=5000ms high=16 low=8 dropped={d})\n{s}", .{
                 @errorName(err), self.dropped, self.buffer[0..self.len],
             });
         }
@@ -7922,7 +7986,7 @@ test "TLS channel replaces a server-idle connection for a later RPC" {
     var handler = Handler{};
     var test_server = try server.Server.init(std.testing.allocator, .{
         .logger = logger,
-        .connection_idle_timeout_ns = 20 * std.time.ns_per_ms,
+        .connection_idle_timeout_ns = std.time.ns_per_s,
         .write_high_watermark_bytes = 16,
         .write_low_watermark_bytes = 8,
         .tls = .{
@@ -7949,14 +8013,26 @@ test "TLS channel replaces a server-idle connection for a later RPC" {
     });
     defer channel.deinit();
 
-    logger.write(.debug, "test: first RPC start generation={d}", .{channel.impl.connection_generation.load(.monotonic)});
+    const first_generation = channel.impl.connection_generation.load(.monotonic);
+    logger.write(.debug, "test: first RPC start generation={d}", .{first_generation});
     var first = try channel.callUnary(std.testing.allocator, "/test.Tls/Unary", "first", .{});
     defer first.deinit();
     logger.write(.debug, "test: first RPC status={s} message={s} generation={d}", .{
         @tagName(first.status.code), first.status.message, channel.impl.connection_generation.load(.monotonic),
     });
     try std.testing.expect(first.status.isOk());
-    try std.Io.sleep(std.testing.io, .fromMilliseconds(100), .awake);
+    // A fixed sleep can span several idle replacements and race the next close.
+    // Generation advances before the TLS handshake, so also wait for admission.
+    const replacement_deadline = nowNs() +| 5 * std.time.ns_per_s;
+    while (true) {
+        channel.impl.mutex.lockUncancelable(syncIo());
+        const replacement_ready = channel.impl.connection_generation.load(.monotonic) > first_generation and
+            channel.impl.accepting_streams;
+        channel.impl.mutex.unlock(syncIo());
+        if (replacement_ready) break;
+        try std.testing.expect(nowNs() < replacement_deadline);
+        try std.Io.sleep(std.testing.io, .fromMilliseconds(1), .awake);
+    }
     logger.write(.debug, "test: second RPC start generation={d}", .{channel.impl.connection_generation.load(.monotonic)});
     var second = try channel.callUnary(std.testing.allocator, "/test.Tls/Unary", "second", .{});
     defer second.deinit();

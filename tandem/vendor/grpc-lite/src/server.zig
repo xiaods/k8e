@@ -208,8 +208,8 @@ const EncodedValueBuilder = StackFirstBuilder(metadata.OutboundValue, encoded_va
 pub const TlsOptions = struct {
     certificate_chain_pem: []const u8,
     private_key_pem: []const u8,
-    ca_certificates_pem: ?[]const u8 = null,
-    require_client_certificate: bool = false,
+    /// When set, require a valid client certificate signed by these PEM CAs.
+    client_ca_certificates_pem: ?[]const u8 = null,
     handshake_timeout_ns: u64 = 10 * std.time.ns_per_s,
 };
 
@@ -800,8 +800,7 @@ fn initImpl(shared_allocator: std.mem.Allocator, coordinator: *Coordinator, opti
                 shared_allocator,
                 tls_options.certificate_chain_pem,
                 tls_options.private_key_pem,
-                tls_options.ca_certificates_pem,
-                tls_options.require_client_certificate,
+                tls_options.client_ca_certificates_pem,
             );
         }
     }
@@ -5193,8 +5192,10 @@ test "server resource silent and incomplete cleartext prefaces expire" {
 
 test "server resource fragmented valid cleartext preface survives into idle" {
     var server = try Server.init(std.testing.allocator, .{
-        .cleartext_preface_timeout_ns = 40 * std.time.ns_per_ms,
-        .connection_idle_timeout_ns = std.time.ns_per_s,
+        // Allow instrumentation and scheduler overhead while keeping the preface
+        // deadline shorter than the observation interval and the idle deadline.
+        .cleartext_preface_timeout_ns = std.time.ns_per_s,
+        .connection_idle_timeout_ns = 30 * std.time.ns_per_s,
     });
     defer server.deinit();
     try server.start();
@@ -5206,6 +5207,7 @@ test "server resource fragmented valid cleartext preface survives into idle" {
     const io = io_threaded.io();
     const stream = try address.connect(io, .{ .mode = .stream, .timeout = .none });
     defer stream.close(io);
+    try socket_options.enableTcpNoDelay(stream.socket.handle);
     const preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" ++ [_]u8{ 0, 0, 0, c.NGHTTP2_SETTINGS, 0, 0, 0, 0, 0 };
     var offset: usize = 0;
     while (offset < preface.len) {
@@ -5213,8 +5215,26 @@ test "server resource fragmented valid cleartext preface survives into idle" {
         try writeTestStream(stream, io, preface[offset..end]);
         offset = end;
     }
-    try waitForAdmittedConnections(server.coordinator, 1);
-    try std.Io.sleep(std.testing.io, .fromMilliseconds(80), .awake);
+    // Admission only proves accept() ran. Wait for the SETTINGS ACK to prove
+    // that the complete fragmented preface was processed before observing idle.
+    var output: std.ArrayList(u8) = .empty;
+    defer output.deinit(std.testing.allocator);
+    var buffer: [256]u8 = undefined;
+    for (0..10) |_| {
+        var poll_fds = [_]std.posix.pollfd{.{
+            .fd = stream.socket.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        if (try std.posix.poll(&poll_fds, 1000) == 0) return error.TestTimeout;
+        const length = try std.posix.read(stream.socket.handle, &buffer);
+        if (length == 0) return error.UnexpectedEof;
+        try output.appendSlice(std.testing.allocator, buffer[0..length]);
+        if (testOutputHasFrame(output.items, 0, c.NGHTTP2_SETTINGS, c.NGHTTP2_FLAG_ACK)) break;
+    }
+    try std.testing.expect(testOutputHasFrame(output.items, 0, c.NGHTTP2_SETTINGS, c.NGHTTP2_FLAG_ACK));
+    // A stale preface deadline must still close the connection and fail this test.
+    try std.Io.sleep(std.testing.io, .fromMilliseconds(1100), .awake);
     try std.testing.expectEqual(@as(usize, 1), server.coordinator.admitted_connections.load(.acquire));
 }
 

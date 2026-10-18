@@ -5,8 +5,12 @@ go 1.26
 require google.golang.org/grpc v1.82.1
 
 require (
+	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
+	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/grpc/grpc/tools/http2_interop v0.0.0-20260718051024-8542e01ff47e // indirect
 	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect

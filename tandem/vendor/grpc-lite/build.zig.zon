@@ -1,6 +1,6 @@
 .{
     .name = .grpc_lite,
-    .version = "0.4.0",
+    .version = "0.5.0",
     .minimum_zig_version = "0.16.0",
     .fingerprint = 0xa8480adad018cc05,
     .dependencies = .{
@@ -27,6 +27,16 @@
         .mbedtls = .{
             .url = "https://codeload.github.com/Mbed-TLS/mbedtls/tar.gz/refs/tags/mbedtls-3.6.6",
             .hash = "N-V-__8AAI1FmQLj92go7nR7_J6kwr-7uYyuitngGqydvWkd",
+            .lazy = true,
+        },
+        .protobuf = .{
+            .url = "https://github.com/Arwalk/zig-protobuf/archive/b794f99323cead7f1794ae68554d0311cc309857.tar.gz",
+            .hash = "protobuf-5.0.0-0e82ahZiKwC5Yrh4psANoUzrV_H4CQU1EsOIY9Zdyap_",
+            .lazy = true,
+        },
+        .grpc_proto = .{
+            .url = "https://codeload.github.com/grpc/grpc-proto/tar.gz/99135b19189588fcc787acb84cff27991787473d",
+            .hash = "N-V-__8AAMvUAgBnxziu_Kuqr4AuJ00Vke6R0R-Rc1A26DRX",
             .lazy = true,
         },
         .gperftools = .{

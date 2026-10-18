@@ -44,6 +44,22 @@ run_isolated() {
     fi
     grep -q 'bundle version mismatch' "$work_dir/negative-mismatch.log"
 
+    # The mismatched fixture is JSON emitted by this script's json.dump below.
+    local wrong_target=x86_64-linux-gnu
+    if grep -q '"target": "x86_64-linux-gnu"' "$mismatch_bundle/manifest.json"; then
+        wrong_target=aarch64-linux-gnu
+    fi
+    sed -i -e "s/\"project_version\": \"999.0.0\"/\"project_version\": \"$version\"/" \
+        -e "s/\"target\": \"[^\"]*\"/\"target\": \"$wrong_target\"/" \
+        "$mismatch_bundle/manifest.json"
+    if cmake -S "$package_source" -B "$work_dir/negative-target" \
+        "${common[@]}" -DGRPC_LITE_TRANSPILED_C_DIR="$mismatch_bundle" \
+        >"$work_dir/negative-target.log" 2>&1; then
+        printf '%s\n' 'CMake unexpectedly accepted a bundle for another architecture' >&2
+        exit 1
+    fi
+    grep -q 'bundle target mismatch' "$work_dir/negative-target.log"
+
     if cmake -S "$package_source" -B "$work_dir/negative-network" \
         -G Ninja -DGRPC_LITE_NO_NETWORK=ON \
         -DGRPC_LITE_TRANSPILED_C_DIR="$bundle_dir" \

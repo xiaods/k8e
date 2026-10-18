@@ -21,17 +21,24 @@ const http2_ciphersuites = [_]c_int{
 };
 var psa_state: std.atomic.Value(u8) = .init(0);
 
+/// Certificate chain and unencrypted private key an endpoint presents to its peer.
+pub const Identity = struct {
+    certificate_chain_pem: []const u8,
+    private_key_pem: []const u8,
+};
+
 pub const Config = struct {
     allocator: std.mem.Allocator = undefined,
     entropy: c.mbedtls_entropy_context = undefined,
     drbg: c.mbedtls_ctr_drbg_context = undefined,
     ssl: c.mbedtls_ssl_config = undefined,
     certificate: c.mbedtls_x509_crt = undefined,
-    ca_certificate: c.mbedtls_x509_crt = undefined,
+    /// Client identity chain or server trusted client CAs.
+    identity_certificate: c.mbedtls_x509_crt = undefined,
     private_key: c.mbedtls_pk_context = undefined,
     initialized: bool = false,
 
-    pub fn createClient(allocator: std.mem.Allocator, ca_pem: []const u8) !*Config {
+    pub fn createClient(allocator: std.mem.Allocator, ca_pem: []const u8, identity: ?Identity) !*Config {
         const self = try allocator.create(Config);
         self.* = .{ .allocator = allocator };
         errdefer allocator.destroy(self);
@@ -41,6 +48,7 @@ pub const Config = struct {
         try parseCertificate(allocator, &self.certificate, ca_pem);
         c.mbedtls_ssl_conf_ca_chain(&self.ssl, &self.certificate, null);
         c.mbedtls_ssl_conf_authmode(&self.ssl, c.MBEDTLS_SSL_VERIFY_REQUIRED);
+        if (identity) |id| try self.useIdentity(&self.identity_certificate, id);
         return self;
     }
 
@@ -48,8 +56,7 @@ pub const Config = struct {
         allocator: std.mem.Allocator,
         certificate_chain_pem: []const u8,
         private_key_pem: []const u8,
-        ca_certificates_pem: ?[]const u8,
-        require_client_certificate: bool,
+        client_ca_pem: ?[]const u8,
     ) !*Config {
         const self = try allocator.create(Config);
         self.* = .{ .allocator = allocator };
@@ -57,22 +64,31 @@ pub const Config = struct {
         try self.init(.server);
         errdefer self.deinit();
 
-        try parseCertificate(allocator, &self.certificate, certificate_chain_pem);
-        if (ca_certificates_pem) |ca_pem| {
-            try parseCertificate(allocator, &self.ca_certificate, ca_pem);
-            c.mbedtls_ssl_conf_ca_chain(&self.ssl, &self.ca_certificate, null);
-            if (require_client_certificate) c.mbedtls_ssl_conf_authmode(&self.ssl, c.MBEDTLS_SSL_VERIFY_REQUIRED);
+        try self.useIdentity(&self.certificate, .{
+            .certificate_chain_pem = certificate_chain_pem,
+            .private_key_pem = private_key_pem,
+        });
+        if (client_ca_pem) |pem| {
+            try parseCertificate(allocator, &self.identity_certificate, pem);
+            c.mbedtls_ssl_conf_ca_chain(&self.ssl, &self.identity_certificate, null);
+            c.mbedtls_ssl_conf_authmode(&self.ssl, c.MBEDTLS_SSL_VERIFY_REQUIRED);
+        } else {
+            c.mbedtls_ssl_conf_authmode(&self.ssl, c.MBEDTLS_SSL_VERIFY_NONE);
         }
-        try parsePrivateKey(allocator, &self.private_key, private_key_pem, &self.drbg);
+        return self;
+    }
+
+    fn useIdentity(self: *Config, certificate: *c.mbedtls_x509_crt, identity: Identity) !void {
+        try parseCertificate(self.allocator, certificate, identity.certificate_chain_pem);
+        try parsePrivateKey(self.allocator, &self.private_key, identity.private_key_pem, &self.drbg);
         if (c.mbedtls_pk_check_pair(
-            &self.certificate.pk,
+            &certificate.pk,
             &self.private_key,
             c.mbedtls_ctr_drbg_random,
             &self.drbg,
         ) != 0) return error.CertificateKeyMismatch;
-        if (c.mbedtls_ssl_conf_own_cert(&self.ssl, &self.certificate, &self.private_key) != 0)
+        if (c.mbedtls_ssl_conf_own_cert(&self.ssl, certificate, &self.private_key) != 0)
             return error.TlsConfigurationFailed;
-        return self;
     }
 
     pub fn destroy(self: *Config) void {
@@ -85,8 +101,8 @@ pub const Config = struct {
         if (!self.initialized) return;
         c.mbedtls_ssl_config_free(&self.ssl);
         c.mbedtls_pk_free(&self.private_key);
+        c.mbedtls_x509_crt_free(&self.identity_certificate);
         c.mbedtls_x509_crt_free(&self.certificate);
-        c.mbedtls_x509_crt_free(&self.ca_certificate);
         c.mbedtls_ctr_drbg_free(&self.drbg);
         c.mbedtls_entropy_free(&self.entropy);
         self.initialized = false;
@@ -100,7 +116,7 @@ pub const Config = struct {
         c.mbedtls_ctr_drbg_init(&self.drbg);
         c.mbedtls_ssl_config_init(&self.ssl);
         c.mbedtls_x509_crt_init(&self.certificate);
-        c.mbedtls_x509_crt_init(&self.ca_certificate);
+        c.mbedtls_x509_crt_init(&self.identity_certificate);
         c.mbedtls_pk_init(&self.private_key);
         self.initialized = true;
         errdefer self.deinit();
@@ -403,9 +419,9 @@ test "client and server negotiate h2 and exchange plaintext" {
     const certificate = @embedFile("testdata/localhost-cert.pem");
     const private_key = @embedFile("testdata/localhost-key.pem");
 
-    const client_config = try Config.createClient(std.testing.allocator, certificate);
+    const client_config = try Config.createClient(std.testing.allocator, certificate, null);
     defer client_config.destroy();
-    const server_config = try Config.createServer(std.testing.allocator, certificate, private_key, null, false);
+    const server_config = try Config.createServer(std.testing.allocator, certificate, private_key, null);
     defer server_config.destroy();
 
     const client = try Session.create(std.testing.allocator, client_config, "localhost");
@@ -446,9 +462,9 @@ test "client and server negotiate h2 and exchange plaintext" {
 test "client rejects a certificate for a different hostname" {
     const certificate = @embedFile("testdata/localhost-cert.pem");
     const private_key = @embedFile("testdata/localhost-key.pem");
-    const client_config = try Config.createClient(std.testing.allocator, certificate);
+    const client_config = try Config.createClient(std.testing.allocator, certificate, null);
     defer client_config.destroy();
-    const server_config = try Config.createServer(std.testing.allocator, certificate, private_key, null, false);
+    const server_config = try Config.createServer(std.testing.allocator, certificate, private_key, null);
     defer server_config.destroy();
     const client = try Session.create(std.testing.allocator, client_config, "wrong.example");
     defer client.destroy();
@@ -468,6 +484,118 @@ test "client rejects a certificate for a different hostname" {
         try transferCiphertext(server, client);
     }
     try std.testing.expect(rejected);
+}
+
+test "server rejects empty or malformed client trust roots" {
+    const certificate = @embedFile("testdata/localhost-cert.pem");
+    const private_key = @embedFile("testdata/localhost-key.pem");
+    for ([_][]const u8{ "", "not a PEM certificate" }) |ca| {
+        try std.testing.expectError(error.InvalidCertificate, Config.createServer(
+            std.testing.allocator,
+            certificate,
+            private_key,
+            ca,
+        ));
+    }
+}
+
+test "server rejects untrusted and expired client certificates" {
+    const certificate = @embedFile("testdata/localhost-cert.pem");
+    const private_key = @embedFile("testdata/localhost-key.pem");
+    const ca = @embedFile("testdata/mtls/ca.pem");
+    const server_config = try Config.createServer(std.testing.allocator, certificate, private_key, ca);
+    defer server_config.destroy();
+    const identities = [_]Identity{
+        .{ .certificate_chain_pem = certificate, .private_key_pem = private_key },
+        .{ .certificate_chain_pem = @embedFile("testdata/mtls/expired-client.pem"), .private_key_pem = @embedFile("testdata/mtls/client-key.pem") },
+    };
+    for (identities) |identity| {
+        const client_config = try Config.createClient(std.testing.allocator, certificate, identity);
+        defer client_config.destroy();
+        const outcome = try runHandshake(client_config, server_config);
+        try std.testing.expect(outcome.server_failed);
+        try std.testing.expect(!outcome.server_complete);
+    }
+}
+
+test "server requiring a client certificate accepts the client identity" {
+    const certificate = @embedFile("testdata/localhost-cert.pem");
+    const private_key = @embedFile("testdata/localhost-key.pem");
+    const client_config = try Config.createClient(std.testing.allocator, certificate, .{
+        .certificate_chain_pem = certificate,
+        .private_key_pem = private_key,
+    });
+    defer client_config.destroy();
+    const server_config = try Config.createServer(std.testing.allocator, certificate, private_key, certificate);
+    defer server_config.destroy();
+
+    const outcome = try runHandshake(client_config, server_config);
+    try std.testing.expect(outcome.client_complete);
+    try std.testing.expect(outcome.server_complete);
+}
+
+test "server requiring a client certificate rejects a client without identity" {
+    const certificate = @embedFile("testdata/localhost-cert.pem");
+    const private_key = @embedFile("testdata/localhost-key.pem");
+    const client_config = try Config.createClient(std.testing.allocator, certificate, null);
+    defer client_config.destroy();
+    const server_config = try Config.createServer(std.testing.allocator, certificate, private_key, certificate);
+    defer server_config.destroy();
+
+    const outcome = try runHandshake(client_config, server_config);
+    try std.testing.expect(outcome.server_failed);
+    try std.testing.expect(!outcome.server_complete);
+}
+
+test "client rejects an identity whose key does not match the certificate" {
+    const certificate = @embedFile("testdata/localhost-cert.pem");
+    const unrelated_key =
+        \\-----BEGIN PRIVATE KEY-----
+        \\MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgo2eSqzM+SZ7QF+x5
+        \\4ET3NEJAMz3nbj3e7XzbgSdPHAuhRANCAATSA4imS1m6RqWAI52SWlDnuDuuJ2Ne
+        \\D4ql0rjUXF0xwzcTgNr3RgywHrRn4UQ4QiAXctwXTzD9fZxXtyKtTR0X
+        \\-----END PRIVATE KEY-----
+    ;
+    try std.testing.expectError(error.CertificateKeyMismatch, Config.createClient(
+        std.testing.allocator,
+        certificate,
+        .{ .certificate_chain_pem = certificate, .private_key_pem = unrelated_key },
+    ));
+}
+
+const HandshakeOutcome = struct {
+    client_complete: bool = false,
+    server_complete: bool = false,
+    server_failed: bool = false,
+};
+
+/// Drives both handshakes until both complete or either side fails.
+fn runHandshake(client_config: *const Config, server_config: *const Config) !HandshakeOutcome {
+    const client = try Session.create(std.testing.allocator, client_config, "localhost");
+    defer client.destroy();
+    const server = try Session.create(std.testing.allocator, server_config, null);
+    defer server.destroy();
+
+    var outcome: HandshakeOutcome = .{};
+    for (0..32) |_| {
+        if (!outcome.client_complete) switch (client.handshake()) {
+            .complete => outcome.client_complete = true,
+            .want_read, .want_write => {},
+            else => return outcome,
+        };
+        try transferCiphertext(client, server);
+        if (!outcome.server_complete) switch (server.handshake()) {
+            .complete => outcome.server_complete = true,
+            .want_read, .want_write => {},
+            else => {
+                outcome.server_failed = true;
+                return outcome;
+            },
+        };
+        try transferCiphertext(server, client);
+        if (outcome.client_complete and outcome.server_complete) break;
+    }
+    return outcome;
 }
 
 fn handshakeStep(session: *Session) !bool {

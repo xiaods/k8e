@@ -67,18 +67,26 @@ The authoritative compatibility matrix lives in
 
 `mise run transpile-c` emits the runtime and C++ protoc plugin through Zig's C backend,
 vendors the matching `zig.h`, writes a manifest, and applies deterministic compatibility
-transforms. The ignored `transpiled/` directory is for local use and is never committed.
+transforms. The default target follows the host architecture. Set
+`GRPC_LITE_TRANSPILED_C_TARGET=x86_64-linux-gnu` or `aarch64-linux-gnu` to override
+it for `transpile-c`, `package-transpiled-c`, or `check-transpiled-c`. Generated C is
+target-specific; it is not portable between architectures. Package suffixes are
+`linux-x86_64` and `linux-arm64`. Use separate output directories when preserving
+both architectures (`GRPC_LITE_TRANSPILED_C_DIST_DIR`), since the reproducibility
+check clears its output directory.
+
+The ignored `transpiled/` directory is for local use and is never committed.
 
 `mise run check-transpiled-c` generates and packages twice with independent caches,
 compares the resulting archives byte for byte, verifies the SHA-256 sidecar, and tests
 that neither tracked files nor `git archive` contain `transpiled/`. The generated-only
-release asset is named `grpc-lite-transpiled-c-<version>-linux-x86_64.tar.gz` and contains
+release asset is named `grpc-lite-transpiled-c-<version>-linux-<arch>.tar.gz` and contains
 only the manifest, two C translation units, and `zig.h`.
 
-CI consumes the exact archive in a separate environment where Zig is absent and the
+CI and tag releases package both architectures on native runners and consume the exact archive in a separate environment where Zig is absent and the
 network is disabled. Git checkouts and GitHub automatic “Source code” archives do not
 support no-Zig CMake by themselves: consumers must extract the same-version asset and
-pass `GRPC_LITE_TRANSPILED_C_DIR`. The asset is insecure Linux x86_64 only and includes
+pass `GRPC_LITE_TRANSPILED_C_DIR`. The assets support insecure Linux x86_64 and ARM64 and includes
 no nghttp2 or c-ares sources. TLS is out of scope for this transpiled-C release bundle
 until separately selected, so CMake rejects `GRPC_LITE_ENABLE_TLS=ON`. Native Zig TLS
 remains selected and is validated by the separate TLS tasks above. Fully offline builds

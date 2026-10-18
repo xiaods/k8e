@@ -192,6 +192,40 @@ var channel = try grpc.Channel.init(allocator, "api.example.com:443", .{
 });
 ```
 
+For mutual TLS, a client presents a certificate chain and unencrypted PEM private key
+when the server requests one. The key must match the leaf certificate, otherwise
+`Channel.init` fails with `error.CertificateKeyMismatch`. PEM input is parsed during
+`Channel.init` and may be released afterward.
+
+```zig
+var channel = try grpc.Channel.init(allocator, "api.example.com:443", .{
+    .runtime = &runtime,
+    .tls = .{
+        .ca_certificates_pem = ca_pem,
+        .identity = .{ .certificate_chain_pem = client_cert_pem, .private_key_pem = client_key_pem },
+    },
+});
+```
+
+A server can require client certificates by setting `client_ca_certificates_pem`:
+
+```zig
+var server = try grpc.Server.init(allocator, .{
+    .tls = .{
+        .certificate_chain_pem = server_cert_pem,
+        .private_key_pem = server_key_pem,
+        .client_ca_certificates_pem = client_ca_pem,
+    },
+});
+```
+
+The default (`null`) does not request a client certificate. When configured, a
+missing, expired, or untrusted client certificate fails the handshake. An empty or
+invalid CA PEM fails initialization; it does not disable verification. CA PEM is
+parsed during `Server.init` and may then be released. Client and server trust roots
+may differ. This authenticates certificate trust only, not per-RPC authorization;
+peer identity APIs, dynamic credential rotation, and C/C++ TLS are not provided.
+
 Servers accept a PEM certificate chain and unencrypted PEM private key. PEM input is
 parsed during `Server.init` and may be released afterward.
 
