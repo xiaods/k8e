@@ -154,7 +154,6 @@ pub fn build(b: *std.Build) void {
     grpc_lite.addOptions("grpc_lite_options", grpc_lite_options);
     grpc_lite.addIncludePath(nghttp2_dependency.path("lib/includes"));
     grpc_lite.addIncludePath(native.nghttp2_include);
-    grpc_lite.addIncludePath(native.nghttp2_public_include);
     grpc_lite.addObjectFile(native.nghttp2_archive);
     grpc_lite.addIncludePath(cares_dependency.path("include"));
     grpc_lite.addIncludePath(native.cares_include);
@@ -892,7 +891,6 @@ fn addExample(
 const NativeDependencies = struct {
     nghttp2_archive: std.Build.LazyPath,
     nghttp2_include: std.Build.LazyPath,
-    nghttp2_public_include: std.Build.LazyPath,
     cares_archive: std.Build.LazyPath,
     cares_include: std.Build.LazyPath,
     mbedtls_archive: ?std.Build.LazyPath,
@@ -1010,7 +1008,6 @@ fn addNativeDependencies(
     return .{
         .nghttp2_archive = build_nghttp2.path(b, "lib/libnghttp2.a"),
         .nghttp2_include = build_nghttp2.path(b, "lib/includes"),
-        .nghttp2_public_include = build_nghttp2.path(b, "include"),
         .cares_archive = build_cares.path(b, "lib/libcares.a"),
         .cares_include = build_cares.path(b, "include"),
         .mbedtls_archive = if (build_mbedtls) |output| output.path(b, "libmbedtls_combined.a") else null,

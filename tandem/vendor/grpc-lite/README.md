@@ -61,11 +61,13 @@ defer result.deinit();
 
 Git checkouts and GitHub's automatic “Source code” archives intentionally omit generated
 C. To build with CMake without Zig, download the same-version
-`grpc-lite-transpiled-c-0.4.0-linux-x86_64.tar.gz` release asset and its checksum, verify
+`grpc-lite-transpiled-c-0.5.0-linux-x86_64.tar.gz` release asset and its checksum, verify
 and extract it, then configure the source tree with
 `-DGRPC_LITE_TRANSPILED_C_DIR=<extracted-root>`.
 
-The generated-only asset supports insecure Linux x86_64 and contains no third-party
+Use the `linux-arm64` asset instead on Linux ARM64.
+
+The generated-only asset supports insecure Linux x86_64 and ARM64 and contains no third-party
 dependencies. TLS is out of scope for this transpiled-C release bundle until separately
 selected; the CMake source build rejects `GRPC_LITE_ENABLE_TLS=ON`. This bundle decision
 does not affect optional TLS in the native Zig build. A fully offline configure must also
@@ -95,7 +97,8 @@ official grpc-go peers and public HTTP/2 framing suites on x86_64 and arm64.
 | grpcpp-shaped synchronous common API | Selected subset |
 | Official Protobuf C++ runtime | Optional external typed-code dependency |
 | General Abseil compatibility | Out of scope |
-| IPv6, mTLS, retries, reflection, xDS | Out of scope |
+| Native Zig mTLS client identities and required server-side client verification | Optional |
+| IPv6, retries, reflection, xDS | Out of scope |
 
 See [the official interoperability profile](tests/official/README.md) for current cases
 and results. grpc-lite does not provide grpc-core ABI compatibility or the full grpcpp

@@ -89,17 +89,20 @@ connection remains reusable.
 
 Git checkouts and GitHub automatic “Source code” archives intentionally contain no
 generated C. A no-Zig CMake build pairs the source at a tag with that release's matching
-`grpc-lite-transpiled-c-<version>-linux-x86_64.tar.gz` asset. Verify its sidecar from the
+`grpc-lite-transpiled-c-<version>-linux-<arch>.tar.gz` asset. Verify its sidecar from the
 folder containing both files, extract it, and pass the extracted root explicitly:
 
 ```bash
-sha256sum --check grpc-lite-transpiled-c-0.4.0-linux-x86_64.tar.gz.sha256
-tar -xzf grpc-lite-transpiled-c-0.4.0-linux-x86_64.tar.gz
+sha256sum --check grpc-lite-transpiled-c-0.5.0-linux-x86_64.tar.gz.sha256
+tar -xzf grpc-lite-transpiled-c-0.5.0-linux-x86_64.tar.gz
 cmake -S grpc-lite -B build \
-  -DGRPC_LITE_TRANSPILED_C_DIR="$PWD/grpc-lite-transpiled-c-0.4.0-linux-x86_64"
+  -DGRPC_LITE_TRANSPILED_C_DIR="$PWD/grpc-lite-transpiled-c-0.5.0-linux-x86_64"
 ```
 
-The generated-only asset targets insecure Linux x86_64. TLS is out of scope for this
+Choose `linux-x86_64` or `linux-arm64` to match the consumer architecture; the examples
+above use x86_64. CMake rejects bundles generated for a different architecture.
+
+The generated-only asset targets insecure Linux x86_64 and ARM64. TLS is out of scope for this
 transpiled-C release bundle until separately selected, and CMake rejects
 `GRPC_LITE_ENABLE_TLS=ON`. This does not change the optional mbedTLS support available to
 native Zig builds.
@@ -133,7 +136,7 @@ network guard:
 
 ```bash
 cmake -S grpc-lite -B build \
-  -DGRPC_LITE_TRANSPILED_C_DIR="$PWD/grpc-lite-transpiled-c-0.4.0-linux-x86_64" \
+  -DGRPC_LITE_TRANSPILED_C_DIR="$PWD/grpc-lite-transpiled-c-0.5.0-linux-x86_64" \
   -DGRPC_LITE_NO_NETWORK=ON \
   -DGRPC_LITE_NGHTTP2_URL="file://$PWD/deps/nghttp2.tar.gz" \
   -DGRPC_LITE_NGHTTP2_URL_HASH=SHA256=... \
@@ -244,3 +247,20 @@ grpc-lite does not expose Abseil in its selected grpcpp-shaped API and does not 
 substitute `absl/*` headers. Abseil used internally by a chosen Protobuf release remains
 that package's transitive dependency. Applications that include Abseil directly must
 continue to provide it or migrate those call sites separately.
+
+## Sanitizing transpiled-C consumers
+
+The Zig C backend reconstructs imported C types (including opaque pointers and
+nghttp2 callback types). Clang's UBSan `function` check cannot match those
+reconstructed types to the original C declarations. For a sanitized CMake
+consumer, compile the C runtime and its C dependencies with
+`-fsanitize=address,undefined -fno-sanitize=function`; C++ consumer code can keep
+`-fsanitize=address,undefined` without that exclusion. Link with the sanitizer
+flags as well.
+
+Zig's thread startup installs its own alternate signal stack. Run ASan consumers
+with `ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:use_sigaltstack=0` to avoid ASan
+trying to unmap that stack at pthread teardown. This disables ASan's alternate
+signal stack, not address or leak detection. Use `UBSAN_OPTIONS=halt_on_error=1`
+to fail on the remaining undefined-behavior checks. These settings are validation
+constraints, not a claim of full function-type sanitizer coverage.

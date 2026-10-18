@@ -102,3 +102,43 @@ for test_case in "${cases[@]}"; do
     --use_tls=true \
     --ca_file="$certificate"
 done
+stop_peer
+
+# Mutual TLS: distinct server and client trust roots, both RPC directions.
+mtls="$project_root/src/testdata/mtls"
+(cd "$project_root/tests/official" && go build -mod=readonly -o "$work_dir/mtls-peer" ./mtls_peer)
+peer_log="$work_dir/grpc-lite-mtls-server.log"
+"$project_root/zig-out/bin/grpc-lite-interop-server" \
+  --port="$zig_server_port" --use_tls=true \
+  --tls_cert_file="$certificate" --tls_key_file="$private_key" \
+  --client_ca_file="$mtls/ca.pem" >"$peer_log" 2>&1 &
+peer_pid=$!
+wait_for_peer "$zig_server_port"
+run_case 'grpc-go client -> grpc-lite mTLS server' empty_unary \
+  "$work_dir/mtls-peer" --address="localhost:$zig_server_port" \
+  --ca="$certificate" --cert="$mtls/client.pem" --key="$mtls/client-key.pem"
+for identity in missing untrusted expired; do
+  identity_args=()
+  case "$identity" in
+    untrusted) identity_args=(--cert="$certificate" --key="$private_key") ;;
+    expired) identity_args=(--cert="$mtls/expired-client.pem" --key="$mtls/client-key.pem") ;;
+  esac
+  if "$work_dir/mtls-peer" --address="localhost:$zig_server_port" --ca="$certificate" "${identity_args[@]}"; then
+    printf 'unexpected acceptance of %s client identity\n' "$identity" >&2
+    exit 1
+  fi
+  printf '[ PASS ] rejected %s client identity\n' "$identity"
+done
+stop_peer
+peer_log="$work_dir/grpc-go-mtls-server.log"
+"$work_dir/mtls-peer" --server --address="127.0.0.1:$go_server_port" \
+  --ca="$mtls/ca.pem" --cert="$certificate" --key="$private_key" >"$peer_log" 2>&1 &
+peer_pid=$!
+wait_for_peer "$go_server_port"
+for test_case in "${cases[@]}"; do
+  run_case 'grpc-lite mTLS client -> grpc-go server' "$test_case" \
+    "$project_root/zig-out/bin/grpc-lite-interop-client" \
+    --server_host=127.0.0.1 --server_port="$go_server_port" \
+    --test_case="$test_case" --use_tls=true --ca_file="$certificate" \
+    --tls_cert_file="$mtls/client.pem" --tls_key_file="$mtls/client-key.pem"
+done

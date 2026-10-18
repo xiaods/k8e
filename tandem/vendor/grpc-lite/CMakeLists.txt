@@ -1,11 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
-project(grpc_lite VERSION 0.4.0 LANGUAGES C)
+project(grpc_lite VERSION 0.5.0 LANGUAGES C)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "grpc-lite currently supports Linux only")
 endif()
-if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
-  message(FATAL_ERROR "The grpc-lite transpiled C bundle supports x86_64 only")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+  set(_grpc_lite_target "x86_64-linux-gnu")
+  set(_grpc_lite_arch "x86_64")
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+  set(_grpc_lite_target "aarch64-linux-gnu")
+  set(_grpc_lite_arch "arm64")
+else()
+  message(FATAL_ERROR "The grpc-lite transpiled C bundle supports x86_64 and ARM64 only")
 endif()
 
 option(GRPC_LITE_ENABLE_TLS "Request TLS (out of scope for the transpiled-C release bundle)" OFF)
@@ -20,13 +26,13 @@ set(GRPC_LITE_CARES_URL_HASH "" CACHE STRING "Optional c-ares tarball hash (ALGO
 
 if(GRPC_LITE_ENABLE_TLS)
   message(FATAL_ERROR
-    "TLS is out of scope for the insecure Linux x86_64 transpiled-C release bundle; configure with GRPC_LITE_ENABLE_TLS=OFF")
+    "TLS is out of scope for the insecure Linux transpiled-C release bundle; configure with GRPC_LITE_ENABLE_TLS=OFF")
 endif()
 
 set(_grpc_lite_bundle_help
   "Git checkouts and GitHub automatic 'Source code' archives intentionally omit generated C. "
   "Either (1) download, verify, and extract the matching "
-  "grpc-lite-transpiled-c-${PROJECT_VERSION}-linux-x86_64.tar.gz release asset and pass "
+  "grpc-lite-transpiled-c-${PROJECT_VERSION}-linux-${_grpc_lite_arch}.tar.gz release asset and pass "
   "-DGRPC_LITE_TRANSPILED_C_DIR=<extracted-root>, or (2) install the pinned Zig toolchain, "
   "run 'mise run transpile-c', and explicitly pass that resulting directory.")
 if(NOT GRPC_LITE_TRANSPILED_C_DIR)
@@ -54,9 +60,9 @@ endif()
 string(JSON _grpc_lite_manifest_target ERROR_VARIABLE _grpc_lite_json_error
   GET "${_grpc_lite_manifest_json}" target)
 if(NOT _grpc_lite_json_error STREQUAL "NOTFOUND" OR
-    NOT _grpc_lite_manifest_target STREQUAL "x86_64-linux-gnu")
+    NOT _grpc_lite_manifest_target STREQUAL "${_grpc_lite_target}")
   message(FATAL_ERROR
-    "Transpiled C bundle target mismatch: expected x86_64-linux-gnu, got '${_grpc_lite_manifest_target}'")
+    "Transpiled C bundle target mismatch: expected ${_grpc_lite_target}, got '${_grpc_lite_manifest_target}'")
 endif()
 set(_grpc_lite_runtime_source "${_grpc_lite_transpiled_dir}/src/grpc_lite.c")
 set(_grpc_lite_plugin_source "${_grpc_lite_transpiled_dir}/src/protoc-gen-grpc_lite_cpp.c")

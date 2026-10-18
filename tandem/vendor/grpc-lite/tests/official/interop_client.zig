@@ -16,6 +16,8 @@ const Config = struct {
     server_port: u16 = 10000,
     test_case: []const u8 = "large_unary",
     use_tls: bool = false,
+    tls_cert_file: []const u8 = "",
+    tls_key_file: []const u8 = "",
     ca_file: []const u8 = "",
     soak_iterations: usize = 10,
     soak_max_failures: usize = 0,
@@ -33,8 +35,24 @@ pub fn main(init: std.process.Init) !void {
     else
         null;
     defer if (ca_pem) |bytes| init.gpa.free(bytes);
+    const tls_cert_file_pem = if (config.tls_cert_file.len != 0)
+        try std.Io.Dir.cwd().readFileAlloc(init.io, config.tls_cert_file, init.gpa, .limited(4 * 1024 * 1024))
+    else
+        null;
+    defer if (tls_cert_file_pem) |bytes| init.gpa.free(bytes);
+    const tls_key_file_pem = if (config.tls_key_file.len != 0)
+        try std.Io.Dir.cwd().readFileAlloc(init.io, config.tls_key_file, init.gpa, .limited(4 * 1024 * 1024))
+    else
+        null;
+    defer if (tls_key_file_pem) |bytes| init.gpa.free(bytes);
     const channel_options: grpc.ChannelOptions = .{
-        .tls = if (ca_pem) |bytes| .{ .ca_certificates_pem = bytes } else null,
+        .tls = if (ca_pem) |bytes| .{
+            .ca_certificates_pem = bytes,
+            .identity = if (tls_cert_file_pem) |cert| .{
+                .certificate_chain_pem = cert,
+                .private_key_pem = tls_key_file_pem.?,
+            } else null,
+        } else null,
     };
 
     const target = try std.fmt.allocPrint(init.gpa, "{s}:{d}", .{
@@ -903,6 +921,10 @@ fn parseArgs(args: []const []const u8) !Config {
             index += 1;
             if (index >= args.len) return error.MissingTestCase;
             config.test_case = args[index];
+        } else if (std.mem.startsWith(u8, arg, "--tls_cert_file=")) {
+            config.tls_cert_file = arg["--tls_cert_file=".len..];
+        } else if (std.mem.startsWith(u8, arg, "--tls_key_file=")) {
+            config.tls_key_file = arg["--tls_key_file=".len..];
         } else if (std.mem.startsWith(u8, arg, "--use_tls=")) {
             config.use_tls = try parseBool(arg["--use_tls=".len..]);
         } else if (std.mem.eql(u8, arg, "--use_tls")) {
@@ -950,6 +972,8 @@ fn parseArgs(args: []const []const u8) !Config {
             return error.UnknownArgument;
         }
     }
+    if ((config.tls_cert_file.len == 0) != (config.tls_key_file.len == 0)) return error.IncompleteClientIdentity;
+    if (!config.use_tls and config.tls_cert_file.len != 0) return error.IdentityRequiresTls;
     if (config.use_tls and config.ca_file.len == 0) return error.MissingCaFile;
     if (config.soak_iterations == 0) return error.ZeroSoakIterations;
     return config;
@@ -1088,4 +1112,12 @@ test "channel soak counts init failures and preserves OOM" {
         handleSoakFailure(&failures, 1, 1, error.OutOfMemory),
     );
     try std.testing.expectEqual(@as(usize, 1), failures);
+}
+
+test "parse mutual TLS identity arguments" {
+    const config = try parseArgs(&.{ "client", "--use_tls=true", "--ca_file=ca.pem", "--tls_cert_file=client.pem", "--tls_key_file=client-key.pem" });
+    try std.testing.expectEqualStrings("client.pem", config.tls_cert_file);
+    try std.testing.expectEqualStrings("client-key.pem", config.tls_key_file);
+    try std.testing.expectError(error.IncompleteClientIdentity, parseArgs(&.{ "client", "--tls_cert_file=client.pem" }));
+    try std.testing.expectError(error.IncompleteClientIdentity, parseArgs(&.{ "client", "--tls_key_file=client-key.pem" }));
 }

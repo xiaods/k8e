@@ -49,7 +49,7 @@ mise run gen-grpcpp
 - gRPC payloads remain raw protobuf wire bytes.
 - Generated protobuf sources live under `.zig-cache` and are not committed.
 - The native Zig transport supports raw unary and full-duplex streaming over cleartext or TLS IPv4.
-- The insecure Linux x86_64 transpiled-C release bundle supports cleartext transport only.
+- The insecure Linux x86_64 and ARM64 transpiled-C release bundle supports cleartext transport only.
 - c-ares resolves client hostnames to IPv4 candidates on the libxev loop.
 
 Keep C types private to transport modules. Keep protobuf out of `src/root.zig` so the
@@ -79,8 +79,9 @@ authoritative: change it before implementing a feature with a different decision
 | Graceful server drain | Selected | Stop admission, send GOAWAY, wait with timeout |
 | Server resource limits | Selected | Aggregate connection cap, per-connection stream cap, absolute cleartext preface timeout, and idle timeout only while no inbound RPC streams are active |
 | Native Zig TLS and ALPN | Selected | Optional mbedTLS; TLS 1.2+, mandatory `h2`, explicit PEM credentials |
-| Transpiled-C release bundle TLS | Out of scope | The insecure Linux x86_64 bundle remains cleartext-only until TLS is separately selected |
-| mTLS | Out of scope | Client certificates and server-side client verification are not required |
+| Transpiled-C release bundles | Selected | Target-specific insecure Linux x86_64 and ARM64 packages; native CI packaging and no-Zig consumers |
+| Transpiled-C release bundle TLS | Out of scope | The insecure Linux x86_64 and ARM64 bundles remain cleartext-only until TLS is separately selected |
+| mTLS | Selected | Native Zig TLS only: optional client PEM identity and server-required client verification with explicit trusted CAs; no identity authorization or dynamic rotation |
 | DNS | Selected | c-ares on Linux io_uring; client IPv4 hostnames only |
 | IPv6 | Out of scope | No AAAA, Happy Eyeballs, or IPv6 listeners |
 | Reflection and health services | Out of scope | Not part of the lite profile |

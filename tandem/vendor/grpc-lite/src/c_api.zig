@@ -181,7 +181,7 @@ const channel_options_v1_size = @offsetOf(ChannelOptions, "jitter_percent") + @s
 const channel_options_v2_size = @offsetOf(ChannelOptions, "logger") + @sizeOf(?*const Logger);
 const channel_options_v3_size = @offsetOf(ChannelOptions, "max_response_header_list_size") + @sizeOf(u64);
 
-const allocator = std.heap.c_allocator;
+const allocator = if (@import("builtin").is_test) std.testing.allocator else std.heap.c_allocator;
 
 const ChannelCreateOptions = struct {
     reconnect: ?channel.ReconnectOptions = null,
@@ -351,7 +351,8 @@ fn createChannel(
     output.* = null;
     const target_bytes = bytes(target) orelse return .invalid_argument;
     const storage = allocator.create(ChannelStorage) catch return .out_of_memory;
-    errdefer allocator.destroy(storage);
+    // Error is a C status enum, not a Zig error union: errdefer would not run.
+    defer if (output.* == null) allocator.destroy(storage);
     storage.value = channel.Channel.init(allocator, target_bytes, .{
         .runtime = if (runtime_handle) |handle| &runtimeStorage(handle).value else null,
         .reconnect = options.reconnect,
@@ -399,7 +400,8 @@ pub fn grpc_lite_channel_call_unary(
     const options = parseUnaryOptions(options_pointer) orelse return .invalid_argument;
 
     const storage = allocator.create(UnaryResultStorage) catch return .out_of_memory;
-    errdefer allocator.destroy(storage);
+    // Error is a C status enum, not a Zig error union: errdefer would not run.
+    defer if (output.* == null) allocator.destroy(storage);
     storage.value = channelStorage(handle).value.callUnary(
         allocator,
         method,
@@ -429,7 +431,8 @@ pub fn grpc_lite_channel_open_stream(
     const callbacks = parseClientStreamCallbacks(callbacks_pointer) orelse return .invalid_argument;
 
     const storage = allocator.create(ClientStreamStorage) catch return .out_of_memory;
-    errdefer allocator.destroy(storage);
+    // Error is a C status enum, not a Zig error union: errdefer would not run.
+    defer if (output.* == null) allocator.destroy(storage);
     storage.callbacks = callbacks;
     storage.ready = .init(false);
     storage.value = channelStorage(handle).value.openStream(method, options, .{
@@ -512,7 +515,6 @@ pub fn grpc_lite_server_register_stream(
     const callbacks = parseServerMethodCallbacks(callbacks_pointer) orelse return .invalid_argument;
     const server_storage = serverStorage(handle);
     const method = allocator.create(ServerMethodStorage) catch return .out_of_memory;
-    errdefer allocator.destroy(method);
     method.* = .{ .callbacks = callbacks };
     server_storage.methods.ensureUnusedCapacity(allocator, 1) catch {
         allocator.destroy(method);
@@ -1773,4 +1775,29 @@ test "C client stream completes an event-driven round trip" {
     server_state.worker.?.join();
     try std.testing.expect(state.message_seen.load(.acquire));
     try std.testing.expect(state.succeeded.load(.acquire));
+}
+
+test "C failed unary and stream creation release handle storage" {
+    const Callbacks = struct {
+        fn onMessage(_: ?*anyopaque, _: *ClientStreamHandle, _: BytesView, _: u32) callconv(.c) u32 {
+            return 0;
+        }
+        fn onTerminal(_: ?*anyopaque, _: *ClientStreamHandle, _: i32, _: BytesView, _: *const MetadataViewHandle) callconv(.c) void {}
+    };
+    const options: ChannelOptions = .{ .allow_initial_offline = 1 };
+    var handle: ?*ChannelHandle = null;
+    try std.testing.expectEqual(Error.ok, grpc_lite_channel_create_managed(null, view("127.0.0.1:1"), &options, &handle));
+    defer grpc_lite_channel_destroy(handle);
+    grpc_lite_channel_shutdown(handle);
+    grpc_lite_channel_wait(handle);
+
+    var result: ?*UnaryResultHandle = @ptrFromInt(1);
+    try std.testing.expectEqual(Error.invalid_argument, grpc_lite_channel_call_unary(handle, view("invalid"), view(""), null, &result));
+    try std.testing.expectEqual(null, result);
+    const callbacks: ClientStreamCallbacks = .{ .on_message = Callbacks.onMessage, .on_terminal = Callbacks.onTerminal };
+    var stream: ?*ClientStreamHandle = @ptrFromInt(1);
+    try std.testing.expectEqual(Error.invalid_argument, grpc_lite_channel_open_stream(handle, view("invalid"), null, &callbacks, &stream));
+    try std.testing.expectEqual(null, stream);
+    try std.testing.expect(grpc_lite_channel_open_stream(handle, view("/test.Echo/Stream"), null, &callbacks, &stream) != .ok);
+    try std.testing.expectEqual(null, stream);
 }
