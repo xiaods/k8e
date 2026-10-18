@@ -32,7 +32,7 @@ test "appendLine then readWindow returns full content" {
     transcript.appendLineAt(allocator, TEST_BASE, "sess-1", "cmd", "echo hello");
     transcript.appendLineAt(allocator, TEST_BASE, "sess-1", "stdout", "hello world");
 
-    const w = transcript.readWindowAt(allocator, TEST_BASE, "sess-1", 0, 0) orelse {
+    const w = transcript.readWindowAt(allocator, TEST_BASE, "sess-1", 0) orelse {
         return error.TestUnexpectedResult;
     };
     defer transcript.freeWindow(allocator, w);

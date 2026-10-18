@@ -139,7 +139,7 @@ test "removeRecursive: removes nested dir tree" {
 
     // removeRecursive takes a [:0]u8.
     var buf: [256]u8 = undefined;
-    const base_z = try   std.fmt.bufPrintSentinel(&buf, "{s}", .{base}, 0, 0);
+    const base_z = try   std.fmt.bufPrintSentinel(&buf, "{s}", .{base}, 0);
     try std.testing.expect(files.removeRecursive(base_z));
 
     // The whole tree must be gone.
@@ -153,7 +153,7 @@ test "removeRecursive: missing path returns false" {
     var buf: [256]u8 = undefined;
     var ts: std.os.linux.timespec = undefined;
     _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.REALTIME, &ts);
-    const gone_z = try   std.fmt.bufPrintSentinel(&buf, "/tmp/k8e-no-such-path-{d}", .{ts.sec}, 0, 0);
+    const gone_z = try   std.fmt.bufPrintSentinel(&buf, "/tmp/k8e-no-such-path-{d}", .{ts.sec}, 0);
     try std.testing.expect(!files.removeRecursive(gone_z));
 }
 
@@ -188,9 +188,9 @@ test "stat: symlink target is resolved" {
     defer _ = std.os.linux.unlink(target);
 
     var base_buf: [256]u8 = undefined;
-    const base_z = try   std.fmt.bufPrintSentinel(&base_buf, "{s}", .{base}, 0, 0);
+    const base_z = try   std.fmt.bufPrintSentinel(&base_buf, "{s}", .{base}, 0);
     var tgt_buf: [256]u8 = undefined;
-    const tgt_z = try   std.fmt.bufPrintSentinel(&tgt_buf, "{s}", .{target}, 0, 0);
+    const tgt_z = try   std.fmt.bufPrintSentinel(&tgt_buf, "{s}", .{target}, 0);
     _ = std.os.linux.symlink(tgt_z, base_z);
     defer _ = std.os.linux.unlink(base_z);
 
@@ -229,7 +229,7 @@ test "writeChunk w-mode creates and truncates" {
     try files.writeChunk(path, "hello", "w", 0);
     try files.writeChunk(path, "hi", "w", 0); // second w truncates
 
-    const got = try files.readRange(testing.allocator, path, 0, 0);
+    const got = try files.readRange(testing.allocator, path, 0);
     defer testing.allocator.free(got);
     try testing.expectEqualStrings("hi", got);
 }
@@ -245,7 +245,7 @@ test "writeChunk positional offset reassembles chunks without truncation" {
     try files.writeChunk(path, "BBBB", "", 4);
     try files.writeChunk(path, "CC", "", 8);
 
-    const got = try files.readRange(testing.allocator, path, 0, 0);
+    const got = try files.readRange(testing.allocator, path, 0);
     defer testing.allocator.free(got);
     try testing.expectEqualStrings("AAAABBBBCC", got);
 }
