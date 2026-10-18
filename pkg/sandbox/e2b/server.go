@@ -232,6 +232,7 @@ func registerControlRoutes(r *mux.Router, s *Server) {
 		}
 	}
 	r.HandleFunc("/sandboxes", auth(s.handleCreate)).Methods(http.MethodPost)
+	r.HandleFunc("/v2/sandboxes", auth(s.handleCreate)).Methods(http.MethodPost)
 	r.HandleFunc("/sandboxes/{id}/connect", auth(s.handleConnect)).Methods(http.MethodPost)
 	r.HandleFunc("/sandboxes/{id}", auth(s.handleGet)).Methods(http.MethodGet)
 	r.HandleFunc("/sandboxes/{id}", auth(s.handleKill)).Methods(http.MethodDelete)
