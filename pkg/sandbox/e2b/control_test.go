@@ -623,8 +623,8 @@ func TestNeverTimeoutEndAtOmitted(t *testing.T) {
 	info := controlReq(t, ts, "GET", "/sandboxes/"+id, nil)
 	iv := map[string]any{}
 	_ = json.Unmarshal([]byte(readBody(t, info)), &iv)
-	if _, has := iv["endAt"]; has {
-		t.Fatalf("never-timeout sandbox must omit endAt, got %v", iv["endAt"])
+	if _, has := iv["endAt"]; !has {
+		t.Fatalf("never-timeout sandbox must report endAt for SDK compat, got none")
 	}
 	// The registry has no deadline.
 	if d := s.registry.deadlineOf(id); !d.IsZero() {

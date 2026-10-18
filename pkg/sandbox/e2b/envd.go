@@ -351,7 +351,11 @@ func (s *Server) runProcessStream(r *http.Request, sandboxID string, rec *Proces
 
 // parseExitFrame extracts {"exit":N} from a frame, or nil.
 func parseExitFrame(frame []byte) *int {
-	frame = bytes.TrimSpace(frame)
+	if idx := bytes.Index(frame, []byte(`{"exit":`)); idx >= 0 {
+		frame = bytes.TrimSpace(frame[idx:])
+	} else {
+		frame = bytes.TrimSpace(frame)
+	}
 	if !bytes.HasPrefix(frame, []byte(`{"exit":`)) {
 		return nil
 	}
@@ -366,7 +370,11 @@ func parseExitFrame(frame []byte) *int {
 
 // parsePidFrame extracts {"pid":N} from a frame, or nil.
 func parsePidFrame(frame []byte) *int {
-	frame = bytes.TrimSpace(frame)
+	if idx := bytes.Index(frame, []byte(`{"pid":`)); idx >= 0 {
+		frame = bytes.TrimSpace(frame[idx:])
+	} else {
+		frame = bytes.TrimSpace(frame)
+	}
 	if !bytes.HasPrefix(frame, []byte(`{"pid":`)) {
 		return nil
 	}
