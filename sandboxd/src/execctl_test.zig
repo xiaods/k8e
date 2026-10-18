@@ -23,7 +23,7 @@ test "ring buffer drops the oldest when full" {
     defer execctl.unregister(pid);
 
     // Append more than the buffer size.
-    const chunk = [_]u8{'x'} ** 1024;
+    const chunk = [_]u8{'x'}**1024;
     var total: usize = 0;
     while (total < 70 * 1024) : (total += 1024) {
         execctl.appendOutput(pid, &chunk);

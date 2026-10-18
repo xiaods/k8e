@@ -31,7 +31,7 @@ pub const Terminal = struct {
     pid: i32, // session leader
     rows: u16,
     cols: u16,
-    buf: [BUFFER_MAX]u8 = [_]u8{0} ** BUFFER_MAX,
+    buf: [BUFFER_MAX]u8 = [_]u8{0}**BUFFER_MAX,
     buf_len: usize = 0,
     buf_head: usize = 0,
     total_bytes: u64 = 0,
@@ -39,7 +39,7 @@ pub const Terminal = struct {
     done: bool = false,
 };
 
-var terminals: [MAX_TERMINALS]?Terminal = [_]?Terminal{null} ** MAX_TERMINALS;
+var terminals: [MAX_TERMINALS]?Terminal = [_]?Terminal{null}**MAX_TERMINALS;
 var count: usize = 0;
 var next_id: u32 = 1;
 var lock: std.atomic.Value(u32) = .init(0);
@@ -82,7 +82,7 @@ const Pty = struct {
 
 pub fn openPty() !Pty {
     var ptmx_buf: [64]u8 = undefined;
-    const ptmx = std.fmt.bufPrintZ(&ptmx_buf, "/dev/ptmx", .{}) catch return error.PathTooLong;
+    const ptmx = std.fmt.bufPrintSentinel(&ptmx_buf, "/dev/ptmx", .{}) catch return error.PathTooLong;
     const master_rc = std.os.linux.open(ptmx.ptr, std.os.linux.O{ .ACCMODE = .RDWR, .NOCTTY = true, .CLOEXEC = true }, 0);
     if (isErr(master_rc)) return error.OpenPtmxFailed;
     const master: i32 = @intCast(master_rc);
@@ -99,7 +99,7 @@ pub fn openPty() !Pty {
     }
 
     var pts_buf: [64]u8 = undefined;
-    const pts = std.fmt.bufPrintZ(&pts_buf, "/dev/pts/{d}", .{ptn}) catch {
+    const pts = std.fmt.bufPrintSentinel(&pts_buf, "/dev/pts/{d}", .{ptn}) catch {
         _ = std.os.linux.close(master);
         return error.PathTooLong;
     };
@@ -155,7 +155,7 @@ pub fn spawnTerminal(
     };
 
     var workdir_buf: [4096]u8 = undefined;
-    const workdir_z = std.fmt.bufPrintZ(&workdir_buf, "{s}", .{workdir}) catch return error.PathTooLong;
+    const workdir_z = std.fmt.bufPrintSentinel(&workdir_buf, "{s}", .{workdir}) catch return error.PathTooLong;
 
     const child_pid = std.os.linux.fork();
     if (isErr(child_pid)) {

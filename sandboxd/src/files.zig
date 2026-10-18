@@ -577,7 +577,7 @@ pub fn removeRecursive(path_z: [:0]u8) bool {
                     const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&dent.name)), 0);
                     if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
                     var child_buf: [4200]u8 = undefined;
-                    const child = std.fmt.bufPrintZ(&child_buf, "{s}/{s}", .{ path_z, name }) catch continue;
+                    const child = std.fmt.bufPrintSentinel(&child_buf, "{s}/{s}", .{ path_z, name }) catch continue;
                     _ = removeRecursive(child);
                 }
             }

@@ -21,10 +21,10 @@ const Watcher = struct {
     active: bool = false,
     id: u32 = 0,
     wd: i32 = -1, // inotify watch descriptor
-    path: [512]u8 = .{0} ** 512,
+    path: [512]u8 = .{0}**512,
     // Ring of event names (paths) + types.
-    names: [EVENT_BUF_MAX][256]u8 = .{.{0} ** 256} ** EVENT_BUF_MAX,
-    types: [EVENT_BUF_MAX]u8 = .{0} ** EVENT_BUF_MAX,
+    names: [EVENT_BUF_MAX][256]u8 = .{.{0}**256}**EVENT_BUF_MAX,
+    types: [EVENT_BUF_MAX]u8 = .{0}**EVENT_BUF_MAX,
     head: usize = 0,
     len: usize = 0,
     cursor: usize = 0, // index of the next event to deliver
@@ -147,7 +147,7 @@ pub fn handleCreate(allocator: std.mem.Allocator, client_fd: i32, body: []const 
     // Watch the path (non-recursive; recursive would need per-dir watches
     // for existing subdirs — documented limitation).
     var path_buf: [512]u8 = undefined;
-    const path_z = std.fmt.bufPrintZ(&path_buf, "{s}", .{req.path}) catch {
+    const path_z = std.fmt.bufPrintSentinel(&path_buf, "{s}", .{req.path}) catch {
         try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"path too long\"}");
         return;
     };

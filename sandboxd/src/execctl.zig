@@ -24,13 +24,13 @@ const Entry = struct {
     pid: std.os.linux.pid_t,
     stdin_fd: i32,
     /// Command snapshot (best-effort, truncated to CONFIG_MAX).
-    config: [CONFIG_MAX]u8 = .{0} ** CONFIG_MAX,
+    config: [CONFIG_MAX]u8 = .{0}**CONFIG_MAX,
     config_len: usize = 0,
     /// Ring buffer of the process's recent output (KIP-18 P1 /exec/attach).
     /// The streaming exec appends as it drains stdout; an attach replays
     /// this buffer so a reconnect sees what the process produced. Fixed size
     /// bounds memory per process (BUFFER_MAX); only the tail is kept.
-    buf: [BUFFER_MAX]u8 = .{0} ** BUFFER_MAX,
+    buf: [BUFFER_MAX]u8 = .{0}**BUFFER_MAX,
     buf_len: usize = 0,
     buf_head: usize = 0,
     /// Set once the process has been reaped (stdout fully drained).
@@ -46,7 +46,7 @@ fn setConfig(e: *Entry, command: []const u8) void {
     e.config_len = n;
 }
 
-var entries: [64]?Entry = .{null} ** 64;
+var entries: [64]?Entry = .{null}**64;
 var count: usize = 0;
 // Simple spinlock: sandboxd is thread-per-connection with short critical
 // sections (table lookups), so a futex-free spinlock is the right primitive
@@ -183,7 +183,7 @@ pub fn isDone(pid: std.os.linux.pid_t) bool {
 pub fn pids() [64]?std.os.linux.pid_t {
     lockTable();
     defer unlockTable();
-    var out: [64]?std.os.linux.pid_t = .{null} ** 64;
+    var out: [64]?std.os.linux.pid_t = .{null}**64;
     var i: usize = 0;
     for (entries) |maybe| {
         if (maybe) |e| {

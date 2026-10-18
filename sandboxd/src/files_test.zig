@@ -139,7 +139,7 @@ test "removeRecursive: removes nested dir tree" {
 
     // removeRecursive takes a [:0]u8.
     var buf: [256]u8 = undefined;
-    const base_z = try std.fmt.bufPrintZ(&buf, "{s}", .{base});
+    const base_z = try std.fmt.bufPrintSentinel(&buf, "{s}", .{base});
     try std.testing.expect(files.removeRecursive(base_z));
 
     // The whole tree must be gone.
@@ -153,7 +153,7 @@ test "removeRecursive: missing path returns false" {
     var buf: [256]u8 = undefined;
     var ts: std.os.linux.timespec = undefined;
     _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.REALTIME, &ts);
-    const gone_z = try std.fmt.bufPrintZ(&buf, "/tmp/k8e-no-such-path-{d}", .{ts.sec});
+    const gone_z = try std.fmt.bufPrintSentinel(&buf, "/tmp/k8e-no-such-path-{d}", .{ts.sec});
     try std.testing.expect(!files.removeRecursive(gone_z));
 }
 
@@ -188,9 +188,9 @@ test "stat: symlink target is resolved" {
     defer _ = std.os.linux.unlink(target);
 
     var base_buf: [256]u8 = undefined;
-    const base_z = try std.fmt.bufPrintZ(&base_buf, "{s}", .{base});
+    const base_z = try std.fmt.bufPrintSentinel(&base_buf, "{s}", .{base});
     var tgt_buf: [256]u8 = undefined;
-    const tgt_z = try std.fmt.bufPrintZ(&tgt_buf, "{s}", .{target});
+    const tgt_z = try std.fmt.bufPrintSentinel(&tgt_buf, "{s}", .{target});
     _ = std.os.linux.symlink(tgt_z, base_z);
     defer _ = std.os.linux.unlink(base_z);
 

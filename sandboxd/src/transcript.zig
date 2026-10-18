@@ -17,7 +17,7 @@ const TRANSCRIPT_DIR = "/workspace/.k8e_transcripts";
 pub const max_window_bytes: usize = 256 * 1024;
 
 fn transcriptPath(buf: []u8, base_dir: []const u8, session_id: []const u8) ?[:0]u8 {
-    return std.fmt.bufPrintZ(buf, "{s}/{s}.log", .{ base_dir, session_id }) catch null;
+    return std.fmt.bufPrintSentinel(buf, "{s}/{s}.log", .{ base_dir, session_id }) catch null;
 }
 
 /// appendLine appends one transcript line for the session, creating the

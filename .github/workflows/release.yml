@@ -25,7 +25,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -72,7 +72,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -111,7 +111,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - name: Build sandbox-cli
         run: zig build sandboxcli
       - name: Upload linux-amd64
@@ -158,7 +158,7 @@ jobs:
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
         with:
-          version: 0.16.0
+          version: 0.17.0
       - name: Build sandboxd binaries
         run: cd sandboxd && zig build sandboxd
       - name: Set up Docker Buildx

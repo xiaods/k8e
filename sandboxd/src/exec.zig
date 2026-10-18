@@ -150,7 +150,7 @@ pub fn runCommandWithEnv(allocator: std.mem.Allocator, command: []const u8, work
 
         // Change working directory
         var cwd_buf: [4096]u8 = undefined;
-        const cwd_z = std.fmt.bufPrintZ(&cwd_buf, "{s}", .{workdir}) catch return error.PathTooLong;
+        const cwd_z = std.fmt.bufPrintSentinel(&cwd_buf, "{s}", .{workdir}) catch return error.PathTooLong;
         _ = std.os.linux.chdir(cwd_z);
 
         // Exec /bin/sh with merged env (defaults + session env)
@@ -359,7 +359,7 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
             _ = std.os.linux.close(stdin_pipe[0]);
 
             var cwd_buf: [4096]u8 = undefined;
-            const cwd_z = std.fmt.bufPrintZ(&cwd_buf, "{s}", .{req.workdir}) catch unreachable;
+            const cwd_z = std.fmt.bufPrintSentinel(&cwd_buf, "{s}", .{req.workdir}) catch unreachable;
             _ = std.os.linux.chdir(cwd_z);
 
             const argv: [3:null]?[*:0]const u8 = .{ "/bin/sh".ptr, "-c".ptr, cmd_z };
