@@ -1174,6 +1174,15 @@ func (o *Orchestrator) PauseSession(ctx context.Context, sessionID string) error
 	// A best-effort workspace flush would belong here (none exists yet);
 	// the PVC persists regardless.
 	if pod != nil {
+		// A warm-pool claim carries a controller ownerReference to its pod so
+		// the apiserver GCs the claim when the pod is deleted out-of-band.
+		// That GC is *cascade* deletion: it fires on this deliberate pause
+		// delete too, destroying the claim the paused session still owns —
+		// ResumeSession would then recreate a pod whose PVC no longer exists
+		// ("persistentvolumeclaim ... not found") and the pod would sit
+		// Pending forever. The session CRD owns the claim from here on;
+		// DestroySession's deleteSessionWorkspacePVC is the cleanup path.
+		o.detachPVCOwner(ctx, session.Status.WorkspacePVC, pod.Name)
 		if derr := o.k8s.CoreV1().Pods(o.namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
 			return status.Errorf(codes.Internal, "pause: delete pod %s: %v", pod.Name, derr)
 		}
@@ -1315,6 +1324,39 @@ func (o *Orchestrator) deleteSessionWorkspacePVC(ctx context.Context, pvcName, s
 	}
 	if derr := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Delete(ctx, pvcName, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
 		logrus.Warnf("sandbox: delete workspace PVC %s of session %s: %v", pvcName, sessionID, derr)
+	}
+}
+
+// detachPVCOwner drops the controller ownerReference linking a workspace
+// claim to the given pod, so deleting that pod does not cascade-delete the
+// claim. Warm-pool claims get such a reference at creation (to GC claims of
+// pods deleted out-of-band); without this detach, PauseSession's deliberate
+// pod delete would destroy the claim the paused session still needs and
+// ResumeSession would never schedule. Best-effort: a failure only leaves the
+// old GC behavior in place, logged.
+func (o *Orchestrator) detachPVCOwner(ctx context.Context, pvcName, podName string) {
+	if pvcName == "" || podName == "" {
+		return
+	}
+	pvc, err := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		return // claim gone: nothing to detach from
+	}
+	refs := make([]metav1.OwnerReference, 0, len(pvc.OwnerReferences))
+	detached := false
+	for _, ref := range pvc.OwnerReferences {
+		if ref.Kind == "Pod" && ref.Name == podName {
+			detached = true
+			continue
+		}
+		refs = append(refs, ref)
+	}
+	if !detached {
+		return
+	}
+	pvc.OwnerReferences = refs
+	if _, uerr := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Update(ctx, pvc, metav1.UpdateOptions{}); uerr != nil {
+		logrus.Warnf("sandbox: detach PVC %s owner %s: %v", pvcName, podName, uerr)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -771,21 +772,28 @@ func TestEnvdWatchDirFamily(t *testing.T) {
 	var cr struct {
 		WatcherID int `json:"watcherId"`
 	}
-	if err := json.Unmarshal([]byte(body), &cr); err != nil {
+	// The E2B proto declares watcher_id as a string, so the server returns
+	// one; sandboxd's int id is encoded as decimal text.
+	var crStr struct {
+		WatcherID string `json:"watcherId"`
+	}
+	if err := json.Unmarshal([]byte(body), &crStr); err != nil {
 		t.Fatalf("create body: %s", body)
 	}
-	if cr.WatcherID == 0 {
-		t.Fatal("watcher id missing")
+	watcherID, convErr := strconv.Atoi(crStr.WatcherID)
+	if convErr != nil || watcherID == 0 {
+		t.Fatalf("watcher id missing: %s", body)
 	}
+	cr.WatcherID = watcherID
 
 	// Seed an event on the watcher.
 	stub.mu.Lock()
 	stub.watchers[cr.WatcherID] = []watchEvent{{Name: "/workspace/new.txt", Type: 1}}
 	stub.mu.Unlock()
 
-	// GetWatcherEvents.
+	// GetWatcherEvents (the SDK sends watcher_id as a string).
 	status, body = postRPC("/filesystem.Filesystem/GetWatcherEvents",
-		fmt.Sprintf(`{"watcherId":%d}`, cr.WatcherID))
+		fmt.Sprintf(`{"watcherId":%q}`, crStr.WatcherID))
 	if status != 200 {
 		t.Fatalf("GetWatcherEvents: %d %s", status, body)
 	}
@@ -805,16 +813,16 @@ func TestEnvdWatchDirFamily(t *testing.T) {
 		t.Fatalf("event name = %v", ge.Events[0]["name"])
 	}
 
-	// RemoveWatcher.
+	// RemoveWatcher (string watcher_id).
 	status, body = postRPC("/filesystem.Filesystem/RemoveWatcher",
-		fmt.Sprintf(`{"watcherId":%d}`, cr.WatcherID))
+		fmt.Sprintf(`{"watcherId":%q}`, crStr.WatcherID))
 	if status != 200 {
 		t.Fatalf("RemoveWatcher: %d %s", status, body)
 	}
 
 	// GetWatcherEvents after remove → not_found.
 	status, _ = postRPC("/filesystem.Filesystem/GetWatcherEvents",
-		fmt.Sprintf(`{"watcherId":%d}`, cr.WatcherID))
+		fmt.Sprintf(`{"watcherId":%q}`, crStr.WatcherID))
 	if status != 404 {
 		t.Fatalf("events after remove: want 404, got %d", status)
 	}

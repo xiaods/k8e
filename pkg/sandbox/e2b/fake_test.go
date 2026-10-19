@@ -2,6 +2,7 @@ package e2b
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strconv"
@@ -149,7 +150,17 @@ func (f *fakeGateway) ExecStream(ctx context.Context, req *pb.ExecRequest) (Exec
 func (f *fakeGateway) WriteFile(ctx context.Context, req *pb.WriteFileRequest) (*pb.WriteFileResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.files[req.Path] = req.Content
+	// Mirror sandboxd's /files/write: encoding="base64" carries a
+	// binary-safe payload that must be decoded before it lands on disk.
+	content := req.Content
+	if req.Encoding == "base64" {
+		decoded, err := base64.StdEncoding.DecodeString(content)
+		if err != nil {
+			return nil, errors.New("invalid base64")
+		}
+		content = string(decoded)
+	}
+	f.files[req.Path] = content
 	f.writeLog = append(f.writeLog, req.Path)
 	return &pb.WriteFileResponse{Ok: true}, nil
 }

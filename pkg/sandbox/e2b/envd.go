@@ -1432,22 +1432,34 @@ func (s *Server) handleFSCreateWatcher(w http.ResponseWriter, r *http.Request) {
 		s.writeEnvdError(w, connectError("internal", "create watcher failed: "+err.Error()))
 		return
 	}
+	// The E2B proto declares watcher_id as a string; sandboxd uses an int
+	// internally, so encode it as a string on the wire or the SDK rejects
+	// the response ("expected string got: int").
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"watcherId": id})
+	_ = json.NewEncoder(w).Encode(map[string]any{"watcherId": strconv.Itoa(id)})
 }
 
 // handleFSGetWatcherEvents implements filesystem.Filesystem/GetWatcherEvents:
 // return filesystem events since the last call (WatchHandle.get_new_events).
 func (s *Server) handleFSGetWatcherEvents(w http.ResponseWriter, r *http.Request) {
+	// The E2B proto declares watcher_id as a string, so accept one; sandboxd
+	// wants the int back.
 	var body struct {
-		WatcherID int `json:"watcherId"`
+		WatcherID json.Number `json:"watcherId"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber()
+	_ = dec.Decode(&body)
+	watcherID, parseErr := body.WatcherID.Int64()
 	sandboxID := s.fsReady(w, r)
 	if sandboxID == "" {
 		return
 	}
-	events, err := s.sandboxd.getWatcherEvents(r.Context(), sandboxID, body.WatcherID)
+	if parseErr != nil {
+		s.writeEnvdError(w, connectError("invalid_argument", "watcherId must be a number"))
+		return
+	}
+	events, err := s.sandboxd.getWatcherEvents(r.Context(), sandboxID, int(watcherID))
 	if err != nil {
 		s.writeEnvdError(w, connectError("not_found", "watcher not found"))
 		return
@@ -1466,15 +1478,23 @@ func (s *Server) handleFSGetWatcherEvents(w http.ResponseWriter, r *http.Request
 // handleFSRemoveWatcher implements filesystem.Filesystem/RemoveWatcher:
 // stop watching (WatchHandle.stop).
 func (s *Server) handleFSRemoveWatcher(w http.ResponseWriter, r *http.Request) {
+	// watcher_id is a string on the wire (E2B proto); sandboxd wants the int.
 	var body struct {
-		WatcherID int `json:"watcherId"`
+		WatcherID json.Number `json:"watcherId"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	dec := json.NewDecoder(r.Body)
+	dec.UseNumber()
+	_ = dec.Decode(&body)
+	watcherID, parseErr := body.WatcherID.Int64()
 	sandboxID := s.fsReady(w, r)
 	if sandboxID == "" {
 		return
 	}
-	if err := s.sandboxd.removeWatcher(r.Context(), sandboxID, body.WatcherID); err != nil {
+	if parseErr != nil {
+		s.writeEnvdError(w, connectError("invalid_argument", "watcherId must be a number"))
+		return
+	}
+	if err := s.sandboxd.removeWatcher(r.Context(), sandboxID, int(watcherID)); err != nil {
 		s.writeEnvdError(w, connectError("not_found", "watcher not found"))
 		return
 	}

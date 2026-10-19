@@ -1255,6 +1255,55 @@ func TestResumeSessionRestoresPodWithPVC(t *testing.T) {
 	}
 }
 
+// TestPauseSessionDetachesPVCOwner guards the pause path against the
+// warm-pool claim's controller ownerReference: the apiserver cascade-GCs a
+// claim whose owning pod is deleted, so a pause (which deliberately deletes
+// the pod while the session keeps the claim) would otherwise destroy the
+// PVC and ResumeSession could never schedule a pod for it again.
+func TestPauseSessionDetachesPVCOwner(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	sess, err := o.CreateSession(ctx, &pb.CreateSessionRequest{
+		SessionId: "sess-pause-owner", TenantId: "tenant-d",
+	})
+	if err != nil {
+		t.Fatalf(msgCreate, err)
+	}
+	pvcName := sess.Status.WorkspacePVC
+	if pvcName == "" {
+		t.Fatal("persistent session should have a workspace PVC")
+	}
+	// Simulate what createWarmPodWithWorkspace stamps on a warm claim: the
+	// pod as controller owner of the PVC.
+	podName := sess.Status.PodName
+	pvc, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pvc.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: "v1", Kind: "Pod", Name: podName,
+		UID: "pod-uid-1", Controller: boolPtr(true),
+	}}
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Update(ctx, pvc, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := o.PauseSession(ctx, sess.Name); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+
+	// The claim survives pause with no owner pointing at the deleted pod.
+	after, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("PVC %s must survive pause: %v", pvcName, err)
+	}
+	for _, ref := range after.OwnerReferences {
+		if ref.Kind == "Pod" && ref.Name == podName {
+			t.Fatalf("PVC still owned by deleted pod %s: %+v", podName, after.OwnerReferences)
+		}
+	}
+}
+
 func TestPauseSessionNonActiveRefused(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()

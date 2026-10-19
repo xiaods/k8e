@@ -234,6 +234,11 @@ func registerControlRoutes(r *mux.Router, s *Server) {
 	r.HandleFunc("/sandboxes", auth(s.handleCreate)).Methods(http.MethodPost)
 	r.HandleFunc("/v2/sandboxes", auth(s.handleCreate)).Methods(http.MethodPost)
 	r.HandleFunc("/sandboxes/{id}/connect", auth(s.handleConnect)).Methods(http.MethodPost)
+	// SDK 2.x Sandbox.connect()/AsyncSandbox.connect() post to
+	// /v2/sandboxes/{id}/connect (post_v_2_sandboxes_sandbox_id_connect);
+	// without this alias every connect on a live sandbox 404s and the SDK
+	// surfaces it as "Paused sandbox <id> not found". Same handler/auth.
+	r.HandleFunc("/v2/sandboxes/{id}/connect", auth(s.handleConnect)).Methods(http.MethodPost)
 	r.HandleFunc("/sandboxes/{id}", auth(s.handleGet)).Methods(http.MethodGet)
 	r.HandleFunc("/sandboxes/{id}", auth(s.handleKill)).Methods(http.MethodDelete)
 	r.HandleFunc("/sandboxes/{id}/timeout", auth(s.handleTimeout)).Methods(http.MethodPost)
