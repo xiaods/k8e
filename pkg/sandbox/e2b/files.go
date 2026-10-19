@@ -211,90 +211,110 @@ func (s *Server) serveFileUpload(w http.ResponseWriter, r *http.Request, sandbox
 	// constant). Applies to the raw body; gzip decoding and base64 encoding
 	// below stay within a small multiple of it.
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+
 	var written []map[string]any
-	writeOne := func(path string, data []byte) {
-		resolved, err := resolveSandboxPath(path)
-		if err != nil {
-			s.writeEnvdError(w, connectError("invalid_argument", err.Error()))
-			return
-		}
-		// The gateway's WriteFileRequest.Content is a proto string, so raw
-		// non-UTF-8 bytes make gRPC marshal fail ("string field contains
-		// invalid UTF-8"). sandboxd accepts encoding="base64" (its own
-		// chunked-transfer format), so binary payloads ride base64; text
-		// payloads keep the legacy direct path.
-		content := string(data)
-		encoding := ""
-		if !utf8.Valid(data) {
-			content = base64.StdEncoding.EncodeToString(data)
-			encoding = "base64"
-		}
-		_, werr := s.gw.WriteFile(r.Context(), &pb.WriteFileRequest{
-			SessionId: sandboxID, Path: resolved, Content: content, Mode: "w",
-			Encoding: encoding,
-		})
-		if werr != nil {
-			s.writeEnvdError(w, connectError("internal", "write failed: "+werr.Error()))
-			return
-		}
-		written = append(written, map[string]any{
-			"name": baseName(resolved), "type": "file", "path": resolved,
-		})
-	}
+	var handleErr *E2bError
 
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		reader, err := r.MultipartReader()
-		if err != nil {
-			s.writeEnvdError(w, connectError("invalid_argument", "invalid multipart body"))
-			return
-		}
-		for {
-			part, err := reader.NextPart()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				s.writeEnvdError(w, connectError("invalid_argument", "invalid multipart body"))
-				return
-			}
-			// Go's multipart reader strips the filename to its basename; the
-			// destination path IS the filename here ('notes/x.txt' must keep
-			// its directory), so read it from the raw Content-Disposition.
-			filename := multipartFilename(part)
-			if filename == "" {
-				continue
-			}
-			data, err := io.ReadAll(io.LimitReader(part, maxUploadBytes+1))
-			if err != nil {
-				s.writeEnvdError(w, connectError("internal", "read part failed"))
-				return
-			}
-			if len(data) > maxUploadBytes {
-				s.writeEnvdError(w, connectError("resource_exhausted",
-					fmt.Sprintf("upload part exceeds %d bytes", maxUploadBytes)))
-				return
-			}
-			writeOne(filename, data)
-		}
+		written, handleErr = s.readMultipartFiles(r, sandboxID)
 	} else {
 		path := r.URL.Query().Get("path")
 		if path == "" {
-			s.writeEnvdError(w, connectError("invalid_argument", "missing path query"))
-			return
+			handleErr = connectError("invalid_argument", "missing path query")
+		} else {
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
+				// MaxBytesReader's over-limit read arrives here.
+				s.writeUploadReadError(w, err)
+				return
+			}
+			// The SDK's gzip option is a Content-Encoding on the whole body; the
+			// sandbox must receive the decoded bytes.
+			data = decodeBodyIfGzip(data, r.Header.Get("Content-Encoding"))
+			entry, e2e := s.writeFilePart(r, sandboxID, path, data)
+			if e2e != nil {
+				handleErr = e2e
+			} else {
+				written = append(written, entry)
+			}
 		}
-		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			// MaxBytesReader's over-limit read arrives here.
-			s.writeUploadReadError(w, err)
-			return
-		}
-		// The SDK's gzip option is a Content-Encoding on the whole body; the
-		// sandbox must receive the decoded bytes.
-		data = decodeBodyIfGzip(data, r.Header.Get("Content-Encoding"))
-		writeOne(path, data)
+	}
+
+	if handleErr != nil {
+		s.writeEnvdError(w, handleErr)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(written)
+}
+
+// readMultipartFiles reads a multipart upload into a list of written entries.
+func (s *Server) readMultipartFiles(r *http.Request, sandboxID string) ([]map[string]any, *E2bError) {
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return nil, connectError("invalid_argument", "invalid multipart body")
+	}
+	var written []map[string]any
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, connectError("invalid_argument", "invalid multipart body")
+		}
+		// Go's multipart reader strips the filename to its basename; the
+		// destination path IS the filename here ('notes/x.txt' must keep
+		// its directory), so read it from the raw Content-Disposition.
+		filename := multipartFilename(part)
+		if filename == "" {
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(part, maxUploadBytes+1))
+		if err != nil {
+			return nil, connectError("internal", "read part failed")
+		}
+		if len(data) > maxUploadBytes {
+			return nil, connectError("resource_exhausted",
+				fmt.Sprintf("upload part exceeds %d bytes", maxUploadBytes))
+		}
+		entry, e2e := s.writeFilePart(r, sandboxID, filename, data)
+		if e2e != nil {
+			return nil, e2e
+		}
+		written = append(written, entry)
+	}
+	return written, nil
+}
+
+// writeFilePart resolves, encodes and writes a single uploaded file, returning
+// the entry to report back to the client.
+func (s *Server) writeFilePart(r *http.Request, sandboxID, path string, data []byte) (map[string]any, *E2bError) {
+	resolved, err := resolveSandboxPath(path)
+	if err != nil {
+		return nil, connectError("invalid_argument", err.Error())
+	}
+	// The gateway's WriteFileRequest.Content is a proto string, so raw
+	// non-UTF-8 bytes make gRPC marshal fail ("string field contains
+	// invalid UTF-8"). sandboxd accepts encoding="base64" (its own
+	// chunked-transfer format), so binary payloads ride base64; text
+	// payloads keep the legacy direct path.
+	content := string(data)
+	encoding := ""
+	if !utf8.Valid(data) {
+		content = base64.StdEncoding.EncodeToString(data)
+		encoding = "base64"
+	}
+	_, werr := s.gw.WriteFile(r.Context(), &pb.WriteFileRequest{
+		SessionId: sandboxID, Path: resolved, Content: content, Mode: "w",
+		Encoding: encoding,
+	})
+	if werr != nil {
+		return nil, connectError("internal", "write failed: "+werr.Error())
+	}
+	return map[string]any{
+		"name": baseName(resolved), "type": "file", "path": resolved,
+	}, nil
 }
 
 // writeUploadReadError turns a body-read failure into the envd error shape,
