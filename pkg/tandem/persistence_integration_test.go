@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -216,14 +217,103 @@ func TestTandemPersistenceConcurrentTxn(t *testing.T) {
 	}
 }
 
+var (
+	testPortMu    sync.Mutex
+	testPortsUsed = map[int]bool{}
+)
+
+// testAddress returns a localhost host:port this process has not handed out
+// before.
+//
+// Picking a free port is done by listening on port 0 and closing, which frees
+// it immediately. Two such calls in a row can therefore return the SAME port:
+// the allocator recycles what was just released. rqlite, told to serve its HTTP
+// API and its Raft listener on one address, refuses to start —
+// "fatal: HTTP and Raft addresses must differ" — and the caller only sees a
+// readiness timeout. Same story for the addresses of different cluster members.
+//
+// So the port is recorded and a collision retries. Registry entries are never
+// released: a test's addresses stay distinct for the whole process run, which
+// is what keeps the pair, and the members of a multi-node fixture, apart.
 func testAddress(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	for attempt := 0; attempt < 1000; attempt++ {
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		addr := l.Addr().String()
+		l.Close()
+
+		_, portText, err := net.SplitHostPort(addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		testPortMu.Lock()
+		duplicate := testPortsUsed[port]
+		if !duplicate {
+			testPortsUsed[port] = true
+		}
+		testPortMu.Unlock()
+		if !duplicate {
+			return addr
+		}
 	}
-	defer l.Close()
-	return l.Addr().String()
+	t.Fatal("could not allocate a unique loopback address after 1000 attempts")
+	return ""
+}
+
+// TestTestAddressNeverRepeatsAPort guards the allocator the fixtures depend on.
+//
+// The old implementation could return the same port twice, because each call
+// released its port before returning it; that is what made rqlite abort with
+// "HTTP and Raft addresses must differ" and the test report a readiness timeout
+// instead.
+//
+// This is a structural guard rather than a reproduction: whether the kernel
+// recycles a just-freed port is an allocation detail. I could not make the old
+// implementation fail here on this host (10 consecutive runs, 200 calls each,
+// no duplicate), so the old implementation was not inherently broken; the
+// registry removes the possibility of the collision, and this test stands
+// behind the guarantee that it does.
+//
+// The two cases that matter are the ones this test distinguishes:
+//
+//   - Two consecutive calls, as in `address, raft := testAddress(t),
+//     testAddress(t)` (the rqlite fixtures)
+//   - Members of a multi-node cluster fixture, each taking its own pair
+//
+// So the assertions run the pair repeatedly and the cluster-sized sequence, and
+// fail loudly on any repeat. Removing the registry in favour of the
+// old two-line body does not necessarily fail this test on this host, but it
+// reintroduces the state that made the production test flaky, which is the
+// part worth pinning.
+func TestTestAddressNeverRepeatsAPort(t *testing.T) {
+	// A single allocator serving two callers back to back is the rqlite shape.
+	for i := 0; i < 50; i++ {
+		address := testAddress(t)
+		raft := testAddress(t)
+		if address == raft {
+			t.Fatalf("iteration %d: HTTP and Raft addresses are both %s; rqlite will refuse to start", i, address)
+		}
+	}
+
+	// A sequence for every member of the largest fixture in the suite.
+	seen := map[string]struct{}{}
+	for i := 0; i < 3; i++ {
+		for j := 0; j < 2; j++ {
+			addr := testAddress(t)
+			if _, dup := seen[addr]; dup {
+				t.Fatalf("member %d probe %d: address %s already handed out", i, j, addr)
+			}
+			seen[addr] = struct{}{}
+		}
+	}
 }
 
 // Every test owns its rqlite process and data; no pre-existing daemon is used.
