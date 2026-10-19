@@ -63,7 +63,7 @@ func (g *asyncPodIPGateway) PauseSession(ctx context.Context, req *pb.PauseSessi
 
 // listDir issues an authenticated envd ListDir, which is the request that
 // triggers wakeForTraffic's auto-resume and then must reach sandboxd by pod IP.
-func listDir(t *testing.T, ts *httptest.Server, s *Server, id string) int {
+func listDir(t *testing.T, ts *httptest.Server, s *Server, id string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost,
 		ts.URL+"/e2b/envd/filesystem.Filesystem/ListDir",
@@ -82,7 +82,6 @@ func listDir(t *testing.T, ts *httptest.Server, s *Server, id string) int {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("ListDir after resume: %d %s", resp.StatusCode, readBody(t, resp))
 	}
-	return resp.StatusCode
 }
 
 // TestWakeForTrafficWaitsForPodIPAfterResume is the regression test for the E2B
@@ -157,4 +156,3 @@ func TestWakeForTrafficRunningWithoutPodIPWaits(t *testing.T) {
 		t.Fatal("the call must have waited for the pod IP to be assigned")
 	}
 }
-

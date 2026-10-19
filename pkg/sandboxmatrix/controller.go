@@ -437,30 +437,20 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, dyn dyna
 // counted from pod phases, because a pod created a moment ago has no readable
 // phase yet.
 func updateWarmPoolStatus(ctx context.Context, dyn dynamic.Interface, cfg config.SandboxConfig, pool unstructured.Unstructured, warmPods []corev1.Pod, pending int64) {
-	ready := int64(0)
-	for _, p := range warmPods {
-		if p.Status.Phase == corev1.PodRunning && podReady(&p) {
+	var ready int64
+	for i := range warmPods {
+		if sandboxgrpc.PodReadyCondition(&warmPods[i]) {
 			ready++
 		}
 	}
-	if pool.Object["status"] == nil {
-		pool.Object["status"] = map[string]interface{}{}
+	status, ok := pool.Object["status"].(map[string]interface{})
+	if !ok {
+		status = map[string]interface{}{}
+		pool.Object["status"] = status
 	}
-	status := pool.Object["status"].(map[string]interface{})
 	status["readyCount"] = ready
 	status["pendingCount"] = pending
-	status["size"] = pool.Object["spec"].(map[string]interface{})["size"]
 	dyn.Resource(warmPoolGVR).Namespace(cfg.Namespace).UpdateStatus(ctx, &pool, metav1.UpdateOptions{}) //nolint:errcheck
-}
-
-// podReady reports whether a pod's Ready condition is true.
-func podReady(p *corev1.Pod) bool {
-	for _, c := range p.Status.Conditions {
-		if c.Type == corev1.PodReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
 }
 
 // createWarmPodWithWorkspace provisions a blank workspace PVC and boots a warm

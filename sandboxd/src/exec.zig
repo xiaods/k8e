@@ -478,9 +478,7 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
     defer allocator.free(stderr_json);
 
     const trunc_lit: []const u8 = if (result.truncated) "true" else "false";
-    const resp = try std.fmt.allocPrint(allocator,
-        "{{\"stdout\":\"{s}\",\"stderr\":\"{s}\",\"exit_code\":{d},\"duration_ms\":{d},\"truncated\":{s}}}",
-        .{ stdout_json, stderr_json, result.exit_code, result.duration_ms, trunc_lit });
+    const resp = try std.fmt.allocPrint(allocator, "{{\"stdout\":\"{s}\",\"stderr\":\"{s}\",\"exit_code\":{d},\"duration_ms\":{d},\"truncated\":{s}}}", .{ stdout_json, stderr_json, result.exit_code, result.duration_ms, trunc_lit });
     defer allocator.free(resp);
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }
