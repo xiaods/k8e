@@ -285,9 +285,15 @@ fn reapExitCode(pid: i32) i32 {
         0,
         0,
     );
-    if (isErr(rc)) return 0; // auto-reaped (SA_NOCLDWAIT) → no exit status
+    // A real SIGCHLD handler keeps the status waitable (see main.setupSignals),
+    // so the old "auto-reaped → return 0" branch no longer fires and PTY
+    // sessions report their true exit code.
+    if (isErr(rc)) return -1;
     if (std.posix.W.IFEXITED(status)) return @intCast(std.posix.W.EXITSTATUS(status));
-    return 0;
+    if (std.posix.W.IFSIGNALED(status)) {
+        return 128 + @as(i32, @intCast(@as(u8, @truncate(status))));
+    }
+    return -1;
 }
 
 fn pumpThread(id: u32, master_fd: i32, pid: i32) void {

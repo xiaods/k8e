@@ -246,9 +246,76 @@ func (s *Server) wakeForTraffic(r *http.Request, sandboxID string) (*pb.GetSessi
 			return nil, false, connectError("unavailable", "auto-resume failed: "+rerr.Error())
 		}
 		s.registry.markPaused(sandboxID, false)
-		return sess, true, nil
+		// Resume re-creates the pod asynchronously, so the session view we
+		// already hold still reports the pre-pause state: PodIp is empty
+		// because the old pod is gone and the new one has not been assigned an
+		// address yet. Callers address sandboxd by pod IP, so returning that
+		// stale view made every post-resume call fail with
+		// "session ... has no pod IP" (E2B watch_dir, files.stat, ...).
+		//
+		// Poll until the new pod reports an address. Bounded: a resume that
+		// never schedules a pod is an infrastructure failure, and blocking the
+		// request forever is worse than reporting it.
+		fresh, perr := s.waitForPodIP(r, sandboxID)
+		if perr != nil {
+			return nil, false, connectError("unavailable", "sandbox resumed but has no pod IP: "+perr.Error())
+		}
+		return fresh, true, nil
+	}
+	// Running: normally return the live view. But a sandbox that an explicit
+	// resume() just brought back is already marked running while its pod is
+	// still being created, so its PodIp is momentarily empty. Callers address
+	// sandboxd by pod IP, so wait briefly rather than failing the request —
+	// otherwise the first files/process call after resume() reports
+	// "has no pod IP".
+	if st == stateRunning && sess.GetPodIp() == "" {
+		if fresh, perr := s.waitForPodIP(r, sandboxID); perr == nil {
+			return fresh, false, nil
+		}
 	}
 	return sess, false, nil
+}
+
+// waitForPodIP polls the session until the scheduler has assigned the
+// (re)created pod an address, returning the fresh session view.
+//
+// Poll rather than a single read because resume is asynchronous: the pod is
+// claimed and scheduled after ResumeSession returns, and the pod IP cache in
+// the sandboxd client is deliberately short-lived (e2bPodIPTTL) so it cannot
+// paper over the gap.
+func (s *Server) waitForPodIP(r *http.Request, sandboxID string) (*pb.GetSessionResponse, error) {
+	const (
+		// podIPWaitTimeout bounds the whole wait. Warm-pool claims normally
+		// land in well under a second; a cold pod needs scheduling time.
+		podIPWaitTimeout = 30 * time.Second
+		podIPWaitPoll    = 200 * time.Millisecond
+	)
+	deadline := time.Now().Add(podIPWaitTimeout)
+	for {
+		sess, err := s.gw.GetSession(r.Context(), &pb.GetSessionRequest{SessionId: sandboxID})
+		if err == nil && sess.GetPodIp() != "" {
+			// The pod changed, so any cached address for this session is stale.
+			s.invalidatePodIP(sandboxID)
+			return sess, nil
+		}
+		if !time.Now().Before(deadline) {
+			if err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("pod IP not assigned after %s", podIPWaitTimeout)
+		}
+		time.Sleep(podIPWaitPoll)
+	}
+}
+
+// invalidatePodIP drops any cached sandboxd address for a session. Pause,
+// resume and pod replacement all change the address, so the short pod-IP cache
+// must be dropped at those boundaries or it keeps answering with an IP that no
+// longer exists.
+func (s *Server) invalidatePodIP(sandboxID string) {
+	if s.sandboxd != nil {
+		s.sandboxd.invalidatePodIP(sandboxID)
+	}
 }
 
 // unixNow returns the current unix time in seconds.

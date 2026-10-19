@@ -364,12 +364,12 @@ func newWarmPoolCR(size int64) unstructured.Unstructured {
 // lowered target). Surplus must go now, not at the next idle reaper sweep.
 func TestReconcileSinglePool_TrimsSurplusWarmPods(t *testing.T) {
 	ctx := context.Background()
-	k8s := kubefake.NewSimpleClientset()
+	dyn, k8s := fakeSandboxClients()
 	ready := warmTestPod("warm-ready", corev1.PodRunning, condReady)
 	stuck := warmTestPod("warm-stuck", corev1.PodPending, condUnschedulable)
 	seedPods(ctx, t, k8s, ready, stuck)
 
-	reconcileSinglePool(ctx, k8s, newWarmPoolCR(1), podCapacityUnknown, defaultCfg(), 0)
+	reconcileSinglePool(ctx, k8s, dyn, newWarmPoolCR(1), podCapacityUnknown, defaultCfg(), 0)
 
 	// The unschedulable pod is worthless; the claimable one must stay.
 	assertGone(t, k8s, "warm-stuck", "worthless to a session")
@@ -378,13 +378,13 @@ func TestReconcileSinglePool_TrimsSurplusWarmPods(t *testing.T) {
 
 func TestReconcileSinglePool_TrimPrefersLongestIdle(t *testing.T) {
 	ctx := context.Background()
-	k8s := kubefake.NewSimpleClientset()
+	dyn, k8s := fakeSandboxClients()
 
 	older := idleSince(warmTestPod("warm-old", corev1.PodRunning, condReady), 90*time.Minute)
 	newer := idleSince(warmTestPod("warm-new", corev1.PodRunning, condReady), 5*time.Minute)
 	seedPods(ctx, t, k8s, older, newer)
 
-	reconcileSinglePool(ctx, k8s, newWarmPoolCR(1), podCapacityUnknown, defaultCfg(), 0)
+	reconcileSinglePool(ctx, k8s, dyn, newWarmPoolCR(1), podCapacityUnknown, defaultCfg(), 0)
 
 	assertGone(t, k8s, "warm-old", "idled longest")
 	assertPresent(t, k8s, "warm-new")
@@ -395,11 +395,11 @@ func TestReconcileSinglePool_TrimPrefersLongestIdle(t *testing.T) {
 // create a refill the scheduler can never place.
 func TestReconcileSinglePool_RespectsCapacity(t *testing.T) {
 	ctx := context.Background()
-	k8s := kubefake.NewSimpleClientset()
+	dyn, k8s := fakeSandboxClients()
 	active := sandboxTestPod("sandbox-warm-active", sandboxgrpc.StateActive, corev1.PodRunning)
 	seedPods(ctx, t, k8s, active)
 
-	reconcileSinglePool(ctx, k8s, newWarmPoolCR(2), 1, defaultCfg(), 0)
+	reconcileSinglePool(ctx, k8s, dyn, newWarmPoolCR(2), 1, defaultCfg(), 0)
 
 	pods, err := k8s.CoreV1().Pods(testNS).List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -744,5 +744,66 @@ func TestGCExpiredSessions_ReclaimsPausedSessionPVC(t *testing.T) {
 	}
 	if _, err := k8s.CoreV1().PersistentVolumeClaims(testNS).Get(ctx, claim, metav1.GetOptions{}); err == nil {
 		t.Fatalf("expected the paused session's claim %s to be reclaimed, not leaked", claim)
+	}
+}
+
+// warmPoolStatusAfterReconcile runs one reconcile pass over a created WarmPool
+// CR seeded with the given pods, and returns the .status the reconciler wrote.
+//
+// Both WarmPool status tests need the same arrange/act/observe shape: create the
+// pool CR the reconciler reads, seed the pods it counts, reconcile, then read
+// the status back. Repeating that boilerplate in each test is what pushes the
+// file's duplication metric over the new-code threshold, and it buries the one
+// line each test actually cares about.
+func warmPoolStatusAfterReconcile(t *testing.T, poolSize int64, pods ...*corev1.Pod) map[string]interface{} {
+	t.Helper()
+	ctx := context.Background()
+	dyn, k8s := fakeSandboxClients()
+	seedPods(ctx, t, k8s, pods...)
+
+	pool := newWarmPoolCR(poolSize)
+	if _, err := dyn.Resource(warmPoolGVR).Namespace(testNS).Create(ctx, &pool, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create warm pool CR: %v", err)
+	}
+	reconcileSinglePool(ctx, k8s, dyn, pool, podCapacityUnknown, defaultCfg(), 0)
+
+	got, err := dyn.Resource(warmPoolGVR).Namespace(testNS).Get(ctx, "default", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pool: %v", err)
+	}
+	status, _ := got.Object["status"].(map[string]interface{})
+	if status == nil {
+		t.Fatal("reconcile must populate .status")
+	}
+	return status
+}
+
+// TestReconcileSinglePool_PopulatesStatus is the regression test for the
+// WarmPool status surface: the CRD has carried readyCount/pendingCount since
+// KIP-30 but nothing ever wrote them, so `kubectl get sandboxwarmpools` showed
+// an empty READY column and operators had no in-cluster signal for whether the
+// pool was actually serving.
+func TestReconcileSinglePool_PopulatesStatus(t *testing.T) {
+	// One ready warm pod plus the pool's target of 1: the gap is zero, so the
+	// reconciler should report it as ready rather than pending.
+	status := warmPoolStatusAfterReconcile(t, 1,
+		warmTestPod("warm-ready", corev1.PodRunning, condReady))
+
+	if rc, _ := status["readyCount"].(int64); rc != 1 {
+		t.Fatalf("readyCount = %v, want 1", status["readyCount"])
+	}
+	if pc, _ := status["pendingCount"].(int64); pc != 0 {
+		t.Fatalf("pendingCount = %v, want 0", status["pendingCount"])
+	}
+}
+
+// TestReconcileSinglePool_ReportsPendingWhenFilling covers the case operators
+// hit most: the pool is short and has just created pods that are still Pending,
+// so the status must say pending rather than looking empty.
+func TestReconcileSinglePool_ReportsPendingWhenFilling(t *testing.T) {
+	status := warmPoolStatusAfterReconcile(t, 3)
+
+	if _, ok := status["pendingCount"]; !ok {
+		t.Fatal("pendingCount must be reported while the pool is filling")
 	}
 }

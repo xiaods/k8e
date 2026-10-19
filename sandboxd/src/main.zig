@@ -23,7 +23,9 @@ pub fn main() !void {
         gpa_state = .{};
         break :blk gpa_state.allocator();
     } else std.heap.page_allocator;
-    defer { if (std.debug.runtime_safety) _ = gpa_state.deinit(); }
+    defer {
+        if (std.debug.runtime_safety) _ = gpa_state.deinit();
+    }
 
     // PID 1: reap zombies via SIGCHLD ignore
     const pid = std.os.linux.getpid();
@@ -197,8 +199,7 @@ fn handleRequest(allocator: std.mem.Allocator, client_fd: i32) !void {
 /// require status=="ready".
 fn handleReady(client_fd: i32) !void {
     const venv_ready = venv.isReady();
-    const body = try std.fmt.allocPrint(std.heap.page_allocator,
-        "{{\"status\":\"ready\",\"venv\":{s}}}", .{if (venv_ready) "true" else "false"});
+    const body = try std.fmt.allocPrint(std.heap.page_allocator, "{{\"status\":\"ready\",\"venv\":{s}}}", .{if (venv_ready) "true" else "false"});
     defer std.heap.page_allocator.free(body);
     try writeResponse(client_fd, "200 OK", "application/json", body);
 }
@@ -246,19 +247,34 @@ fn handleEvents(allocator: std.mem.Allocator, client_fd: i32, query: []const u8)
 /// sandboxd is linux-only and writes via raw syscalls.
 pub fn writeResponse(client_fd: i32, status: []const u8, content_type: []const u8, body: []const u8) !void {
     var header_buf: [4096]u8 = undefined;
-    const header = try std.fmt.bufPrint(&header_buf,
-        "HTTP/1.1 {s}\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n",
-        .{ status, content_type, body.len });
+    const header = try std.fmt.bufPrint(&header_buf, "HTTP/1.1 {s}\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ status, content_type, body.len });
     _ = std.os.linux.write(client_fd, header.ptr, header.len);
     _ = std.os.linux.write(client_fd, body.ptr, body.len);
 }
 
 fn setupSignals() void {
-    // Ignore SIGCHLD to auto-reap zombies as PID 1
+    // Install a REAL (non-SIG_IGN) SIGCHLD handler rather than SIG_IGN +
+    // SA_NOCLDWAIT. Both SIG_IGN and SA_NOCLDWAIT make the kernel auto-reap
+    // children, which means wait4 on any child returns -ECHILD and leaves the
+    // status word untouched — every exec's exit code silently collapsed to the
+    // caller's fallback (-1 on the streaming path, 0 on the buffered one).
+    //
+    // A real handler keeps children waitable, so the exit-code paths in
+    // exec.zig / pty.zig / venv.zig recover the real status. Zombie reaping is
+    // then each fork site's responsibility: exec, pty and venv already wait,
+    // and background.zig now drains its own child (see reapBackground).
+    //
+    // SA_RESTART keeps the daemon's blocking syscalls (accept, read) from
+    // failing with EINTR every time a command finishes.
     const sa = std.os.linux.Sigaction{
-        .handler = .{ .handler = std.os.linux.SIG.IGN },
+        .handler = .{ .handler = sigchldNoop },
         .mask = std.mem.zeroes(std.os.linux.sigset_t),
-        .flags = std.os.linux.SA.NOCLDWAIT,
+        .flags = std.os.linux.SA.RESTART,
     };
     _ = std.os.linux.sigaction(std.os.linux.SIG.CHLD, &sa, null);
 }
+
+/// sigchldNoop receives SIGCHLD so the kernel leaves the child's wait status
+/// for its parent to collect. It does no work: reaping happens at each fork
+/// site's explicit wait, which is what lets the exit code survive.
+fn sigchldNoop(_: std.os.linux.SIG) callconv(.c) void {}

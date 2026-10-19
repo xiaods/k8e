@@ -215,7 +215,7 @@ func reconcileWarmPools(ctx context.Context, k8s kubernetes.Interface, dyn dynam
 		boost = demand.observe(time.Now(), coldStarts)
 	}
 	for _, pool := range pools.Items {
-		reconcileSinglePool(ctx, k8s, pool, maxPods, cfg, boost)
+		reconcileSinglePool(ctx, k8s, dyn, pool, maxPods, cfg, boost)
 	}
 	recycleUnhealthyWarmPods(ctx, k8s, cfg.Namespace)
 	updateSandboxMatrixStatus(ctx, k8s, dyn, cfg, orch, maxPods)
@@ -357,7 +357,7 @@ func deleteWarmPod(ctx context.Context, k8s kubernetes.Interface, namespace stri
 }
 
 // reconcileSinglePool ensures one WarmPool CRD's target is met within capacity limits.
-func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool unstructured.Unstructured, maxPods int64, cfg config.SandboxConfig, boost int64) {
+func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, dyn dynamic.Interface, pool unstructured.Unstructured, maxPods int64, cfg config.SandboxConfig, boost int64) {
 	specMap, _ := pool.Object["spec"].(map[string]interface{})
 	configuredSize, _ := specMap["size"].(int64)
 	runtimeClass, _ := specMap["runtimeClass"].(string)
@@ -404,8 +404,10 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool uns
 		// returning from resetting, or a target that was just lowered. Scale
 		// down now instead of waiting for the idle reaper's sessionTTL×2 sweep.
 		trimWarmPods(ctx, k8s, cfg.Namespace, warmPods.Items, -gap)
+		updateWarmPoolStatus(ctx, dyn, cfg, pool, warmPods.Items, 0)
 		return
 	case gap == 0:
+		updateWarmPoolStatus(ctx, dyn, cfg, pool, warmPods.Items, 0)
 		return
 	}
 	if maxPods >= 0 && int64(len(allPods.Items)) >= maxPods {
@@ -419,6 +421,36 @@ func reconcileSinglePool(ctx context.Context, k8s kubernetes.Interface, pool uns
 			logrus.Debugf("sandbox-matrix: create warm pod: %v", err)
 		}
 	}
+	// The pods we just asked for are still Pending, so report them as pending
+	// rather than ready: an operator watching the pool sees "1 pending" until
+	// the next pass flips it to ready, instead of an empty status that looks
+	// like a broken pool.
+	updateWarmPoolStatus(ctx, dyn, cfg, pool, warmPods.Items, gap)
+}
+
+// updateWarmPoolStatus writes the pool's ready/pending counts to its .status.
+//
+// The CRD has carried readyCount/pendingCount since KIP-30 but nothing ever
+// populated them, so `kubectl get sandboxwarmpools` reported an empty READY
+// column and operators had no in-cluster signal for "is my pool actually
+// serving?". Pending is derived from the gap this pass is closing rather than
+// counted from pod phases, because a pod created a moment ago has no readable
+// phase yet.
+func updateWarmPoolStatus(ctx context.Context, dyn dynamic.Interface, cfg config.SandboxConfig, pool unstructured.Unstructured, warmPods []corev1.Pod, pending int64) {
+	var ready int64
+	for i := range warmPods {
+		if sandboxgrpc.PodReadyCondition(&warmPods[i]) {
+			ready++
+		}
+	}
+	status, ok := pool.Object["status"].(map[string]interface{})
+	if !ok {
+		status = map[string]interface{}{}
+		pool.Object["status"] = status
+	}
+	status["readyCount"] = ready
+	status["pendingCount"] = pending
+	dyn.Resource(warmPoolGVR).Namespace(cfg.Namespace).UpdateStatus(ctx, &pool, metav1.UpdateOptions{}) //nolint:errcheck
 }
 
 // createWarmPodWithWorkspace provisions a blank workspace PVC and boots a warm

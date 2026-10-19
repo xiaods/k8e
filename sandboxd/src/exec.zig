@@ -219,10 +219,15 @@ pub fn runCommandWithEnv(allocator: std.mem.Allocator, command: []const u8, work
             0,
         );
         const err = std.posix.errno(@as(usize, @bitCast(rc)));
-        if (err == .SUCCESS and std.posix.W.IFEXITED(status)) {
-            break :blk @intCast(std.posix.W.EXITSTATUS(status));
+        // A real SIGCHLD handler (main.setupSignals) leaves the status waitable,
+        // so this recovers it. The old fallback of 0 reported success for a
+        // killed command, which made `cmd; echo $?` lie to every caller.
+        if (err != .SUCCESS) break :blk -1;
+        if (std.posix.W.IFEXITED(status)) break :blk @intCast(std.posix.W.EXITSTATUS(status));
+        if (std.posix.W.IFSIGNALED(status)) {
+            break :blk 128 + @as(i32, @intCast(@as(u8, @truncate(status))));
         }
-        break :blk 0;
+        break :blk -1;
     };
 
     var ts_end: std.os.linux.timespec = undefined;
@@ -416,9 +421,12 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         _ = std.os.linux.close(stdout_pipe[0]);
         execctl.markDone(@intCast(child_pid));
 
-        // Reap child, then drop the process-table entry (closes stdin fd).
-        // The exit code is reported as the final SSE frame so the e2b layer
-        // gets the honest code in-stream (retiring the marker-file hack).
+        // Reap the child and report its exit code as the final SSE frame so
+        // the e2b layer gets the honest code in-stream.
+        //
+        // wait4 succeeds here because setupSignals installs a real SIGCHLD
+        // handler (not SIG_IGN/SA_NOCLDWAIT), so the kernel leaves the status
+        // word for us instead of auto-reaping it.
         var status: u32 = 0;
         const wrc = std.os.linux.syscall4(
             .wait4,
@@ -428,10 +436,17 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
             0,
         );
         const werr = std.posix.errno(@as(usize, @bitCast(wrc)));
-        const exit_code: i32 = if (werr == .SUCCESS and std.posix.W.IFEXITED(status))
+        const exit_code: i32 = if (werr != .SUCCESS)
+            // Genuinely unreapable (should not happen with a real handler).
+            -1
+        else if (std.posix.W.IFEXITED(status))
             @intCast(std.posix.W.EXITSTATUS(status))
+        else if (std.posix.W.IFSIGNALED(status))
+            // Report the terminating signal the way a shell does: 128+signo,
+            // so `kill -9` surfaces as 137 rather than a bare -1.
+            128 + @as(i32, @intCast(@as(u8, @truncate(status))))
         else
-            -1; // killed by signal / not reaped normally
+            -1;
         var exit_frame_buf: [64]u8 = undefined;
         const exit_frame = std.fmt.bufPrint(&exit_frame_buf, "data: {{\"exit\":{d}}}\n\n", .{exit_code}) catch {
             _ = std.os.linux.write(client_fd, "data: {\"exit\":-1}\n\n".ptr, 22);
@@ -463,9 +478,7 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
     defer allocator.free(stderr_json);
 
     const trunc_lit: []const u8 = if (result.truncated) "true" else "false";
-    const resp = try std.fmt.allocPrint(allocator,
-        "{{\"stdout\":\"{s}\",\"stderr\":\"{s}\",\"exit_code\":{d},\"duration_ms\":{d},\"truncated\":{s}}}",
-        .{ stdout_json, stderr_json, result.exit_code, result.duration_ms, trunc_lit });
+    const resp = try std.fmt.allocPrint(allocator, "{{\"stdout\":\"{s}\",\"stderr\":\"{s}\",\"exit_code\":{d},\"duration_ms\":{d},\"truncated\":{s}}}", .{ stdout_json, stderr_json, result.exit_code, result.duration_ms, trunc_lit });
     defer allocator.free(resp);
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }
