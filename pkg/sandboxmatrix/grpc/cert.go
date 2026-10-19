@@ -133,8 +133,13 @@ func ensureServerCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, certFil
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: hostname, Organization: []string{caOrg}},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(90 * 24 * time.Hour),
+		// Backdate by an hour. A cert whose NotBefore is exactly time.Now() is
+		// "not yet valid" for any client whose clock is a few seconds fast, and
+		// the client has no way to recover: it retries a handshake that cannot
+		// succeed until the server's clock catches up. Clients on other hosts
+		// routinely skew this way. One hour costs nothing and covers it.
+		NotBefore: time.Now().Add(-1 * time.Hour),
+		NotAfter:  time.Now().Add(90 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:     sans.dnsNames,
@@ -291,9 +296,16 @@ func signClientCert(caKey *ecdsa.PrivateKey, caCert *x509.Certificate, csrPEM, c
 	}
 
 	tmpl := &x509.Certificate{
-		SerialNumber:          big.NewInt(time.Now().UnixNano()),
-		Subject:               pkix.Name{CommonName: commonName, Organization: []string{caOrg}},
-		NotBefore:             time.Now(),
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: commonName, Organization: []string{caOrg}},
+		// Backdate by an hour, for the same reason as the server cert: a cert
+		// valid from exactly now is already too late for a client whose clock
+		// runs a little fast. The client uses this immediately after login to
+		// dial the gateway, so there is no retry window — the handshake simply
+		// fails with "certificate has expired or is not yet valid" and
+		// `k8e-sandbox-cli connect` reports a message that describes a clock
+		// problem nobody has.
+		NotBefore:             time.Now().Add(-1 * time.Hour),
 		NotAfter:              time.Now().Add(time.Duration(ttlDays) * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
