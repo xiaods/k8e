@@ -747,21 +747,21 @@ func TestGCExpiredSessions_ReclaimsPausedSessionPVC(t *testing.T) {
 	}
 }
 
-// TestReconcileSinglePool_PopulatesStatus is the regression test for the
-// WarmPool status surface: the CRD has carried readyCount/pendingCount since
-// KIP-30 but nothing ever wrote them, so `kubectl get sandboxwarmpools` showed
-// an empty READY column and operators had no in-cluster signal for whether the
-// pool was actually serving.
-func TestReconcileSinglePool_PopulatesStatus(t *testing.T) {
+// warmPoolStatusAfterReconcile runs one reconcile pass over a created WarmPool
+// CR seeded with the given pods, and returns the .status the reconciler wrote.
+//
+// Both WarmPool status tests need the same arrange/act/observe shape: create the
+// pool CR the reconciler reads, seed the pods it counts, reconcile, then read
+// the status back. Repeating that boilerplate in each test is what pushes the
+// file's duplication metric over the new-code threshold, and it buries the one
+// line each test actually cares about.
+func warmPoolStatusAfterReconcile(t *testing.T, poolSize int64, pods ...*corev1.Pod) map[string]interface{} {
+	t.Helper()
 	ctx := context.Background()
 	dyn, k8s := fakeSandboxClients()
+	seedPods(ctx, t, k8s, pods...)
 
-	// One ready warm pod plus the pool's target of 1: the gap is zero, so the
-	// reconciler should report it as ready rather than pending.
-	ready := warmTestPod("warm-ready", corev1.PodRunning, condReady)
-	seedPods(ctx, t, k8s, ready)
-
-	pool := newWarmPoolCR(1)
+	pool := newWarmPoolCR(poolSize)
 	if _, err := dyn.Resource(warmPoolGVR).Namespace(testNS).Create(ctx, &pool, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create warm pool CR: %v", err)
 	}
@@ -775,6 +775,20 @@ func TestReconcileSinglePool_PopulatesStatus(t *testing.T) {
 	if status == nil {
 		t.Fatal("reconcile must populate .status")
 	}
+	return status
+}
+
+// TestReconcileSinglePool_PopulatesStatus is the regression test for the
+// WarmPool status surface: the CRD has carried readyCount/pendingCount since
+// KIP-30 but nothing ever wrote them, so `kubectl get sandboxwarmpools` showed
+// an empty READY column and operators had no in-cluster signal for whether the
+// pool was actually serving.
+func TestReconcileSinglePool_PopulatesStatus(t *testing.T) {
+	// One ready warm pod plus the pool's target of 1: the gap is zero, so the
+	// reconciler should report it as ready rather than pending.
+	status := warmPoolStatusAfterReconcile(t, 1,
+		warmTestPod("warm-ready", corev1.PodRunning, condReady))
+
 	if rc, _ := status["readyCount"].(int64); rc != 1 {
 		t.Fatalf("readyCount = %v, want 1", status["readyCount"])
 	}
@@ -784,29 +798,11 @@ func TestReconcileSinglePool_PopulatesStatus(t *testing.T) {
 }
 
 // TestReconcileSinglePool_ReportsPendingWhenFilling covers the case operators
-// hit most: the pool is short and has just created pods that are still
-// Pending, so the status must say pending rather than looking empty.
+// hit most: the pool is short and has just created pods that are still Pending,
+// so the status must say pending rather than looking empty.
 func TestReconcileSinglePool_ReportsPendingWhenFilling(t *testing.T) {
-	ctx := context.Background()
-	dyn, k8s := fakeSandboxClients()
+	status := warmPoolStatusAfterReconcile(t, 3)
 
-	pool := newWarmPoolCR(3)
-	if _, err := dyn.Resource(warmPoolGVR).Namespace(testNS).Create(ctx, &pool, metav1.CreateOptions{}); err != nil {
-		t.Fatalf("create warm pool CR: %v", err)
-	}
-	reconcileSinglePool(ctx, k8s, dyn, pool, podCapacityUnknown, defaultCfg(), 0)
-
-	// The reconciler creates pods through a PVC claim path the fake client
-	// cannot place, so no pods land; the point is that pendingCount reflects
-	// the gap the pass just tried to close instead of staying absent.
-	got, err := dyn.Resource(warmPoolGVR).Namespace(testNS).Get(ctx, "default", metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("get pool: %v", err)
-	}
-	status, _ := got.Object["status"].(map[string]interface{})
-	if status == nil {
-		t.Fatal("reconcile must populate .status")
-	}
 	if _, ok := status["pendingCount"]; !ok {
 		t.Fatal("pendingCount must be reported while the pool is filling")
 	}
