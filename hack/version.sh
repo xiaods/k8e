@@ -4,7 +4,25 @@ GO=${GO-go}
 ARCH=${ARCH:-$(${GO} env GOARCH)}
 OS=$("${GO}" env GOOS)
 SUFFIX="-${ARCH}"
-GIT_TAG=$RELEASE_TAG
+# RELEASE_TAG pins the version for builds that have no git history to read.
+#
+# Nothing in this repository sets it: every CI job checks out with a tag on the
+# commit, so `git tag -l --contains HEAD` below already recovers the release
+# version — including in the default shallow `actions/checkout`, which still
+# fetches tags that point at the checked-out commit.
+#
+# It matters when building a copied source tree: a release tarball, a vendored
+# or air-gapped build, or a Docker context assembled without .git. There the
+# tag lookup is skipped entirely (the `if [ -d .git ]` guard) and, without this
+# variable, the version degrades to "$VERSION_K8S+k8e-" — a trailing dash with
+# no commit, which is both a lie in `k8e --version` and an invalid image tag
+# once '+' becomes '-'.
+#
+# Quoted for hygiene (and so a future edit that moves this into a command
+# argument does not inherit a splitting surprise). Note that bash does not
+# word-split an assignment's right-hand side, so this is not fixing a live bug:
+# "$RELEASE_TAG" and $RELEASE_TAG already assign identically.
+GIT_TAG="${RELEASE_TAG}"
 TREE_STATE=clean
 COMMIT=$DRONE_COMMIT
 
@@ -93,6 +111,15 @@ if [[ -n "$GIT_TAG" ]]; then
     VERSION=$GIT_TAG
 else
     VERSION="$VERSION_K8S+k8e-${COMMIT:0:8}$DIRTY"
+    # The commit is only known from git history (REVISION) or an override, so a
+    # build outside a checkout leaves it empty and produces "+k8e-". Warn
+    # instead of shipping it silently: the version is what operators read from
+    # `k8e --version` and what image tags are derived from, and a truncated one
+    # is impossible to trace back to a source commit.
+    if [[ -z "${COMMIT}" ]]; then
+        echo "warning: no git tag and no commit available; version '${VERSION}' cannot be traced to a source revision." >&2
+        echo "warning: set RELEASE_TAG (e.g. RELEASE_TAG='$VERSION') when building a copied source tree." >&2
+    fi
 fi
 VERSION_TAG="$(sed -e 's/+/-/g' <<< "$VERSION")"
 
