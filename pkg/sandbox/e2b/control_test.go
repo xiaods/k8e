@@ -839,6 +839,40 @@ func TestConnectAutoResumePaused(t *testing.T) {
 	}
 }
 
+func TestConnectV2Route(t *testing.T) {
+	gw := newFakeGateway()
+	_, ts := testServer(t, gw)
+	resp := controlReq(t, ts, "POST", "/sandboxes", map[string]any{})
+	session := map[string]any{}
+	_ = json.Unmarshal([]byte(readBody(t, resp)), &session)
+	id := session["sandboxID"].(string)
+
+	// The 2.x SDK posts to /v2/sandboxes/{id}/connect; without the route it
+	// 404s and the SDK reports "Paused sandbox <id> not found".
+	conn := controlReq(t, ts, "POST", "/v2/sandboxes/"+id+"/connect", map[string]any{"timeout": 300})
+	if conn.StatusCode != 200 {
+		t.Fatalf("v2 connect to running should be 200, got %d: %s", conn.StatusCode, readBody(t, conn))
+	}
+	view := map[string]any{}
+	_ = json.Unmarshal([]byte(readBody(t, conn)), &view)
+	if view["sandboxID"] != id {
+		t.Fatalf("v2 connect view=%v", view)
+	}
+
+	// Pause, then v2 connect auto-resumes -> 201.
+	pause := controlReq(t, ts, "POST", "/sandboxes/"+id+"/pause", map[string]any{})
+	if pause.StatusCode != 204 {
+		t.Fatalf("pause: %d", pause.StatusCode)
+	}
+	conn2 := controlReq(t, ts, "POST", "/v2/sandboxes/"+id+"/connect", map[string]any{"timeout": 300})
+	if conn2.StatusCode != 201 {
+		t.Fatalf("v2 connect to paused should be 201, got %d: %s", conn2.StatusCode, readBody(t, conn2))
+	}
+	if len(gw.resumed) != 1 || gw.resumed[0] != id {
+		t.Fatalf("resumed=%v", gw.resumed)
+	}
+}
+
 func TestEnvdAutoResumePaused(t *testing.T) {
 	gw := newFakeGateway()
 	s, ts := testServer(t, gw)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -93,6 +94,52 @@ func TestFilesOctetStreamUpload(t *testing.T) {
 	gw.mu.Unlock()
 	if content != string([]byte{0, 1, 2, 255}) {
 		t.Fatalf("content=%q", content)
+	}
+}
+
+func TestFilesBinaryRoundTrip(t *testing.T) {
+	gw := newFakeGateway()
+	s, ts := testServer(t, gw)
+	id := createSandboxID(t, ts)
+	headers := envdHeaders(t, s, id)
+
+	// Non-UTF-8 upload: the e2b layer must ride base64 (sandboxd's
+	// encoding="base64") rather than fail gRPC marshal.
+	payload := bytes.Repeat([]byte{0xff, 0x00, 'k', 0x80}, 64)
+	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd/files?path=bin.dat",
+		bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("binary upload: %d %s", resp.StatusCode, readBody(t, resp))
+	}
+	resp.Body.Close()
+
+	// Download must return the same bytes.
+	dl, _ := http.NewRequest("GET", ts.URL+"/e2b/envd/files?path=bin.dat", http.NoBody)
+	for k, v := range headers {
+		dl.Header.Set(k, v)
+	}
+	dresp, err := ts.Client().Do(dl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dresp.Body.Close()
+	if dresp.StatusCode != 200 {
+		t.Fatalf("binary download: %d", dresp.StatusCode)
+	}
+	body, err := io.ReadAll(dresp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, payload) {
+		t.Fatalf("round-trip mismatch: got %d bytes, want %d", len(body), len(payload))
 	}
 }
 
