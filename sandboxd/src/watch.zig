@@ -13,7 +13,6 @@ const main = @import("main.zig");
 /// Watchers are created with a globally-incrementing id. The buffers are
 /// plain memory: a daemon restart drops them, matching the process table's
 /// honest non-persistence.
-
 const WATCHER_MAX = 32;
 const EVENT_BUF_MAX = 64;
 
@@ -151,9 +150,8 @@ pub fn handleCreate(allocator: std.mem.Allocator, client_fd: i32, body: []const 
         try main.writeResponse(client_fd, "400 Bad Request", "application/json", "{\"error\":\"path too long\"}");
         return;
     };
-    const wd_raw = std.os.linux.inotify_add_watch(inotify_fd, path_z,
-        std.os.linux.IN.CREATE | std.os.linux.IN.MODIFY | std.os.linux.IN.DELETE |
-            std.os.linux.IN.MOVED_FROM | std.os.linux.IN.MOVED_TO | std.os.linux.IN.ATTRIB);
+    const wd_raw = std.os.linux.inotify_add_watch(inotify_fd, path_z, std.os.linux.IN.CREATE | std.os.linux.IN.MODIFY | std.os.linux.IN.DELETE |
+        std.os.linux.IN.MOVED_FROM | std.os.linux.IN.MOVED_TO | std.os.linux.IN.ATTRIB);
     const wd: isize = @bitCast(wd_raw);
     if (wd < 0) {
         try main.writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"path not found\"}");
@@ -217,8 +215,7 @@ pub fn handleEvents(allocator: std.mem.Allocator, client_fd: i32, query: []const
                 if (wrote_any) try out.append(',');
                 wrote_any = true;
                 var entry_buf: [320]u8 = undefined;
-                const entry = try std.fmt.bufPrint(&entry_buf, "{{\"name\":\"{s}\",\"type\":{d}}}",
-                    .{ name, w.types[slot] });
+                const entry = try std.fmt.bufPrint(&entry_buf, "{{\"name\":\"{s}\",\"type\":{d}}}", .{ name, w.types[slot] });
                 try out.appendSlice(entry);
             }
             w.cursor = w.len;

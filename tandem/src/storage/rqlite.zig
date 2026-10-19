@@ -779,8 +779,7 @@ pub const SqlBuilder = struct {
     pub fn atomicDeleteRangeSql(allocator: Allocator, key: []const u8, range_end: []const u8) ![]u8 {
         const predicate = try keyPredicate(allocator, key, range_end);
         defer allocator.free(predicate);
-        return std.fmt.allocPrint(allocator,
-            "BEGIN;DROP TABLE IF EXISTS tandem_delete_prev;CREATE TEMP TABLE tandem_delete_prev AS SELECT key,value,create_revision,mod_revision,version,lease FROM kv WHERE {s};" ++
+        return std.fmt.allocPrint(allocator, "BEGIN;DROP TABLE IF EXISTS tandem_delete_prev;CREATE TEMP TABLE tandem_delete_prev AS SELECT key,value,create_revision,mod_revision,version,lease FROM kv WHERE {s};" ++
             "UPDATE revision SET current_revision=current_revision+1 WHERE id=1 AND EXISTS(SELECT 1 FROM tandem_delete_prev);" ++
             "INSERT INTO kv_history(key,value,create_revision,mod_revision,version,lease,deleted) SELECT key,value,create_revision,(SELECT current_revision FROM revision WHERE id=1),version,lease,1 FROM tandem_delete_prev;" ++
             "DELETE FROM lease_keys WHERE key IN (SELECT key FROM tandem_delete_prev);" ++
@@ -999,16 +998,14 @@ pub const SqlBuilder = struct {
     /// deletions split across revisions, and a client counting revisions to
     /// order its own writes saw a gap that was never a real write.
     pub fn revokeLeaseWithKeysSql(allocator: Allocator, lease_id: i64) ![]u8 {
-        return std.fmt.allocPrint(allocator,
-            "BEGIN;" ++
+        return std.fmt.allocPrint(allocator, "BEGIN;" ++
             "UPDATE revision SET current_revision=current_revision+1 WHERE id=1 AND EXISTS(SELECT 1 FROM kv WHERE lease={d});" ++
             "INSERT INTO kv_history(key,value,create_revision,mod_revision,version,lease,deleted) " ++
             "SELECT key,value,create_revision,(SELECT current_revision FROM revision WHERE id=1),version,lease,1 FROM kv WHERE lease={d};" ++
             "DELETE FROM kv WHERE lease={d};" ++
             "DELETE FROM lease_keys WHERE lease_id={d};" ++
             "DELETE FROM leases WHERE id={d};" ++
-            "COMMIT;",
-            .{ lease_id, lease_id, lease_id, lease_id, lease_id });
+            "COMMIT;", .{ lease_id, lease_id, lease_id, lease_id, lease_id });
     }
 
     /// Expire one leased key: record the tombstone, drop the row and the lease
@@ -1055,12 +1052,10 @@ pub const SqlBuilder = struct {
         defer allocator.free(hex);
         const guard = try leaseOwnerGuardSql(allocator, lease_id, owner, now);
         defer allocator.free(guard);
-        return std.fmt.allocPrint(allocator,
-            "BEGIN;UPDATE revision SET current_revision=current_revision+1 WHERE id=1 AND EXISTS(SELECT 1 FROM kv WHERE key=X'{s}' AND lease={d}) AND {s};" ++
+        return std.fmt.allocPrint(allocator, "BEGIN;UPDATE revision SET current_revision=current_revision+1 WHERE id=1 AND EXISTS(SELECT 1 FROM kv WHERE key=X'{s}' AND lease={d}) AND {s};" ++
             "INSERT INTO kv_history(key,value,create_revision,mod_revision,version,lease,deleted) SELECT key,value,create_revision,(SELECT current_revision FROM revision WHERE id=1),version,lease,1 FROM kv WHERE key=X'{s}' AND lease={d} AND {s};" ++
             "DELETE FROM kv WHERE key=X'{s}' AND lease={d} AND {s};" ++
-            "DELETE FROM lease_keys WHERE key=X'{s}' AND lease_id={d} AND {s};COMMIT;",
-            .{ hex, lease_id, guard, hex, lease_id, guard, hex, lease_id, guard, hex, lease_id, guard });
+            "DELETE FROM lease_keys WHERE key=X'{s}' AND lease_id={d} AND {s};COMMIT;", .{ hex, lease_id, guard, hex, lease_id, guard, hex, lease_id, guard, hex, lease_id, guard });
     }
 
     pub fn revokeLeaseOwnedSql(allocator: Allocator, lease_id: i64, owner: []const u8, now: i64) ![]u8 {
@@ -1750,7 +1745,8 @@ test "the rqlite status parser reads nested leader and raft fields" {
 test "a status without a leader reports none rather than a fabricated one" {
     // A node that has not elected itself still answers /status, and the
     // caller reports "no leader" instead of the constant 1 this used to send.
-    const body = \\{"store":{"ready":false,"node_id":"n1","leader":{},"raft":{"term":0,"applied_index":0}}}
+    const body =
+        \\{"store":{"ready":false,"node_id":"n1","leader":{},"raft":{"term":0,"applied_index":0}}}
     ;
     const status = try parseStatusResponse(testing.allocator, body);
     defer testing.allocator.free(status.leader_address);

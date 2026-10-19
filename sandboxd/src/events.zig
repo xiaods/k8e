@@ -10,7 +10,6 @@ const std = @import("std");
 ///
 /// Format per line: {"t":<unix_sec>,"ev":"<event>","sid":"<session>",...}
 /// Events: exec_start, exec_end, file_write, file_read, bg_submit, bg_poll.
-
 const EVENT_DIR = "/workspace/.k8e_events";
 /// Hard cap for the event file; when exceeded the file is rotated (old -> .1).
 pub const max_event_bytes: usize = 4 * 1024 * 1024;
@@ -45,8 +44,7 @@ pub fn appendAt(dir: []const u8, session_id: []const u8, event: []const u8, extr
 
     const ts = getUnixSeconds();
     var line_buf: [MAX_LINE]u8 = undefined;
-    const line = std.fmt.bufPrint(&line_buf, "{{\"t\":{d},\"ev\":\"{s}\",\"sid\":\"{s}\"{s}}}\n",
-        .{ ts, event, session_id, extra }) catch return;
+    const line = std.fmt.bufPrint(&line_buf, "{{\"t\":{d},\"ev\":\"{s}\",\"sid\":\"{s}\"{s}}}\n", .{ ts, event, session_id, extra }) catch return;
     _ = std.os.linux.write(@intCast(fd), line.ptr, line.len);
 }
 

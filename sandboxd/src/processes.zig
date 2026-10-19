@@ -9,7 +9,6 @@ const exec = @import("exec.zig");
 /// visible in the pod's pid namespace. Reading never triggers collection and
 /// an idle daemon does zero extra work (the /proc scan happens only when a
 /// consumer requests it).
-
 /// handleProcesses serves GET /processes — JSON array of running processes.
 pub fn handleProcesses(allocator: std.mem.Allocator, client_fd: i32, query: []const u8) !void {
     _ = query;
@@ -52,8 +51,7 @@ pub fn handleProcesses(allocator: std.mem.Allocator, client_fd: i32, query: []co
             if (wrote_any) try out.append(',');
             wrote_any = true;
             var entry_buf: [512]u8 = undefined;
-            const entry = try std.fmt.bufPrint(&entry_buf, "{{\"pid\":{d},\"comm\":\"{s}\",\"state\":\"{c}\"}}",
-                .{ pid, escaped, state });
+            const entry = try std.fmt.bufPrint(&entry_buf, "{{\"pid\":{d},\"comm\":\"{s}\",\"state\":\"{c}\"}}", .{ pid, escaped, state });
             try out.appendSlice(entry);
         }
     }

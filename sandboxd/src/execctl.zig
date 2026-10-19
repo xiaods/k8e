@@ -317,7 +317,6 @@ pub fn handleSignal(allocator: std.mem.Allocator, client_fd: i32, body: []const 
     try main.writeResponse(client_fd, "200 OK", "application/json", "{\"ok\":true}");
 }
 
-
 const StdinRequest = struct {
     pid: std.os.linux.pid_t,
     data: []const u8 = "",
@@ -375,9 +374,7 @@ pub fn handleProcessList(allocator: std.mem.Allocator, client_fd: i32) !void {
 
         if (wrote_any) try out.append(',');
         wrote_any = true;
-        const entry = try std.fmt.bufPrint(&entry_buf,
-            "{{\"pid\":{d},\"alive\":{s},\"config\":\"{s}\"}}",
-            .{ pid, if (alive) "true" else "false", escaped });
+        const entry = try std.fmt.bufPrint(&entry_buf, "{{\"pid\":{d},\"alive\":{s},\"config\":\"{s}\"}}", .{ pid, if (alive) "true" else "false", escaped });
         try out.appendSlice(entry);
     }
 
@@ -392,7 +389,6 @@ pub fn handleProcessList(allocator: std.mem.Allocator, client_fd: i32) !void {
 /// the buffered output, then a done marker. This slice replays the buffer;
 /// live tailing a still-running process from a second consumer needs a
 /// multi-reader pipe model (documented P1 follow-up).
-
 /// parsePidQuery extracts the integer value of the "pid" query parameter.
 fn parsePidQuery(query: []const u8) ?[]const u8 {
     const prefix = "pid=";

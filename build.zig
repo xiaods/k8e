@@ -169,9 +169,9 @@ pub fn build(b: *std.Build) !void {
     containerd_build.setEnvironmentVariable("GOPATH", b.fmt("{s}/build", .{root}));
     containerd_build.setCwd(b.path(containerd_src));
     containerd_build.addArgs(&.{
-        "-tags",                         shim_tags,
-        "-ldflags",                      ldflags,
-        "-o",                            "bin/containerd",
+        "-tags",            shim_tags,
+        "-ldflags",         ldflags,
+        "-o",               "bin/containerd",
         "./cmd/containerd",
     });
     containerd_build.step.dependOn(&download_cmd.step);
@@ -266,7 +266,7 @@ pub fn build(b: *std.Build) !void {
     const cni_clone_abs = b.fmt("{s}/.cni-build", .{root});
     const cni_workdir_abs = b.fmt("{s}/src/github.com/containernetworking/plugins", .{cni_clone_abs});
     const cni_clone = b.addSystemCommand(&.{
-        bash,                                                                                                                                                                                                    "-c",
+        bash,                                                                                                                                                                                                "-c",
         b.fmt("rm -rf {s} && mkdir -p {s} && git clone --single-branch --depth=1 --branch={s} https://github.com/rancher/plugins.git {s}", .{ cni_clone_abs, cni_clone_abs, cni_version, cni_workdir_abs }),
     });
     const cni_build = b.addSystemCommand(&.{ "go", "build" });
@@ -406,9 +406,9 @@ fn addSandboxCLIBuild(b: *std.Build, all_step: *std.Build.Step, v: VersionInfo) 
         const out_path = b.getInstallPath(.bin, out_name);
 
         const go_build = b.addSystemCommand(&[_][]const u8{
-            "go", "build",
-            "-ldflags", ldflags,
-            "-o", out_path,
+            "go",                "build",
+            "-ldflags",          ldflags,
+            "-o",                out_path,
             "./cmd/sandboxcli/",
         });
         go_build.setEnvironmentVariable("GOOS", t.goos);
