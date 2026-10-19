@@ -6,7 +6,6 @@ const transcript = @import("transcript.zig");
 // those trigger SIGSYS (same pre-existing limitation as exec_test runCommand
 // fork tests). These tests are Linux-only and run in CI.
 
-
 const TEST_BASE = "/tmp/k8e-transcript-test";
 
 fn setupDir() void {

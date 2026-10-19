@@ -11,7 +11,6 @@ const main = @import("main.zig");
 ///
 /// Format per line: `<unix_seconds> <stream> <text>\n` where stream is one of
 /// stdout|stderr|cmd.
-
 const TRANSCRIPT_DIR = "/workspace/.k8e_transcripts";
 /// Hard cap for a single window read (bounds per-request memory).
 pub const max_window_bytes: usize = 256 * 1024;
@@ -188,9 +187,7 @@ pub fn handleTranscript(allocator: std.mem.Allocator, client_fd: i32, query: []c
 
     const escaped = try exec_json_escape(allocator, w.output);
     defer allocator.free(escaped);
-    const resp = try std.fmt.allocPrint(allocator,
-        "{{\"output\":\"{s}\",\"offset\":{d},\"next_offset\":{d},\"truncated_before\":{s},\"eof\":{s}}}",
-        .{ escaped, w.absolute_offset, w.next_offset, if (w.truncated_before) "true" else "false", if (w.eof) "true" else "false" });
+    const resp = try std.fmt.allocPrint(allocator, "{{\"output\":\"{s}\",\"offset\":{d},\"next_offset\":{d},\"truncated_before\":{s},\"eof\":{s}}}", .{ escaped, w.absolute_offset, w.next_offset, if (w.truncated_before) "true" else "false", if (w.eof) "true" else "false" });
     defer allocator.free(resp);
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }

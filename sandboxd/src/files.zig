@@ -463,9 +463,7 @@ pub fn handleStat(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
     const target_escaped = try exec.jsonEscape(allocator, symlink_target);
     defer allocator.free(target_escaped);
 
-    const resp = try std.fmt.allocPrint(allocator,
-        "{{\"type\":\"{s}\",\"size\":{d},\"mode\":\"{o}\",\"uid\":{d},\"gid\":{d},\"mtime\":{d},\"name\":\"{s}\",\"symlink_target\":\"{s}\"}}",
-        .{ ftype, stx.size, mode_u32 & 0o7777, stx.uid, stx.gid, stx.mtime.sec, req.path, target_escaped });
+    const resp = try std.fmt.allocPrint(allocator, "{{\"type\":\"{s}\",\"size\":{d},\"mode\":\"{o}\",\"uid\":{d},\"gid\":{d},\"mtime\":{d},\"name\":\"{s}\",\"symlink_target\":\"{s}\"}}", .{ ftype, stx.size, mode_u32 & 0o7777, stx.uid, stx.gid, stx.mtime.sec, req.path, target_escaped });
     defer allocator.free(resp);
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }
