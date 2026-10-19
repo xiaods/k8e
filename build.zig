@@ -64,7 +64,7 @@ pub fn build(b: *std.Build) !void {
         .version_cri_dockerd = version_env.get("VERSION_CRI_DOCKERD") orelse "v0.0.0",
         .version_hcsshim = version_env.get("VERSION_HCSSHIM") orelse "v0.0.0",
     };
-    const ldflags = try buildVersionFlags(b.allocator, vi);
+    const ldflags = try buildVersionFlags(b.allocator, vi, builtin.os.tag == .linux);
 
     // Pre-build cleanup: remove stale k8e binaries (aligned with k3s scripts/build)
     const k8e_binaries = [_][]const u8{
@@ -349,11 +349,25 @@ fn xflag(allocator: std.mem.Allocator, comptime key: []const u8, value: []const 
     return std.fmt.allocPrint(allocator, "-X " ++ key ++ "={s}", .{value});
 }
 
-fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo) ![]const u8 {
+/// buildVersionFlags assembles the -ldflags shared by every Go binary the
+/// graph produces.
+///
+/// staticLink selects the linker flags. It must be false off Linux: the set
+/// below asks the external linker for a fully static binary plus -ldl and
+/// -lpthread, which macOS cannot satisfy (no static libc; libdl and libpthread
+/// live in libSystem). Passing them there sends the linker looking for glibc's
+/// crt0.o and the build dies with "ld: library 'crt0.o' not found", so
+/// `zig build k8e` has never worked on a macOS host.
+fn buildVersionFlags(allocator: std.mem.Allocator, v: VersionInfo, staticLink: bool) ![]const u8 {
     const commit_short = if (v.commit.len >= 8) v.commit[0..8] else v.commit;
 
     const parts = [_][]const u8{
-        "-w -s -extldflags '-static -lm -ldl -lz -lpthread'",
+        if (staticLink)
+            "-w -s -extldflags '-static -lm -ldl -lz -lpthread'"
+        else
+            // Keep the symbols stripped and the debug info dropped, and let the
+            // host linker resolve the system libraries dynamically.
+            "-w -s",
         // k8e version
         try xflag(allocator, PKG ++ "/pkg/version.Version", v.version),
         try xflag(allocator, PKG ++ "/pkg/version.GitCommit", commit_short),
