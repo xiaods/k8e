@@ -117,7 +117,7 @@ func TestWakeForTrafficWaitsForPodIPAfterResume(t *testing.T) {
 	if got := len(base.resumed); got != 1 {
 		t.Fatalf("expected exactly one auto-resume, got %d", got)
 	}
-	if ip := base.sessions[id].GetPodIp(); ip == "" {
+	if base.sessions[id].GetPodIp() == "" {
 		t.Fatal("auto-resume must leave the session with an assigned pod IP")
 	}
 }
@@ -152,7 +152,7 @@ func TestWakeForTrafficRunningWithoutPodIPWaits(t *testing.T) {
 	if len(base.resumed) != 0 {
 		t.Fatalf("a running session must not be resumed again, got %d resumes", len(base.resumed))
 	}
-	if ip := base.sessions[id].GetPodIp(); ip == "" {
+	if base.sessions[id].GetPodIp() == "" {
 		t.Fatal("the call must have waited for the pod IP to be assigned")
 	}
 }
