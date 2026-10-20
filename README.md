@@ -1,9 +1,6 @@
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/k8e-sandbox-logo.svg">
-  <img src="docs/assets/k8e-sandbox-logo-light.svg" alt="K8E sandbox" width="440" height="101" />
-</picture>
+<img src="docs/assets/k8e-sandbox-logo-light.svg" alt="K8E sandbox" width="440" height="101" />
 
 <br/>
 
