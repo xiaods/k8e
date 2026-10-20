@@ -65,6 +65,7 @@ Last audited: **2026-08-24**, against the in-tree sandbox matrix, gRPC proto,
 | [KIP-22](kip-22-sandbox-advertise-hostname.md) | `--sandbox-advertise-hostname` SAN + cert regen | Implemented |
 | [KIP-23](kip-23-endpointslice-migration.md) | Ingress bridge: Endpoints → EndpointSlice | Implemented (was “KIP-21 follow-up”; numbered KIP-23 to close the gap before KIP-24) |
 | [KIP-24](kip-24-sandbox-service-exposure.md) | Service exposure via k8e API Gateway reverse proxy | Implemented (M1–M3); live-cluster e2e (M4) still pending |
+| [KIP-31](kip-31-sandbox-e2b-template-semantics.md) | E2B template semantics for K8E sandboxes (registry, build API, golden workspace, start command) | Proposed — M0 (template registry) is the ship-first slice; M1–M5 follow |
 
 ### Outdated (do not implement)
 
@@ -91,6 +92,10 @@ Agent-facing repo conventions live under [`docs/agents/`](agents/). Those files 
 - **KIP-30** was drafted while KIP-29 was still open; both numbers are now used and the
   next free integer is **KIP-31**. It is a follow-up to KIP-8 (making the MCP Deployment
   runnable) rather than a revision of it — KIP-8's protocol and API-key design is
+  unchanged.
+- **KIP-31** was drafted after KIP-30 landed; the next free integer is now **KIP-32**.
+  It revises KIP-18's template handling (the `templateID` → runtime-class alias becomes a
+  real template reference) — KIP-18's protocol layer, auth model and error dialect are
   unchanged.
 
 ## How to add a KIP

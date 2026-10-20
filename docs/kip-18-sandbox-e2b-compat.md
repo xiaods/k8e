@@ -2,7 +2,7 @@
 
 | Author | Updated | Status |
 |--------|---------|--------|
-| @xiaods | 2026-08-24 | Implemented (PR #541) — official `e2b` SDK talks to the embedded e2b HTTP server. PTY 501s closed by [KIP-19](./kip-19-sandbox-pty-terminal-primitive.md) M4. Ingress address correctness: [KIP-21](./kip-21-host-advertise-ip-resolution.md) + [KIP-23](./kip-23-endpointslice-migration.md). |
+| @xiaods | 2026-08-24 | Implemented (PR #541) — official `e2b` SDK talks to the embedded e2b HTTP server. PTY 501s closed by [KIP-19](./kip-19-sandbox-pty-terminal-primitive.md) M4. Ingress address correctness: [KIP-21](./kip-21-host-advertise-ip-resolution.md) + [KIP-23](./kip-23-endpointslice-migration.md). **Errata (2026-10-20):** `templateID` handling is revised by [KIP-31](./kip-31-sandbox-e2b-template-semantics.md) — the runtime-class alias described below becomes a real template reference (registry → build API → golden workspace → start command). Everything else in this KIP stands. |
 
 ## Summary
 
@@ -331,7 +331,7 @@ silently dropping it).
 
 | E2B verb | K8E RPC / sandboxd | Notes |
 |----------|---------|-------|
-| `POST /sandboxes` (create) | `CreateSession` | `envVars→env`; `templateID→runtime_class` (`base`/absent → default runtime; known runtimes `gvisor|kata|firecracker` accepted, else 404 `template not found`); `metadata.name` becomes the k8e `session_id` → **idempotent create** (same name ⇒ same sandbox, Dormice extension); `timeout` → daemon-side deadline registry (stateStore-backed) |
+| `POST /sandboxes` (create) | `CreateSession` | `envVars→env`; `templateID→runtime_class` (`base`/absent → default runtime; known runtimes `gvisor|kata|firecracker` accepted, else 404 `template not found`) — **superseded by [KIP-31](./kip-31-sandbox-e2b-template-semantics.md)**, which resolves `templateID` to a `SandboxTemplate` (name / `name:tag` / `name:buildID`) and keeps the runtime-class aliases as the legacy path; `metadata.name` becomes the k8e `session_id` → **idempotent create** (same name ⇒ same sandbox, Dormice extension); `timeout` → daemon-side deadline registry (stateStore-backed) |
 | `POST /sandboxes/:id/connect` | `GetSession` | wake/extend deadline; returns session view (201 if resumed) |
 | `GET /sandboxes/:id` | `GetSession` | info view: `sandboxID, clientID, templateID, metadata, state, startedAt, endAt, cpuCount, memoryMB, diskSizeMB, envdVersion` |
 | `DELETE /sandboxes/:id` (kill) | `DestroySession` | 204; second kill → 404 (SDK's `kill()===false` keys on it) |
@@ -629,7 +629,8 @@ idempotency.
 **Honest 501s (SDK methods throw, with a machine-readable hint):**
 `process.Process/Update`, `StreamInput`, `UpdatePTY`, streaming `WatchDir`
 (the polling trio works), metrics (returns `[]`), templates registry (only
-runtime-class names accepted as `templateID`), pause of an ephemeral
+runtime-class names accepted as `templateID` — **being closed by
+[KIP-31](./kip-31-sandbox-e2b-template-semantics.md)**), pause of an ephemeral
 (EmptyDir) sandbox (409 — no persistent workspace to survive the release).
 **PTY (`pty.create` / sendInput / resize / kill) is implemented** (KIP-19 M4).
 
@@ -710,7 +711,11 @@ the same reason).
   the honest filesystem-only variant (release pod, keep PVC, cold-boot
   resume).
 - **Template registry**: map E2B template names to k8e session images
-  (runtime-class names are accepted today).
+  (runtime-class names are accepted today) — **designed in
+  [KIP-31](./kip-31-sandbox-e2b-template-semantics.md)**: the `SandboxTemplate`
+  CRD becomes the registry, the E2B build API (`POST /v3/templates` and
+  friends) becomes the builder, and the build's workspace becomes the
+  template's golden workspace.
 - **e2e suite**: run the official `e2b` package against a live cluster and
   validate the Cilium Gateway API ingress (Gateway programmed status,
   HTTPRoute → e2b-server Service reachability, HTTPS listener with the
