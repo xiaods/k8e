@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128.4662" height="29.5" viewBox="0 0 128.4662 29.5" fill="none" role="img" aria-label="k8e sandbox">
+  <!--
+    k8e-sandbox logo - horizontal lockup. Background: transparent.
+
+    Left : the k8e sandbox mark, an isometric box in the k8e palette
+           (k-paper #e8eeeb lit face, k-signal amber #ffb000 top face,
+            k-shade #8fa5a0 right face).
+    Right: "K8E", drawn in the e2b logotype's geometry so the wordmark and the
+           mark read as one family. Every metric is the e2b one:
+
+             cap height              29.5
+             band / stroke width      8.4053
+             hairline slit height     2.1416
+             outer corner radius      5.4511
+             hairline corner radius   0.7937
+             letter box width        33.02
+             letter gap               2.05
+
+           Construction is the e2b "e2b" logotype's own: solid horizontal
+           bands with hairline slits cut through them, wrapped in a big-radius
+           rounded box. The "E" is that logotype's glyph verbatim; the "8"
+           adds a pinched waist so it does not read as a B (or a theta); the
+           "K" is the same band width with two straight arms.
+
+           One typeface-free system, one colour, one spine width, one cap
+           height, one baseline - the three letters differ only in how the
+           bands are interrupted.
+
+    Variants:
+      k8e-sandbox-logo.svg        dark surfaces   K8E = k-paper #e8eeeb
+      k8e-sandbox-logo-light.svg  light surfaces  K8E = k-ink   #2b3a36
+  -->
+  <polygon points="0,7.375 12.7697,14.75 12.7697,29.5 0,22.125" fill="#e8eeeb"/><polygon points="25.5394,7.375 25.5394,22.125 12.7697,29.5 12.7697,14.75" fill="#8fa5a0"/><polygon points="12.7697,0 25.5394,7.375 12.7697,14.75 0,7.375" fill="#ffb000"/><path fill="#e8eeeb" d="M37.742 0 L41.9447 0 L41.9447 29.5 L37.742 29.5 C35.4209 29.5 33.5394 27.6184 33.5394 25.2974 L33.5394 4.2026 C33.5394 1.8816 35.4209 0 37.742 0 Z M41.9447 14.75 L41.9447 2.1885 L44.3752 0 L58.3262 0 Z M41.9447 14.75 L41.9447 27.3115 L44.3752 29.5 L58.3262 29.5 Z"/><g fill="#e8eeeb"><path fill-rule="evenodd" d="M65.8273 0 L87.9451 0 C90.9556 0 93.3962 2.4405 93.3962 5.4511 L93.3962 10.25 C93.3962 12.7353 92.8815 14.75 90.3962 14.75 C92.8815 14.75 93.3962 16.7647 93.3962 19.25 L93.3962 24.0489 C93.3962 27.0595 90.9556 29.5 87.9451 29.5 L65.8273 29.5 C62.8167 29.5 60.3762 27.0595 60.3762 24.0489 L60.3762 19.25 C60.3762 16.7647 60.8909 14.75 63.3762 14.75 C60.8909 14.75 60.3762 12.7353 60.3762 10.25 L60.3762 5.4511 C60.3762 2.4405 62.8167 0 65.8273 0 Z M69.5752 8.4053 L84.1972 8.4053 C84.6355 8.4053 84.9909 8.7607 84.9909 9.199 L84.9909 9.7532 C84.9909 10.1915 84.6355 10.5469 84.1972 10.5469 L69.5752 10.5469 C69.1368 10.5469 68.7815 10.1915 68.7815 9.7532 L68.7815 9.199 C68.7815 8.7607 69.1368 8.4053 69.5752 8.4053 Z M69.5752 18.9522 L84.1972 18.9522 C84.6355 18.9522 84.9909 19.3076 84.9909 19.7459 L84.9909 20.3001 C84.9909 20.7384 84.6355 21.0938 84.1972 21.0938 L69.5752 21.0938 C69.1368 21.0938 68.7815 20.7384 68.7815 20.3001 L68.7815 19.7459 C68.7815 19.3076 69.1368 18.9522 69.5752 18.9522 Z"/></g><g fill="#e8eeeb"><g transform="translate(80.1093,-15.2402)"><path d="M48.3584 15.2402V23.6455H24.5352C24.0977 23.6455 23.7422 24.001 23.7422 24.4385V24.9951C23.7422 25.4326 24.0977 25.7871 24.5352 25.7871H48.3584V34.1934H24.5352C24.0977 34.1934 23.7422 34.5479 23.7422 34.9854V35.542C23.7422 35.9795 24.0977 36.335 24.5352 36.335H48.3584V44.7402H20.7881C17.7776 44.74 15.3372 42.2995 15.3369 39.2891V20.6914C15.3372 17.6809 17.7776 15.2405 20.7881 15.2402H48.3584Z"/></g></g>
+</svg>
