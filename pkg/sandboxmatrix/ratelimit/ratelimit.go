@@ -25,8 +25,19 @@ const (
 // Limiter is a per-tenant token bucket rate limiter.
 type Limiter struct {
 	mu     sync.Mutex
-	cache  map[string]*tokenBucket
+	cache  map[string]*tenantBuckets
 	config RateConfig
+}
+
+// tenantBuckets holds a tenant's read and write buckets.
+//
+// They are separate buckets on purpose: a shared one let a burst of writes
+// consume the read budget (and the other way round), so the configured
+// ReadBurst/WriteBurst did not mean what the operator set - a burst of
+// writes could throttle reads for the same tenant.
+type tenantBuckets struct {
+	read  *tokenBucket
+	write *tokenBucket
 }
 
 // RateConfig holds burst and rate for read and write operations.
@@ -57,7 +68,7 @@ func DefaultRateConfig() RateConfig {
 // NewLimiter creates a Limiter with the given config.
 func NewLimiter(cfg RateConfig) *Limiter {
 	return &Limiter{
-		cache:  make(map[string]*tokenBucket),
+		cache:  make(map[string]*tenantBuckets),
 		config: cfg,
 	}
 }
@@ -101,35 +112,39 @@ func (l *Limiter) ReloadConfig(spec *v1alpha1.RateLimitSpec) {
 	}
 	l.mu.Lock()
 	l.config = cfg
-	l.cache = make(map[string]*tokenBucket) // reset buckets on config change
+	l.cache = make(map[string]*tenantBuckets) // reset buckets on config change
 	l.mu.Unlock()
 }
 
 // Allow checks if the tenant has a token available for the given operation type.
 func (l *Limiter) Allow(tenant string, isWrite bool) bool {
+	// The config is read under the lock: ReloadConfig replaces it, and
+	// reading it outside would race with that (and could pair a new burst
+	// with an old rate).
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	cfg := l.config
-	burst := cfg.ReadBurst
 	rate := cfg.ReadRate
 	if isWrite {
-		burst = cfg.WriteBurst
 		rate = cfg.WriteRate
 	}
 	if rate <= 0 {
 		return true // rate limiting disabled
 	}
 
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	b, ok := l.cache[tenant]
+	tb, ok := l.cache[tenant]
 	if !ok {
-		b = &tokenBucket{
-			tokens:   float64(burst),
-			lastFill: time.Now(),
-			burst:    burst,
-			rate:     rate,
+		tb = &tenantBuckets{
+			read:  &tokenBucket{tokens: float64(cfg.ReadBurst), lastFill: time.Now(), burst: cfg.ReadBurst, rate: cfg.ReadRate},
+			write: &tokenBucket{tokens: float64(cfg.WriteBurst), lastFill: time.Now(), burst: cfg.WriteBurst, rate: cfg.WriteRate},
 		}
-		l.cache[tenant] = b
+		l.cache[tenant] = tb
+	}
+
+	b := tb.read
+	if isWrite {
+		b = tb.write
 	}
 
 	now := time.Now()
@@ -150,8 +165,11 @@ func (l *Limiter) ReapStale(maxAge time.Duration) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	cutoff := time.Now().Add(-maxAge)
-	for tenant, b := range l.cache {
-		if b.lastFill.Before(cutoff) {
+	for tenant, tb := range l.cache {
+		// A tenant is stale only when BOTH of its buckets are idle: the read
+		// and the write bucket are filled on their own schedule, so either
+		// one being fresh means the tenant is still active.
+		if tb.read.lastFill.Before(cutoff) && tb.write.lastFill.Before(cutoff) {
 			delete(l.cache, tenant)
 		}
 	}
@@ -161,7 +179,7 @@ func (l *Limiter) ReapStale(maxAge time.Duration) {
 func extractTenant(ctx context.Context) string {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return ""
+		return "anon"
 	}
 	// Prefer tenant header
 	if vals := md.Get("x-sandbox-tenant"); len(vals) > 0 {
