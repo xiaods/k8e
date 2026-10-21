@@ -10,7 +10,6 @@ import (
 	"github.com/sirupsen/logrus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -64,12 +63,20 @@ func runEmbeddedE2B(ctx context.Context, cfg config.SandboxConfig, kubeconfig st
 		namespace = config.DefaultSandboxNamespace
 	}
 
-	// CRD-backed state store for multi-node consistency. Fall back to the
-	// in-memory store if the cluster is unreachable (e.g. kubeconfig missing
-	// in an unusual embedding) — degrade to single-node semantics.
+	// CRD-backed state store for multi-node consistency.
+	//
+	// There is deliberately no fallback to the in-memory registry here. The
+	// embedded server is the multi-node deployment: a per-process store would
+	// make the E2B bookkeeping (deadline, auto-pause, the metadata.name
+	// index) depend on which node the Gateway API happened to route a
+	// request to, and would lose it on every restart. A server that cannot
+	// reach the CRDs therefore does not serve the E2B surface at all - a
+	// visible failure is better than a silent divergence.
 	store, err := newEmbeddedStateStore(kubeconfig, namespace)
 	if err != nil {
-		logrus.Warnf("e2b (embedded): CRD state store unavailable (%v); using in-memory (single-node semantics)", err)
+		logrus.Errorf("e2b (embedded): CRD state store unavailable (%v); the E2B surface is disabled "+
+			"(the SandboxSession CRDs must be reachable, or start k8e-server with --disable-e2b)", err)
+		return
 	}
 
 	staticKey := resolveEmbeddedAPIKey(cfg.E2BAPIKey)
@@ -211,15 +218,10 @@ func loadSandboxAPIKeys(ctx context.Context, kubeconfig, namespace string) (sand
 
 // newEmbeddedStateStore builds the CRD-backed E2B state store for the
 // embedded architecture. A nil return with a non-nil error means the store
-// could not be constructed (caller falls back to in-memory).
+// could not be constructed; the caller then does not serve the E2B surface.
 func newEmbeddedStateStore(kubeconfig, namespace string) (sandboxe2b.StateStore, error) {
-	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-	if err != nil {
-		return nil, err
-	}
-	dyn, err := dynamic.NewForConfig(restConfig)
-	if err != nil {
-		return nil, err
-	}
-	return sandboxe2b.NewCRDStateStore(dyn, namespace), nil
+	return sandboxe2b.NewStateStore(sandboxe2b.StateStoreOptions{
+		Kubeconfig: kubeconfig,
+		Namespace:  namespace,
+	})
 }
