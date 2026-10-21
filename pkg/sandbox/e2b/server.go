@@ -125,6 +125,11 @@ func NewServer(cfg Config, gw Gateway) *Server {
 	apiKeys := normalizeKeyList([]string{cfg.APIKey})
 	registry := cfg.StateStore
 	if registry == nil {
+		// A caller that did not choose a state store gets the in-memory
+		// registry, which is only correct for a single-node experiment or a
+		// test. Production callers build the CRD-backed store explicitly
+		// (NewStateStore), because the in-memory one loses the E2B
+		// bookkeeping on restart and cannot be shared between nodes.
 		registry = newSandboxRegistry()
 	}
 	s := &Server{

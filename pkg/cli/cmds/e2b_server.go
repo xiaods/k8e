@@ -2,19 +2,31 @@ package cmds
 
 import (
 	"github.com/urfave/cli"
+
+	"github.com/xiaods/k8e/pkg/daemons/config"
 )
 
 // E2BServerConfig holds the `k8e e2b-server` configuration.
 type E2BServerConfig struct {
-	Listen              string
-	Endpoint            string
-	APIKey              string
-	NodeID              string
-	SigningSecret       string
-	DefaultCPUs         int
-	DefaultMemoryMB     int
-	DefaultDiskMB       int
+	Listen                string
+	Endpoint              string
+	APIKey                string
+	NodeID                string
+	SigningSecret         string
+	DefaultCPUs           int
+	DefaultMemoryMB       int
+	DefaultDiskMB         int
 	AllowedRuntimeClasses cli.StringSlice
+	// Kubeconfig is the kubeconfig used to reach the cluster for the
+	// CRD-backed E2B state store. Empty means the default resolution.
+	Kubeconfig string
+	// Namespace holds the SandboxSession CRDs the state store reads and
+	// writes. Empty means DefaultSandboxNamespace.
+	Namespace string
+	// InMemoryState allows the in-memory E2B state store as a fallback when
+	// the cluster is unreachable. Off by default: the in-memory store loses
+	// the E2B bookkeeping on restart and is not shared between nodes.
+	InMemoryState bool
 }
 
 var (
@@ -77,10 +89,29 @@ var (
 			EnvVar:      "K8E_E2B_DEFAULT_DISK",
 		},
 		cli.StringSliceFlag{
-			Name:  "runtime",
-			Usage: "(e2b) Allowed runtime-class templateIDs (repeatable; default gvisor,kata,firecracker)",
-			Value: &E2BServer.AllowedRuntimeClasses,
+			Name:   "runtime",
+			Usage:  "(e2b) Allowed runtime-class templateIDs (repeatable; default gvisor,kata,firecracker)",
+			Value:  &E2BServer.AllowedRuntimeClasses,
 			EnvVar: "K8E_E2B_RUNTIMES",
+		},
+		cli.StringFlag{
+			Name:        "kubeconfig",
+			Usage:       "(e2b) Kubeconfig used to reach the cluster for the CRD-backed E2B state store (default: the in-cluster config, then the standard kubeconfig resolution)",
+			Destination: &E2BServer.Kubeconfig,
+			EnvVar:      "K8E_E2B_KUBECONFIG",
+		},
+		cli.StringFlag{
+			Name:        "sandbox-namespace",
+			Usage:       "(e2b) Namespace holding the SandboxSession CRDs used by the E2B state store",
+			Value:       config.DefaultSandboxNamespace,
+			Destination: &E2BServer.Namespace,
+			EnvVar:      "K8E_E2B_SANDBOX_NAMESPACE",
+		},
+		cli.BoolFlag{
+			Name:        "in-memory-state",
+			Usage:       "(e2b) Allow the in-memory E2B state store as a fallback when the cluster is unreachable. The E2B bookkeeping (auto-pause, the metadata.name index, the E2B deadline) is then lost on restart and is not shared between nodes",
+			Destination: &E2BServer.InMemoryState,
+			EnvVar:      "K8E_E2B_IN_MEMORY_STATE",
 		},
 	}
 )

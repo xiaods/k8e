@@ -186,24 +186,43 @@ what the gateway itself already provides.
 
 With sandbox-matrix and e2b both embedded, every control-plane node runs an
 e2b instance. The E2B bookkeeping must not live in per-process maps that
-diverge when the Gateway API routes a request to a different node:
+diverge when the Gateway API routes a request to a different node.
 
-| State | Standalone (per-node) | Embedded (multi-node consistent) |
+**Both deployment modes use the same CRD-backed store.** The standalone
+`k8e e2b-server` is a different process, not a different deployment model: it
+must see the same state as the embedded server, or the two would disagree
+about a sandbox's deadline.
+
+| State | Standalone `k8e e2b-server` | Embedded (multi-node) |
 |---|---|---|
-| E2B kill deadline (`deadlineAt`, `onDeadline`) | in-memory `sandboxRegistry` map | SandboxSession annotation `sandbox.k8e.io/e2b-state` (JSON) |
-| Explicit pause (`pausedByUser`) | in-memory | same annotation (CRD `Phase: Paused` is the authoritative lifecycle flag) |
-| Idempotent-create name index (`metadata.name` → sandboxID) | in-memory `byName` map | annotation `sandbox.k8e.io/e2b-name` + List-scan fallback |
-| createdAt / metadata / runtimeName echoed in views | in-memory | same `e2b-state` annotation |
+| E2B kill deadline (`deadlineAt`, `onDeadline`) | SandboxSession annotation `sandbox.k8e.io/e2b-state` (JSON) | same annotation |
+| Explicit pause (`pausedByUser`) | same annotation (CRD `Phase: Paused` is the authoritative lifecycle flag) | same annotation |
+| Idempotent-create name index (`metadata.name` → sandboxID) | annotation `sandbox.k8e.io/e2b-name` + List-scan fallback | same annotation |
+| createdAt / metadata / runtimeName echoed in views | same `e2b-state` annotation | same annotation |
+
+The in-memory `sandboxRegistry` remains the implementation behind
+`stateStore` for unit tests and for the explicit `--in-memory-state`
+opt-in; it is not a fallback (see below).
 
 Implementation:
 
 - `stateStore` interface (`pkg/sandbox/e2b/state_store.go`) is the persistence
   contract; `sandboxRegistry` (in-memory) and `crdStateStore`
   (`pkg/sandbox/e2b/crd_state.go`) both implement it. The e2b `Server`
-  accepts a `Config.StateStore`; the embedded mode injects the CRD store
-  (built from the kubeconfig via `dynamic.Interface`), the standalone
-  `k8e e2b-server` command falls back to the in-memory store (single-node
-  semantics, documented).
+  accepts a `Config.StateStore`, and `e2b.NewStateStore` builds the CRD
+  store for both deployment modes (the embedded server and the standalone
+  `k8e e2b-server` command), so the E2B bookkeeping is persisted on the
+  SandboxSession CRD either way.
+- **The in-memory registry is not a fallback.** It loses the E2B bookkeeping
+  on restart (auto-pause, the `metadata.name` index, the E2B deadline) and
+  cannot be shared between control-plane nodes, so a server that cannot reach
+  the CRDs would behave differently depending on which node served a request
+  and would lose that state on every restart. `NewStateStore` therefore
+  fails when the cluster is unreachable, and only the explicit
+  `--in-memory-state` opt-in (`K8E_E2B_IN_MEMORY_STATE`) selects the
+  in-memory registry, for a single-node experiment. The embedded server has
+  no such opt-in: if it cannot build the CRD store it does not serve the E2B
+  surface at all — a visible failure beats a silent divergence.
 - GC: every node's `gcLoop` scans the CRD-backed `ids()` and enforces
   deadlines with idempotent `PauseSession`/`DestroySession` calls — no
   leader-gating needed because the underlying RPCs are already idempotent
@@ -254,8 +273,12 @@ subcommand (registered in the main `k8e` binary alongside `server`); it dials
 the gRPC gateway the same way the sandbox CLI does — mTLS bootstrap with the
 API key, local auto-discovery (`127.0.0.1:50051`) by default,
 `--endpoint`/`--apikey` for remote gateways — and listens for HTTP on
-`--listen` (default `127.0.0.1:3676`, Dormice's port). In standalone mode it
-uses the in-memory `stateStore` (single-node semantics, documented).
+`--listen` (default `127.0.0.1:3676`, Dormice's port). It uses the same
+CRD-backed `stateStore` as the embedded server, so the E2B bookkeeping
+survives a restart and is shared with every other control-plane node; the
+cluster must be reachable (`--kubeconfig`/`K8E_E2B_KUBECONFIG`,
+`--sandbox-namespace`/`K8E_E2B_SANDBOX_NAMESPACE` select it). The in-memory
+store is available only with the explicit `--in-memory-state` opt-in.
 
 **Routing** follows CubeSandbox: the control plane is mounted **at the root**
 (`/sandboxes`, `/v2/sandboxes`, …) because the official SDK points `apiUrl`

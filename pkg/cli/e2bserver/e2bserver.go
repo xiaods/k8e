@@ -54,16 +54,32 @@ func Run(app *cli.Context) error {
 		gw = sandboxe2b.GatewayFromClient(c)
 	}
 
+	// The E2B state store is CRD-backed, exactly like the embedded server's.
+	// The in-memory registry would lose the E2B bookkeeping (auto-pause, the
+	// metadata.name index, the E2B deadline) on restart, and it cannot be
+	// shared between control-plane nodes - so it is only a last resort, and
+	// only when the operator asked for it.
+	store, err := sandboxe2b.NewStateStore(sandboxe2b.StateStoreOptions{
+		Kubeconfig:    cfg.Kubeconfig,
+		Namespace:     cfg.Namespace,
+		AllowInMemory: cfg.InMemoryState,
+	})
+	if err != nil {
+		return errors.Wrap(err, "e2b-server: build the E2B state store (the SandboxSession CRDs must be reachable)")
+	}
+	logrus.Infof("e2b-server: E2B state store: %T", store)
+
 	srv := sandboxe2b.NewServer(sandboxe2b.Config{
-		Listen:              cfg.Listen,
-		Endpoint:            cfg.Endpoint,
-		APIKey:              cfg.APIKey,
-		NodeID:              cfg.NodeID,
-		SigningSecret:       cfg.SigningSecret,
-		DefaultCPUs:         cfg.DefaultCPUs,
-		DefaultMemoryMB:     cfg.DefaultMemoryMB,
-		DefaultDiskMB:       cfg.DefaultDiskMB,
+		Listen:                cfg.Listen,
+		Endpoint:              cfg.Endpoint,
+		APIKey:                cfg.APIKey,
+		NodeID:                cfg.NodeID,
+		SigningSecret:         cfg.SigningSecret,
+		DefaultCPUs:           cfg.DefaultCPUs,
+		DefaultMemoryMB:       cfg.DefaultMemoryMB,
+		DefaultDiskMB:         cfg.DefaultDiskMB,
 		AllowedRuntimeClasses: cfg.AllowedRuntimeClasses,
+		StateStore:            store,
 	}, gw)
 
 	if err := srv.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
