@@ -40,20 +40,49 @@ func newSandboxRegistry() *sandboxRegistry {
 	}
 }
 
+// put records a sandbox's bookkeeping. It stores a copy of the entry, so the
+// caller cannot mutate the registry's copy behind the lock (and vice versa).
 func (r *sandboxRegistry) put(e *registryEntry) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.byID[e.sandboxID] = e
-	if name, ok := e.metadata["name"]; ok && name != "" {
+	stored := *e
+	if e.metadata != nil {
+		stored.metadata = make(map[string]string, len(e.metadata))
+		for k, v := range e.metadata {
+			stored.metadata[k] = v
+		}
+	}
+	r.byID[e.sandboxID] = &stored
+	if name, ok := stored.metadata["name"]; ok && name != "" {
 		r.byName[name] = e.sandboxID
 	}
 }
 
+// get returns a snapshot of the entry for a sandbox.
+//
+// It returns a COPY, never the stored pointer. The entry's fields are written
+// under the registry lock (extendDeadline, clearDeadline, markPaused) and read
+// by request handlers on other goroutines; handing out the internal pointer
+// let those readers touch the fields without the lock, which is a data race
+// (`go test -race` flagged it). A copy is a few words wide, so the cost is
+// irrelevant next to the correctness.
 func (r *sandboxRegistry) get(sandboxID string) (*registryEntry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.byID[sandboxID]
-	return e, ok
+	if !ok {
+		return nil, false
+	}
+	snapshot := *e
+	// The metadata map is shared, so copy it too: callers may read it while
+	// another goroutine replaces the entry.
+	if e.metadata != nil {
+		snapshot.metadata = make(map[string]string, len(e.metadata))
+		for k, v := range e.metadata {
+			snapshot.metadata[k] = v
+		}
+	}
+	return &snapshot, true
 }
 
 func (r *sandboxRegistry) byKeyName(name string) (string, bool) {

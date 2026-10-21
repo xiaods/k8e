@@ -2,6 +2,7 @@ package e2b
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
@@ -361,15 +362,16 @@ func (s *Server) ReplaceAPIKeys(keys []string) {
 	s.apiKeysMu.Unlock()
 }
 
+// constantTimeEqual compares two secrets without leaking their contents
+// through timing.
+//
+// Both sides are hashed first, so the comparison always runs over two
+// equal-length digests: a length mismatch between the presented and the
+// expected secret is not observable. This is the same approach the envd
+// token check uses (protocol.go, verifyEnvdToken), so both credential paths
+// behave identically.
 func constantTimeEqual(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	var v byte
-	for i := 0; i < len(a); i++ {
-		v |= a[i] ^ b[i]
-	}
-	return v == 0
+	return hmac.Equal([]byte(sha256Hex(a)), []byte(sha256Hex(b)))
 }
 
 // envdKeyAuth guards the envd surface. /health stays open like real envd's —

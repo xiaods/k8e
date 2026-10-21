@@ -106,11 +106,11 @@ func TestEnvdPtySendInput(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("sendInput: want 200, got %d", code)
 	}
-	if len(gw.term.writes) != 1 {
-		t.Fatalf("expected 1 TerminalWrite, got %d", len(gw.term.writes))
+	if len(gw.terminalWrites()) != 1 {
+		t.Fatalf("expected 1 TerminalWrite, got %d", len(gw.terminalWrites()))
 	}
-	if string(gw.term.writes[0].Data) != "ls\r" {
-		t.Fatalf("TerminalWrite data = %q, want %q", gw.term.writes[0].Data, "ls\r")
+	if string(gw.terminalWrites()[0].Data) != "ls\r" {
+		t.Fatalf("TerminalWrite data = %q, want %q", gw.terminalWrites()[0].Data, "ls\r")
 	}
 }
 
@@ -127,10 +127,10 @@ func TestEnvdPtyResize(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("resize: want 200, got %d", code)
 	}
-	if len(gw.term.resizes) != 1 {
-		t.Fatalf("expected 1 TerminalResize, got %d", len(gw.term.resizes))
+	if len(gw.terminalResizes()) != 1 {
+		t.Fatalf("expected 1 TerminalResize, got %d", len(gw.terminalResizes()))
 	}
-	r := gw.term.resizes[0]
+	r := gw.terminalResizes()[0]
 	if r.Rows != 43 || r.Cols != 132 {
 		t.Fatalf("resize = %dx%d, want 43x132", r.Rows, r.Cols)
 	}
@@ -149,11 +149,11 @@ func TestEnvdPtyKill(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("kill: want 200, got %d", code)
 	}
-	if len(gw.term.signals) != 1 {
-		t.Fatalf("expected 1 TerminalSignal, got %d", len(gw.term.signals))
+	if len(gw.terminalSignals()) != 1 {
+		t.Fatalf("expected 1 TerminalSignal, got %d", len(gw.terminalSignals()))
 	}
-	if gw.term.signals[0].Signal != pb.TerminalSignal_TERMINAL_SIGNAL_KILL {
-		t.Fatalf("signal = %v, want KILL", gw.term.signals[0].Signal)
+	if gw.terminalSignals()[0].Signal != pb.TerminalSignal_TERMINAL_SIGNAL_KILL {
+		t.Fatalf("signal = %v, want KILL", gw.terminalSignals()[0].Signal)
 	}
 }
 
@@ -172,8 +172,8 @@ func TestEnvdPtyOwnershipEnforced(t *testing.T) {
 	if code != 404 {
 		t.Fatalf("cross-sandbox sendInput: want 404, got %d", code)
 	}
-	if len(gw.term.writes) != 0 {
-		t.Fatalf("cross-sandbox sendInput must not reach TerminalWrite, got %d writes", len(gw.term.writes))
+	if len(gw.terminalWrites()) != 0 {
+		t.Fatalf("cross-sandbox sendInput must not reach TerminalWrite, got %d writes", len(gw.terminalWrites()))
 	}
 
 	code = ptyRequest(t, ts, s, otherID, "/process.Process/Update", map[string]any{
@@ -183,8 +183,8 @@ func TestEnvdPtyOwnershipEnforced(t *testing.T) {
 	if code != 404 && code != 400 {
 		t.Fatalf("cross-sandbox resize: want 4xx, got %d", code)
 	}
-	if len(gw.term.resizes) != 0 {
-		t.Fatalf("cross-sandbox resize must not reach TerminalResize, got %d", len(gw.term.resizes))
+	if len(gw.terminalResizes()) != 0 {
+		t.Fatalf("cross-sandbox resize must not reach TerminalResize, got %d", len(gw.terminalResizes()))
 	}
 }
 
@@ -210,12 +210,12 @@ func TestEnvdPtyDestroyedOnExit(t *testing.T) {
 	}
 	_ = readBody(t, resp)
 
-	if len(gw.term.created) != 1 {
-		t.Fatalf("expected 1 CreateTerminal, got %d", len(gw.term.created))
+	if len(gw.terminalCreated()) != 1 {
+		t.Fatalf("expected 1 CreateTerminal, got %d", len(gw.terminalCreated()))
 	}
 	// fakeGateway derives the terminal id from the session + counter.
 	want := id + "/t1"
-	if len(gw.term.destroyed) != 1 || gw.term.destroyed[0] != want {
-		t.Fatalf("expected TerminalDestroy(%q), got %v", want, gw.term.destroyed)
+	if len(gw.terminalDestroyed()) != 1 || gw.terminalDestroyed()[0] != want {
+		t.Fatalf("expected TerminalDestroy(%q), got %v", want, gw.terminalDestroyed())
 	}
 }

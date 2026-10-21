@@ -225,6 +225,61 @@ type terminalRows struct {
 	streams   map[string][]*pb.TerminalStreamResponse
 }
 
+// The terminal fake is written by the server's own goroutines (a pty.create
+// whose process exits destroys the terminal in the background) and read by
+// the test goroutine. Reading the rows directly is a data race, so every read
+// goes through these snapshot accessors, which copy under the gateway's lock.
+
+// terminalCreated returns the CreateTerminal requests recorded so far.
+func (f *fakeGateway) terminalCreated() []*pb.CreateTerminalRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil
+	}
+	return append([]*pb.CreateTerminalRequest(nil), f.term.created...)
+}
+
+// terminalWrites returns the TerminalWrite requests recorded so far.
+func (f *fakeGateway) terminalWrites() []*pb.TerminalWriteRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil
+	}
+	return append([]*pb.TerminalWriteRequest(nil), f.term.writes...)
+}
+
+// terminalResizes returns the TerminalResize requests recorded so far.
+func (f *fakeGateway) terminalResizes() []*pb.TerminalResizeRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil
+	}
+	return append([]*pb.TerminalResizeRequest(nil), f.term.resizes...)
+}
+
+// terminalSignals returns the TerminalSignal requests recorded so far.
+func (f *fakeGateway) terminalSignals() []*pb.TerminalSignalRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil
+	}
+	return append([]*pb.TerminalSignalRequest(nil), f.term.signals...)
+}
+
+// terminalDestroyed returns the terminal ids destroyed so far.
+func (f *fakeGateway) terminalDestroyed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.term == nil {
+		return nil
+	}
+	return append([]string(nil), f.term.destroyed...)
+}
+
 func (f *fakeGateway) CreateTerminal(ctx context.Context, req *pb.CreateTerminalRequest) (*pb.CreateTerminalResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

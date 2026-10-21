@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,12 +13,14 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynfake "k8s.io/client-go/dynamic/fake"
 	kubefake "k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 
 	sandboxv1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
@@ -56,6 +59,34 @@ func newTestOrchestrator() *Orchestrator {
 	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
 	k8s := kubefake.NewSimpleClientset()
 	return NewOrchestrator(k8s, dyn, sandboxNS)
+}
+
+// newTestOrchestratorWithFake is newTestOrchestrator plus the fake clientset,
+// so a test can inject an API failure with PrependReactor.
+func newTestOrchestratorWithFake() (*Orchestrator, *kubefake.Clientset) {
+	scheme := runtime.NewScheme()
+	for _, gvk := range []schema.GroupVersionKind{
+		{Group: testGroupK8e, Version: "v1alpha1", Kind: "SandboxSession"},
+		{Group: testGroupK8e, Version: "v1alpha1", Kind: "SandboxMatrix"},
+		{Group: testGroupCilium, Version: "v2", Kind: "CiliumNetworkPolicy"},
+	} {
+		scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+	}
+	for _, gvk := range []schema.GroupVersionKind{
+		{Group: testGroupK8e, Version: "v1alpha1", Kind: "SandboxSessionList"},
+		{Group: testGroupK8e, Version: "v1alpha1", Kind: "SandboxMatrixList"},
+		{Group: testGroupCilium, Version: "v2", Kind: "CiliumNetworkPolicyList"},
+	} {
+		scheme.AddKnownTypeWithName(gvk, &unstructured.UnstructuredList{})
+	}
+	listKinds := map[schema.GroupVersionResource]string{
+		{Group: testGroupK8e, Version: "v1alpha1", Resource: "sandboxsessions"}:    "SandboxSessionList",
+		{Group: testGroupK8e, Version: "v1alpha1", Resource: "sandboxmatrices"}:    "SandboxMatrixList",
+		{Group: testGroupCilium, Version: "v2", Resource: "ciliumnetworkpolicies"}: "CiliumNetworkPolicyList",
+	}
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme, listKinds)
+	k8s := kubefake.NewSimpleClientset()
+	return NewOrchestrator(k8s, dyn, sandboxNS), k8s
 }
 
 // mustCreateSession creates a session and fails the test on error.
@@ -1443,5 +1474,70 @@ func TestReleasePod_UnlabelsWorkspacePVC(t *testing.T) {
 	}
 	if _, has := pvc.Labels[labelSessionID]; has {
 		t.Fatalf("expected the released pod's claim to carry no session label, got %v", pvc.Labels)
+	}
+}
+
+// TestCreateSession_PodCreateFailureRollsBack is the regression for the
+// resource leak: when the pod could not be created, the session CRD and the
+// workspace PVC that ensureWorkspacePVC had just provisioned were left
+// behind. The GC only reaps sessions whose ExpiresAt has passed, and a
+// session that never became Active has no ExpiresAt at all - so without the
+// rollback both objects would linger for the lifetime of the cluster.
+func TestCreateSession_PodCreateFailureRollsBack(t *testing.T) {
+	o, fake := newTestOrchestratorWithFake()
+	ctx := context.Background()
+
+	// Make pod creation fail the way a cluster under pressure would.
+	fake.PrependReactor("create", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(corev1.Resource("pods"), "sandbox-x", errors.New("quota exceeded"))
+	})
+
+	const sessionID = "leak-on-failure"
+	if _, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: sessionID}); err == nil {
+		t.Fatalf("expected CreateSession to fail when the pod cannot be created")
+	}
+
+	// The session CRD must be gone.
+	if _, err := o.dynamic.Resource(sessionGVR).Namespace(sandboxNS).Get(ctx, sessionID, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("expected session %s to be rolled back, got err=%v", sessionID, err)
+	}
+
+	// The workspace PVC must be gone too.
+	pvcName := workspacePVCPrefix + sessionID
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("expected workspace PVC %s to be rolled back, got err=%v", pvcName, err)
+	}
+}
+
+// TestCreateSession_FailedCreateKeepsForeignPVC makes sure the rollback
+// never deletes a claim that belongs to somebody else: a PVC that carries a
+// different session's label must survive even when this create fails.
+func TestCreateSession_FailedCreateKeepsForeignPVC(t *testing.T) {
+	o, fake := newTestOrchestratorWithFake()
+	ctx := context.Background()
+
+	foreign := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "workspace-owned-by-another-session",
+			Namespace: sandboxNS,
+			Labels:    map[string]string{labelSessionID: "someone-else"},
+		},
+		Spec: WorkspacePVCSpec(),
+	}
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Create(ctx, foreign, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create foreign PVC: %v", err)
+	}
+
+	fake.PrependReactor("create", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(corev1.Resource("pods"), "sandbox-x", errors.New("quota exceeded"))
+	})
+
+	const sessionID = "rollback-must-not-steal"
+	if _, err := o.CreateSession(ctx, &pb.CreateSessionRequest{SessionId: sessionID}); err == nil {
+		t.Fatalf("expected CreateSession to fail when the pod cannot be created")
+	}
+
+	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, "workspace-owned-by-another-session", metav1.GetOptions{}); err != nil {
+		t.Fatalf("expected the foreign PVC to survive the rollback: %v", err)
 	}
 }

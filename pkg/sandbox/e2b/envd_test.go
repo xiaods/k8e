@@ -264,10 +264,10 @@ func TestEnvdProcessStartWithPTY(t *testing.T) {
 // CreateTerminal for the sandbox with the SDK's argv and window size.
 func assertPtyCreateRequest(t *testing.T, gw *fakeGateway, sandboxID string) {
 	t.Helper()
-	if len(gw.term.created) != 1 {
-		t.Fatalf("expected 1 CreateTerminal, got %d", len(gw.term.created))
+	if len(gw.terminalCreated()) != 1 {
+		t.Fatalf("expected 1 CreateTerminal, got %d", len(gw.terminalCreated()))
 	}
-	cr := gw.term.created[0]
+	cr := gw.terminalCreated()[0]
 	if cr.SessionId != sandboxID || len(cr.Argv) != 3 || cr.Argv[0] != "/bin/bash" {
 		t.Fatalf("unexpected CreateTerminalRequest: %+v", cr)
 	}

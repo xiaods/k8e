@@ -439,6 +439,13 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	// cheap.
 	pod, pvcName, err := o.claimOrCreatePod(ctx, sessionID, runtimeClass, "" /* claim-or-provision */, matrixCPU, matrixMemory)
 	if err != nil {
+		// A failed claim leaves two objects behind: the session CRD created
+		// above, and (on the cold path) the workspace PVC that
+		// ensureWorkspacePVC just provisioned. The GC only reaps sessions
+		// whose ExpiresAt has passed, and a session that never became Active
+		// has no ExpiresAt at all - so without this rollback both would
+		// linger for the lifetime of the cluster. Reclaim them here.
+		o.rollbackFailedCreate(ctx, sessionID, pvcName)
 		return nil, err
 	}
 
@@ -454,6 +461,27 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	o.updateSessionStatus(ctx, session)
 
 	return session, o.applySessionCNP(ctx, session)
+}
+
+// rollbackFailedCreate reclaims what a failed session create left behind: the
+// SandboxSession CRD and, on the cold-start path, the workspace PVC that was
+// provisioned for it.
+//
+// The PVC is only deleted when it carries this session's own label
+// (deleteSessionWorkspacePVC checks it), so a claim that belongs to the warm
+// pool — or to a session that merely shares the name — is never touched.
+// The CRD deletion is guarded the same way: a session that already exists is
+// not ours to remove.
+//
+// Every step is best-effort and logged: the caller is already returning the
+// original error, and a cleanup failure must not mask it.
+func (o *Orchestrator) rollbackFailedCreate(ctx context.Context, sessionID, pvcName string) {
+	if pvcName != "" {
+		o.deleteSessionWorkspacePVC(ctx, pvcName, sessionID)
+	}
+	if derr := o.dynamic.Resource(sessionGVR).Namespace(o.namespace).Delete(ctx, sessionID, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
+		logrus.Warnf("sandbox: rollback session %s after failed create: %v", sessionID, derr)
+	}
 }
 
 func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) error {
