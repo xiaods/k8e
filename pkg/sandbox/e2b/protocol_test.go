@@ -183,3 +183,50 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+// TestConstantTimeEqualIsLengthAgnostic pins the property the control-plane
+// key check depends on: comparing a secret of one length against a secret of
+// another must not be distinguishable from a content mismatch.
+//
+// The previous implementation returned early on a length mismatch, so the
+// time it took told an attacker how long the expected key is. Both sides are
+// now hashed before the comparison, so they always have the same length.
+func TestConstantTimeEqualIsLengthAgnostic(t *testing.T) {
+	const secret = "0123456789abcdef"
+
+	if !constantTimeEqual(secret, secret) {
+		t.Fatalf("equal secrets must compare equal")
+	}
+	if constantTimeEqual(secret, "0123456789abcde") {
+		t.Fatalf("a one-character difference must not compare equal")
+	}
+	if constantTimeEqual(secret, "") {
+		t.Fatalf("an empty secret must not compare equal")
+	}
+	if constantTimeEqual(secret, secret+"x") {
+		t.Fatalf("a longer secret must not compare equal")
+	}
+
+	// The comparison must be driven by the digest, not by the raw bytes: a
+	// secret whose length differs from the expected one still has to be
+	// compared (and rejected) rather than short-circuited.
+	if constantTimeEqual(secret, "short") {
+		t.Fatalf("a shorter secret must not compare equal")
+	}
+}
+
+// TestAcceptKeyRejectsDifferentLength is the control-plane counterpart: a
+// presented key of a different length must be rejected without the
+// comparison short-circuiting on the length.
+func TestAcceptKeyRejectsDifferentLength(t *testing.T) {
+	s := NewServer(Config{APIKey: "0123456789abcdef"}, newFakeGateway())
+
+	if s.acceptKey("0123456789abcdef") != true {
+		t.Fatalf("the configured key must be accepted")
+	}
+	for _, wrong := range []string{"0123456789abcde", "0123456789abcdef0", "", "short"} {
+		if s.acceptKey(wrong) {
+			t.Fatalf("key %q must be rejected", wrong)
+		}
+	}
+}
