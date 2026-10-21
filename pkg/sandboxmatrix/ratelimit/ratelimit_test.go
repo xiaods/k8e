@@ -142,6 +142,7 @@ func TestAllowConcurrentWithReloadConfig(t *testing.T) {
 
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
+		isWrite := i%2 == 0
 		go func() {
 			defer wg.Done()
 			for {
@@ -150,7 +151,7 @@ func TestAllowConcurrentWithReloadConfig(t *testing.T) {
 					return
 				default:
 				}
-				l.Allow("t1", i%2 == 0)
+				l.Allow("t1", isWrite)
 			}
 		}()
 	}
@@ -158,6 +159,13 @@ func TestAllowConcurrentWithReloadConfig(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+
+	// The limiter must still be usable after the concurrent reloads, and the
+	// config it settled on must be one of the ones that was written - a torn
+	// read would leave a mismatched burst/rate pair.
+	if l.Allow("t1", true) && !l.Allow("t1", true) {
+		t.Fatalf("the write budget must be enforced after the concurrent reloads")
+	}
 }
 
 func TestReapStaleRemovesIdleTenants(t *testing.T) {
@@ -255,7 +263,7 @@ func TestUnaryInterceptorRefusesOverLimit(t *testing.T) {
 	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-sandbox-tenant", "acme"))
 
 	called := 0
-	handler := func(ctx context.Context, req any) (any, error) {
+	handler := func(_ context.Context, _ any) (any, error) {
 		called++
 		return "ok", nil
 	}

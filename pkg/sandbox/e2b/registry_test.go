@@ -15,6 +15,7 @@ import (
 // The test drives the readers and the writers concurrently; with the pointer
 // escaping it fails under -race, with the snapshot copy it passes.
 func TestRegistryConcurrentReadWrite(t *testing.T) {
+	t.Helper()
 	r := newSandboxRegistry()
 	const id = "concurrent-sandbox"
 	r.put(&registryEntry{
@@ -28,7 +29,7 @@ func TestRegistryConcurrentReadWrite(t *testing.T) {
 	stop := make(chan struct{})
 
 	// Writers: the three mutating operations, exactly as the handlers call them.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -47,7 +48,7 @@ func TestRegistryConcurrentReadWrite(t *testing.T) {
 	}
 
 	// Readers: the field accesses the request handlers perform.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -72,6 +73,21 @@ func TestRegistryConcurrentReadWrite(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+
+	// The entry must still be intact after all that concurrent access: a
+	// reader that saw a torn entry would have read a corrupted metadata map
+	// (the deadline is legitimately zero here - the writers call
+	// clearDeadline).
+	e, ok := r.get(id)
+	if !ok {
+		t.Fatalf("the entry must survive the concurrent access")
+	}
+	if e.metadata["name"] != "concurrent-sandbox" {
+		t.Fatalf("the metadata must not have been corrupted: %v", e.metadata)
+	}
+	if e.sandboxID != id {
+		t.Fatalf("the sandbox id must not have been corrupted: %q", e.sandboxID)
+	}
 }
 
 // TestRegistryGetReturnsCopy pins the contract: get() must hand out a copy,
