@@ -21,6 +21,48 @@ const (
 	maxExecOutputBytes = 1 * 1024 * 1024
 )
 
+// deniedSessionEnvKeys are environment variables a session may not set.
+//
+// These are the runtime loader and path-override variables: a value here is
+// interpreted by the language runtime or the dynamic loader rather than by
+// the program, so an agent that injects LD_PRELOAD or PYTHONPATH can make
+// the sandbox load code it chose - an escape from the intended environment,
+// and a way to subvert a policy that only looks at the program's own
+// behaviour. The list is case-insensitive (the lookups upper-case the key)
+// because the loader variables are read case-sensitively on Linux but the
+// same name in a different case is still an attempt.
+//
+// The deny-list is the same shape as the one CubeSandbox enforces, and it is
+// applied at CreateSession so the refusal is explicit and names the
+// offending variable instead of failing later inside the sandbox.
+var deniedSessionEnvKeys = map[string]string{
+	"LD_PRELOAD":            "runtime loader override",
+	"LD_LIBRARY_PATH":       "runtime loader path override",
+	"LD_AUDIT":              "runtime loader override",
+	"LD_ORIGIN_PATH":        "runtime loader path override",
+	"DYLD_INSERT_LIBRARIES": "dynamic loader override",
+	"DYLD_LIBRARY_PATH":     "dynamic loader path override",
+	"PYTHONPATH":            "module search path override",
+	"PYTHONHOME":            "interpreter path override",
+	"PYTHONSTARTUP":         "interpreter startup override",
+	"NODE_PATH":             "module search path override",
+	"NODE_OPTIONS":          "runtime option override",
+	"PERL5LIB":              "module search path override",
+	"PERLLIB":               "module search path override",
+	"RUBYLIB":               "module search path override",
+	"RUBYOPT":               "runtime option override",
+	"GEM_PATH":              "gem search path override",
+	"GEM_HOME":              "gem search path override",
+	"JAVA_TOOL_OPTIONS":     "runtime option override",
+	"_JAVA_OPTIONS":         "runtime option override",
+	"CLASSPATH":             "class search path override",
+	"IFS":                   "shell field separator override",
+	"PATH":                  "command search path override",
+	"ENV":                   "interpreter environment override",
+	"BASH_ENV":              "shell startup file override",
+	"GCONV_PATH":            "locale data path override",
+}
+
 // validateSessionEnv checks a CreateSession env map against size and key rules.
 // nil/empty maps are valid (no env configured).
 func validateSessionEnv(env map[string]string) error {
@@ -43,9 +85,13 @@ func validateSessionEnv(env map[string]string) error {
 	return nil
 }
 
+// validateSessionEnvEntry checks one key/value pair.
 func validateSessionEnvEntry(k, v string) error {
 	if k == "" {
 		return fmt.Errorf("empty key")
+	}
+	if denied, ok := deniedSessionEnvKeys[strings.ToUpper(k)]; ok {
+		return fmt.Errorf("key %q is not allowed: %s", k, denied)
 	}
 	if !utf8.ValidString(k) || !utf8.ValidString(v) {
 		return fmt.Errorf("key %q: non-utf8 key or value", k)

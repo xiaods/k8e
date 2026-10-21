@@ -50,6 +50,12 @@ func TestValidateSessionEnv(t *testing.T) {
 		{name: "empty key", env: map[string]string{"": "x"}, wantErr: "empty key"},
 		{name: "key equals", env: map[string]string{"FOO=BAR": "x"}, wantErr: "'=' not allowed"},
 		{name: "nul value", env: map[string]string{"FOO": "a\x00b"}, wantErr: "NUL byte"},
+		{name: "loader override", env: map[string]string{"LD_PRELOAD": "/tmp/evil.so"}, wantErr: "not allowed"},
+		{name: "loader override lowercase", env: map[string]string{"ld_preload": "/tmp/evil.so"}, wantErr: "not allowed"},
+		{name: "module path override", env: map[string]string{"PYTHONPATH": "/tmp/evil"}, wantErr: "not allowed"},
+		{name: "path override", env: map[string]string{"PATH": "/tmp/evil"}, wantErr: "not allowed"},
+		{name: "shell startup override", env: map[string]string{"BASH_ENV": "/tmp/evil.sh"}, wantErr: "not allowed"},
+		{name: "denied key among allowed ones", env: map[string]string{"FOO": "bar", "LD_LIBRARY_PATH": "/tmp/evil"}, wantErr: "not allowed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
