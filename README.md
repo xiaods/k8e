@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/k8e-sandbox-logo-light.svg" alt="K8E sandbox" width="440" height="101" />
+<img src="docs/assets/k8e-sandbox-logo-light.svg" alt="K8E sandbox" width="440" height="77" />
 
 <br/>
 
