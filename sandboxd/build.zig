@@ -56,4 +56,8 @@ pub fn build(b: *std.Build) void {
     const httpio_mod = b.createModule(.{ .root_source_file = b.path("src/httpio_test.zig"), .target = native });
     const httpio_tests = b.addTest(.{ .root_module = httpio_mod });
     test_step.dependOn(&b.addRunArtifact(httpio_tests).step);
+
+    const watch_mod = b.createModule(.{ .root_source_file = b.path("src/watch_test.zig"), .target = native });
+    const watch_tests = b.addTest(.{ .root_module = watch_mod });
+    test_step.dependOn(&b.addRunArtifact(watch_tests).step);
 }
