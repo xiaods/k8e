@@ -147,12 +147,26 @@ func (s *Server) serveFileDownload(w http.ResponseWriter, r *http.Request, sandb
 		s.writeEnvdError(w, connectError("invalid_argument", err.Error()))
 		return
 	}
-	resp, err := s.gw.ReadFile(r.Context(), &pb.ReadFileRequest{SessionId: sandboxID, Path: path})
+	// Ask for a binary-safe payload. The legacy path returns the file as
+	// escaped JSON text, which cannot carry non-UTF-8 bytes: the gateway's
+	// ReadFileResponse.content is a proto string, so raw binary fails to
+	// marshal and the SDK received an EMPTY file for every binary payload.
+	// sandboxd's base64 encoding is byte-faithful, so it is the only correct
+	// way to return arbitrary file content.
+	resp, err := s.gw.ReadFile(r.Context(), &pb.ReadFileRequest{
+		SessionId: sandboxID,
+		Path:      path,
+		Encoding:  "base64",
+	})
 	if err != nil {
 		s.writeEnvdError(w, connectError("not_found", "file not found: "+path))
 		return
 	}
-	content := []byte(resp.Content)
+	content, derr := decodeReadContent(resp)
+	if derr != nil {
+		s.writeEnvdError(w, connectError("internal", "decode file content: "+derr.Error()))
+		return
+	}
 	name := baseName(path)
 	// Single-range support (video playback / resume).
 	rangeHeader := r.Header.Get("Range")
@@ -172,6 +186,21 @@ func (s *Server) serveFileDownload(w http.ResponseWriter, r *http.Request, sandb
 	w.Header().Set("Access-Control-Expose-Headers", "accept-ranges, content-range, content-disposition")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+// decodeReadContent turns a ReadFileResponse payload into the raw file bytes.
+// The response echoes the encoding it used: "base64" carries the bytes
+// base64-encoded, anything else is the legacy escaped-text form, which is
+// already plain text.
+func decodeReadContent(resp *pb.ReadFileResponse) ([]byte, error) {
+	if resp.Encoding == "base64" {
+		decoded, err := base64.StdEncoding.DecodeString(resp.Content)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64 payload: %w", err)
+		}
+		return decoded, nil
+	}
+	return []byte(resp.Content), nil
 }
 
 // decodeBodyIfGzip applies the SDK's gzip Content-Encoding to an upload body,

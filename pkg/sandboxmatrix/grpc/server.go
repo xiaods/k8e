@@ -575,6 +575,8 @@ func (s *Server) execForeground(ctx context.Context, req *pb.ExecRequest) (*pb.E
 	if envErr != nil {
 		return nil, envErr
 	}
+	// Per-call env wins over the session's own env for the keys it names.
+	env = mergeExecEnv(env, req.Env)
 	body := sandboxdExecBody(req.SessionId, req.Command, timeout, workdir, env)
 	start := time.Now()
 	httpCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout+5)*time.Second)
@@ -632,6 +634,9 @@ func (s *Server) ExecStream(req *pb.ExecRequest, stream pb.SandboxService_ExecSt
 	if envErr != nil {
 		return envErr
 	}
+	// Per-call env rides on the request (the E2B SDK's commands.run(envs=…))
+	// and wins over the session's own env for the keys it names.
+	env = mergeExecEnv(env, req.Env)
 	body := sandboxdExecBody(req.SessionId, req.Command, timeout, workdir, env)
 	httpCtx, cancel := context.WithTimeout(stream.Context(), time.Duration(timeout+5)*time.Second)
 	defer cancel()
@@ -760,20 +765,47 @@ func (s *Server) ReadFile(ctx context.Context, req *pb.ReadFileRequest) (*pb.Rea
 		return nil, status.Errorf(codes.Unavailable, "sandboxd read: %v", err)
 	}
 	defer resp.Body.Close()
+	// A missing file is a 404 from sandboxd. It must NOT be flattened into an
+	// empty response: the e2b layer then answered the SDK with an empty body
+	// instead of "not found", so files.read() of a missing file returned ""
+	// rather than raising FileNotFoundException.
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, status.Errorf(codes.NotFound, "file not found: %s", req.Path)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, status.Errorf(codes.Internal, "sandboxd read: http %d", resp.StatusCode)
+	}
 	var result struct {
 		Content  string `json:"content"`
 		Encoding string `json:"encoding"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if derr := json.NewDecoder(resp.Body).Decode(&result); derr != nil {
+		return nil, status.Errorf(codes.Internal, "sandboxd read: decode response: %v", derr)
+	}
 	return &pb.ReadFileResponse{Content: result.Content, Encoding: result.Encoding}, nil
 }
 
+// listFilesURL builds the sandboxd /files/list URL for a request. The path
+// and depth are optional: without them sandboxd walks the whole workspace,
+// which is O(workspace) — a sandbox with a populated .venv holds thousands
+// of files, and a caller that only asked for one directory would pay for
+// all of them (plus a stat per entry).
+func listFilesURL(req *pb.ListFilesRequest) string {
+	u := fmt.Sprintf("/files/list?since=%d", req.Since)
+	if req.Path != "" {
+		u += "&path=" + url.QueryEscape(req.Path)
+	}
+	if req.Depth != 0 {
+		u += fmt.Sprintf("&depth=%d", req.Depth)
+	}
+	return u
+}
 func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.ListFilesResponse, error) {
 	podIP, err := s.getPodIP(ctx, req.SessionId)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := sandboxdGet(ctx, podIP, fmt.Sprintf("/files/list?since=%d", req.Since))
+	resp, err := sandboxdGet(ctx, podIP, listFilesURL(req))
 	if err != nil {
 		return nil, status.Errorf(codes.Unavailable, "sandboxd list: %v", err)
 	}
@@ -1144,21 +1176,20 @@ func (s *Server) invalidatePodIP(sessionID string) {
 func (s *Server) pollForPodIP(ctx context.Context, sessionID string) (string, error) {
 	wait := 1 * time.Second
 	maxWait := 5 * time.Second
+	// The pod the session points at is the authoritative one. A resume
+	// re-creates the pod while the old one is still terminating, and both
+	// carry the session-id label — listing by label could therefore hand
+	// back the DEAD pod's address, and every later call would then talk to
+	// a pod that no longer exists ("connection timed out" to a stale IP).
+	preferred := s.sessionPodName(ctx, sessionID)
 	for i := 0; i < 12; i++ {
 		select {
 		case <-ctx.Done():
 			return "", status.Errorf(codes.Canceled, "context cancelled waiting for pod IP")
 		case <-time.After(wait):
 		}
-		pods, err := s.k8s.CoreV1().Pods(s.sandboxNamespace()).List(ctx, metav1.ListOptions{
-			LabelSelector: labelSessionID + "=" + sessionID,
-		})
-		if err == nil {
-			for i := range pods.Items {
-				if pods.Items[i].Status.PodIP != "" {
-					return pods.Items[i].Status.PodIP, nil
-				}
-			}
+		if ip := s.livePodIP(ctx, sessionID, preferred); ip != "" {
+			return ip, nil
 		}
 		wait *= 2
 		if wait > maxWait {
@@ -1166,6 +1197,42 @@ func (s *Server) pollForPodIP(ctx context.Context, sessionID string) (string, er
 		}
 	}
 	return "", status.Errorf(codes.FailedPrecondition, "session %s has no pod IP after 60s", sessionID)
+}
+
+// sessionPodName returns the pod the session CRD points at, or "" when the
+// session is unknown.
+func (s *Server) sessionPodName(ctx context.Context, sessionID string) string {
+	u, err := s.dyn.Resource(sessionGVR).Namespace(s.sandboxNamespace()).Get(ctx, sessionID, metav1.GetOptions{})
+	if err != nil {
+		return ""
+	}
+	name, _, _ := unstructured.NestedString(u.Object, "status", "podName")
+	return name
+}
+
+// livePodIP returns the address of the session's Pod: the one the session
+// points at when it has an address, else any Pod with an address that is not
+// being deleted.
+func (s *Server) livePodIP(ctx context.Context, sessionID, preferred string) string {
+	pods, err := s.k8s.CoreV1().Pods(s.sandboxNamespace()).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSessionID + "=" + sessionID,
+	})
+	if err != nil {
+		return ""
+	}
+	for i := range pods.Items {
+		if preferred != "" && pods.Items[i].Name == preferred && pods.Items[i].Status.PodIP != "" {
+			return pods.Items[i].Status.PodIP
+		}
+	}
+	for i := range pods.Items {
+		p := &pods.Items[i]
+		if p.Status.PodIP == "" || p.DeletionTimestamp != nil {
+			continue
+		}
+		return p.Status.PodIP
+	}
+	return ""
 }
 
 // mTLSAuthInterceptor enforces mTLS for all RPCs except Login.

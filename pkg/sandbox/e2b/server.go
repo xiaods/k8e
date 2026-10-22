@@ -193,7 +193,7 @@ func (s *Server) Handle() http.Handler {
 	// The streaming WatchDir stays unimplemented (the SDK uses the polling
 	// trio below — CreateWatcher/GetWatcherEvents/RemoveWatcher — via
 	// WatchHandle; the streaming RPC is a low-level path).
-	envd.HandleFunc("/filesystem.Filesystem/WatchDir", s.handleUnimplementedFS("WatchDir"))
+	envd.HandleFunc("/filesystem.Filesystem/WatchDir", s.handleFSWatchDir)
 	envd.HandleFunc("/filesystem.Filesystem/CreateWatcher", s.handleFSCreateWatcher)
 	envd.HandleFunc("/filesystem.Filesystem/GetWatcherEvents", s.handleFSGetWatcherEvents)
 	envd.HandleFunc("/filesystem.Filesystem/RemoveWatcher", s.handleFSRemoveWatcher)

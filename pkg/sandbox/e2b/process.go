@@ -19,6 +19,10 @@ type ProcessTable struct {
 	mu      sync.Mutex
 	nextPid int
 	records map[int]*ProcessRecord
+	// guestPids keeps the SDK-pid -> in-sandbox-pid mapping after the
+	// process record is removed, so a client that attaches to a finished
+	// process can still address it in sandboxd.
+	guestPids map[int]int
 }
 
 // ProcessConfig is the process config as the SDK sent it, echoed back
@@ -70,7 +74,7 @@ type ProcessRecord struct {
 
 // NewProcessTable creates an empty process table.
 func NewProcessTable() *ProcessTable {
-	return &ProcessTable{nextPid: 1000, records: map[int]*ProcessRecord{}}
+	return &ProcessTable{nextPid: 1000, records: map[int]*ProcessRecord{}, guestPids: map[int]int{}}
 }
 
 // Start registers a process with a fresh pid and returns the record. The
@@ -126,14 +130,19 @@ func (t *ProcessTable) SetGuestPID(pid, guest int) {
 }
 
 // GuestPID returns the recorded in-sandbox pid and whether it is known yet.
+// The mapping outlives the process record: a client may attach to a process
+// that has already finished.
 func (t *ProcessTable) GuestPID(pid int) (int, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	rec, ok := t.records[pid]
-	if !ok || rec.GuestPID == nil {
-		return 0, false
+	if ok && rec.GuestPID != nil {
+		return *rec.GuestPID, true
 	}
-	return *rec.GuestPID, true
+	if guest, ok := t.guestPids[pid]; ok {
+		return guest, true
+	}
+	return 0, false
 }
 
 // Subscribe adds a subscriber. No replay: a late subscriber sees output from
@@ -211,11 +220,22 @@ func (t *ProcessTable) End(pid int, end ProcessEnd) {
 	delete(t.records, pid)
 	subs := rec.Subs
 	rec.Subs = nil
-	close(rec.done)
+	// Keep the pid mapping: Process/Connect addresses a process by the pid
+	// the SDK was given, and sandboxd's /exec/attach needs the in-sandbox
+	// pid. The record is gone, so without this the mapping would be lost
+	// exactly when a client attaches to a finished process.
+	if rec.GuestPID != nil {
+		t.guestPids[pid] = *rec.GuestPID
+	}
 	t.mu.Unlock()
+	// Notify the subscribers BEFORE closing the done channel: a subscriber
+	// that is waiting on `done` would otherwise wake up, close the stream
+	// and lose the end event (the SDK then raised "Command ended without an
+	// end event" and the attach reported neither output nor an exit code).
 	for _, sub := range subs {
 		sub.OnEnd(end)
 	}
+	close(rec.done)
 }
 
 // Done returns a channel closed when the process finalizes (used to gate a

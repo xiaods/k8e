@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const path_util = @import("path.zig");
 const files = @import("files.zig");
+const syscall = @import("syscall.zig");
 
 fn extractQueryParam(query: []const u8, key: []const u8) ?[]const u8 {
     var it = std.mem.splitScalar(u8, query, '&');
@@ -292,4 +293,92 @@ test "writeChunk offset past end extends file (sparse)" {
 test "readRange missing file returns NotFound" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     try testing.expectError(error.NotFound, files.readRange(testing.allocator, "/tmp/k8e-files-test-does-not-exist.bin", 0, 10));
+}
+
+// Regression (2026-10-21): a failing syscall returns the NEGATED errno as a
+// usize (ENOENT = 0xFFFF_FFFF_FFFF_FFFE). Decoding it with
+// `@intCast(rc)` to isize OVERFLOWS on exactly the error values we care
+// about, and in ReleaseSafe that overflow is a panic. The panic killed
+// sandboxd (the Pod's PID 1), so one failed mkdir/rename took the whole
+// sandbox down and permanently burned one of the node's ~13 Pod slots.
+//
+// errnoFromSyscall must decode every errno without trapping.
+test "errnoFromSyscall: negated errno decodes without overflow" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    // The exact shape a failing syscall returns.
+    const enoent: usize = @bitCast(@as(isize, -2));
+    const eexist: usize = @bitCast(@as(isize, -17));
+    const eacces: usize = @bitCast(@as(isize, -13));
+
+    try testing.expectEqual(std.posix.E.NOENT, syscall.errnoFromSyscall(enoent));
+    try testing.expectEqual(std.posix.E.EXIST, syscall.errnoFromSyscall(eexist));
+    try testing.expectEqual(std.posix.E.ACCES, syscall.errnoFromSyscall(eacces));
+
+    // A successful syscall (0) is SUCCESS, not an errno.
+    try testing.expectEqual(std.posix.E.SUCCESS, syscall.errnoFromSyscall(0));
+}
+
+test "errnoFromSyscall: real mkdir failure decodes to the right errno" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var path_buf: [128]u8 = undefined;
+    const path = try std.fmt.bufPrintZ(&path_buf, "/tmp/k8e-files-test-errno-dir", .{});
+    // The directory may survive a previous run; start from a clean slate so
+    // the "mkdir succeeds" step below is deterministic.
+    _ = std.os.linux.rmdir(path.ptr);
+    defer _ = std.os.linux.rmdir(path.ptr);
+
+    // Parent does not exist -> ENOENT. This is the call that used to panic.
+    const rc = std.os.linux.mkdir("/tmp/k8e-no-such-parent-dir/child", 0o755);
+    try testing.expect(rc != 0);
+    try testing.expectEqual(std.posix.E.NOENT, syscall.errnoFromSyscall(rc));
+
+    // Now a real mkdir that succeeds, then a second one -> EEXIST. The
+    // EEXIST path used to panic as well.
+    const rc_ok = std.os.linux.mkdir(path.ptr, 0o755);
+    try testing.expectEqual(@as(usize, 0), rc_ok);
+    const rc2 = std.os.linux.mkdir(path.ptr, 0o755);
+    try testing.expect(rc2 != 0);
+    try testing.expectEqual(std.posix.E.EXIST, syscall.errnoFromSyscall(rc2));
+}
+
+// Regression (2026-10-21): getdents64 — like every raw Linux syscall —
+// returns the NEGATED errno as a usize on failure. A plain `n <= 0` test on
+// a usize never fires, so the error reached `@intCast(n)` and panicked in
+// ReleaseSafe, killing sandboxd (the Pod's PID 1). A directory that
+// vanished mid-walk hit that path: the sandbox died on files.list().
+test "dirReadCount: a failed read decodes as end-of-directory, not a panic" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    // The exact shape a failing getdents64 returns.
+    const enoent: usize = @bitCast(@as(isize, -2));
+    try testing.expect(syscall.dirReadCount(enoent) == null);
+    // And the other failure mode: a negative count.
+    const eio: usize = @bitCast(@as(isize, -5));
+    try testing.expect(syscall.dirReadCount(eio) == null);
+    // A successful read of N bytes.
+    try testing.expectEqual(@as(?usize, 128), syscall.dirReadCount(128));
+    // Zero means end-of-directory.
+    try testing.expect(syscall.dirReadCount(0) == null);
+}
+
+// Regression: the list path arrives percent-encoded (it contains "/"), so
+// it must be decoded before it is used as a directory. Without the decode
+// sandboxd looked for a literal "%2Fworkspace%2Ft" and returned nothing.
+test "urlDecode: percent-encoded path decodes to a filesystem path" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    var buf: [256]u8 = undefined;
+    const got = files.urlDecode(&buf, "%2Fworkspace%2Ft").?;
+    try testing.expectEqualStrings("/workspace/t", got);
+
+    const plain = files.urlDecode(&buf, "/workspace/t").?;
+    try testing.expectEqualStrings("/workspace/t", plain);
+
+    const plus = files.urlDecode(&buf, "a+b").?;
+    try testing.expectEqualStrings("a b", plus);
+
+    // Malformed input is rejected rather than silently mangled.
+    try testing.expect(files.urlDecode(&buf, "%zz") == null);
+    try testing.expect(files.urlDecode(&buf, "%4") == null);
 }

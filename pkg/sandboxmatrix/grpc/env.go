@@ -111,6 +111,23 @@ func validateSessionEnvEntry(k, v string) error {
 	return nil
 }
 
+// mergeExecEnv merges a per-call env map over the session's own env. The
+// per-call keys win: the E2B SDK's commands.run(envs={...}) is a per-call
+// override, not a replacement of the session's environment.
+func mergeExecEnv(sessionEnv, callEnv map[string]string) map[string]string {
+	if len(callEnv) == 0 {
+		return sessionEnv
+	}
+	merged := make(map[string]string, len(sessionEnv)+len(callEnv))
+	for k, v := range sessionEnv {
+		merged[k] = v
+	}
+	for k, v := range callEnv {
+		merged[k] = v
+	}
+	return merged
+}
+
 // sandboxdExecBody builds the JSON body for sandboxd /exec and /exec/stream.
 // env is omitted when empty so older sandboxd builds stay compatible.
 func sandboxdExecBody(sessionID, command string, timeout int32, workdir string, env map[string]string) map[string]any {

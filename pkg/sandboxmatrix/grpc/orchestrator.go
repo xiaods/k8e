@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 
 	"github.com/sirupsen/logrus"
 	"net"
@@ -288,6 +289,10 @@ func (o *Orchestrator) CheckCapacity(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	allocatableCPU, err := o.nodeCPUAllocatable(ctx)
+	if err != nil {
+		return err
+	}
 
 	pods, err := o.k8s.CoreV1().Pods(o.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelState,
@@ -296,19 +301,115 @@ func (o *Orchestrator) CheckCapacity(ctx context.Context) error {
 		return fmt.Errorf("capacity check: list pods: %w", err)
 	}
 
-	usedMemory := sumPodMemoryLimits(pods)
+	// A pod that has terminated (Failed/Succeeded) holds no memory — the
+	// container is gone. Counting it made the node look full when it was
+	// nearly empty: the 9 dead sandbox pods left behind by the sandboxd
+	// mkdir panic summed to 4.5GiB of memory limits, so CheckCapacity
+	// reported "warm pool full" while the node was using 34% of its
+	// memory. Dead pods are reclaimed by the controller (detectResetting),
+	// but capacity must not depend on that sweep having run.
+	live := liveSandboxPods(pods)
+	usedMemory := sumPodMemoryLimits(live)
 	available := allocatable.Value() * 9 / 10
-	perPod := podMemoryLimit(pods)
+	perPod := podMemoryLimit(live)
 
 	if available-usedMemory < perPod {
 		return status.Errorf(codes.ResourceExhausted,
 			"warm pool full: %d pods, %s/%s used. Please wait and retry, or add more memory.",
-			len(pods.Items),
+			len(live.Items),
 			resource.NewQuantity(usedMemory, resource.BinarySI).String(),
 			resource.NewQuantity(allocatable.Value(), resource.BinarySI).String(),
 		)
 	}
+
+	// CPU is the other half of the capacity check, and it is the one that
+	// binds first on a small node: 13 sandbox pods x 500m = 6.5 CPU on a
+	// 4-CPU node. The memory check passed (the node was at 47% memory) so
+	// the request was admitted — and the pod then sat Pending forever
+	// ("0/1 nodes are available: 1 Insufficient cpu"), holding a slot and
+	// starving every other sandbox. The scheduler's own CPU accounting is
+	// what has to be respected, so count CPU requests the same way.
+	usedCPU := sumPodCPURequests(live)
+	perPodCPU := podCPURequest(live)
+	if perPodCPU > 0 && allocatableCPU > 0 {
+		availCPU := allocatableCPU * 9 / 10
+		if availCPU-usedCPU < perPodCPU {
+			return status.Errorf(codes.ResourceExhausted,
+				"warm pool full: %d pods, %s/%s cpu used. Please wait and retry, or add more cpu.",
+				len(live.Items),
+				resource.NewQuantity(usedCPU, resource.DecimalSI).String(),
+				resource.NewQuantity(allocatableCPU, resource.DecimalSI).String(),
+			)
+		}
+	}
 	return nil
+}
+
+// nodeCPUAllocatable returns the allocatable CPU of the first node, or 0 when
+// the node does not report one.
+//
+// A node that does not report CPU cannot be CPU-constrained as far as the
+// scheduler is concerned either, so 0 means "skip the CPU comparison" — it
+// must NOT be an error, or a session create would fail on a node that has
+// memory to spare.
+func (o *Orchestrator) nodeCPUAllocatable(ctx context.Context) (int64, error) {
+	nodes, err := o.k8s.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("capacity check: list nodes: %w", err)
+	}
+	if len(nodes.Items) == 0 {
+		return 0, fmt.Errorf("capacity check: no nodes found")
+	}
+	cpu := nodes.Items[0].Status.Allocatable.Cpu()
+	if cpu == nil || cpu.IsZero() {
+		return 0, nil
+	}
+	return cpu.MilliValue(), nil
+}
+
+// sumPodCPURequests returns the sum of the CPU requests across the pods.
+// The scheduler places pods on REQUESTS, not limits, so this is the number
+// that decides whether another pod fits.
+func sumPodCPURequests(pods *corev1.PodList) int64 {
+	var used int64
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		for _, container := range pod.Spec.Containers {
+			if cpu, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
+				used += cpu.MilliValue()
+			}
+		}
+	}
+	return used
+}
+
+// podCPURequest estimates the per-pod CPU request from the first pod, or
+// falls back to 500m.
+func podCPURequest(pods *corev1.PodList) int64 {
+	if len(pods.Items) == 0 {
+		return 500
+	}
+	for _, container := range pods.Items[0].Spec.Containers {
+		if cpu, ok := container.Resources.Requests[corev1.ResourceCPU]; ok {
+			return cpu.MilliValue()
+		}
+	}
+	return 500
+}
+
+// liveSandboxPods returns the pods that still occupy node resources: the
+// ones that have not reached a terminal phase. A pod in Pending still
+// reserves its scheduling budget, so it counts.
+func liveSandboxPods(pods *corev1.PodList) *corev1.PodList {
+	live := &corev1.PodList{}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+			continue
+		}
+		live.Items = append(live.Items, *pod)
+	}
+	return live
 }
 
 // nodeMemoryAllocatable returns the allocatable memory of the first node.
@@ -515,11 +616,12 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 		}
 	}
 	if podIP != "" && !done["workspace"] {
-		o.resetWorkspace(ctx, podIP)
+		resetOK := o.resetWorkspace(ctx, podIP)
 		o.markDestroyStep(ctx, sessionID, "workspace")
-		// 3. Relabel pod: active → resetting, remove session-id
+		// 3. Relabel pod: active → resetting, remove session-id — or delete it
+		// when it is already dead.
 		if podName != "" {
-			o.releasePod(ctx, podName)
+			o.disposeSessionPod(ctx, sessionID, podName, resetOK)
 			o.markDestroyStep(ctx, sessionID, "release")
 		}
 	}
@@ -530,7 +632,13 @@ func (o *Orchestrator) DestroySession(ctx context.Context, sessionID string) err
 	// came back — their claims would leak bound-forever. Ownership is the
 	// session label on the claim (set at claim time): a sub-agent child shares
 	// its parent's claim and must never delete it.
-	if session.Status.WorkspacePVC != "" && podIP == "" {
+	//
+	// The pod must be GONE, not merely un-IP'd: a pod that is still Pending
+	// (its claim not yet bound, the scheduler still placing it) has no IP
+	// yet, and deleting its claim would leave the pod referencing a claim
+	// that does not exist — it can then never be scheduled ("persistentvolumeclaim
+	// ... not found") and holds a slot forever.
+	if session.Status.WorkspacePVC != "" && podName == "" {
 		o.deleteSessionWorkspacePVC(ctx, session.Status.WorkspacePVC, sessionID)
 	}
 
@@ -594,11 +702,14 @@ func (o *Orchestrator) findPodBySession(ctx context.Context, sessionID string) (
 }
 
 // resetWorkspace calls sandboxd's /workspace/reset endpoint and waits for completion.
-func (o *Orchestrator) resetWorkspace(ctx context.Context, podIP string) {
+// It reports whether the reset actually happened: a dead sandboxd (the pod's
+// PID 1 crashed) refuses the connection, and the caller must not then treat
+// the pod as recyclable — its workspace was never wiped.
+func (o *Orchestrator) resetWorkspace(ctx context.Context, podIP string) bool {
 	url := fmt.Sprintf("http://%s:2024/workspace/reset", podIP)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, http.NoBody)
 	if err != nil {
-		return
+		return false
 	}
 	httpCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -607,9 +718,38 @@ func (o *Orchestrator) resetWorkspace(ctx context.Context, podIP string) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return false
+	}
+	return resp.StatusCode == http.StatusOK
+}
+
+// disposeSessionPod decides what happens to a session's pod when the
+// session is destroyed.
+//
+// A pod whose container has terminated (Failed: sandboxd exited and
+// RestartPolicy Never leaves it dead) can never serve a session again, and
+// the workspace reset could not have wiped it — so handing it back to the
+// pool would hand a dirty workspace to the next session. Delete it, claim
+// and all.
+//
+// A pod that is still running is recycled even when the reset failed: a
+// failed reset can be transient (the daemon was briefly unreachable), and
+// deleting a healthy pod would throw away a working sandbox on a network
+// blip.
+func (o *Orchestrator) disposeSessionPod(ctx context.Context, sessionID, podName string, resetOK bool) {
+	if o.podTerminated(ctx, podName) {
+		logrus.Infof("sandbox: pod %s is terminated — deleting it instead of recycling it into the pool", podName)
+		o.deletePodAndClaim(ctx, podName)
 		return
 	}
-	resp.Body.Close()
+	if !resetOK {
+		logrus.Infof("sandbox: workspace reset failed for %s (pod %s) — recycling the pod anyway", sessionID, podName)
+	}
+	o.releasePod(ctx, podName)
 }
 
 // releasePod relabels a pod from active to resetting and removes session-id label.
@@ -628,6 +768,42 @@ func (o *Orchestrator) releasePod(ctx context.Context, podName string) {
 	// later destroy of this session cannot delete a claim another session may
 	// already have claimed.
 	o.setWorkspacePVCSession(ctx, workspacePVCOf(pod), "")
+}
+
+// podTerminated reports whether a pod's container has already exited, i.e.
+// the pod can never serve a session again. A Failed pod is the shape a
+// crashed sandboxd leaves behind (RestartPolicy Never).
+func (o *Orchestrator) podTerminated(ctx context.Context, podName string) bool {
+	pod, err := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return false
+	}
+	return pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded
+}
+
+// deletePodAndClaim removes a pod that can no longer serve a session,
+// together with the workspace claim backing it.
+//
+// It is the counterpart of releasePod for the case where the pod is NOT
+// recyclable: its sandboxd is dead, so the workspace was never reset and the
+// pod must not go back into the pool. The claim has no life apart from the
+// pod (a running pod's volumes cannot be swapped), so it goes too — leaving
+// it behind would strand a bound claim and block the slot a refill needs.
+func (o *Orchestrator) deletePodAndClaim(ctx context.Context, podName string) {
+	pod, err := o.k8s.CoreV1().Pods(o.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return
+	}
+	claim := workspacePVCOf(pod)
+	if err := o.k8s.CoreV1().Pods(o.namespace).Delete(ctx, podName, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+		logrus.Warnf("sandbox: delete pod %s: %v", podName, err)
+		return
+	}
+	if claim != "" {
+		if derr := o.k8s.CoreV1().PersistentVolumeClaims(o.namespace).Delete(ctx, claim, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
+			logrus.Warnf("sandbox: delete workspace PVC %s of pod %s: %v", claim, podName, derr)
+		}
+	}
 }
 
 // ListActiveSessions returns all Active SandboxSessions in the given namespace.
@@ -1105,7 +1281,15 @@ func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.Pod
 		Containers: []corev1.Container{{
 			Name:  "sandbox",
 			Image: image,
-			Ports: []corev1.ContainerPort{{ContainerPort: sandboxdPort}},
+			// Pull only when the image is not already on the node. The
+			// default (Always for a :latest tag) made every sandbox pod
+			// re-pull the image from the registry, which defeats any
+			// air-gapped or locally-patched deployment and adds seconds of
+			// latency to every cold start. A digest-pinned image is
+			// immutable, so re-pulling it can only ever fetch the same
+			// bytes.
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Ports:           []corev1.ContainerPort{{ContainerPort: sandboxdPort}},
 			Resources: corev1.ResourceRequirements{
 				Limits: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse(cpu),

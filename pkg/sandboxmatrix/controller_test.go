@@ -349,6 +349,81 @@ func TestRecycleUnhealthyWarmPods_UnschedulablePending(t *testing.T) {
 	assertPresent(t, k8s, "warm-pulling")
 }
 
+// TestDetectResetting_ReclaimsDeadPods covers the Pod-slot leak (2026-10-21).
+//
+// A sandboxd panic (files.zig:491 @intCast overflow) killed the Pod.
+// DestroySession then relabelled it state=resetting, but detectResetting()
+// only promoted *Running* pods back to warm, so the dead pod stayed in
+// resetting forever. CheckCapacity counts every pod carrying the state label
+// against the node's memory budget, so each dead pod permanently burned one
+// of the ~13 sandbox slots a 4C8G node has: the pool reported "warm pool
+// full" and refused every new sandbox.
+func TestDetectResetting_ReclaimsDeadPods(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+
+	// sandboxd exited (RestartPolicy Never leaves the pod Failed) — the
+	// exact shape of a crashed sandbox. Must be reclaimed.
+	failed := sandboxTestPod("resetting-failed", sandboxgrpc.StateResetting, corev1.PodFailed)
+	// Succeeded: the pod finished its work and will never serve a session.
+	succeeded := sandboxTestPod("resetting-succeeded", sandboxgrpc.StateResetting, corev1.PodSucceeded)
+
+	seedPods(ctx, t, k8s, failed, succeeded)
+
+	detectResetting(ctx, k8s, testNS)
+
+	assertGone(t, k8s, "resetting-failed", "sandboxd exited; the pod can never serve a session")
+	assertGone(t, k8s, "resetting-succeeded", "pod completed; the pod can never serve a session")
+}
+
+// TestDetectResetting_ReclaimsOrphanedPending covers the other half of the
+// leak: a pod stuck Pending in resetting state because its workspace claim
+// was deleted (the session that owned it is gone), so the scheduler can
+// never place it ("persistentvolumeclaim ... not found").
+func TestDetectResetting_ReclaimsOrphanedPending(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+
+	// Old and unschedulable — the scheduler gave up; reclaim it.
+	stuck := aged(sandboxTestPod("resetting-stuck", sandboxgrpc.StateResetting, corev1.PodPending, condUnschedulable), 10*time.Minute)
+	// Old but still bound (pulling its image): past the grace period, so the
+	// orphan sweep takes it — a bound pod in resetting state is just as stuck.
+	pulling := aged(sandboxTestPod("resetting-pulling", sandboxgrpc.StateResetting, corev1.PodPending, condScheduled), 10*time.Minute)
+	// Recent: still within the grace period, give the scheduler a chance.
+	recent := aged(sandboxTestPod("resetting-recent", sandboxgrpc.StateResetting, corev1.PodPending, condUnschedulable), 10*time.Second)
+
+	seedPods(ctx, t, k8s, stuck, pulling, recent)
+
+	detectResetting(ctx, k8s, testNS)
+
+	assertGone(t, k8s, "resetting-stuck", "unschedulable; the claim it waits for is gone")
+	assertGone(t, k8s, "resetting-pulling", "stuck Pending past the grace period")
+	assertPresent(t, k8s, "resetting-recent")
+}
+
+// TestDetectResetting_PromotesRunning guards the happy path the fix must
+// not break: a healthy pod released back to the pool is promoted to warm.
+func TestDetectResetting_PromotesRunning(t *testing.T) {
+	ctx := context.Background()
+	k8s := kubefake.NewSimpleClientset()
+
+	healthy := sandboxTestPod("resetting-healthy", sandboxgrpc.StateResetting, corev1.PodRunning, condReady)
+	seedPods(ctx, t, k8s, healthy)
+
+	detectResetting(ctx, k8s, testNS)
+
+	got, err := k8s.CoreV1().Pods(testNS).Get(ctx, "resetting-healthy", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("expected the healthy pod to survive: %v", err)
+	}
+	if got.Labels[sandboxgrpc.LabelState] != sandboxgrpc.StateWarm {
+		t.Fatalf("expected state warm, got %v", got.Labels[sandboxgrpc.LabelState])
+	}
+	if got.Annotations[podReleasedAtAnnotation] == "" {
+		t.Fatal("expected a released-at timestamp so the idle reaper can age it out")
+	}
+}
+
 // newWarmPoolCR builds a SandboxWarmPool CR with the given spec.
 func newWarmPoolCR(size int64) unstructured.Unstructured {
 	return unstructured.Unstructured{Object: map[string]interface{}{

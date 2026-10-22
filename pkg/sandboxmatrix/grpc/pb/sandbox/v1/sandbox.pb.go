@@ -792,13 +792,18 @@ func (x *ResumeSessionResponse) GetOk() bool {
 }
 
 type ExecRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Command       string                 `protobuf:"bytes,2,opt,name=command,proto3" json:"command,omitempty"`
-	Timeout       int32                  `protobuf:"varint,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
-	Workdir       string                 `protobuf:"bytes,4,opt,name=workdir,proto3" json:"workdir,omitempty"`
-	Background    bool                   `protobuf:"varint,5,opt,name=background,proto3" json:"background,omitempty"` // submit asynchronously, return run_id immediately
-	Language      string                 `protobuf:"bytes,6,opt,name=language,proto3" json:"language,omitempty"`      // optional hint: python|bash|node|ts (observability)
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SessionId  string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Command    string                 `protobuf:"bytes,2,opt,name=command,proto3" json:"command,omitempty"`
+	Timeout    int32                  `protobuf:"varint,3,opt,name=timeout,proto3" json:"timeout,omitempty"`
+	Workdir    string                 `protobuf:"bytes,4,opt,name=workdir,proto3" json:"workdir,omitempty"`
+	Background bool                   `protobuf:"varint,5,opt,name=background,proto3" json:"background,omitempty"` // submit asynchronously, return run_id immediately
+	Language   string                 `protobuf:"bytes,6,opt,name=language,proto3" json:"language,omitempty"`      // optional hint: python|bash|node|ts (observability)
+	// Per-call environment variables, merged over the session's own env.
+	// The E2B SDK's commands.run(envs={...}) rides this field: without it the
+	// SDK's envs were silently dropped on the streaming path (the only path
+	// the E2B SDK uses), so the command ran without them.
+	Env           map[string]string `protobuf:"bytes,7,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -873,6 +878,13 @@ func (x *ExecRequest) GetLanguage() string {
 		return x.Language
 	}
 	return ""
+}
+
+func (x *ExecRequest) GetEnv() map[string]string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
 }
 
 type ExecResponse struct {
@@ -1295,7 +1307,13 @@ type ListFilesRequest struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// Return only files modified after this unix timestamp (0 = all).
-	Since         int64 `protobuf:"varint,2,opt,name=since,proto3" json:"since,omitempty"`
+	Since int64 `protobuf:"varint,2,opt,name=since,proto3" json:"since,omitempty"`
+	// Restrict the walk to this subtree ("" = the whole workspace). Listing
+	// one directory must not cost a walk of everything else in it.
+	Path string `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
+	// Stop descending below this many levels under the root (0 = the root's
+	// direct children, -1 = unlimited).
+	Depth         int64 `protobuf:"varint,4,opt,name=depth,proto3" json:"depth,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1340,6 +1358,20 @@ func (x *ListFilesRequest) GetSessionId() string {
 func (x *ListFilesRequest) GetSince() int64 {
 	if x != nil {
 		return x.Since
+	}
+	return 0
+}
+
+func (x *ListFilesRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *ListFilesRequest) GetDepth() int64 {
+	if x != nil {
+		return x.Depth
 	}
 	return 0
 }
@@ -4150,7 +4182,7 @@ const file_proto_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"'\n" +
 	"\x15ResumeSessionResponse\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\"\xb6\x01\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"\xa2\x02\n" +
 	"\vExecRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
@@ -4160,7 +4192,11 @@ const file_proto_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\n" +
 	"background\x18\x05 \x01(\bR\n" +
 	"background\x12\x1a\n" +
-	"\blanguage\x18\x06 \x01(\tR\blanguage\"\x84\x02\n" +
+	"\blanguage\x18\x06 \x01(\tR\blanguage\x122\n" +
+	"\x03env\x18\a \x03(\v2 .sandbox.v1.ExecRequest.EnvEntryR\x03env\x1a6\n" +
+	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x84\x02\n" +
 	"\fExecResponse\x12\x16\n" +
 	"\x06stdout\x18\x01 \x01(\tR\x06stdout\x12\x16\n" +
 	"\x06stderr\x18\x02 \x01(\tR\x06stderr\x12\x1b\n" +
@@ -4194,11 +4230,13 @@ const file_proto_sandbox_v1_sandbox_proto_rawDesc = "" +
 	"\bencoding\x18\x05 \x01(\tR\bencoding\"H\n" +
 	"\x10ReadFileResponse\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\x12\x1a\n" +
-	"\bencoding\x18\x02 \x01(\tR\bencoding\"G\n" +
+	"\bencoding\x18\x02 \x01(\tR\bencoding\"q\n" +
 	"\x10ListFilesRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
-	"\x05since\x18\x02 \x01(\x03R\x05since\"@\n" +
+	"\x05since\x18\x02 \x01(\x03R\x05since\x12\x12\n" +
+	"\x04path\x18\x03 \x01(\tR\x04path\x12\x14\n" +
+	"\x05depth\x18\x04 \x01(\x03R\x05depth\"@\n" +
 	"\x11ListFilesResponse\x12+\n" +
 	"\x05files\x18\x01 \x03(\v2\x15.sandbox.v1.FileEntryR\x05files\"c\n" +
 	"\tFileEntry\x12\x12\n" +
@@ -4449,7 +4487,7 @@ func file_proto_sandbox_v1_sandbox_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_sandbox_v1_sandbox_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 74)
+var file_proto_sandbox_v1_sandbox_proto_msgTypes = make([]protoimpl.MessageInfo, 75)
 var file_proto_sandbox_v1_sandbox_proto_goTypes = []any{
 	(TerminalSignal)(0),                // 0: sandbox.v1.TerminalSignal
 	(*SecretRef)(nil),                  // 1: sandbox.v1.SecretRef
@@ -4525,91 +4563,93 @@ var file_proto_sandbox_v1_sandbox_proto_goTypes = []any{
 	(*UpdateAllowedHostsRequest)(nil),  // 71: sandbox.v1.UpdateAllowedHostsRequest
 	(*UpdateAllowedHostsResponse)(nil), // 72: sandbox.v1.UpdateAllowedHostsResponse
 	nil,                                // 73: sandbox.v1.CreateSessionRequest.EnvEntry
-	nil,                                // 74: sandbox.v1.CreateTerminalRequest.EnvEntry
+	nil,                                // 74: sandbox.v1.ExecRequest.EnvEntry
+	nil,                                // 75: sandbox.v1.CreateTerminalRequest.EnvEntry
 }
 var file_proto_sandbox_v1_sandbox_proto_depIdxs = []int32{
 	73, // 0: sandbox.v1.CreateSessionRequest.env:type_name -> sandbox.v1.CreateSessionRequest.EnvEntry
 	1,  // 1: sandbox.v1.CreateSessionRequest.secret_refs:type_name -> sandbox.v1.SecretRef
 	5,  // 2: sandbox.v1.ListSessionsResponse.sessions:type_name -> sandbox.v1.GetSessionResponse
-	23, // 3: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
-	47, // 4: sandbox.v1.GetProcessesResponse.processes:type_name -> sandbox.v1.ProcessInfo
-	74, // 5: sandbox.v1.CreateTerminalRequest.env:type_name -> sandbox.v1.CreateTerminalRequest.EnvEntry
-	53, // 6: sandbox.v1.TerminalStreamResponse.exit:type_name -> sandbox.v1.TerminalExit
-	0,  // 7: sandbox.v1.TerminalSignalRequest.signal:type_name -> sandbox.v1.TerminalSignal
-	68, // 8: sandbox.v1.ListExposedResponse.services:type_name -> sandbox.v1.ExposedService
-	2,  // 9: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
-	4,  // 10: sandbox.v1.SandboxService.GetSession:input_type -> sandbox.v1.GetSessionRequest
-	6,  // 11: sandbox.v1.SandboxService.ListSessions:input_type -> sandbox.v1.ListSessionsRequest
-	8,  // 12: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
-	10, // 13: sandbox.v1.SandboxService.PauseSession:input_type -> sandbox.v1.PauseSessionRequest
-	12, // 14: sandbox.v1.SandboxService.ResumeSession:input_type -> sandbox.v1.ResumeSessionRequest
-	14, // 15: sandbox.v1.SandboxService.Exec:input_type -> sandbox.v1.ExecRequest
-	14, // 16: sandbox.v1.SandboxService.ExecStream:input_type -> sandbox.v1.ExecRequest
-	17, // 17: sandbox.v1.SandboxService.WriteFile:input_type -> sandbox.v1.WriteFileRequest
-	19, // 18: sandbox.v1.SandboxService.ReadFile:input_type -> sandbox.v1.ReadFileRequest
-	21, // 19: sandbox.v1.SandboxService.ListFiles:input_type -> sandbox.v1.ListFilesRequest
-	24, // 20: sandbox.v1.SandboxService.PipInstall:input_type -> sandbox.v1.PipInstallRequest
-	26, // 21: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
-	28, // 22: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
-	30, // 23: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
-	32, // 24: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
-	34, // 25: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
-	36, // 26: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
-	38, // 27: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
-	40, // 28: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
-	42, // 29: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
-	44, // 30: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
-	46, // 31: sandbox.v1.SandboxService.GetProcesses:input_type -> sandbox.v1.GetProcessesRequest
-	49, // 32: sandbox.v1.SandboxService.CreateTerminal:input_type -> sandbox.v1.CreateTerminalRequest
-	51, // 33: sandbox.v1.SandboxService.TerminalStream:input_type -> sandbox.v1.TerminalStreamRequest
-	54, // 34: sandbox.v1.SandboxService.TerminalWrite:input_type -> sandbox.v1.TerminalWriteRequest
-	56, // 35: sandbox.v1.SandboxService.TerminalResize:input_type -> sandbox.v1.TerminalResizeRequest
-	58, // 36: sandbox.v1.SandboxService.TerminalForeground:input_type -> sandbox.v1.TerminalForegroundRequest
-	60, // 37: sandbox.v1.SandboxService.TerminalSignal:input_type -> sandbox.v1.TerminalSignalRequest
-	62, // 38: sandbox.v1.SandboxService.TerminalDestroy:input_type -> sandbox.v1.TerminalDestroyRequest
-	64, // 39: sandbox.v1.SandboxService.ExposeService:input_type -> sandbox.v1.ExposeServiceRequest
-	66, // 40: sandbox.v1.SandboxService.UnexposeService:input_type -> sandbox.v1.UnexposeServiceRequest
-	69, // 41: sandbox.v1.SandboxService.ListExposed:input_type -> sandbox.v1.ListExposedRequest
-	71, // 42: sandbox.v1.SandboxService.UpdateAllowedHosts:input_type -> sandbox.v1.UpdateAllowedHostsRequest
-	3,  // 43: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
-	5,  // 44: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
-	7,  // 45: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
-	9,  // 46: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
-	11, // 47: sandbox.v1.SandboxService.PauseSession:output_type -> sandbox.v1.PauseSessionResponse
-	13, // 48: sandbox.v1.SandboxService.ResumeSession:output_type -> sandbox.v1.ResumeSessionResponse
-	15, // 49: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
-	16, // 50: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
-	18, // 51: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
-	20, // 52: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
-	22, // 53: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
-	25, // 54: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
-	27, // 55: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
-	29, // 56: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
-	31, // 57: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
-	33, // 58: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
-	35, // 59: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
-	37, // 60: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
-	39, // 61: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
-	41, // 62: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
-	43, // 63: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
-	45, // 64: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
-	48, // 65: sandbox.v1.SandboxService.GetProcesses:output_type -> sandbox.v1.GetProcessesResponse
-	50, // 66: sandbox.v1.SandboxService.CreateTerminal:output_type -> sandbox.v1.CreateTerminalResponse
-	52, // 67: sandbox.v1.SandboxService.TerminalStream:output_type -> sandbox.v1.TerminalStreamResponse
-	55, // 68: sandbox.v1.SandboxService.TerminalWrite:output_type -> sandbox.v1.TerminalWriteResponse
-	57, // 69: sandbox.v1.SandboxService.TerminalResize:output_type -> sandbox.v1.TerminalResizeResponse
-	59, // 70: sandbox.v1.SandboxService.TerminalForeground:output_type -> sandbox.v1.TerminalForegroundResponse
-	61, // 71: sandbox.v1.SandboxService.TerminalSignal:output_type -> sandbox.v1.TerminalSignalResponse
-	63, // 72: sandbox.v1.SandboxService.TerminalDestroy:output_type -> sandbox.v1.TerminalDestroyResponse
-	65, // 73: sandbox.v1.SandboxService.ExposeService:output_type -> sandbox.v1.ExposeServiceResponse
-	67, // 74: sandbox.v1.SandboxService.UnexposeService:output_type -> sandbox.v1.UnexposeServiceResponse
-	70, // 75: sandbox.v1.SandboxService.ListExposed:output_type -> sandbox.v1.ListExposedResponse
-	72, // 76: sandbox.v1.SandboxService.UpdateAllowedHosts:output_type -> sandbox.v1.UpdateAllowedHostsResponse
-	43, // [43:77] is the sub-list for method output_type
-	9,  // [9:43] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	74, // 3: sandbox.v1.ExecRequest.env:type_name -> sandbox.v1.ExecRequest.EnvEntry
+	23, // 4: sandbox.v1.ListFilesResponse.files:type_name -> sandbox.v1.FileEntry
+	47, // 5: sandbox.v1.GetProcessesResponse.processes:type_name -> sandbox.v1.ProcessInfo
+	75, // 6: sandbox.v1.CreateTerminalRequest.env:type_name -> sandbox.v1.CreateTerminalRequest.EnvEntry
+	53, // 7: sandbox.v1.TerminalStreamResponse.exit:type_name -> sandbox.v1.TerminalExit
+	0,  // 8: sandbox.v1.TerminalSignalRequest.signal:type_name -> sandbox.v1.TerminalSignal
+	68, // 9: sandbox.v1.ListExposedResponse.services:type_name -> sandbox.v1.ExposedService
+	2,  // 10: sandbox.v1.SandboxService.CreateSession:input_type -> sandbox.v1.CreateSessionRequest
+	4,  // 11: sandbox.v1.SandboxService.GetSession:input_type -> sandbox.v1.GetSessionRequest
+	6,  // 12: sandbox.v1.SandboxService.ListSessions:input_type -> sandbox.v1.ListSessionsRequest
+	8,  // 13: sandbox.v1.SandboxService.DestroySession:input_type -> sandbox.v1.DestroySessionRequest
+	10, // 14: sandbox.v1.SandboxService.PauseSession:input_type -> sandbox.v1.PauseSessionRequest
+	12, // 15: sandbox.v1.SandboxService.ResumeSession:input_type -> sandbox.v1.ResumeSessionRequest
+	14, // 16: sandbox.v1.SandboxService.Exec:input_type -> sandbox.v1.ExecRequest
+	14, // 17: sandbox.v1.SandboxService.ExecStream:input_type -> sandbox.v1.ExecRequest
+	17, // 18: sandbox.v1.SandboxService.WriteFile:input_type -> sandbox.v1.WriteFileRequest
+	19, // 19: sandbox.v1.SandboxService.ReadFile:input_type -> sandbox.v1.ReadFileRequest
+	21, // 20: sandbox.v1.SandboxService.ListFiles:input_type -> sandbox.v1.ListFilesRequest
+	24, // 21: sandbox.v1.SandboxService.PipInstall:input_type -> sandbox.v1.PipInstallRequest
+	26, // 22: sandbox.v1.SandboxService.RunSubAgent:input_type -> sandbox.v1.RunSubAgentRequest
+	28, // 23: sandbox.v1.SandboxService.ConfirmAction:input_type -> sandbox.v1.ConfirmActionRequest
+	30, // 24: sandbox.v1.SandboxService.ApproveAction:input_type -> sandbox.v1.ApproveActionRequest
+	32, // 25: sandbox.v1.SandboxService.Login:input_type -> sandbox.v1.LoginRequest
+	34, // 26: sandbox.v1.SandboxService.PollRun:input_type -> sandbox.v1.PollRunRequest
+	36, // 27: sandbox.v1.SandboxService.GetTranscript:input_type -> sandbox.v1.GetTranscriptRequest
+	38, // 28: sandbox.v1.SandboxService.GetEvents:input_type -> sandbox.v1.GetEventsRequest
+	40, // 29: sandbox.v1.SandboxService.SnapshotPut:input_type -> sandbox.v1.SnapshotPutRequest
+	42, // 30: sandbox.v1.SandboxService.SnapshotGet:input_type -> sandbox.v1.SnapshotGetRequest
+	44, // 31: sandbox.v1.SandboxService.SnapshotList:input_type -> sandbox.v1.SnapshotListRequest
+	46, // 32: sandbox.v1.SandboxService.GetProcesses:input_type -> sandbox.v1.GetProcessesRequest
+	49, // 33: sandbox.v1.SandboxService.CreateTerminal:input_type -> sandbox.v1.CreateTerminalRequest
+	51, // 34: sandbox.v1.SandboxService.TerminalStream:input_type -> sandbox.v1.TerminalStreamRequest
+	54, // 35: sandbox.v1.SandboxService.TerminalWrite:input_type -> sandbox.v1.TerminalWriteRequest
+	56, // 36: sandbox.v1.SandboxService.TerminalResize:input_type -> sandbox.v1.TerminalResizeRequest
+	58, // 37: sandbox.v1.SandboxService.TerminalForeground:input_type -> sandbox.v1.TerminalForegroundRequest
+	60, // 38: sandbox.v1.SandboxService.TerminalSignal:input_type -> sandbox.v1.TerminalSignalRequest
+	62, // 39: sandbox.v1.SandboxService.TerminalDestroy:input_type -> sandbox.v1.TerminalDestroyRequest
+	64, // 40: sandbox.v1.SandboxService.ExposeService:input_type -> sandbox.v1.ExposeServiceRequest
+	66, // 41: sandbox.v1.SandboxService.UnexposeService:input_type -> sandbox.v1.UnexposeServiceRequest
+	69, // 42: sandbox.v1.SandboxService.ListExposed:input_type -> sandbox.v1.ListExposedRequest
+	71, // 43: sandbox.v1.SandboxService.UpdateAllowedHosts:input_type -> sandbox.v1.UpdateAllowedHostsRequest
+	3,  // 44: sandbox.v1.SandboxService.CreateSession:output_type -> sandbox.v1.CreateSessionResponse
+	5,  // 45: sandbox.v1.SandboxService.GetSession:output_type -> sandbox.v1.GetSessionResponse
+	7,  // 46: sandbox.v1.SandboxService.ListSessions:output_type -> sandbox.v1.ListSessionsResponse
+	9,  // 47: sandbox.v1.SandboxService.DestroySession:output_type -> sandbox.v1.DestroySessionResponse
+	11, // 48: sandbox.v1.SandboxService.PauseSession:output_type -> sandbox.v1.PauseSessionResponse
+	13, // 49: sandbox.v1.SandboxService.ResumeSession:output_type -> sandbox.v1.ResumeSessionResponse
+	15, // 50: sandbox.v1.SandboxService.Exec:output_type -> sandbox.v1.ExecResponse
+	16, // 51: sandbox.v1.SandboxService.ExecStream:output_type -> sandbox.v1.ExecStreamResponse
+	18, // 52: sandbox.v1.SandboxService.WriteFile:output_type -> sandbox.v1.WriteFileResponse
+	20, // 53: sandbox.v1.SandboxService.ReadFile:output_type -> sandbox.v1.ReadFileResponse
+	22, // 54: sandbox.v1.SandboxService.ListFiles:output_type -> sandbox.v1.ListFilesResponse
+	25, // 55: sandbox.v1.SandboxService.PipInstall:output_type -> sandbox.v1.PipInstallResponse
+	27, // 56: sandbox.v1.SandboxService.RunSubAgent:output_type -> sandbox.v1.RunSubAgentResponse
+	29, // 57: sandbox.v1.SandboxService.ConfirmAction:output_type -> sandbox.v1.ConfirmActionResponse
+	31, // 58: sandbox.v1.SandboxService.ApproveAction:output_type -> sandbox.v1.ApproveActionResponse
+	33, // 59: sandbox.v1.SandboxService.Login:output_type -> sandbox.v1.LoginResponse
+	35, // 60: sandbox.v1.SandboxService.PollRun:output_type -> sandbox.v1.PollRunResponse
+	37, // 61: sandbox.v1.SandboxService.GetTranscript:output_type -> sandbox.v1.GetTranscriptResponse
+	39, // 62: sandbox.v1.SandboxService.GetEvents:output_type -> sandbox.v1.GetEventsResponse
+	41, // 63: sandbox.v1.SandboxService.SnapshotPut:output_type -> sandbox.v1.SnapshotPutResponse
+	43, // 64: sandbox.v1.SandboxService.SnapshotGet:output_type -> sandbox.v1.SnapshotGetResponse
+	45, // 65: sandbox.v1.SandboxService.SnapshotList:output_type -> sandbox.v1.SnapshotListResponse
+	48, // 66: sandbox.v1.SandboxService.GetProcesses:output_type -> sandbox.v1.GetProcessesResponse
+	50, // 67: sandbox.v1.SandboxService.CreateTerminal:output_type -> sandbox.v1.CreateTerminalResponse
+	52, // 68: sandbox.v1.SandboxService.TerminalStream:output_type -> sandbox.v1.TerminalStreamResponse
+	55, // 69: sandbox.v1.SandboxService.TerminalWrite:output_type -> sandbox.v1.TerminalWriteResponse
+	57, // 70: sandbox.v1.SandboxService.TerminalResize:output_type -> sandbox.v1.TerminalResizeResponse
+	59, // 71: sandbox.v1.SandboxService.TerminalForeground:output_type -> sandbox.v1.TerminalForegroundResponse
+	61, // 72: sandbox.v1.SandboxService.TerminalSignal:output_type -> sandbox.v1.TerminalSignalResponse
+	63, // 73: sandbox.v1.SandboxService.TerminalDestroy:output_type -> sandbox.v1.TerminalDestroyResponse
+	65, // 74: sandbox.v1.SandboxService.ExposeService:output_type -> sandbox.v1.ExposeServiceResponse
+	67, // 75: sandbox.v1.SandboxService.UnexposeService:output_type -> sandbox.v1.UnexposeServiceResponse
+	70, // 76: sandbox.v1.SandboxService.ListExposed:output_type -> sandbox.v1.ListExposedResponse
+	72, // 77: sandbox.v1.SandboxService.UpdateAllowedHosts:output_type -> sandbox.v1.UpdateAllowedHostsResponse
+	44, // [44:78] is the sub-list for method output_type
+	10, // [10:44] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_proto_sandbox_v1_sandbox_proto_init() }
@@ -4627,7 +4667,7 @@ func file_proto_sandbox_v1_sandbox_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_sandbox_v1_sandbox_proto_rawDesc), len(file_proto_sandbox_v1_sandbox_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   74,
+			NumMessages:   75,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

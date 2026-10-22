@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -1539,5 +1541,211 @@ func TestCreateSession_FailedCreateKeepsForeignPVC(t *testing.T) {
 
 	if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, "workspace-owned-by-another-session", metav1.GetOptions{}); err != nil {
 		t.Fatalf("expected the foreign PVC to survive the rollback: %v", err)
+	}
+}
+
+// TestCheckCapacity_IgnoresTerminatedPods covers the "node looks full but
+// isn't" bug (2026-10-21).
+//
+// CheckCapacity summed the memory LIMITS of every pod carrying the state
+// label, including pods that had already terminated. The sandboxd mkdir
+// panic left 9 Failed pods behind; their limits summed to 4.5GiB, so on a
+// 4C8G node the check reported "warm pool full: 13 pods, 6656Mi/8002340Ki
+// used" while the node was actually using 2730Mi (34%) of its memory.
+// A terminated pod holds no memory and must not be counted.
+func TestCheckCapacity_IgnoresTerminatedPods(t *testing.T) {
+	o, k8s := newTestOrchestratorWithFake()
+	ctx := context.Background()
+
+	// 8Gi node, so the 90% budget leaves room for several 512Mi pods.
+	capacityTestNode(t, k8s, "8Gi", "4")
+
+	// 12 terminated pods at 512Mi each = 6144Mi of limits. Counted, they
+	// would blow the 90% budget of an 8Gi node (7372Mi) together with the
+	// 2 live pods below.
+	capacityTestPods(t, k8s, "dead", corev1.PodFailed, 12)
+	// 2 live pods: 1024Mi of limits, comfortably inside the budget.
+	capacityTestPods(t, k8s, "live", corev1.PodRunning, 2)
+
+	if err := o.CheckCapacity(ctx); err != nil {
+		t.Fatalf("expected capacity to be available: %v", err)
+	}
+}
+
+// TestCheckCapacity_RejectsWhenActuallyFull guards the other direction: the
+// check must still refuse when the LIVE pods genuinely fill the node.
+func TestCheckCapacity_RejectsWhenActuallyFull(t *testing.T) {
+	o, k8s := newTestOrchestratorWithFake()
+	ctx := context.Background()
+
+	capacityTestNode(t, k8s, "2Gi", "4")
+
+	// 4 live pods × 512Mi = 2048Mi; the 90% budget of 2Gi is 1843Mi, so
+	// there is no room for a fifth.
+	capacityTestPods(t, k8s, "live", corev1.PodRunning, 4)
+
+	if err := o.CheckCapacity(ctx); err == nil {
+		t.Fatal("expected ResourceExhausted when the live pods fill the node")
+	}
+}
+
+// capacityTestPod builds a state-labelled pod with one container limited to
+// mem and requesting 500m of CPU, in the given phase.
+func capacityTestPod(name string, phase corev1.PodPhase, mem string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: sandboxNS,
+			Labels:    map[string]string{labelState: stateActive},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "sandboxd",
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m")},
+				Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse(mem)},
+			},
+		}}},
+		Status: corev1.PodStatus{Phase: phase},
+	}
+}
+
+// TestDestroySession_DeletesTerminatedPod covers the crashed-sandbox path
+// (2026-10-21).
+//
+// When sandboxd dies the pod goes Failed. DestroySession used to relabel it
+// state=resetting and hope the reset had wiped its workspace — but the reset
+// could not have succeeded (the daemon was dead), so the pod went back into
+// the pool with a dirty workspace. Worse, nothing reclaimed it: the only
+// recycler for dead pods is scoped to state=warm, and detectResetting only
+// promoted Running pods. A terminated pod must be deleted outright.
+func TestDestroySession_DeletesTerminatedPod(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	sess := mustCreateSession(t, o, "destroy-dead-test")
+	podName, pvcName := sess.Status.PodName, sess.Status.WorkspacePVC
+
+	setupPodForRelease(ctx, t, o, podName)
+	// Mark the pod Failed: this is what a crashed sandboxd leaves behind.
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	pod.Status.Phase = corev1.PodFailed
+	if _, err := o.k8s.CoreV1().Pods(sandboxNS).UpdateStatus(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("mark pod failed: %v", err)
+	}
+
+	if err := o.DestroySession(ctx, "destroy-dead-test"); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+
+	if _, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{}); err == nil {
+		t.Error("expected the terminated pod to be deleted, not recycled into the pool")
+	}
+	if pvcName != "" {
+		if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{}); err == nil {
+			t.Error("expected the workspace claim of a deleted pod to be deleted with it")
+		}
+	}
+}
+
+// TestDestroySession_KeepsClaimForPendingPod covers the orphan-Pod case
+// (2026-10-21).
+//
+// A pod that is still Pending has no IP yet, so the old "no pod IP -> the
+// claim is not in use -> delete it" rule deleted the claim OUT FROM UNDER
+// the pod. The pod then referenced a claim that did not exist, the scheduler
+// could never place it ("persistentvolumeclaim ... not found"), and it held
+// a node slot forever. The claim must survive while the pod still exists.
+func TestDestroySession_KeepsClaimForPendingPod(t *testing.T) {
+	o := newTestOrchestrator()
+	ctx := context.Background()
+	sess := mustCreateSession(t, o, "destroy-pending-test")
+	podName, pvcName := sess.Status.PodName, sess.Status.WorkspacePVC
+
+	// The pod exists but has no IP yet (Pending).
+	pod, err := o.k8s.CoreV1().Pods(sandboxNS).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get pod: %v", err)
+	}
+	pod.Status.PodIP = ""
+	pod.Status.Phase = corev1.PodPending
+	pod.Labels[labelSessionID] = "destroy-pending-test"
+	pod.Labels[labelState] = stateActive
+	if _, err := o.k8s.CoreV1().Pods(sandboxNS).UpdateStatus(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("mark pod pending: %v", err)
+	}
+
+	if err := o.DestroySession(ctx, "destroy-pending-test"); err != nil {
+		t.Fatalf("destroy: %v", err)
+	}
+
+	if pvcName != "" {
+		if _, err := o.k8s.CoreV1().PersistentVolumeClaims(sandboxNS).Get(ctx, pvcName, metav1.GetOptions{}); err != nil {
+			t.Fatalf("expected the claim of a still-pending pod to survive: %v", err)
+		}
+	}
+}
+
+// TestCheckCapacity_RejectsWhenCPUFull covers the CPU half of the capacity
+// check (2026-10-21).
+//
+// The check only looked at MEMORY, so on a 4-CPU node it admitted 13 sandbox
+// pods (13 x 500m = 6.5 CPU) while memory was still at 47%. The extra pods
+// then sat Pending forever ("0/1 nodes are available: 1 Insufficient cpu"),
+// holding a slot and starving every other sandbox. CPU is what the
+// scheduler actually places pods on, so it has to be checked too.
+func TestCheckCapacity_RejectsWhenCPUFull(t *testing.T) {
+	o, k8s := newTestOrchestratorWithFake()
+	ctx := context.Background()
+
+	// 8Gi of memory (plenty) but only 2 CPU.
+	capacityTestNode(t, k8s, "8Gi", "2")
+
+	// 4 live pods x 500m = 2000m; the 90% budget of 2 CPU is 1800m, so
+	// there is no room for a fifth.
+	capacityTestPods(t, k8s, "live", corev1.PodRunning, 4)
+
+	if err := o.CheckCapacity(ctx); err == nil {
+		t.Fatal("expected ResourceExhausted when the CPU requests fill the node")
+	}
+}
+
+// TestCheckCapacity_AcceptsWhenCPUHasRoom guards the other direction: a node
+// with CPU to spare must still be accepted.
+func TestCheckCapacity_AcceptsWhenCPUHasRoom(t *testing.T) {
+	o, k8s := newTestOrchestratorWithFake()
+	ctx := context.Background()
+
+	capacityTestNode(t, k8s, "8Gi", "8")
+	capacityTestPods(t, k8s, "live", corev1.PodRunning, 3)
+	if err := o.CheckCapacity(ctx); err != nil {
+		t.Fatalf("expected capacity to be available: %v", err)
+	}
+}
+
+// capacityTestNode creates the node the capacity check measures against.
+func capacityTestNode(t *testing.T, k8s *kubefake.Clientset, mem, cpu string) {
+	t.Helper()
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-a"},
+		Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+			corev1.ResourceMemory: resource.MustParse(mem),
+			corev1.ResourceCPU:    resource.MustParse(cpu),
+		}},
+	}
+	if _, err := k8s.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+}
+
+// capacityTestPods creates n sandbox pods of the given phase.
+func capacityTestPods(t *testing.T, k8s *kubefake.Clientset, name string, phase corev1.PodPhase, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		pod := capacityTestPod(fmt.Sprintf("%s-%d", name, i), phase, "512Mi")
+		if _, err := k8s.CoreV1().Pods(sandboxNS).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+			t.Fatalf("create pod: %v", err)
+		}
 	}
 }

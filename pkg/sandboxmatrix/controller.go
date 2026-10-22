@@ -262,6 +262,15 @@ const recycleUnhealthyWarmPodAfter = 5 * time.Minute
 // enough that transient scheduler pressure does not thrash the pool.
 const recycleUnschedulableWarmPodAfter = 2 * time.Minute
 
+// resettingPendingGrace is how long a pod stuck Pending in the resetting
+// state may wait before the reconciler treats it as an orphan and reclaims it.
+// The orphan signature is a workspace claim that no longer exists, so the
+// scheduler can never place the pod; the grace period exists only so a pod
+// that is still pulling its image is not deleted underneath the scheduler.
+// Matches recycleUnschedulableWarmPodAfter so both paths reclaim on the
+// same timescale.
+const resettingPendingGrace = 2 * time.Minute
+
 // recycleUnhealthyWarmPods deletes warm pods that will never serve a session:
 // Failed pods (container exited; RestartPolicy Never leaves the pod Failed),
 // Running pods stuck without the Ready condition for longer than
@@ -949,10 +958,15 @@ func detectResetting(ctx context.Context, k8s kubernetes.Interface, namespace st
 		return
 	}
 	for i := range pods.Items {
-		pod := &pods.Items[i]
-		if pod.Status.Phase != corev1.PodRunning {
-			continue
-		}
+		disposeResettingPod(ctx, k8s, namespace, &pods.Items[i])
+	}
+}
+
+// disposeResettingPod moves a pod out of the resetting state: a healthy pod
+// goes back to the warm pool, a dead or orphaned one is reclaimed.
+func disposeResettingPod(ctx context.Context, k8s kubernetes.Interface, namespace string, pod *corev1.Pod) {
+	switch pod.Status.Phase {
+	case corev1.PodRunning:
 		// Pod is running — workspace reset should be complete by now.
 		// Promote to warm with release timestamp.
 		if pod.Labels == nil {
@@ -967,6 +981,38 @@ func detectResetting(ctx context.Context, k8s kubernetes.Interface, namespace st
 		if updateErr == nil {
 			logrus.Debugf("sandbox-matrix: pod %s promoted resetting → warm", pod.Name)
 		}
+	case corev1.PodFailed, corev1.PodSucceeded:
+		// The pod can never serve a session again: sandboxd exited
+		// (RestartPolicy Never leaves the pod Failed) so the workspace
+		// reset that releasePod() asked for never happened, and nothing
+		// will bring it back. Leaving it here is not merely untidy — it
+		// is a permanent leak: CheckCapacity counts EVERY pod carrying
+		// the state label against the node's memory budget, so each dead
+		// pod burns one of the ~13 sandbox slots a 4C8G node has, and the
+		// pool refuses every new sandbox ("warm pool full") until an
+		// operator intervenes.
+		//
+		// The only recycler for dead pods (recycleUnhealthyWarmPods) is
+		// scoped to state=warm, so resetting pods are its blind spot.
+		// Retire them here.
+		logrus.Infof("sandbox-matrix: reclaim dead resetting pod %s (phase %s)", pod.Name, pod.Status.Phase)
+		deleteWarmPod(ctx, k8s, namespace, pod)
+	case corev1.PodPending:
+		// A pod stuck Pending in resetting state is usually an orphan: the
+		// session that owned it is gone and its workspace claim was
+		// deleted, so the scheduler can never place it ("persistentvolumeclaim
+		// ... not found"). It holds a slot forever.
+		//
+		// A pod that only just started Pending may still be pulling its
+		// image or waiting for the scheduler, so it gets a grace period
+		// before we conclude it is an orphan. The grace matches the warm
+		// pool's unschedulable-pod window (recycleUnschedulableWarmPodAfter)
+		// so both paths reclaim on the same timescale.
+		if time.Since(pod.CreationTimestamp.Time) < resettingPendingGrace {
+			return
+		}
+		logrus.Infof("sandbox-matrix: reclaim orphaned resetting pod %s (phase %s)", pod.Name, pod.Status.Phase)
+		deleteWarmPod(ctx, k8s, namespace, pod)
 	}
 }
 

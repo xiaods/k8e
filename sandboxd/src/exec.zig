@@ -337,9 +337,21 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         };
         defer env_build.deinit();
 
-        // Fork /bin/sh -c <command> with stdout piped
+        // Fork /bin/sh -c <command> with stdout and stderr piped SEPARATELY.
+        // They used to share one pipe (both fds dup2'd onto stdout_pipe), so
+        // the stream carried no channel information and every byte reached
+        // the client as stdout — the E2B SDK's stderr was always empty and
+        // its on_stderr callback never fired. Separate pipes let each frame
+        // name its channel.
         var stdout_pipe: [2]i32 = undefined;
         if (std.os.linux.pipe2(&stdout_pipe, std.os.linux.O{ .CLOEXEC = true }) < 0) {
+            try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", "{\"error\":\"pipe failed\"}");
+            return;
+        }
+        var stderr_pipe: [2]i32 = undefined;
+        if (std.os.linux.pipe2(&stderr_pipe, std.os.linux.O{ .CLOEXEC = true }) < 0) {
+            _ = std.os.linux.close(stdout_pipe[0]);
+            _ = std.os.linux.close(stdout_pipe[1]);
             try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", "{\"error\":\"pipe failed\"}");
             return;
         }
@@ -347,20 +359,24 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         if (std.os.linux.pipe2(&stdin_pipe, std.os.linux.O{ .CLOEXEC = true }) < 0) {
             _ = std.os.linux.close(stdout_pipe[0]);
             _ = std.os.linux.close(stdout_pipe[1]);
+            _ = std.os.linux.close(stderr_pipe[0]);
+            _ = std.os.linux.close(stderr_pipe[1]);
             try main.writeResponse(client_fd, "500 Internal Server Error", "application/json", "{\"error\":\"pipe failed\"}");
             return;
         }
 
         const child_pid = std.os.linux.fork();
         if (child_pid == 0) {
-            // Child: close read ends, dup stdout/stderr to write ends, dup
-            // stdin from the pipe read end, exec.
+            // Child: close read ends, dup stdout/stderr to their own write
+            // ends, dup stdin from the pipe read end, exec.
             _ = std.os.linux.close(stdout_pipe[0]);
+            _ = std.os.linux.close(stderr_pipe[0]);
             _ = std.os.linux.close(stdin_pipe[1]); // child keeps read end only
             _ = std.os.linux.dup2(stdout_pipe[1], 1);
-            _ = std.os.linux.dup2(stdout_pipe[1], 2);
+            _ = std.os.linux.dup2(stderr_pipe[1], 2);
             _ = std.os.linux.dup2(stdin_pipe[0], 0);
             _ = std.os.linux.close(stdout_pipe[1]);
+            _ = std.os.linux.close(stderr_pipe[1]);
             _ = std.os.linux.close(stdin_pipe[0]);
 
             var cwd_buf: [4096]u8 = undefined;
@@ -372,11 +388,12 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
             std.os.linux.exit(1);
         }
 
-        // Parent: close write end (stdout) and the child's stdin read end;
-        // keep the stdin write fd for /exec/stdin via the process table.
-        // Also snapshot the command so E2B Process/List can report it and a
-        // Connect can describe the process.
+        // Parent: close write ends (stdout, stderr) and the child's stdin
+        // read end; keep the stdin write fd for /exec/stdin via the process
+        // table. Also snapshot the command so E2B Process/List can report it
+        // and a Connect can describe the process.
         _ = std.os.linux.close(stdout_pipe[1]);
+        _ = std.os.linux.close(stderr_pipe[1]);
         _ = std.os.linux.close(stdin_pipe[0]);
         execctl.registerWithConfig(@intCast(child_pid), stdin_pipe[1], req.command);
 
@@ -398,27 +415,31 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         // is not the sandbox's real pid). Frame: data: {"pid":N}\n\n
         var pid_frame_buf: [64]u8 = undefined;
         const pid_frame = std.fmt.bufPrint(&pid_frame_buf, "data: {{\"pid\":{d}}}\n\n", .{child_pid}) catch {
-            _ = std.os.linux.write(client_fd, "data: {\"error\":\"pid frame\"}\n\n".ptr, 27);
+            _ = std.os.linux.write(client_fd, "data: {\"error\":\"pid frame\"}\n\n".ptr, "data: {\"error\":\"pid frame\"}\n\n".len);
             return;
         };
         _ = std.os.linux.write(client_fd, pid_frame.ptr, pid_frame.len);
 
-        // Stream stdout to client, buffering for attach (E2B Connect).
-        var stdout_buf: [4096]u8 = undefined;
-        while (true) {
-            const n = std.os.linux.read(stdout_pipe[0], &stdout_buf, stdout_buf.len);
-            if (n <= 0) break;
-            const data = stdout_buf[0..@as(usize, @intCast(n))];
-            execctl.appendOutput(@intCast(child_pid), data);
-            var line_buf: [4200]u8 = undefined;
-            const line = std.fmt.bufPrint(&line_buf, "data: {s}\n\n", .{data}) catch {
-                _ = std.os.linux.write(client_fd, "data: {\"error\":\"output too large\"}\n\n".ptr, 34);
-                break;
-            };
-            _ = std.os.linux.write(client_fd, line.ptr, line.len);
-        }
+        // Stream stdout and stderr to the client, buffering for attach
+        // (E2B Connect). Each frame names its channel so the client can put
+        // the bytes back on the right stream:
+        //
+        //   data: {"stdout":"<base64>"}\n\n
+        //   data: {"stderr":"<base64>"}\n\n
+        //
+        // The payload is base64 for two reasons: it is JSON-safe (raw bytes
+        // may contain quotes, newlines or invalid UTF-8), and it keeps the
+        // SSE frame boundary intact — a raw payload containing a blank line
+        // used to split the frame and leak the "data: " prefix into the
+        // client's stdout.
+        //
+        // Both pipes are drained together: reading one to EOF before
+        // touching the other deadlocks as soon as a child fills the
+        // unread pipe (>64KiB) while the other is still open.
+        try streamBothChannels(client_fd, stdout_pipe[0], stderr_pipe[0], child_pid);
 
         _ = std.os.linux.close(stdout_pipe[0]);
+        _ = std.os.linux.close(stderr_pipe[0]);
         execctl.markDone(@intCast(child_pid));
 
         // Reap the child and report its exit code as the final SSE frame so
@@ -449,7 +470,7 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
             -1;
         var exit_frame_buf: [64]u8 = undefined;
         const exit_frame = std.fmt.bufPrint(&exit_frame_buf, "data: {{\"exit\":{d}}}\n\n", .{exit_code}) catch {
-            _ = std.os.linux.write(client_fd, "data: {\"exit\":-1}\n\n".ptr, 22);
+            _ = std.os.linux.write(client_fd, "data: {\"exit\":-1}\n\n".ptr, "data: {\"exit\":-1}\n\n".len);
             return;
         };
         _ = std.os.linux.write(client_fd, exit_frame.ptr, exit_frame.len);
@@ -481,6 +502,84 @@ pub fn handleExec(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
     const resp = try std.fmt.allocPrint(allocator, "{{\"stdout\":\"{s}\",\"stderr\":\"{s}\",\"exit_code\":{d},\"duration_ms\":{d},\"truncated\":{s}}}", .{ stdout_json, stderr_json, result.exit_code, result.duration_ms, trunc_lit });
     defer allocator.free(resp);
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
+}
+
+/// streamBothChannels drains a command's stdout and stderr pipes and writes
+/// one SSE frame per chunk, each naming the channel it came from:
+///
+///     data: {"stdout":"<base64>"}\n\n
+///     data: {"stderr":"<base64>"}\n\n
+///
+/// The two pipes are polled together, never one after the other: a child
+/// that fills the stderr pipe (>64KiB) while the parent is still reading
+/// stdout would deadlock forever, because the child cannot exit until its
+/// stderr is drained and the parent is waiting for stdout to reach EOF.
+///
+/// Chunks are base64-encoded so the payload is JSON-safe (raw bytes may
+/// contain quotes, newlines or invalid UTF-8) and so the SSE frame boundary
+/// survives: a raw payload containing a blank line used to split the frame
+/// and leak the "data: " prefix into the client's stdout.
+fn streamBothChannels(client_fd: i32, stdout_fd: i32, stderr_fd: i32, child_pid: usize) !void {
+    const fds = [_]i32{ stdout_fd, stderr_fd };
+    const channels = [_][]const u8{ "stdout", "stderr" };
+    var open = [_]bool{ true, true };
+    var buf: [4096]u8 = undefined;
+
+    while (open[0] or open[1]) {
+        var poll_fds: [2]std.os.linux.pollfd = undefined;
+        var slot_of = [_]usize{ 0, 0 };
+        var n_poll: usize = 0;
+        for (fds, 0..) |fd, i| {
+            if (!open[i]) continue;
+            poll_fds[n_poll] = .{ .fd = fd, .events = std.os.linux.POLL.IN, .revents = 0 };
+            slot_of[n_poll] = i;
+            n_poll += 1;
+        }
+        if (n_poll == 0) break;
+
+        // std.posix.poll retries on EINTR internally, so a signal (the
+        // daemon installs a SIGCHLD handler) never surfaces as an error.
+        const ready = std.posix.poll(poll_fds[0..n_poll], -1) catch |err| {
+            if (err == error.SystemResources) return err;
+            return err;
+        };
+        if (ready == 0) continue;
+
+        for (poll_fds[0..n_poll], 0..) |pfd, i| {
+            const ch = slot_of[i];
+            if (pfd.revents & std.os.linux.POLL.IN == 0) {
+                // No data and no readable end: this channel is finished.
+                if (pfd.revents & (std.os.linux.POLL.HUP | std.os.linux.POLL.ERR | std.os.linux.POLL.NVAL) != 0) {
+                    open[ch] = false;
+                }
+                continue;
+            }
+            const n = std.os.linux.read(pfd.fd, &buf, buf.len);
+            if (n <= 0) {
+                open[ch] = false;
+                continue;
+            }
+            const data = buf[0..@as(usize, @intCast(n))];
+            execctl.appendOutput(@intCast(child_pid), data);
+            try writeChannelFrame(client_fd, channels[ch], data);
+        }
+    }
+}
+
+/// writeChannelFrame writes one channel-tagged SSE frame carrying the
+/// base64-encoded payload.
+fn writeChannelFrame(client_fd: i32, channel: []const u8, data: []const u8) !void {
+    const enc = std.base64.standard.Encoder;
+    const encoded = try std.heap.page_allocator.alloc(u8, enc.calcSize(data.len));
+    defer std.heap.page_allocator.free(encoded);
+    _ = enc.encode(encoded, data);
+
+    var line_buf: [16384]u8 = undefined;
+    const line = std.fmt.bufPrint(&line_buf, "data: {{\"{s}\":\"{s}\"}}\n\n", .{ channel, encoded }) catch {
+        _ = std.os.linux.write(client_fd, "data: {\"error\":\"output too large\"}\n\n".ptr, "data: {\"error\":\"output too large\"}\n\n".len);
+        return;
+    };
+    _ = std.os.linux.write(client_fd, line.ptr, line.len);
 }
 
 // jsonEscape returns the string with JSON special chars escaped (no surrounding quotes).

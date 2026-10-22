@@ -622,7 +622,7 @@ pub fn handleStream(allocator: std.mem.Allocator, client_fd: i32, query: []const
     const trunc_lit: []const u8 = if (truncated) "true" else "false";
     var exit_buf: [128]u8 = undefined;
     const exit_frame = std.fmt.bufPrint(&exit_buf, "data: {{\"exit\":{d},\"signal\":\"\",\"truncated\":{s}}}\n\n", .{ exit_code, trunc_lit }) catch {
-        _ = std.os.linux.write(client_fd, "data: {\"exit\":0,\"signal\":\"\"}\n\n".ptr, 28);
+        _ = std.os.linux.write(client_fd, "data: {\"exit\":0,\"signal\":\"\"}\n\n".ptr, "data: {\"exit\":0,\"signal\":\"\"}\n\n".len);
         return;
     };
     _ = std.os.linux.write(client_fd, exit_frame.ptr, exit_frame.len);

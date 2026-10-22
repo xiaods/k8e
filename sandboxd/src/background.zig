@@ -1,3 +1,4 @@
+const syscall = @import("syscall.zig");
 const std = @import("std");
 const main = @import("main.zig");
 const exec = @import("exec.zig");
@@ -45,7 +46,10 @@ pub fn handleBgSubmit(allocator: std.mem.Allocator, client_fd: i32, body: []cons
     {
         var started_path: [600]u8 = undefined;
         const sp = std.fmt.bufPrintZ(&started_path, "{s}/started_at", .{run_dir}) catch unreachable;
-        const fd = std.os.linux.open(sp.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+        const fd_raw = std.os.linux.open(sp.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+        // open() returns the NEGATED errno as a usize on failure, so the
+        // check must reinterpret the word rather than compare it as signed.
+        const fd: isize = @bitCast(fd_raw);
         if (fd >= 0) {
             var ts_buf: [24]u8 = undefined;
             const ts_str = std.fmt.bufPrint(&ts_buf, "{d}", .{unixSeconds()}) catch "0";
@@ -215,8 +219,7 @@ pub fn killAllRuns(allocator: std.mem.Allocator) void {
     var buf: [4096]u8 align(@alignOf(std.os.linux.dirent64)) = undefined;
     while (true) {
         const n = std.os.linux.getdents64(@intCast(fd), @ptrCast(&buf), buf.len);
-        if (n <= 0) break;
-        const total: usize = @intCast(n);
+        const total = syscall.dirReadCount(n) orelse break;
         var pos: usize = 0;
         while (pos < total) {
             const dent = @as(*align(1) std.os.linux.dirent64, @ptrCast(&buf[pos]));
@@ -299,7 +302,8 @@ fn spawnTimeoutKiller(pid: i32, timeout_sec: u32, run_dir: [:0]u8, allocator: st
     // Fallback for the case where the group signal could not be delivered
     // (setpgid not applied): a no-op once the group kill reaped this pid.
     _ = std.os.linux.kill(@as(std.os.linux.pid_t, @intCast(pid)), std.os.linux.SIG.KILL);
-    const fd = std.os.linux.open(exit_path.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+    const fd_raw = std.os.linux.open(exit_path.ptr, std.os.linux.O{ .CREAT = true, .ACCMODE = .WRONLY, .TRUNC = true }, 0o644);
+    const fd: isize = @bitCast(fd_raw);
     if (fd >= 0) {
         _ = std.os.linux.write(@intCast(fd), "-1", 2);
         _ = std.os.linux.close(@intCast(fd));
