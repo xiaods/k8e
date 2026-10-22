@@ -4,8 +4,11 @@
 # k8e-server host process (embedded e2b is on by default; --disable-e2b to turn off); the Cilium Gateway API is the ONLY
 # external door for every sandbox port:
 #
-#   :80/:443  e2b HTTP (control plane + envd + signed files) via HTTPRoute
+#   :80       e2b HTTP (control plane + envd + signed files) via HTTPRoute
 #             -> headless e2b-server Service/EndpointSlice -> host :3676
+#   :443      the same e2b HTTP surface over TLS, via its own HTTPRoute
+#             (needs the optional sandbox-e2b TLS secret; the :80 routes are
+#             separate objects, so a missing secret never takes :80 down)
 #   :50051    sandbox gRPC (SandboxService) via TCPRoute (L4 passthrough)
 #             -> headless sandbox-grpc-gateway Service/EndpointSlice -> host :50051
 #
@@ -223,6 +226,38 @@ spec:
     - name: e2b-server
       port: 3676
 ---
+# The same control plane over TLS, as its OWN route object.
+#
+# The :443 listener needs a TLS secret (sandbox-e2b); without it the
+# listener reports Invalid and any route attached to it is rejected with
+# NotAllowedByListeners. Keeping the HTTPS route separate from the HTTP
+# one is what makes that safe: a rejected attachment fails only this route,
+# while the :80 route keeps serving. A single route with two parentRefs
+# would take the HTTP path down with it.
+#
+# With the secret present, the E2B surface is reachable over HTTPS:
+#   apiUrl     = https://<gateway>/           (control plane)
+#   sandboxUrl = https://<gateway>/e2b/envd   (envd data plane)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: e2b-control-plane-tls
+  namespace: %{SANDBOX_NAMESPACE}%
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  parentRefs:
+  - name: e2b
+    sectionName: https
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: e2b-server
+      port: 3676
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -251,6 +286,33 @@ spec:
       # The envd surface carries long-lived Connect/WebSocket streams (exec,
       # file watch, process control). Envoy's default request timeout would
       # kill those sessions mid-stream; 0s explicitly disables it.
+      request: 0s
+    backendRefs:
+    - name: e2b-server
+      port: 3676
+---
+# The envd surface over TLS, as its OWN route object — see the reasoning on
+# e2b-control-plane-tls above for why this is not a second parentRef.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: e2b-envd-tls
+  namespace: %{SANDBOX_NAMESPACE}%
+  labels:
+    app.kubernetes.io/managed-by: k8e
+spec:
+  parentRefs:
+  - name: e2b
+    sectionName: https
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /e2b
+    - path:
+        type: PathPrefix
+        value: /files
+    timeouts:
       request: 0s
     backendRefs:
     - name: e2b-server

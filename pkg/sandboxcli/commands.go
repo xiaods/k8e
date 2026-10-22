@@ -15,6 +15,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 	"github.com/xiaods/k8e/pkg/sandbox/client"
+	"github.com/xiaods/k8e/pkg/sandbox/envdstream"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -297,6 +298,47 @@ func runAction(ctx *cli.Context) error {
 	return runExec(cli, ctx, req, sid, needsFinalize, raw)
 }
 
+// rawWriter turns the envd output frames into the bytes the command
+// actually printed: stdout payloads to stdout, stderr payloads to stderr,
+// the exit code to the returned value.
+//
+// The pid frame is dropped — it names the guest process, and printing it
+// would corrupt the command's output.
+type rawWriter struct {
+	out  io.Writer
+	errw io.Writer
+	exit *int
+}
+
+// write emits one frame.
+func (w *rawWriter) write(f envdstream.Frame) {
+	switch {
+	case f.Exit != nil:
+		w.exit = f.Exit
+	case f.PID != nil:
+		// The start frame — nothing to print.
+	case f.Channel == envdstream.ChannelStderr:
+		w.errw.Write(f.Payload)
+	case f.Channel == envdstream.ChannelStdout:
+		w.out.Write(f.Payload)
+	default:
+		// Not an envd output frame (an older sandboxd writing plain
+		// text, or an SSE comment). Pass it through unchanged rather
+		// than dropping it.
+		w.out.Write(f.Raw)
+	}
+}
+
+// runStream executes a command and streams its output verbatim.
+//
+// The gateway forwards the envd SSE frames, whose payloads are base64 so
+// that newlines and ANSI escapes cannot break a frame boundary. `--raw`
+// promises "raw output (no JSON wrapper)", so the frames are decoded here
+// and the bytes the command actually printed are written to stdout/stderr
+// as they arrive.
+//
+// The exit code comes from the terminal {"exit":N} frame. Without it a
+// failing command would be reported as success.
 func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFinalize bool, tenant string) (exitCode int, err error) {
 	rctx, cancel := rpcCtx(req.Timeout)
 	defer cancel()
@@ -309,7 +351,17 @@ func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFina
 		return 1, err
 	}
 
-	var streamErr error
+	var (
+		streamErr error
+		decoder   envdstream.Decoder
+	)
+	writer := &rawWriter{out: os.Stdout, errw: os.Stderr}
+	emit := func(frames []envdstream.Frame) {
+		for _, f := range frames {
+			writer.write(f)
+		}
+	}
+
 	for {
 		chunk, recvErr := stream.Recv()
 		if recvErr != nil {
@@ -319,8 +371,9 @@ func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFina
 			streamErr = recvErr
 			break
 		}
-		os.Stdout.WriteString(chunk.Chunk)
+		emit(decoder.Feed([]byte(chunk.Chunk)))
 	}
+	emit(decoder.Flush())
 
 	if needsFinalize {
 		_ = finalizeState(tenant, sid)
@@ -329,6 +382,9 @@ func runStream(client *client.Client, req *pb.ExecRequest, sid string, needsFina
 	if streamErr != nil {
 		fmt.Fprintf(os.Stderr, "stream error: %v\n", streamErr)
 		return 1, nil
+	}
+	if writer.exit != nil {
+		return *writer.exit, nil
 	}
 	return 0, nil
 }
