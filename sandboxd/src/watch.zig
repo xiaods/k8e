@@ -71,36 +71,92 @@ fn drainInotify() void {
     while (true) {
         const n = std.os.linux.read(inotify_fd, &buf, buf.len);
         if (n <= 0) break;
-        var pos: usize = 0;
-        while (pos + @sizeOf(std.os.linux.inotify_event) <= @as(usize, @intCast(n))) {
-            const ev = @as(*align(1) const std.os.linux.inotify_event, @ptrCast(&buf[pos]));
-            const rec_len = ev.len;
-            if (rec_len == 0) break;
-            const name = if (rec_len > @sizeOf(std.os.linux.inotify_event))
-                @as([*]const u8, @ptrCast(&buf[pos + @sizeOf(std.os.linux.inotify_event)]))[0 .. rec_len - @sizeOf(std.os.linux.inotify_event) - 1]
+        parseInotifyRecords(buf[0..@intCast(n)], {}, recordInotifyEvent);
+    }
+}
+
+/// One record parsed out of a raw inotify read.
+pub const InotifyRecord = struct {
+    wd: i32,
+    mask: u32,
+    /// The entry name relative to the watched directory. Empty for an
+    /// event about the watched object itself.
+    name: []const u8,
+    /// Total length of the record on the wire.
+    rec_len: usize,
+};
+
+/// parseInotifyRecords walks the records in a raw inotify read buffer and
+/// invokes `visit` for each one. Pure: no syscalls, so it is unit-testable.
+///
+/// inotify_event.len is the length of the NAME - including its terminating
+/// NUL - and the kernel pads it so the record stays 4-byte aligned. The
+/// record on the wire is therefore header + len; len on its own is NOT the
+/// record length.
+///
+/// Treating len as the record length broke two things: the name slice came
+/// out as buf[pos+16 .. pos+len-17], which for any name of 15 bytes or
+/// less collapsed to the empty string (so every event reported an empty
+/// name), and the cursor advanced by len instead of by the record length,
+/// which desynchronised the whole event stream after the first record.
+pub fn parseInotifyRecords(
+    buf: []u8,
+    ctx: anytype,
+    comptime visit: fn (@TypeOf(ctx), InotifyRecord) void,
+) void {
+    const header_len = @sizeOf(std.os.linux.inotify_event);
+    var pos: usize = 0;
+    while (pos + header_len <= buf.len) {
+        // Read the header out of the buffer. The struct is read with
+        // align(1) so the buffer needs no special alignment; a many-pointer
+        // must NOT be cast to a single pointer here - that reads from the
+        // wrong address and silently yields a zeroed length.
+        const ev = @as(*align(1) const std.os.linux.inotify_event, @ptrCast(&buf[pos]));
+        const rec_len = header_len + ev.len;
+        if (pos + rec_len > buf.len) break;
+        // The name field is NUL-terminated. ev.len counts the NUL and the
+        // alignment padding, so the name is NOT len-1 bytes long - find the
+        // terminator instead of trusting the length.
+        const field = buf[pos + header_len .. pos + rec_len];
+        const nul = std.mem.indexOfScalar(u8, field, 0) orelse field.len;
+        const name: []const u8 = field[0..nul];
+        visit(ctx, .{ .wd = ev.wd, .mask = ev.mask, .name = name, .rec_len = rec_len });
+        pos += rec_len;
+    }
+}
+
+/// recordInotifyEvent appends one inotify record to its watcher's ring.
+fn recordInotifyEvent(_: void, rec: InotifyRecord) void {
+    lockTable();
+    defer unlockTable();
+    if (findWatcherByWd(rec.wd)) |w| {
+        const t = eventTypeOf(rec.mask);
+        if (t != 0) {
+            const slot = (w.head + w.len) % EVENT_BUF_MAX;
+            // The SDK's FilesystemEvent.name is documented as the
+            // "relative path to the filesystem object" - relative to the
+            // watched directory - which is exactly what inotify hands us as
+            // the entry name. Do NOT prefix the watch path: the SDK
+            // matches the name against the entries it listed in that
+            // directory.
+            //
+            // An event about the watched object itself (its own
+            // attributes, a self-delete) carries no entry name; report the
+            // watch path so the event stays identifiable.
+            const reported = if (rec.name.len == 0)
+                std.mem.sliceTo(&w.path, 0)
             else
-                "";
-            lockTable();
-            if (findWatcherByWd(ev.wd)) |w| {
-                const t = eventTypeOf(ev.mask);
-                if (t != 0) {
-                    const slot = (w.head + w.len) % EVENT_BUF_MAX;
-                    var path_buf: [256]u8 = undefined;
-                    const full = std.fmt.bufPrint(&path_buf, "{s}/{s}", .{ std.mem.sliceTo(&w.path, 0), name }) catch "";
-                    const clen = @min(full.len, 255);
-                    @memcpy(w.names[slot][0..clen], full[0..clen]);
-                    w.names[slot][clen] = 0;
-                    w.types[slot] = t;
-                    if (w.len < EVENT_BUF_MAX) {
-                        w.len += 1;
-                    } else {
-                        w.head = (w.head + 1) % EVENT_BUF_MAX;
-                        if (w.cursor > 0) w.cursor -= 1;
-                    }
-                }
+                rec.name;
+            const clen = @min(reported.len, 255);
+            @memcpy(w.names[slot][0..clen], reported[0..clen]);
+            w.names[slot][clen] = 0;
+            w.types[slot] = t;
+            if (w.len < EVENT_BUF_MAX) {
+                w.len += 1;
+            } else {
+                w.head = (w.head + 1) % EVENT_BUF_MAX;
+                if (w.cursor > 0) w.cursor -= 1;
             }
-            unlockTable();
-            pos += rec_len;
         }
     }
 }
