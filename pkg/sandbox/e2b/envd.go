@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xiaods/k8e/pkg/sandbox/envdstream"
 	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 )
 
@@ -370,33 +371,19 @@ func (s *Server) runProcessStream(r *http.Request, sandboxID string, rec *Proces
 //
 // It reports ok=false for a frame that is not channel-tagged (the older
 // sandboxd emitted raw output), so the caller can fall back to stdout.
+//
+// The decoding lives in pkg/sandbox/envdstream so the e2b server and the
+// CLI read the wire format the same way.
 func parseChannelFrame(frame []byte) (OutputChannel, []byte, bool) {
-	trimmed := bytes.TrimSpace(frame)
-	if !bytes.HasPrefix(trimmed, []byte("{")) {
+	f, ok := envdstream.ParseFrame(frame)
+	if !ok || f.Exit != nil {
 		return "", nil, false
 	}
-	var v struct {
-		Stdout string `json:"stdout"`
-		Stderr string `json:"stderr"`
-	}
-	if err := json.Unmarshal(trimmed, &v); err != nil {
-		return "", nil, false
-	}
-	// Exactly one of the two must be present, and it must be non-empty:
-	// an empty payload carries no bytes and would be a no-op frame.
-	if v.Stdout != "" {
-		decoded, err := base64.StdEncoding.DecodeString(v.Stdout)
-		if err != nil {
-			return "", nil, false
-		}
-		return ChannelStdout, decoded, true
-	}
-	if v.Stderr != "" {
-		decoded, err := base64.StdEncoding.DecodeString(v.Stderr)
-		if err != nil {
-			return "", nil, false
-		}
-		return ChannelStderr, decoded, true
+	switch f.Channel {
+	case envdstream.ChannelStdout:
+		return ChannelStdout, f.Payload, true
+	case envdstream.ChannelStderr:
+		return ChannelStderr, f.Payload, true
 	}
 	return "", nil, false
 }
