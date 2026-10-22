@@ -2,6 +2,7 @@ const std = @import("std");
 const main = @import("main.zig");
 const exec = @import("exec.zig");
 const path_util = @import("path.zig");
+const syscall = @import("syscall.zig");
 
 const WriteRequest = struct {
     path: []const u8 = "",
@@ -234,13 +235,37 @@ pub fn handleList(allocator: std.mem.Allocator, client_fd: i32, query: []const u
     if (extractQueryParam(query, "since")) |v| {
         since = std.fmt.parseInt(i64, v, 10) catch 0;
     }
+    // Optional path=<dir>: list this subtree instead of the whole workspace.
+    // The E2B SDK's files.list(path) asks for one directory, and walking
+    // the ENTIRE workspace for it is O(workspace) — on a sandbox with a
+    // populated .venv that is thousands of entries, each of which the
+    // caller then stats. Listing the requested subtree keeps the cost
+    // proportional to what was asked for.
+    //
+    // The path arrives percent-encoded (it contains "/"), so it must be
+    // decoded before it is used as a directory.
+    var root_buf: [4096]u8 = undefined;
+    var root: []const u8 = "/workspace";
+    if (extractQueryParam(query, "path")) |v| {
+        if (v.len > 0) {
+            if (urlDecode(&root_buf, v)) |decoded| {
+                root = decoded;
+            }
+        }
+    }
+    // Optional depth=<n>: stop descending below n levels under the root.
+    // depth=1 means the root's direct children only.
+    var max_depth: i64 = -1; // -1 = unlimited
+    if (extractQueryParam(query, "depth")) |v| {
+        max_depth = std.fmt.parseInt(i64, v, 10) catch -1;
+    }
     var entries = std.array_list.Managed(FileEntry).init(allocator);
     defer {
         for (entries.items) |e| allocator.free(e.path);
         entries.deinit();
     }
 
-    listDirRecursive(allocator, &entries, "/workspace", "", since) catch {};
+    listDirRecursive(allocator, &entries, root, "", since, max_depth, 0) catch {};
 
     // Build JSON array manually
     var json_buf = std.array_list.Managed(u8).init(allocator);
@@ -263,43 +288,70 @@ pub fn handleList(allocator: std.mem.Allocator, client_fd: i32, query: []const u
     try main.writeResponse(client_fd, "200 OK", "application/json", resp);
 }
 
-fn listDirRecursive(allocator: std.mem.Allocator, entries: *std.array_list.Managed(FileEntry), base: []const u8, sub: []const u8, since: i64) !void {
+/// listDirRecursive walks a directory tree, collecting file entries.
+///
+/// `root` is the absolute directory to walk; `sub` is the path relative to
+/// it ("" at the root). `max_depth` bounds the descent (0 = the root's
+/// direct files only, -1 = unlimited); `depth` is the current level.
+fn listDirRecursive(allocator: std.mem.Allocator, entries: *std.array_list.Managed(FileEntry), root: []const u8, sub: []const u8, since: i64, max_depth: i64, depth: i64) !void {
     const full_path_raw = if (sub.len > 0)
-        try std.fmt.allocPrint(allocator, "{s}/{s}", .{ base, sub })
+        try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, sub })
     else
-        try allocator.dupe(u8, base);
+        try allocator.dupe(u8, root);
     defer allocator.free(full_path_raw);
     const full_path = try allocator.dupeZ(u8, full_path_raw);
     defer allocator.free(full_path);
 
-    const fd = std.os.linux.open(full_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    const fd_raw = std.os.linux.open(full_path.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    // open() returns the NEGATED errno as a usize on failure, so `fd < 0`
+    // on the raw usize never fires — the error then reached @intCast(fd)
+    // and panicked in ReleaseSafe, killing sandboxd (the Pod's PID 1).
+    const fd: isize = @bitCast(fd_raw);
     if (fd < 0) return;
     defer _ = std.os.linux.close(@intCast(fd));
 
     var buf: [4096]u8 align(@alignOf(std.os.linux.dirent64)) = undefined;
     while (true) {
         const n = std.os.linux.getdents64(@intCast(fd), @ptrCast(&buf), buf.len);
-        if (n <= 0) break;
+        const count = syscall.dirReadCount(n) orelse break;
         var pos: usize = 0;
-        while (pos < @as(usize, @intCast(n))) {
+        while (pos < count) {
             const dent = @as(*align(1) std.os.linux.dirent64, @ptrCast(&buf[pos]));
             pos += dent.reclen;
             const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&dent.name)), 0);
             if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
 
             const entry_path = if (sub.len > 0)
-                try std.fmt.allocPrint(allocator, "/workspace/{s}/{s}", .{ sub, name })
+                try std.fmt.allocPrint(allocator, "{s}/{s}/{s}", .{ root, sub, name })
             else
-                try std.fmt.allocPrint(allocator, "/workspace/{s}", .{name});
+                try std.fmt.allocPrint(allocator, "{s}/{s}", .{ root, name });
             errdefer allocator.free(entry_path);
 
             if (dent.type == std.os.linux.DT.DIR) {
+                // Directories are walked, not reported (the E2B list
+                // reports files; the caller stats what it gets).
+                //
+                // `depth` counts path SEGMENTS below the root, the same
+                // measure the e2b layer filters with: a file directly
+                // under the root has depth 1, a file under a subdirectory
+                // has depth 2. A directory at depth L holds files of depth
+                // L+1, so it is entered only when L+1 <= max_depth.
+                if (max_depth >= 0 and depth + 1 > max_depth) {
+                    allocator.free(entry_path);
+                    continue;
+                }
                 const next_sub_raw = if (sub.len > 0)
                     try std.fmt.allocPrint(allocator, "{s}/{s}", .{ sub, name })
                 else
                     try allocator.dupe(u8, name);
                 defer allocator.free(next_sub_raw);
-                try listDirRecursive(allocator, entries, base, next_sub_raw, since);
+                try listDirRecursive(allocator, entries, root, next_sub_raw, since, max_depth, depth + 1);
+                allocator.free(entry_path);
+                continue;
+            }
+            // A file at `depth` segments below the root is kept when the
+            // caller asked for at least that depth.
+            if (max_depth >= 0 and depth + 1 > max_depth) {
                 allocator.free(entry_path);
                 continue;
             }
@@ -390,6 +442,50 @@ pub fn fileMtime(path: []const u8) ?i64 {
     return stx.mtime.sec;
 }
 
+/// urlDecode percent-decodes `src` into `buf` and returns the decoded
+/// slice, or null when the input is malformed or does not fit.
+///
+/// Query values (a path, for instance) carry "/" percent-encoded, so they
+/// must be decoded before they are used as a filesystem path.
+pub fn urlDecode(buf: []u8, src: []const u8) ?[]const u8 {
+    var out: usize = 0;
+    var i: usize = 0;
+    while (i < src.len) {
+        if (out >= buf.len) return null;
+        const c = src[i];
+        if (c == '%') {
+            if (i + 2 >= src.len) return null;
+            const hi = hexVal(src[i + 1]) orelse return null;
+            const lo = hexVal(src[i + 2]) orelse return null;
+            buf[out] = (hi << 4) | lo;
+            out += 1;
+            i += 3;
+            continue;
+        }
+        if (c == '+') {
+            buf[out] = ' ';
+            out += 1;
+            i += 1;
+            continue;
+        }
+        buf[out] = c;
+        out += 1;
+        i += 1;
+    }
+    return buf[0..out];
+}
+
+fn hexVal(c: u8) ?u8 {
+    return switch (c) {
+        '0'...'9' => c - '0',
+        'a'...'f' => c - 'a' + 10,
+        'A'...'F' => c - 'A' + 10,
+        else => null,
+    };
+}
+
+/// extractQueryParam returns the raw (still percent-encoded) value of a
+/// query parameter.
 fn extractQueryParam(query: []const u8, key: []const u8) ?[]const u8 {
     var it = std.mem.splitScalar(u8, query, '&');
     while (it.next()) |pair| {
@@ -488,7 +584,7 @@ pub fn handleMkdir(allocator: std.mem.Allocator, client_fd: i32, body: []const u
         try main.writeResponse(client_fd, "200 OK", "application/json", "{\"ok\":true}");
         return;
     }
-    const err = std.posix.errno(@as(usize, @bitCast(@as(isize, @intCast(rc)))));
+    const err = syscall.errnoFromSyscall(rc);
     if (err == .EXIST) {
         try main.writeResponse(client_fd, "409 Conflict", "application/json", "{\"error\":\"already exists\"}");
         return;
@@ -518,7 +614,7 @@ pub fn handleMove(allocator: std.mem.Allocator, client_fd: i32, body: []const u8
         try main.writeResponse(client_fd, "200 OK", "application/json", "{\"ok\":true}");
         return;
     }
-    const err = std.posix.errno(@as(usize, @bitCast(@as(isize, @intCast(rc)))));
+    const err = syscall.errnoFromSyscall(rc);
     if (err == .NOENT) {
         try main.writeResponse(client_fd, "404 Not Found", "application/json", "{\"error\":\"source not found\"}");
         return;
@@ -562,14 +658,18 @@ pub fn removeRecursive(path_z: [:0]u8) bool {
     const mode_u32: u32 = stx.mode;
     if (mode_u32 & std.os.linux.S.IFMT == std.os.linux.S.IFDIR) {
         // Walk and remove children first (deepest-first).
-        const fd = std.os.linux.open(path_z.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+        const fd_raw = std.os.linux.open(path_z.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+        // open() returns the NEGATED errno as a usize on failure, so the
+        // check must reinterpret the word, not compare it as a signed
+        // number.
+        const fd: isize = @bitCast(fd_raw);
         if (fd >= 0) {
             var buf: [4096]u8 align(@alignOf(std.os.linux.dirent64)) = undefined;
             while (true) {
                 const n = std.os.linux.getdents64(@intCast(fd), @ptrCast(&buf), buf.len);
-                if (n <= 0) break;
+                const count = syscall.dirReadCount(n) orelse break;
                 var pos: usize = 0;
-                while (pos < @as(usize, @intCast(n))) {
+                while (pos < count) {
                     const dent = @as(*align(1) std.os.linux.dirent64, @ptrCast(&buf[pos]));
                     pos += dent.reclen;
                     const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&dent.name)), 0);

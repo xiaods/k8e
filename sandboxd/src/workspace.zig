@@ -1,3 +1,4 @@
+const syscall = @import("syscall.zig");
 const std = @import("std");
 const main = @import("main.zig");
 const background = @import("background.zig");
@@ -57,9 +58,12 @@ fn collectPaths(allocator: std.mem.Allocator, paths: *std.array_list.Managed([]c
     const full_z = try allocator.dupeZ(u8, full_raw);
     defer allocator.free(full_z);
 
-    const fd = std.os.linux.open(full_z.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    const fd_raw = std.os.linux.open(full_z.ptr, std.os.linux.O{ .ACCMODE = .RDONLY, .DIRECTORY = true }, 0);
+    // open() returns the NEGATED errno as a usize on failure; `-fd` on the
+    // raw usize is meaningless. Reinterpret the word to recover the errno.
+    const fd: isize = @bitCast(fd_raw);
     if (fd < 0) {
-        const err = @as(std.posix.E, @enumFromInt(-fd));
+        const err = std.os.linux.errno(fd_raw);
         return switch (err) {
             .NOENT, .NOTDIR => error.FileNotFound,
             else => error.OpenFailed,
@@ -70,9 +74,9 @@ fn collectPaths(allocator: std.mem.Allocator, paths: *std.array_list.Managed([]c
     var buf: [4096]u8 align(@alignOf(std.os.linux.dirent64)) = undefined;
     while (true) {
         const n = std.os.linux.getdents64(@intCast(fd), @ptrCast(&buf), buf.len);
-        if (n <= 0) break;
+        const count = syscall.dirReadCount(n) orelse break;
         var pos: usize = 0;
-        while (pos < @as(usize, @intCast(n))) {
+        while (pos < count) {
             const dent = @as(*align(1) std.os.linux.dirent64, @ptrCast(&buf[pos]));
             pos += dent.reclen;
             const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&dent.name)), 0);

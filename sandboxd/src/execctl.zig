@@ -1,5 +1,6 @@
 const std = @import("std");
 const main = @import("main.zig");
+const syscall = @import("syscall.zig");
 
 /// Process control table for streaming execs (KIP-18 "ability downshift").
 ///
@@ -304,7 +305,7 @@ pub fn handleSignal(allocator: std.mem.Allocator, client_fd: i32, body: []const 
 
     const rc = std.os.linux.kill(req.pid, sig);
     if (rc != 0) {
-        const err = std.posix.errno(@as(usize, @bitCast(@as(isize, @intCast(rc)))));
+        const err = syscall.errnoFromSyscall(rc);
         if (err == .SRCH) {
             // Process already gone — the streaming handler may not have
             // reaped it yet. Report not-found so the SDK sees kill()===false.
@@ -427,18 +428,25 @@ pub fn handleAttach(allocator: std.mem.Allocator, client_fd: i32, query: []const
     const pid_frame = std.fmt.bufPrint(&pid_frame_buf, "data: {{\"pid\":{d}}}\n\n", .{pid}) catch return;
     _ = std.os.linux.write(client_fd, pid_frame.ptr, pid_frame.len);
 
-    // Replay the buffered output as SSE data frames.
+    // Replay the buffered output as SSE data frames, in the same
+    // channel-tagged base64 format the live stream uses
+    // (data: {"stdout":"<base64>"}). The raw form is not JSON-safe and
+    // split the frame boundary whenever the output contained a blank line.
     var buf: [BUFFER_MAX]u8 = undefined;
     const n = attachOutput(pid, &buf);
-    var line_buf: [BUFFER_MAX + 32]u8 = undefined;
     if (n > 0) {
-        const line = std.fmt.bufPrint(&line_buf, "data: {s}\n\n", .{buf[0..n]}) catch {
-            _ = std.os.linux.write(client_fd, "data: {\"error\":\"attach output too large\"}\n\n".ptr, 37);
+        const enc = std.base64.standard.Encoder;
+        const encoded = try std.heap.page_allocator.alloc(u8, enc.calcSize(n));
+        defer std.heap.page_allocator.free(encoded);
+        _ = enc.encode(encoded, buf[0..n]);
+        var line_buf: [BUFFER_MAX * 2 + 64]u8 = undefined;
+        const line = std.fmt.bufPrint(&line_buf, "data: {{\"stdout\":\"{s}\"}}\n\n", .{encoded}) catch {
+            _ = std.os.linux.write(client_fd, "data: {\"error\":\"attach output too large\"}\n\n".ptr, "data: {\"error\":\"attach output too large\"}\n\n".len);
             return;
         };
         _ = std.os.linux.write(client_fd, line.ptr, line.len);
     }
 
     // Done marker (the e2b layer reads the exit-code file for the code).
-    _ = std.os.linux.write(client_fd, "data: {\"done\":true}\n\n".ptr, 24);
+    _ = std.os.linux.write(client_fd, "data: {\"done\":true}\n\n".ptr, "data: {\"done\":true}\n\n".len);
 }

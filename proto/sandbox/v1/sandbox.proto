@@ -125,6 +125,11 @@ message ExecRequest {
   string workdir    = 4;
   bool   background = 5;  // submit asynchronously, return run_id immediately
   string language   = 6;  // optional hint: python|bash|node|ts (observability)
+  // Per-call environment variables, merged over the session's own env.
+  // The E2B SDK's commands.run(envs={...}) rides this field: without it the
+  // SDK's envs were silently dropped on the streaming path (the only path
+  // the E2B SDK uses), so the command ran without them.
+  map<string, string> env = 7;
 }
 message ExecResponse {
   string stdout      = 1;
@@ -173,6 +178,12 @@ message ListFilesRequest  {
   string session_id = 1;
   // Return only files modified after this unix timestamp (0 = all).
   int64  since      = 2;
+  // Restrict the walk to this subtree ("" = the whole workspace). Listing
+  // one directory must not cost a walk of everything else in it.
+  string path       = 3;
+  // Stop descending below this many levels under the root (0 = the root's
+  // direct children, -1 = unlimited).
+  int64  depth      = 4;
 }
 message ListFilesResponse { repeated FileEntry files = 1; }
 message FileEntry {

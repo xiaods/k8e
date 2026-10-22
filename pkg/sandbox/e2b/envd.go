@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -288,7 +289,12 @@ func (s *Server) runProcessStream(r *http.Request, sandboxID string, rec *Proces
 		Command:   command,      // raw command; exit code arrives in-stream (KIP-18 P1)
 		Timeout:   24 * 60 * 60, // in-container backstop only; the wire deadline detaches, never kills
 		Workdir:   cfg.Cwd,
+		// The per-call env (the E2B SDK's commands.run(envs={...})). It used
+		// to be dropped here: cfg.Envs was parsed and then never handed to
+		// the gateway, so the SDK's envs had no effect on the command.
+		Env: cfg.Envs,
 	}
+
 	stream, err := s.gw.ExecStream(r.Context(), req)
 	if err != nil {
 		s.processes.End(rec.PID, ProcessEnd{ExitCode: -1, Err: err})
@@ -322,6 +328,15 @@ func (s *Server) runProcessStream(r *http.Request, sandboxID string, rec *Proces
 				exitCh <- *code
 				return
 			}
+			// Output frames name their channel:
+			//   data: {"stdout":"<base64>"}\n\n
+			//   data: {"stderr":"<base64>"}\n\n
+			// A frame without a channel is raw output from an older
+			// sandboxd (the pre-separation format) and is stdout.
+			if channel, payload, ok := parseChannelFrame(out); ok {
+				s.processes.Broadcast(rec.PID, channel, payload)
+				return
+			}
 			s.processes.Broadcast(rec.PID, ChannelStdout, out)
 		}
 		for {
@@ -347,6 +362,43 @@ func (s *Server) runProcessStream(r *http.Request, sandboxID string, rec *Proces
 	}
 	s.processes.End(rec.PID, ProcessEnd{ExitCode: exitCode})
 	return exitCode
+}
+
+// parseChannelFrame decodes a channel-tagged output frame:
+//
+//	{"stdout":"<base64>"} / {"stderr":"<base64>"}
+//
+// It reports ok=false for a frame that is not channel-tagged (the older
+// sandboxd emitted raw output), so the caller can fall back to stdout.
+func parseChannelFrame(frame []byte) (OutputChannel, []byte, bool) {
+	trimmed := bytes.TrimSpace(frame)
+	if !bytes.HasPrefix(trimmed, []byte("{")) {
+		return "", nil, false
+	}
+	var v struct {
+		Stdout string `json:"stdout"`
+		Stderr string `json:"stderr"`
+	}
+	if err := json.Unmarshal(trimmed, &v); err != nil {
+		return "", nil, false
+	}
+	// Exactly one of the two must be present, and it must be non-empty:
+	// an empty payload carries no bytes and would be a no-op frame.
+	if v.Stdout != "" {
+		decoded, err := base64.StdEncoding.DecodeString(v.Stdout)
+		if err != nil {
+			return "", nil, false
+		}
+		return ChannelStdout, decoded, true
+	}
+	if v.Stderr != "" {
+		decoded, err := base64.StdEncoding.DecodeString(v.Stderr)
+		if err != nil {
+			return "", nil, false
+		}
+		return ChannelStderr, decoded, true
+	}
+	return "", nil, false
 }
 
 // parseExitFrame extracts {"exit":N} from a frame, or nil.
@@ -422,74 +474,102 @@ func (s *Server) handleProcessConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cross-node Connect: the process's Start stream may have been served by
-	// a different control-plane node, so this node's local process table has
-	// no record. Fall back to the sandbox-owned process table via
-	// /exec/attach (pids are the sandbox's own — node-independent), which
-	// replays the buffered output. This keeps Connect working across nodes
-	// even though the subscriber broadcast stays local.
-	if rec == nil {
-		s.attachRemote(w, r, sandboxID, pid)
-		return
-	}
-	hijack, ok := w.(http.Hijacker)
-	if !ok {
-		return
-	}
-	conn, buf, err := hijack.Hijack()
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-	_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/connect+json\r\n\r\n")
+	// Connect must REPLAY the output the process has already produced. The
+	// subscriber broadcast cannot do that: it only forwards chunks as they
+	// happen, so attaching to a process that already printed something (or
+	// finished) delivered nothing — the SDK's CommandHandle.wait() then
+	// raised "Command ended without an end event" or reported empty output.
+	//
+	// sandboxd's /exec/attach replays the process's ring buffer, and the
+	// pids there are the sandbox's own, so it works from any control-plane
+	// node. Use it for every Connect, not just the cross-node case.
+	s.attachRemote(w, r, sandboxID, pid)
+}
 
-	writeStreamStartFrame(buf, pid)
-
-	sub := &streamSubscriber{pid: pid, w: buf}
+// subscribeProcessOutput registers a live subscriber for a process so the
+// output it produces AFTER the attach is forwarded too. It returns nil when
+// the process is unknown to this node. The returned function releases the
+// subscriber.
+func (s *Server) subscribeProcessOutput(sandboxID string, pid int, w io.Writer) (*streamSubscriber, func()) {
+	if s.processes.Get(sandboxID, pid) == nil {
+		return nil, func() {}
+	}
+	sub := &streamSubscriber{pid: pid, w: w}
 	if !s.processes.Subscribe(pid, sub) {
-		writeEnvelopeRaw(buf, envelope(FlagEndStream, map[string]any{
-			"error": map[string]string{"code": "not_found", "message": fmt.Sprintf("process not found: %d", pid)},
-		}))
-		return
+		return nil, func() {}
 	}
-	defer s.processes.Unsubscribe(pid, sub)
-
-	// Keepalive heartbeats for long-idle reconnects.
-	ksub, stopKeepalive := newKeepaliveSubscriber(sub, buf)
+	ksub, stopKeepalive := newKeepaliveSubscriber(sub, w)
 	s.processes.ReplaceSubscriber(pid, sub, ksub)
-	defer stopKeepalive()
-
-	// Wait for the process to finalize, then close the stream.
-	if done, ok := s.processes.Done(pid); ok {
-		<-done
+	return sub, func() {
+		stopKeepalive()
+		s.processes.Unsubscribe(pid, sub)
 	}
-	writeEnvelopeRaw(buf, envelope(FlagEndStream, map[string]any{}))
+}
+
+// replayAttachedOutput writes the buffered output of an attached process to
+// the stream and returns the exit code the process reported.
+//
+// The frames are channel-tagged and base64-encoded
+// (data: {"stdout":"<base64>"}), the same format the live stream uses. An
+// older sandboxd emitted raw output instead; that frame is passed through
+// unchanged.
+func replayAttachedOutput(w io.Writer, raw []byte) int {
+	exitCode := 0
+	pidSeen := false
+	for _, frame := range splitSSEFrames(raw) {
+		out := stripDataPrefix(frame)
+		// Skip the leading pid frame and the done marker (both are sandboxd
+		// protocol frames, not process output).
+		if bytes.Contains(out, []byte(`"done":true`)) {
+			continue
+		}
+		if code := parseExitFrame(out); code != nil {
+			exitCode = *code
+			continue
+		}
+		if !pidSeen {
+			pidSeen = true
+			if parsePidFrame(out) != nil {
+				continue
+			}
+		}
+		if len(out) == 0 {
+			continue
+		}
+		// A tagged frame names its channel and carries base64 bytes.
+		if channel, payload, ok := parseChannelFrame(out); ok {
+			writeStreamDataFrame(w, channel, payload)
+			continue
+		}
+		// Legacy frame: raw output on stdout.
+		writeStreamDataFrame(w, ChannelStdout, out)
+	}
+	return exitCode
 }
 
 // handleProcessList implements process.Process/List (unary).
 func (s *Server) handleProcessList(w http.ResponseWriter, r *http.Request) {
 	sandboxID := sandboxIDOf(r)
 
-	// Prefer the sandbox-owned process table (GET /exec/processes): pids are
-	// the sandbox's own, node-independent, so the view is consistent across
-	// control-plane nodes (multi-node embedded architecture). Fall back to
-	// the local process table (subscriber records) if sandboxd is
-	// unreachable — degraded but still useful.
-	if sp, err := s.sandboxd.processList(r.Context(), sandboxID); err == nil {
-		procs := make([]map[string]any, 0, len(sp))
-		for _, p := range sp {
-			procs = append(procs, map[string]any{
-				"pid":    p.PID,
-				"alive":  p.Alive,
-				"config": map[string]any{"cmd": p.Config},
-			})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"processes": procs})
-		return
-	}
-
+	// The E2B protocol has ONE pid space: the pid the SDK received in the
+	// Start frame is the pid it must pass to Connect/SendInput/Signal, and
+	// Process/List has to report the same numbers. It used to report
+	// sandboxd's own pids (the in-guest pid) while Start handed out the
+	// e2b layer's synthetic pid, so a client that followed the documented
+	// flow — "get the pid from commands.list(), then connect to it" — always
+	// got "process not found".
+	//
+	// So: list the e2b layer's own process table (the synthetic pids the SDK
+	// knows). The sandboxd table is still consulted to learn which of them
+	// are alive and what command they run, and to cover processes started
+	// on another control-plane node.
 	records := s.processes.List(sandboxID)
+	byGuest := map[int]sandboxProcess{}
+	if sp, err := s.sandboxd.processList(r.Context(), sandboxID); err == nil {
+		for _, p := range sp {
+			byGuest[p.PID] = p
+		}
+	}
 	procs := make([]map[string]any, 0, len(records))
 	for _, rec := range records {
 		cfg := map[string]any{
@@ -500,10 +580,19 @@ func (s *Server) handleProcessList(w http.ResponseWriter, r *http.Request) {
 		if rec.Config.Cwd != "" {
 			cfg["cwd"] = rec.Config.Cwd
 		}
-		procs = append(procs, map[string]any{
+		entry := map[string]any{
 			"pid":    rec.PID,
 			"config": cfg,
-		})
+		}
+		// When the guest pid is known, report the command it runs and
+		// whether it is still alive.
+		if guest, ok := s.processes.GuestPID(rec.PID); ok {
+			if sp, found := byGuest[guest]; found {
+				cfg["cmd"] = sp.Config
+				entry["alive"] = sp.Alive
+			}
+		}
+		procs = append(procs, entry)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"processes": procs})
@@ -751,14 +840,6 @@ func (s *Server) handleUnimplementedProcess(name string) http.HandlerFunc {
 	}
 }
 
-// handleUnimplementedFS answers a filesystem RPC with the honest
-// unimplemented code.
-func (s *Server) handleUnimplementedFS(name string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		s.writeEnvdError(w, connectError("unimplemented", name+" is not supported: K8E has no watch"))
-	}
-}
-
 // fsReady resolves the sandbox for a filesystem RPC, auto-resuming a paused
 // one. Returns the live sandbox ID or writes the error and returns "".
 func (s *Server) fsReady(w http.ResponseWriter, r *http.Request) string {
@@ -899,9 +980,15 @@ func (s *Server) handleFSListDir(w http.ResponseWriter, r *http.Request) {
 		s.writeEnvdError(w, connectError("invalid_argument", "not a directory: "+path))
 		return
 	}
-	// List files under the path (recursive walk from sandboxd), filter to
-	// depth-1 children, and stat each for the full EntryInfo.
-	resp, err := s.gw.ListFiles(r.Context(), &pb.ListFilesRequest{SessionId: sandboxID})
+	// List the requested subtree, not the whole workspace: sandboxd's walk
+	// is O(workspace), and the caller then stats every entry it gets back.
+	// On a sandbox with a populated .venv that turned files.list() of a
+	// single directory into thousands of entries and seconds of latency.
+	resp, err := s.gw.ListFiles(r.Context(), &pb.ListFilesRequest{
+		SessionId: sandboxID,
+		Path:      path,
+		Depth:     int64(body.Depth),
+	})
 	if err != nil {
 		s.writeEnvdError(w, connectError("internal", "list failed: "+err.Error()))
 		return
@@ -1158,7 +1245,26 @@ func (ss *streamSubscriber) OnOutput(channel OutputChannel, data []byte) {
 	writeStreamDataFrame(ss.w, channel, data)
 }
 
-func (ss *streamSubscriber) OnEnd(end ProcessEnd) {}
+// OnEnd delivers the process's end event to the subscriber.
+//
+// The Connect stream must carry the end event (the SDK's CommandHandle.wait()
+// raises "Command ended without an end event" without it, so an attached
+// process never reported its output or exit code).
+//
+// It writes the end EVENT only — not the end-stream frame: the handler that
+// owns the stream writes that one when the process is done, and writing it
+// twice makes the SDK's Connect parser fail on the second frame.
+func (ss *streamSubscriber) OnEnd(end ProcessEnd) {
+	writeEnvelopeRaw(ss.w, envelope(FlagMessage, map[string]any{
+		"event": map[string]any{
+			"end": map[string]any{
+				"exitCode": end.ExitCode,
+				"exited":   true,
+				"status":   exitStatus(end.ExitCode),
+			},
+		},
+	}))
+}
 
 // writeEnvelopeRaw writes raw bytes to a hijacked writer and flushes a
 // bufio wrapper so the client sees frames live (a hijacked response is
@@ -1253,7 +1359,15 @@ func exitStatus(code int) string {
 // output as SSE frames; these are re-enveloped into the Connect wire
 // (start + data + end), mirroring the local-stream shape the SDK expects.
 func (s *Server) attachRemote(w http.ResponseWriter, r *http.Request, sandboxID string, pid int) {
-	raw, err := s.sandboxd.attach(r.Context(), sandboxID, pid)
+	// sandboxd's /exec/attach addresses a process by its IN-SANDBOX pid, not
+	// by the e2b layer's synthetic one. When the local table still knows the
+	// mapping, translate it; otherwise the pid may already BE the guest pid
+	// (a process started on another node reports the sandbox's own).
+	guestPID := pid
+	if guest, ok := s.processes.GuestPID(pid); ok {
+		guestPID = guest
+	}
+	raw, err := s.sandboxd.attach(r.Context(), sandboxID, guestPID)
 	if err != nil {
 		writeEnvdStreamError(w, connectError("not_found", fmt.Sprintf("process not found: %d", pid)))
 		return
@@ -1275,26 +1389,44 @@ func (s *Server) attachRemote(w http.ResponseWriter, r *http.Request, sandboxID 
 
 	// Replay the sandboxd SSE frames (data: ...) as stdout data frames,
 	// skipping the leading pid frame (already sent as the start envelope).
-	pidSeen := false
-	for _, frame := range splitSSEFrames(raw) {
-		out := stripDataPrefix(frame)
-		// Skip the leading pid frame and the done marker (both are sandboxd
-		// protocol frames, not process output).
-		if bytes.Contains(out, []byte(`"done":true`)) {
-			continue
-		}
-		if !pidSeen {
-			if parsePidFrame(out) != nil {
-				pidSeen = true
-				continue
-			}
-			pidSeen = true
-		}
-		if len(out) > 0 {
-			writeStreamDataFrame(buf, ChannelStdout, out)
+	//
+	// The frames are channel-tagged and base64-encoded
+	// (data: {"stdout":"<base64>"}), the same format the live stream uses.
+	// An older sandboxd emitted raw output instead; that frame is passed
+	// through unchanged.
+	//
+	// The live subscriber is registered BEFORE the replay so that output
+	// produced while the replay runs is not lost: the replay covers what the
+	// process had produced so far, and the subscriber carries the rest.
+	sub, unsubscribe := s.subscribeProcessOutput(sandboxID, pid, buf)
+	defer unsubscribe()
+
+	exitCode := replayAttachedOutput(buf, raw)
+
+	// The replay only covers what the process had produced SO FAR. A client
+	// that attaches to a RUNNING process expects to follow it to completion
+	// (the SDK's connect() documents a timeout for exactly that), so the
+	// stream stays open until the process ends.
+	if sub != nil {
+		if done, ok := s.processes.Done(pid); ok {
+			<-done
 		}
 	}
 
+	// The stream must carry an end event. Without it the SDK's
+	// CommandHandle.wait() raises "Command ended without an end event", so
+	// attaching to a running process reported neither its output nor its
+	// exit code. The end event is written on its own — the end-stream
+	// frame below closes the stream.
+	writeEnvelopeRaw(buf, envelope(FlagMessage, map[string]any{
+		"event": map[string]any{
+			"end": map[string]any{
+				"exitCode": exitCode,
+				"exited":   true,
+				"status":   exitStatus(exitCode),
+			},
+		},
+	}))
 	writeEnvelopeRaw(buf, envelope(FlagEndStream, map[string]any{}))
 }
 
@@ -1439,6 +1571,154 @@ func (s *Server) handleFSCreateWatcher(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"watcherId": strconv.Itoa(id)})
 }
 
+// handleFSWatchDir implements the STREAMING filesystem.Filesystem/WatchDir.
+//
+// The JS SDK's files.watchDir() uses this streaming RPC, while the Python
+// SDK uses the polling trio (CreateWatcher / GetWatcherEvents /
+// RemoveWatcher). KIP-18 answered WatchDir with an honest 501 on the
+// assumption that "no SDK uses it" — the Python SDK indeed does not, but the
+// JS SDK does, so the JS SDK's watchDir() failed with
+// "501: WatchDir is not supported: K8E has no watch".
+//
+// The streaming form is built on the polling trio that sandboxd already
+// implements: a watcher is created, then its events are polled and pushed
+// down the stream as they appear. The semantics match the Python SDK's
+// watch_dir(): the same events, in the same order.
+func (s *Server) handleFSWatchDir(w http.ResponseWriter, r *http.Request) {
+	// A STREAMING connect request carries its payload inside a connect
+	// envelope (5-byte header + JSON), unlike the unary RPCs. Read it the
+	// same way the other streaming handlers do.
+	msg, err := readFirstMessage(mustReadBody(r))
+	if err != nil {
+		s.writeEnvdError(w, err.(*E2bError))
+		return
+	}
+	path, _ := msg["path"].(string)
+	resolved, err := resolveSandboxPath(path)
+	if err != nil {
+		s.writeEnvdError(w, connectError("invalid_argument", err.Error()))
+		return
+	}
+	path = resolved
+	sandboxID := s.fsReady(w, r)
+	if sandboxID == "" {
+		return
+	}
+	watcherID, err := s.sandboxd.createWatcher(r.Context(), sandboxID, path)
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			s.writeEnvdError(w, connectError("not_found", "path not found: "+path))
+			return
+		}
+		s.writeEnvdError(w, connectError("internal", "create watcher failed: "+err.Error()))
+		return
+	}
+	// The watcher lives on the sandbox; release it when the client goes away.
+	defer func() { _ = s.sandboxd.removeWatcher(context.Background(), sandboxID, watcherID) }()
+
+	hijack, ok := w.(http.Hijacker)
+	if !ok {
+		s.writeEnvdError(w, connectError("internal", "streaming watch is not supported by this connection"))
+		return
+	}
+	conn, buf, err := hijack.Hijack()
+	if err != nil {
+		s.writeEnvdError(w, connectError("internal", "watch stream failed: "+err.Error()))
+		return
+	}
+	defer conn.Close()
+	_, _ = buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/connect+json\r\n\r\n")
+
+	// The sandboxd calls outlive the request context (which is cancelled
+	// once the connection is hijacked), so they get their own.
+	watchCtx, cancelWatch := context.WithCancel(context.Background())
+	defer cancelWatch()
+
+	// The SDK's watch handle reads the first frame and expects a START
+	// event (it throws "Expected start event" otherwise).
+	//
+	// The watch stream's frame IS the message: the connect client parses the
+	// whole frame as the WatchDirResponse, so the oneof member name sits at
+	// the TOP level ("start"), not under an "event" key.
+	writeEnvelopeRaw(buf, envelope(FlagMessage, map[string]any{
+		"start": map[string]any{},
+	}))
+
+	// Poll the watcher and push each batch of events down the stream. The
+	// SDK's watch handle consumes them until the stream ends.
+	stop := watchClientGone(conn)
+	s.streamWatchEvents(watchCtx, buf, sandboxID, watcherID, stop)
+}
+
+// watchClientGone reports when the client closes the hijacked connection.
+//
+// The request context is NOT a usable cancellation signal here: once the
+// connection is hijacked the server cancels it, which ended the stream
+// immediately. The client going away is detected by reading the hijacked
+// connection instead.
+func watchClientGone(conn net.Conn) <-chan struct{} {
+	stop := make(chan struct{})
+	go func() {
+		defer close(stop)
+		one := make([]byte, 1)
+		for {
+			_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+			_, err := conn.Read(one)
+			if err != nil {
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					continue // the client is quiet, not gone
+				}
+				return // the client closed the connection
+			}
+		}
+	}()
+	return stop
+}
+
+// streamWatchEvents polls a sandboxd watcher and writes every event to the
+// stream until the client goes away or the watcher disappears.
+func (s *Server) streamWatchEvents(ctx context.Context, w io.Writer, sandboxID string, watcherID int, stop <-chan struct{}) {
+	for {
+		select {
+		case <-stop:
+			writeEnvelopeRaw(w, envelope(FlagEndStream, map[string]any{}))
+			return
+		default:
+		}
+		// The sandboxd calls must not ride the (already cancelled) request
+		// context.
+		events, gerr := s.sandboxd.getWatcherEvents(ctx, sandboxID, watcherID)
+		if gerr != nil {
+			// The watcher is gone (the sandbox died): end the stream
+			// cleanly rather than erroring.
+			writeEnvelopeRaw(w, envelope(FlagEndStream, map[string]any{}))
+			return
+		}
+		for _, e := range events {
+			// The watch stream's frame IS the message, with the oneof member
+			// name at the top level; the type inside is the NUMERIC enum the
+			// SDK maps to its names (create/write/remove/rename/chmod). The
+			// string form the polling RPC uses is for the Python SDK.
+			writeEnvelopeRaw(w, envelope(FlagMessage, map[string]any{
+				"filesystem": map[string]any{
+					"name": e.Name,
+					"type": e.Type,
+				},
+			}))
+		}
+		if len(events) == 0 {
+			// Nothing new: wait a little before polling again, and let the
+			// client disconnecting end the loop.
+			select {
+			case <-stop:
+				writeEnvelopeRaw(w, envelope(FlagEndStream, map[string]any{}))
+				return
+			case <-time.After(200 * time.Millisecond):
+			}
+		}
+	}
+}
+
 // handleFSGetWatcherEvents implements filesystem.Filesystem/GetWatcherEvents:
 // return filesystem events since the last call (WatchHandle.get_new_events).
 func (s *Server) handleFSGetWatcherEvents(w http.ResponseWriter, r *http.Request) {
@@ -1498,7 +1778,11 @@ func (s *Server) handleFSRemoveWatcher(w http.ResponseWriter, r *http.Request) {
 		s.writeEnvdError(w, connectError("not_found", "watcher not found"))
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	// Connect (the SDK's transport) requires a JSON content type on every
+	// response. A bare WriteHeader(200) with no body left the content type
+	// empty, and the SDK's watch_handle.stop() failed with "invalid
+	// content-type: ''; expecting 'application/json'".
+	jsonWriter(w, http.StatusOK, map[string]any{})
 }
 
 // eventTypeName maps the sandboxd numeric event type (1..5) to the E2B

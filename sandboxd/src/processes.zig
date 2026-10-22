@@ -1,3 +1,4 @@
+const syscall = @import("syscall.zig");
 const std = @import("std");
 const main = @import("main.zig");
 const exec = @import("exec.zig");
@@ -32,9 +33,9 @@ pub fn handleProcesses(allocator: std.mem.Allocator, client_fd: i32, query: []co
     var wrote_any = false;
     while (true) {
         const n = std.os.linux.getdents64(@intCast(fd), @ptrCast(&buf), buf.len);
-        if (n <= 0) break;
+        const count = syscall.dirReadCount(n) orelse break;
         var pos: usize = 0;
-        while (pos < @as(usize, @intCast(n))) {
+        while (pos < count) {
             const dent = @as(*align(1) std.os.linux.dirent64, @ptrCast(&buf[pos]));
             pos += dent.reclen;
             const name = std.mem.sliceTo(@as([*:0]u8, @ptrCast(&dent.name)), 0);

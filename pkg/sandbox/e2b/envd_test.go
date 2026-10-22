@@ -2,6 +2,7 @@ package e2b
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -367,14 +368,17 @@ func TestUnimplementedSurfaces(t *testing.T) {
 	s, ts := testServer(t, gw)
 	id := createSandboxID(t, ts)
 
-	// SendSignal/SendInput/CloseStdin, PTY Update (resize), and the polling
-	// watch trio (CreateWatcher/GetWatcherEvents/RemoveWatcher) are now
-	// implemented; the streaming WatchDir and streamed stdin stay 501.
+	// SendSignal/SendInput/CloseStdin and PTY Update (resize) are
+	// implemented; the polling watch trio
+	// (CreateWatcher/GetWatcherEvents/RemoveWatcher) is implemented too.
+	// The streaming WatchDir is implemented as well: the JS SDK's
+	// files.watchDir() uses it (the Python SDK uses the polling trio),
+	// so answering it with a 501 broke the JS SDK's watch.
+	// Streamed stdin stays 501.
 	cases := []struct {
 		path string
 		body string
 	}{
-		{"/filesystem.Filesystem/WatchDir", `{}`},
 		{"/process.Process/StreamInput", `{}`},
 	}
 	for _, c := range cases {
@@ -604,6 +608,13 @@ func TestEnvdProcessListFromSandboxd(t *testing.T) {
 	stub.procTable[4242] = sandboxProcess{PID: 4242, Alive: true, Config: "echo hi"}
 	stub.mu.Unlock()
 
+	// Register the same process in the e2b layer's own table, mapping the
+	// SDK-facing pid to the guest pid (4242). Process/List must report the
+	// SDK-facing pid — it is the one the SDK received in the Start frame
+	// and the one it must pass to Connect/SendInput.
+	rec := s.processes.Start(id, ProcessConfig{Cmd: "echo hi"})
+	s.processes.SetGuestPID(rec.PID, 4242)
+
 	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd/process.Process/List", bytes.NewReader([]byte("{}")))
 	for k, v := range envdHeaders(t, s, id) {
 		req.Header.Set(k, v)
@@ -620,11 +631,14 @@ func TestEnvdProcessListFromSandboxd(t *testing.T) {
 		t.Fatalf("list body: %s", body)
 	}
 	if len(out.Processes) != 1 {
-		t.Fatalf("expected 1 process from sandboxd, got %v", out.Processes)
+		t.Fatalf("expected 1 process, got %v", out.Processes)
 	}
 	p := out.Processes[0]
-	if p["pid"] != float64(4242) {
-		t.Fatalf("pid = %v, want 4242", p["pid"])
+	// The SDK-facing pid, NOT the guest pid: the two spaces used to be
+	// mixed, so a client that took the pid from commands.list() and passed
+	// it to commands.connect() always got "process not found".
+	if p["pid"] != float64(rec.PID) {
+		t.Fatalf("pid = %v, want %d (the pid the SDK was given at Start)", p["pid"], rec.PID)
 	}
 	if p["alive"] != true {
 		t.Fatalf("alive = %v, want true", p["alive"])
@@ -826,4 +840,243 @@ func TestEnvdWatchDirFamily(t *testing.T) {
 	if status != 404 {
 		t.Fatalf("events after remove: want 404, got %d", status)
 	}
+}
+
+// TestParseChannelFrame covers the stdout/stderr separation (2026-10-21).
+//
+// sandboxd used to dup2 stderr onto the same pipe as stdout, so the stream
+// carried no channel information: the E2B SDK's stderr was always empty and
+// its on_stderr callback never fired. The stream now tags each frame with
+// its channel and base64-encodes the payload.
+func TestParseChannelFrame(t *testing.T) {
+	// stdout frame
+	ch, payload, ok := parseChannelFrame([]byte(`{"stdout":"aGVsbG8="}`))
+	if !ok {
+		t.Fatal("expected a stdout frame to parse")
+	}
+	if ch != ChannelStdout {
+		t.Fatalf("channel = %q, want %q", ch, ChannelStdout)
+	}
+	if string(payload) != "hello" {
+		t.Fatalf("payload = %q, want %q", payload, "hello")
+	}
+
+	// stderr frame
+	ch, payload, ok = parseChannelFrame([]byte(`{"stderr":"d29ybGQ="}`))
+	if !ok {
+		t.Fatal("expected a stderr frame to parse")
+	}
+	if ch != ChannelStderr {
+		t.Fatalf("channel = %q, want %q", ch, ChannelStderr)
+	}
+	if string(payload) != "world" {
+		t.Fatalf("payload = %q, want %q", payload, "world")
+	}
+
+	// A frame from an older sandboxd carries raw output and no channel:
+	// it must not be mistaken for a tagged frame.
+	if _, _, ok := parseChannelFrame([]byte("plain output")); ok {
+		t.Fatal("expected an untagged frame not to parse as a channel frame")
+	}
+	// A pid frame and an exit frame are handled elsewhere.
+	if _, _, ok := parseChannelFrame([]byte(`{"pid":42}`)); ok {
+		t.Fatal("expected a pid frame not to parse as a channel frame")
+	}
+	if _, _, ok := parseChannelFrame([]byte(`{"exit":0}`)); ok {
+		t.Fatal("expected an exit frame not to parse as a channel frame")
+	}
+}
+
+// TestSSEFramerChannelFramesKeepsBoundaries covers the frame-boundary bug
+// that came with the shared stdout/stderr pipe: a raw payload containing a
+// blank line split the SSE frame and leaked the "data: " prefix into the
+// client's stdout. Base64 payloads cannot contain a blank line, so the
+// boundary always holds.
+func TestSSEFramerChannelFramesKeepsBoundaries(t *testing.T) {
+	f := &sseFramer{}
+	frames := f.pushFrames("data: {\"stdout\":\"bGluawpibGFuawpibGFuawo=\"}\n\n")
+	if len(frames) != 1 {
+		t.Fatalf("expected 1 frame, got %d: %q", len(frames), frames)
+	}
+	ch, payload, ok := parseChannelFrame(frames[0])
+	if !ok {
+		t.Fatalf("expected the frame to parse: %q", frames[0])
+	}
+	if ch != ChannelStdout {
+		t.Fatalf("channel = %q, want %q", ch, ChannelStdout)
+	}
+	if string(payload) != "link\nblank\nblank\n" {
+		t.Fatalf("payload = %q", payload)
+	}
+}
+
+// TestEnvdProcessConnectDeliversEndEvent covers the attach path (2026-10-21).
+//
+// Process/Connect opened a stream, subscribed to the process and then waited
+// for it to finish — but ProcessTable.End() DELETES the record, so Done()
+// reported "no channel" for a process that had already finished, and the
+// subscriber never got an end event. The SDK's CommandHandle.wait() then
+// raised "Command ended without an end event", so attaching to a running
+// process never reported its output or exit code.
+func TestEnvdProcessConnectDeliversEndEvent(t *testing.T) {
+	gw := newFakeGateway()
+	stub := newSandboxdStub()
+	s, ts := testServerWithSandboxd(t, gw, stub)
+	id := createSandboxID(t, ts)
+
+	// A live process with buffered output: Connect must replay the output
+	// AND carry the end event. Without the end event the SDK's
+	// CommandHandle.wait() raises "Command ended without an end event", so
+	// attaching to a running process reported neither output nor an exit
+	// code.
+	rec := s.processes.Start(id, ProcessConfig{Cmd: "echo hi"})
+	s.processes.SetGuestPID(rec.PID, 4242)
+	stub.mu.Lock()
+	stub.procTable[4242] = sandboxProcess{PID: 4242, Alive: true, Config: "echo hi"}
+	stub.attachOutputs[4242] = "hello from sandbox"
+	stub.mu.Unlock()
+
+	msg := map[string]any{"process": map[string]any{"pid": rec.PID}}
+	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd/process.Process/Connect",
+		bytes.NewReader(envelope(FlagMessage, msg)))
+	req.Header.Set("Content-Type", "application/connect+json")
+	for k, v := range envdHeaders(t, s, id) {
+		req.Header.Set(k, v)
+	}
+	// The stream follows the process to completion, so end it.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		s.processes.End(rec.PID, ProcessEnd{ExitCode: 0})
+	}()
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readBody(t, resp)
+	frames, err := parseEnvelopes([]byte(body))
+	if err != nil {
+		t.Fatalf("parse frames: %v", err)
+	}
+	foundEnd := false
+	for _, f := range frames {
+		if event, ok := f.json["event"].(map[string]any); ok {
+			if _, hasEnd := event["end"]; hasEnd {
+				foundEnd = true
+			}
+		}
+	}
+	if !foundEnd {
+		t.Fatalf("expected an end event in the connect stream, got %q", body)
+	}
+}
+
+// TestEnvdFSWatchDirStreaming covers the STREAMING filesystem WatchDir.
+//
+// KIP-18 answered the streaming WatchDir with an honest 501 on the
+// assumption that "no SDK uses it" — true for the Python SDK (which uses the
+// polling trio), but NOT for the JS SDK: its files.watchDir() calls the
+// streaming RPC, so the JS SDK's watchDir() failed with
+// "501: WatchDir is not supported: K8E has no watch".
+//
+// The stream carries the oneof member name at the TOP level of the frame
+// (the connect client parses the whole frame as the WatchDirResponse), and
+// the event type is the NUMERIC enum the SDK maps to its names.
+func TestEnvdFSWatchDirStreaming(t *testing.T) {
+	gw := newFakeGateway()
+	stub := newSandboxdStub()
+	s, ts := testServerWithSandboxd(t, gw, stub)
+	id := createSandboxID(t, ts)
+
+	// A watcher with one pending event.
+	stub.mu.Lock()
+	stub.nextWatcherID = 7
+	stub.watchers[7] = []watchEvent{{Name: "/workspace/watched/a.txt", Type: 1}}
+	stub.mu.Unlock()
+
+	// A streaming request carries its payload inside a connect envelope.
+	msg := map[string]any{"path": "/workspace/watched"}
+	req, _ := http.NewRequest("POST", ts.URL+"/e2b/envd/filesystem.Filesystem/WatchDir",
+		bytes.NewReader(envelope(FlagMessage, msg)))
+	req.Header.Set("Content-Type", "application/connect+json")
+	for k, v := range envdHeaders(t, s, id) {
+		req.Header.Set(k, v)
+	}
+
+	// The watch stream stays open until the client goes away (that is the
+	// point of a watch), so read it incrementally and stop on a deadline
+	// rather than waiting for the response to end.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req = req.WithContext(ctx)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := readStreamFor(t, resp, cancel)
+	frames, err := parseEnvelopes([]byte(body))
+	if err != nil {
+		t.Fatalf("parse frames: %v (body %q)", err, body)
+	}
+
+	// The first frame is the start event the SDK's watch handle requires.
+	if len(frames) == 0 {
+		t.Fatal("expected at least a start frame")
+	}
+	start, ok := frames[0].json["start"]
+	if !ok {
+		t.Fatalf("expected a start frame, got %v", frames[0].json)
+	}
+	_ = start
+
+	// The event frame names the "filesystem" oneof member and carries the
+	// numeric event type.
+	found := false
+	for _, f := range frames {
+		ev, ok := f.json["filesystem"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if ev["name"] != "/workspace/watched/a.txt" {
+			t.Fatalf("event name = %v", ev["name"])
+		}
+		if ev["type"] != float64(1) {
+			t.Fatalf("event type = %v, want the numeric enum 1", ev["type"])
+		}
+		found = true
+	}
+	if !found {
+		t.Fatalf("no filesystem event frame in %q", body)
+	}
+}
+
+// readStreamFor reads a streaming response for a short while and returns
+// what arrived. A watch stream stays open until the client goes away, so the
+// caller cancels the request instead of waiting for the response to end.
+func readStreamFor(t *testing.T, resp *http.Response, cancel context.CancelFunc) string {
+	t.Helper()
+	var mu sync.Mutex
+	raw := make([]byte, 0, 512)
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				mu.Lock()
+				raw = append(raw, buf[:n]...)
+				mu.Unlock()
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+	time.Sleep(500 * time.Millisecond)
+	cancel()
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	return string(raw)
 }

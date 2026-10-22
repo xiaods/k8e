@@ -2,6 +2,7 @@ package e2b
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -205,8 +206,11 @@ func (st *sandboxdStub) handleAttach(w http.ResponseWriter, r *http.Request) {
 	output := st.attachOutputs[pid]
 	w.Header().Set("Content-Type", "text/event-stream")
 	// Skip the pid frame: the Connect handler sends its own start frame.
+	// The payload uses the channel-tagged base64 format sandboxd emits
+	// (data: {"stdout":"<base64>"}).
 	if len(output) > 0 {
-		_, _ = w.Write([]byte("data: " + output + "\n\n"))
+		encoded := base64.StdEncoding.EncodeToString([]byte(output))
+		_, _ = w.Write([]byte(`data: {"stdout":"` + encoded + `"}` + "\n\n"))
 	}
 	_, _ = w.Write([]byte("data: {\"done\":true}\n\n"))
 }
@@ -220,7 +224,11 @@ func (st *sandboxdStub) handleWatchCreate(w http.ResponseWriter, r *http.Request
 	defer st.mu.Unlock()
 	id := st.nextWatcherID
 	st.nextWatcherID++
-	st.watchers[id] = nil
+	// A watcher starts with no buffered events; a pre-seeded entry (a test
+	// fixture) is kept.
+	if _, ok := st.watchers[id]; !ok {
+		st.watchers[id] = nil
+	}
 	st.writeOK(w, map[string]any{"watcher_id": id})
 }
 
