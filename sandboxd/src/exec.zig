@@ -583,15 +583,37 @@ fn writeChannelFrame(client_fd: i32, channel: []const u8, data: []const u8) !voi
 }
 
 // jsonEscape returns the string with JSON special chars escaped (no surrounding quotes).
+//
+// Every C0 control character is escaped, not just the five that have a
+// shorthand. RFC 8259 forbids raw control characters inside a JSON string,
+// and the one that bites in practice is ESC (0x1B): it is what every
+// terminal program emits for an ANSI colour code, so the payload of a
+// `ls --color`, a progress bar or a marquee carries thousands of them.
+//
+// Leaving ESC raw made the whole response invalid JSON. The control plane
+// decoded it into an empty struct and reported "the run produced no output",
+// while the bytes were sitting right there in the sandboxd buffer. The
+// sibling helper in execctl.zig already escaped 0...31 this way.
 pub fn jsonEscape(allocator: std.mem.Allocator, s: []const u8) ![]u8 {
     var out = try std.ArrayList(u8).initCapacity(allocator, 0);
     for (s) |c| {
         switch (c) {
             '"' => try out.appendSlice(allocator, "\\\""),
             '\\' => try out.appendSlice(allocator, "\\\\"),
-            '\n' => try out.appendSlice(allocator, "\\n"),
-            '\r' => try out.appendSlice(allocator, "\\r"),
-            '\t' => try out.appendSlice(allocator, "\\t"),
+            0...31 => {
+                // The three shorthands first; every other C0 control
+                // character becomes a \u00XX escape.
+                switch (c) {
+                    '\n' => try out.appendSlice(allocator, "\\n"),
+                    '\r' => try out.appendSlice(allocator, "\\r"),
+                    '\t' => try out.appendSlice(allocator, "\\t"),
+                    else => {
+                        var buf: [8]u8 = undefined;
+                        const hex = try std.fmt.bufPrint(&buf, "\\u{x:0>4}", .{c});
+                        try out.appendSlice(allocator, hex);
+                    },
+                }
+            },
             else => try out.append(allocator, c),
         }
     }

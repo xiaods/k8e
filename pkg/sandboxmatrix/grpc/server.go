@@ -74,6 +74,21 @@ func sandboxdGet(ctx context.Context, podIP, path string) (*http.Response, error
 	return sandboxdClient.Do(req)
 }
 
+// decodeSandboxdResponse decodes a sandboxd JSON body into v.
+//
+// The decode error is returned, never swallowed. A zero-valued v is
+// indistinguishable from a sandboxd response that genuinely carried no
+// data, so swallowing the error turned a malformed body into a silent
+// "the command produced no output". That is exactly what happened when
+// sandboxd emitted a raw ESC (0x1B) inside a JSON string — a strict JSON
+// parser rejects it, and the run's real bytes were dropped on the floor.
+func decodeSandboxdResponse(r io.Reader, v any) error {
+	if err := json.NewDecoder(r).Decode(v); err != nil {
+		return fmt.Errorf("decode sandboxd response: %w", err)
+	}
+	return nil
+}
+
 // pipPkgNameRe validates Python package names per PEP 508.
 var pipPkgNameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
 
@@ -597,7 +612,12 @@ func (s *Server) execForeground(ctx context.Context, req *pb.ExecRequest) (*pb.E
 		Truncated  bool   `json:"truncated"`
 		TimedOut   bool   `json:"timed_out"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	// A decode failure must not be swallowed: an empty result would be
+	// reported to the caller as "the command produced no output", which is
+	// indistinguishable from a command that genuinely printed nothing.
+	if derr := decodeSandboxdResponse(resp.Body, &result); derr != nil {
+		return nil, status.Errorf(codes.Internal, "sandboxd exec: %v", derr)
+	}
 	duration := result.DurationMs
 	if duration <= 0 {
 		duration = elapsed
@@ -818,7 +838,9 @@ func (s *Server) ListFiles(ctx context.Context, req *pb.ListFilesRequest) (*pb.L
 			Size     int64  `json:"size"`
 		} `json:"files"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if derr := decodeSandboxdResponse(resp.Body, &result); derr != nil {
+		return nil, status.Errorf(codes.Internal, "sandboxd list: %v", derr)
+	}
 	entries := make([]*pb.FileEntry, len(result.Files))
 	for i, f := range result.Files {
 		// sandboxd reports dirs as "dir"; the client vocabulary is "directory"
@@ -899,7 +921,9 @@ func (s *Server) GetTranscript(ctx context.Context, req *pb.GetTranscriptRequest
 		TruncatedBefore bool   `json:"truncated_before"`
 		Eof             bool   `json:"eof"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if derr := decodeSandboxdResponse(resp.Body, &result); derr != nil {
+		return nil, status.Errorf(codes.Internal, "sandboxd transcript: %v", derr)
+	}
 	return &pb.GetTranscriptResponse{
 		SessionId:       req.SessionId,
 		Output:          result.Output,
