@@ -1022,7 +1022,9 @@ func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command st
 	var result struct {
 		Status string `json:"status"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if derr := decodeSandboxdResponse(resp.Body, &result); derr != nil {
+		return "", fmt.Errorf("sandboxd background submit: %w", derr)
+	}
 
 	o.mu.Lock()
 	o.runRegistry[runID] = sessionID
@@ -1058,7 +1060,13 @@ func (o *Orchestrator) PollRun(ctx context.Context, runID string) (*pb.PollRunRe
 	defer resp.Body.Close()
 
 	var result pb.PollRunResponse
-	json.NewDecoder(resp.Body).Decode(&result)
+	// A malformed body must surface as an error. Returning the zero value
+	// made a background run that produced output look like a run that
+	// produced nothing at all — the caller had no way to tell the two
+	// apart, and the real bytes were silently dropped.
+	if derr := decodeSandboxdResponse(resp.Body, &result); derr != nil {
+		return nil, fmt.Errorf("sandboxd poll: %w", derr)
+	}
 	return &result, nil
 }
 

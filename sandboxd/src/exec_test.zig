@@ -38,6 +38,42 @@ test "jsonEscape: empty string" {
     try std.testing.expectEqualStrings("", out);
 }
 
+test "jsonEscape: escapes ESC and every other C0 control char" {
+    const allocator = std.testing.allocator;
+    // ESC is the one that matters: it is what every ANSI colour code
+    // starts with. Raw ESC in a JSON string makes the whole document
+    // invalid, so the control plane saw "no output" for a command whose
+    // output was a coloured marquee.
+    const out = try exec.jsonEscape(allocator, "\x1b[31m\x1b[0m\x01\x02");
+    defer allocator.free(out);
+    try std.testing.expectEqualStrings("\\u001b[31m\\u001b[0m\\u0001\\u0002", out);
+}
+
+test "jsonEscape: result is always valid JSON when embedded in a string" {
+    const allocator = std.testing.allocator;
+    const payloads = [_][]const u8{
+        "\x1b[1;36m★\x1b[0m",
+        "\x00\x01\x1f",
+        "plain",
+        "quote\" backslash\\ tab\t nl\n cr\r",
+    };
+    for (payloads) |payload| {
+        const out = try exec.jsonEscape(allocator, payload);
+        defer allocator.free(out);
+
+        // Embed it in a JSON document and parse it back: a raw control
+        // character anywhere in the string would make this fail.
+        const doc = try std.fmt.allocPrint(allocator, "{{\"s\":\"{s}\"}}", .{out});
+        defer allocator.free(doc);
+
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, doc, .{});
+        defer parsed.deinit();
+
+        const s = parsed.value.object.get("s").?.string;
+        try std.testing.expectEqualStrings(payload, s);
+    }
+}
+
 // --- buildEnvp tests ---
 
 test "buildEnvp: defaults only" {
