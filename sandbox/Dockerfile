@@ -2,7 +2,11 @@
 # k8e-sandbox: PID 1 is sandboxd (Zig static binary), runs inside gVisor/Firecracker/Kata.
 # Root inside the sandbox is safe — isolation is enforced by the RuntimeClass boundary.
 
-ARG TARGETARCH=amd64
+# NOTE: no forced default here. `ARG TARGETARCH` below is populated by BuildKit
+# from the target platform when building with `docker buildx build --platform ...`
+# (automatic platform args). Declaring `ARG TARGETARCH=amd64` globally would pin
+# the picker stage to amd64 and ship the x86_64 sandboxd into arm64 images.
+ARG TARGETARCH
 
 # ── Stage 1: pick the correct sandboxd binary for this arch ──────────────────
 FROM busybox:musl AS picker

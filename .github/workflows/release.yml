@@ -184,6 +184,10 @@ jobs:
             ghcr.io/xiaods/k8e-sandbox:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Verify sandbox image architecture
+        run: |
+          echo "Verifying sandbox image platforms..."
+          docker buildx imagetools inspect ghcr.io/xiaods/k8e-sandbox:latest
 
   # ── MCP adapter image ────────────────────────────────────────────────
   build-mcp-image:
