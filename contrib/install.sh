@@ -397,7 +397,19 @@ create_env_file() {
     $SUDO chmod 0600 "${FILE_K8E_ENV}"
     env | grep '^K8E_' | $SUDO tee "${FILE_K8E_ENV}" >/dev/null
     env | grep '^CONTAINERD_' | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
-    env | grep -Ei '^(NO|HTTP|HTTPS)_PROXY' | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
+
+    # Proxy settings: forward what the caller exported, but never let the
+    # apiserver dial its own kubelet through a proxy. Go resolves NO_PROXY on
+    # every outbound request, so a shell that exported HTTP(S)_PROXY without a
+    # NO_PROXY leaves the service proxying cluster-local traffic with no
+    # exemption — kubectl logs/exec then fails with a proxy 502. Always append
+    # the loopback and in-cluster ranges, merging with any existing value so a
+    # caller who did set NO_PROXY keeps their entries.
+    local no_proxy_value="${NO_PROXY:-${no_proxy:-}}"
+    no_proxy_value="${no_proxy_value:+${no_proxy_value},}localhost,127.0.0.1,::1,10.42.0.0/16,10.43.0.0/16,.svc,.cluster.local,.local"
+    env | grep -Ei '^(HTTP|HTTPS|ALL)_PROXY' | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
+    printf 'NO_PROXY=%s\nno_proxy=%s\n' "${no_proxy_value}" "${no_proxy_value}" \
+        | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
 }
 
 create_systemd_service_file() {
