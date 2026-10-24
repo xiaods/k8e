@@ -22,7 +22,15 @@ var (
 	// vendors k8s.io/* v0.37.0). Stay on 1.20 until 1.21.0 is GA.
 	// Gateway API CRDs in manifests/sandbox-matrix/gateway-api-crds.yaml are
 	// pinned to v1.6.1 for this chart (standard + experimental TLSRoute v1alpha2).
-	CiliumChartVersion = "1.20.0"
+	//
+	// Do not go below 1.20.2: kernel v7.2 added validation that bpf_set_retval's
+	// R1 must be a scalar (torvalds/linux b1f7f67b74c2, v7.2-rc1). Cilium's helper
+	// probe emitted a bare call with R1 still holding the context pointer, so
+	// 1.20.0/1.20.1 die at startup with "failed to probe helper ... R1 is not a
+	// scalar" on any 7.2 kernel — including OrbStack. Fixed by 67c619cb (CO-RE
+	// bpf_core_enum_value_exists), backported to v1.20 in PR #48213 and released
+	// in 1.20.2. See cilium/cilium#48016.
+	CiliumChartVersion = "1.20.2"
 )
 
 func PrintK8eASCIIArt() {
