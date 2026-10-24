@@ -30,6 +30,7 @@ __pycache__
 *.tmp
 .zig-cache
 zig-out
+.cni-build
 .claude/*
 /.codex/
 /.loopx/

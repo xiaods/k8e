@@ -6,6 +6,14 @@ set -e
 https_fetch() {
     curl --proto '=https' "$@"
 }
+
+# tar(1) accepts --zstd whenever it was compiled with zstd support, but when tar
+# is not linked against libzstd it merely execs an external `zstd` binary.
+# `tar --zstd --help` exits 0 in that case too, so it cannot be used as a
+# capability probe — probe with a real (empty) round-trip instead.
+tar_can_zstd() {
+    tar --zstd -cf /dev/null --files-from=/dev/null >/dev/null 2>&1
+}
 set -o noglob
 
 # K8E Install Script — https://k8e.sh
@@ -81,7 +89,7 @@ install_gvisor() {
 
     # gVisor's release bucket ships the bundle in both zstd and bzip2 forms.
     # Prefer zstd (~4x smaller) when the host can decode it, else fall back to bz2.
-    if command -v zstd >/dev/null 2>&1 || tar --zstd --help >/dev/null 2>&1; then
+    if command -v zstd >/dev/null 2>&1 || tar_can_zstd; then
         TARBALL=gvisor.tar.zstd
     else
         TARBALL=gvisor.tar.bz2
@@ -106,7 +114,7 @@ install_gvisor() {
     # runsc resolves gvisor-bin/ relative to its own binary, so extract the
     # whole bundle into BIN_DIR (alongside the k8e binaries) and keep the
     # files together — do not relocate runsc alone.
-    if [ "${TARBALL}" = "gvisor.tar.zstd" ] && tar --zstd --help >/dev/null 2>&1; then
+    if [ "${TARBALL}" = "gvisor.tar.zstd" ] && tar_can_zstd; then
         if ! $SUDO tar --zstd -xf "${GV_TMP}/${TARBALL}" -C "${BIN_DIR}"; then
             warn "Failed to extract ${TARBALL}, skipping gVisor install"
             return
@@ -389,7 +397,19 @@ create_env_file() {
     $SUDO chmod 0600 "${FILE_K8E_ENV}"
     env | grep '^K8E_' | $SUDO tee "${FILE_K8E_ENV}" >/dev/null
     env | grep '^CONTAINERD_' | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
-    env | grep -Ei '^(NO|HTTP|HTTPS)_PROXY' | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
+
+    # Proxy settings: forward what the caller exported, but never let the
+    # apiserver dial its own kubelet through a proxy. Go resolves NO_PROXY on
+    # every outbound request, so a shell that exported HTTP(S)_PROXY without a
+    # NO_PROXY leaves the service proxying cluster-local traffic with no
+    # exemption — kubectl logs/exec then fails with a proxy 502. Always append
+    # the loopback and in-cluster ranges, merging with any existing value so a
+    # caller who did set NO_PROXY keeps their entries.
+    local no_proxy_value="${NO_PROXY:-${no_proxy:-}}"
+    no_proxy_value="${no_proxy_value:+${no_proxy_value},}localhost,127.0.0.1,::1,10.42.0.0/16,10.43.0.0/16,.svc,.cluster.local,.local"
+    env | grep -Ei '^(HTTP|HTTPS|ALL)_PROXY' | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
+    printf 'NO_PROXY=%s\nno_proxy=%s\n' "${no_proxy_value}" "${no_proxy_value}" \
+        | $SUDO tee -a "${FILE_K8E_ENV}" >/dev/null
 }
 
 create_systemd_service_file() {
@@ -475,10 +495,19 @@ killtree() {
         set -x;
     ) 2>/dev/null
 }
-getshims() {
-    ps -e -o pid= -o args= | sed -e 's/^ *//; s/\s\s*/\t/;' | grep -w 'k8e/data/[^/]*/bin/containerd-shim' | cut -f1
+getprocs() {
+    # Identify the helpers by binary name, never by launch path.
+    # resolveBinary() (pkg/tandem/supervisor.go) runs rqlited/tandem from
+    # $K8E_RQLITED_BINARY, PATH, /usr/local/bin or the server's own data dir,
+    # and containerd/shim likewise follow whichever was resolved first. A
+    # path-shaped pattern therefore silently misses the processes that are
+    # actually running whenever the data-dir copy is not the live one.
+    # "containerd" is anchored to argv[0] so it cannot also match the shims.
+    ps -e -o pid= -o args= | sed -e 's/^ *//; s/\s\s*/\t/' \
+        | grep -E '^[[:digit:]]+[[:space:]]+(.*/)?(containerd|containerd-shim-[^/[:space:]]*|rqlited|tandem)([[:space:]]|$)' \
+        | cut -f1
 }
-killtree $({ set +x; } 2>/dev/null; getshims; set -x)
+killtree $({ set +x; } 2>/dev/null; getprocs; set -x)
 do_unmount_and_remove() {
     set +x
     while read -r _ path _; do

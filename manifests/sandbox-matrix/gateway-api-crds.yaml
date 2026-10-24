@@ -1,4 +1,4 @@
-# Gateway API v1.6.1 CRDs for Cilium 1.20.0
+# Gateway API v1.6.1 CRDs for Cilium 1.20.2
 # Required by Cilium's Gateway API controller (gatewayAPI.enabled in manifests/cilium.yaml),
 # KIP-18 e2b ingress. Applied before the cilium HelmChart so the controller finds its CRDs.
 #

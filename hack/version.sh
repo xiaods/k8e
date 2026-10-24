@@ -80,7 +80,7 @@ fi
 
 VERSION_CNIPLUGINS="v1.9.1-k3s1"
 
-VERSION_CILIUM_CHART="1.20.0"
+VERSION_CILIUM_CHART="1.20.2"
 
 # rqlite powers the Tandem etcd-compatibility backend (KIP-29). One pinned
 # version, shared by every consumer: hack/download stages it into bin/ for the
