@@ -6,6 +6,14 @@ set -e
 https_fetch() {
     curl --proto '=https' "$@"
 }
+
+# tar(1) accepts --zstd whenever it was compiled with zstd support, but when tar
+# is not linked against libzstd it merely execs an external `zstd` binary.
+# `tar --zstd --help` exits 0 in that case too, so it cannot be used as a
+# capability probe — probe with a real (empty) round-trip instead.
+tar_can_zstd() {
+    tar --zstd -cf /dev/null --files-from=/dev/null >/dev/null 2>&1
+}
 set -o noglob
 
 # K8E Install Script — https://k8e.sh
@@ -81,7 +89,7 @@ install_gvisor() {
 
     # gVisor's release bucket ships the bundle in both zstd and bzip2 forms.
     # Prefer zstd (~4x smaller) when the host can decode it, else fall back to bz2.
-    if command -v zstd >/dev/null 2>&1 || tar --zstd --help >/dev/null 2>&1; then
+    if command -v zstd >/dev/null 2>&1 || tar_can_zstd; then
         TARBALL=gvisor.tar.zstd
     else
         TARBALL=gvisor.tar.bz2
@@ -106,7 +114,7 @@ install_gvisor() {
     # runsc resolves gvisor-bin/ relative to its own binary, so extract the
     # whole bundle into BIN_DIR (alongside the k8e binaries) and keep the
     # files together — do not relocate runsc alone.
-    if [ "${TARBALL}" = "gvisor.tar.zstd" ] && tar --zstd --help >/dev/null 2>&1; then
+    if [ "${TARBALL}" = "gvisor.tar.zstd" ] && tar_can_zstd; then
         if ! $SUDO tar --zstd -xf "${GV_TMP}/${TARBALL}" -C "${BIN_DIR}"; then
             warn "Failed to extract ${TARBALL}, skipping gVisor install"
             return
