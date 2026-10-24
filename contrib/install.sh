@@ -495,10 +495,19 @@ killtree() {
         set -x;
     ) 2>/dev/null
 }
-getshims() {
-    ps -e -o pid= -o args= | sed -e 's/^ *//; s/\s\s*/\t/;' | grep -w 'k8e/data/[^/]*/bin/containerd-shim' | cut -f1
+getprocs() {
+    # Identify the helpers by binary name, never by launch path.
+    # resolveBinary() (pkg/tandem/supervisor.go) runs rqlited/tandem from
+    # $K8E_RQLITED_BINARY, PATH, /usr/local/bin or the server's own data dir,
+    # and containerd/shim likewise follow whichever was resolved first. A
+    # path-shaped pattern therefore silently misses the processes that are
+    # actually running whenever the data-dir copy is not the live one.
+    # "containerd" is anchored to argv[0] so it cannot also match the shims.
+    ps -e -o pid= -o args= | sed -e 's/^ *//; s/\s\s*/\t/' \
+        | grep -E '^[[:digit:]]+[[:space:]]+(.*/)?(containerd|containerd-shim-[^/[:space:]]*|rqlited|tandem)([[:space:]]|$)' \
+        | cut -f1
 }
-killtree $({ set +x; } 2>/dev/null; getshims; set -x)
+killtree $({ set +x; } 2>/dev/null; getprocs; set -x)
 do_unmount_and_remove() {
     set +x
     while read -r _ path _; do
