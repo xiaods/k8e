@@ -149,6 +149,7 @@ exec:    gateway 读取 session 的 env + secret_refs
 - 解析后的 secret **值**只在单次 exec 的请求体与 pod 内存中存在，**不写入 CRD、不写入** `~/.k8e/sandbox/{tenant}/state.json`。
 - CLI state 文件仅持久化 `session_id`（reconnect 所需），env/secret_refs 由服务端 session 对象保存并在每次 exec 重放。
 - ⚠️ **inline `env` 明文存于 CRD**，凡有 RBAC 读 SandboxSession 者可见 —— 真正敏感的值**必须**用 `--secret`（CRD 只存引用），不可用 `--env`。SKILL.md 需写明这条红线。
+- ⚠️ **`secret_refs` 有名称白名单**：网关自身的凭据存储（`sandbox-matrix/sandbox-apikeys`，及其 `keys.json` 键）被保留，任何 session 皆不可引用。否则调用者可把整个网关 API 密钥环当作普通 secret_ref 注入，再经 `Exec` stdout 全量读出（认证调用者 → 网关凭据存储的越级泄露）。该闸门在 `CreateSession` 校验，并在 exec 解析路径上 fail-closed 兜底（兼容升级前已持久化非法引用的旧 session）。
 
 ### 决策记录（ADR）
 
@@ -169,6 +170,7 @@ exec:    gateway 读取 session 的 env + secret_refs
 | 预览 token 过期 | Ingress external-auth 返回 403 |
 | 同一 (sid, port) 重复 expose | 复用现有 Service/Ingress，签发新 token |
 | `secret_refs` 指向不存在的 Secret/key | `CreateSession` 不校验值，首次 exec 解析失败 → 报错并将命令置为失败 |
+| `secret_refs` 指向网关自身的凭据 Secret（`sandbox-apikeys`，或任意 Secret 的 `keys.json` 键） | **CreateSession 直接拒绝**（名称白名单，InvalidArgument）；exec 时亦 fail-closed —— 网关密钥环不得注入 sandbox env |
 | 集群无 Ingress controller | `expose` 报错并提示需部署 ingress；其余命令不受影响 |
 | warm pod 未打 session label | Service 选不中 → `expose` 报错（claim 时打 label 为前置条件） |
 | inline `env` 误放敏感值 | 文档红线 + （可选）对疑似密钥名告警到 stderr |

@@ -736,7 +736,14 @@ func (s *Server) getSessionEnv(ctx context.Context, sessionID string) map[string
 	return env
 }
 
+// readSecretKey reads a single key from a K8s Secret for session env
+// injection. Fails closed: gateway-internal secrets (the gateway's own API key
+// ring) are never resolvable, even for sessions that persisted a forbidden
+// secret_ref before the CreateSession name gate existed.
 func (s *Server) readSecretKey(ctx context.Context, secretName, key string) (string, error) {
+	if !isSessionSecretRefAllowed(secretName, key) {
+		return "", fmt.Errorf("secret_ref %s/%s is not allowed (gateway-internal secret)", secretName, key)
+	}
 	sec, err := s.k8s.CoreV1().Secrets(s.sandboxNamespace()).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
 		return "", err
