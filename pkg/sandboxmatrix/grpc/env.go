@@ -19,6 +19,10 @@ const (
 	maxSessionSecretRefs    = 32
 	// maxExecOutputBytes is the per-stream capture cap for agent-facing truncation (~1 MiB).
 	maxExecOutputBytes = 1 * 1024 * 1024
+	// internalAPIKeyRingKey is the key within the gateway's own API-key Secret
+	// that holds the multi-key ring (KIP-17). It namespaces gateway-internal
+	// credential material that session secret_refs must never resolve.
+	internalAPIKeyRingKey = "keys.json"
 )
 
 // deniedSessionEnvKeys are environment variables a session may not set.
@@ -155,6 +159,45 @@ func sandboxdRequestBody(sessionID, command, runID string, timeout int32, workdi
 	return body
 }
 
+// reservedSessionSecretNames is the name-based reservation list for session
+// secret_refs: the K8s Secrets a session may never resolve (CreateSession
+// hardening).
+//
+// The gateway's own credential Secret — apiKeySecretName ("sandbox-apikeys") —
+// is reserved: it stores the gateway's API key ring under internalAPIKeyRingKey
+// ("keys.json", KIP-17), i.e. the gateway's own authentication material for
+// remote clients. It is not a per-tenant secret an agent session should inject.
+// Before the name gate existed, validateSecretRefs only checked ref shape
+// (count / required fields / env var name / duplicates), so a caller could pass
+// the gateway's own ring as an ordinary secret_ref and have the whole key ring
+// injected into the sandbox env at exec time — leaking every gateway credential
+// back to the creating caller through the Exec stdout path.
+//
+// The gate works by exclusion: caller-managed Secrets (e.g. an
+// operator-provisioned provider secret such as "my-llm-secret" / key "api_key")
+// remain referenceable; gateway-internal Secrets do not.
+var reservedSessionSecretNames = map[string]struct{}{
+	apiKeySecretName: {},
+}
+
+// isSessionSecretRefAllowed reports whether a session secret_ref may resolve
+// the given secret/key pair. Fail closed on empty names/keys and on reserved
+// (gateway-internal) Secrets or ring keys. This is the name-based gate behind
+// CreateSession secret_refs: the gateway's own credential material must never
+// be injectable into a sandbox env.
+func isSessionSecretRefAllowed(secretName, key string) bool {
+	if secretName == "" || key == "" {
+		return false
+	}
+	if _, reserved := reservedSessionSecretNames[strings.ToLower(secretName)]; reserved {
+		return false
+	}
+	if key == internalAPIKeyRingKey {
+		return false
+	}
+	return true
+}
+
 func validateSecretRefs(refs []*pb.SecretRef) error {
 	if len(refs) == 0 {
 		return nil
@@ -169,6 +212,9 @@ func validateSecretRefs(refs []*pb.SecretRef) error {
 		}
 		if r.SecretName == "" || r.Key == "" || r.EnvVar == "" {
 			return fmt.Errorf("secret_name, key, and env_var are required")
+		}
+		if !isSessionSecretRefAllowed(r.SecretName, r.Key) {
+			return fmt.Errorf("secret_ref %s/%s is not allowed (gateway-internal secret)", r.SecretName, r.Key)
 		}
 		if err := validateSessionEnvEntry(r.EnvVar, "x"); err != nil {
 			// reuse key rules for env_var name (value placeholder)

@@ -382,6 +382,7 @@ Default allowed hosts (cluster `SandboxMatrix.spec.defaultAllowedHosts`): `pypi.
 ## Security red lines
 
 - `--env` is for non-sensitive config only (stored on CRD). Use `--secret ENV=secret:key` for secrets.
+- `--secret` may only reference Secrets you control. The gateway's own credential store (`sandbox-apikeys`, and any Secret's `keys.json` key) is reserved — `create` rejects such a ref with an error, so point at your own provisioned Secret instead (e.g. `--secret OPENAI_API_KEY=my-llm-secret:api_key`).
 - Never pass host secrets into sandbox flags in chat logs if avoidable.
 - Never `sudo` via sandbox CLI.
 - Destructive sandbox actions require `confirm` → `approve` (human in the loop); don't skip it.

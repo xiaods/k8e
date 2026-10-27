@@ -81,6 +81,10 @@ func (TerminalSignal) EnumDescriptor() ([]byte, []int) {
 
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
 // at exec time only and never stored on the SandboxSession CRD (#505 / KIP-12 B).
+// Name allowlist: the gateway's own credential store is reserved — refs to the
+// sandbox-apikeys Secret (or any Secret's "keys.json" key) are rejected at
+// CreateSession and fail closed at exec time, so the gateway key ring can never
+// be injected into a sandbox environment.
 type SecretRef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SecretName    string                 `protobuf:"bytes,1,opt,name=secret_name,json=secretName,proto3" json:"secret_name,omitempty"` // K8s Secret name

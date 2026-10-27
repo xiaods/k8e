@@ -196,6 +196,10 @@ func TestValidateSecretRefs(t *testing.T) {
 	if err := validateSecretRefs([]*pb.SecretRef{{SecretName: "s", Key: "k", EnvVar: "API_KEY"}}); err != nil {
 		t.Fatal(err)
 	}
+	// Caller-managed secrets stay referenceable (operator-provisioned provider keys).
+	if err := validateSecretRefs([]*pb.SecretRef{{SecretName: "my-llm-secret", Key: "api_key", EnvVar: "OPENAI_API_KEY"}}); err != nil {
+		t.Fatalf("caller-managed secret should be allowed: %v", err)
+	}
 	if err := validateSecretRefs([]*pb.SecretRef{{SecretName: "s", Key: "k"}}); err == nil {
 		t.Fatal("expected missing env_var error")
 	}
@@ -204,6 +208,58 @@ func TestValidateSecretRefs(t *testing.T) {
 		{SecretName: "s", Key: "k2", EnvVar: "A"},
 	}); err == nil {
 		t.Fatal("expected duplicate env_var")
+	}
+}
+
+// TestValidateSecretRefs_RejectsGatewayInternalSecret verifies the name-based
+// allowlist: the gateway's own API key ring Secret (sandbox-apikeys / keys.json)
+// must never be referenceable as a session secret_ref — otherwise the whole key
+// ring is injected into the sandbox env and leaks back via Exec stdout.
+func TestValidateSecretRefs_RejectsGatewayInternalSecret(t *testing.T) {
+	if err := validateSecretRefs([]*pb.SecretRef{{
+		SecretName: apiKeySecretName,      // sandbox-apikeys — gateway credential ring
+		Key:        internalAPIKeyRingKey, // keys.json — the ring itself
+		EnvVar:     "GATEWAY_KEY",
+	}}); err == nil {
+		t.Fatal("expected gateway-internal api-key ring secret_ref to be rejected")
+	}
+	// The internal ring key namespace is reserved even under caller-managed secret names.
+	if err := validateSecretRefs([]*pb.SecretRef{{
+		SecretName: "my-llm-secret",
+		Key:        internalAPIKeyRingKey,
+		EnvVar:     "OPENAI_API_KEY",
+	}}); err == nil {
+		t.Fatal("expected internal ring key secret_ref to be rejected")
+	}
+}
+
+// TestReadSecretKey_RejectsGatewayInternalSecret verifies the exec-time fail-closed
+// gate: resolution of the gateway's own credential ring is refused even if a
+// session somehow persisted a forbidden secret_ref. The ring is seeded first so
+// the refusal can only come from the gate, not from a missing Secret.
+func TestReadSecretKey_RejectsGatewayInternalSecret(t *testing.T) {
+	s := newTestServer()
+	_, err := s.k8s.CoreV1().Secrets(sandboxNS).Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: apiKeySecretName, Namespace: sandboxNS},
+		Data:       map[string][]byte{internalAPIKeyRingKey: []byte(`{"alice":"aaaa"}`)},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("seed api key ring: %v", err)
+	}
+	if _, err := s.readSecretKey(context.Background(), apiKeySecretName, internalAPIKeyRingKey); err == nil {
+		t.Fatal("expected readSecretKey to reject the gateway-internal api key ring")
+	}
+	// A caller-managed secret in the same namespace still resolves.
+	_, err = s.k8s.CoreV1().Secrets(sandboxNS).Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-llm-secret", Namespace: sandboxNS},
+		Data:       map[string][]byte{"api_key": []byte("sk-ok")},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("seed caller secret: %v", err)
+	}
+	got, err := s.readSecretKey(context.Background(), "my-llm-secret", "api_key")
+	if err != nil || got != "sk-ok" {
+		t.Fatalf("caller-managed secret must still resolve: %v %q", err, got)
 	}
 }
 
@@ -298,6 +354,57 @@ func TestResolveSessionEnv_MissingSecretFails(t *testing.T) {
 	_, err = s.resolveSessionEnv(context.Background(), "sec-miss")
 	if err == nil {
 		t.Fatal("expected secret resolution error")
+	}
+}
+
+// TestResolveSessionEnv_RejectsLegacyGatewayInternalRef is the fail-closed
+// regression test: a session created before the CreateSession name gate could
+// persist a secret_ref into the gateway's own API key ring. Exec-time
+// resolution must refuse it AND must not echo any ring content — the whole
+// point of the gate is that the ring never reaches a sandbox env / Exec stdout.
+func TestResolveSessionEnv_RejectsLegacyGatewayInternalRef(t *testing.T) {
+	s := newTestServer()
+	// The gateway's real key ring, exactly as provisioned by `k8e sandbox-apikey create`.
+	_, err := s.k8s.CoreV1().Secrets(sandboxNS).Create(context.Background(), &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: apiKeySecretName, Namespace: sandboxNS},
+		Data: map[string][]byte{
+			internalAPIKeyRingKey: []byte(`{"alice":"e2b_" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`),
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		t.Fatalf("seed api key ring: %v", err)
+	}
+	// Bypass validateSecretRefs on purpose: write the session CRD directly, the
+	// way a pre-gateway-gate session object would look after an upgrade.
+	u := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": testAPIVer,
+		"kind":       "SandboxSession",
+		"metadata":   map[string]interface{}{"name": "sec-legacy-ring", "namespace": sandboxNS},
+		"spec": map[string]interface{}{
+			"runtimeClass": "gvisor",
+			"secretRefs": []interface{}{
+				map[string]interface{}{
+					"secretName": apiKeySecretName,
+					"key":        internalAPIKeyRingKey,
+					"envVar":     "GATEWAY_KEY",
+				},
+			},
+		},
+		"status": map[string]interface{}{"phase": "Active", "podIP": "10.0.0.1"},
+	}}
+	if _, err := s.dyn.Resource(sessionGVR).Namespace(sandboxNS).Create(context.Background(), u, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("seed legacy session: %v", err)
+	}
+
+	env, err := s.resolveSessionEnv(context.Background(), "sec-legacy-ring")
+	if err == nil {
+		t.Fatal("expected gateway-internal secret_ref to fail resolution")
+	}
+	if env != nil {
+		t.Fatalf("expected nil env on refusal, got %v", env)
+	}
+	if strings.Contains(err.Error(), "aaaa") {
+		t.Fatalf("resolution error must not echo ring material: %v", err)
 	}
 }
 

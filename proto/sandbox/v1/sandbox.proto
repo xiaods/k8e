@@ -67,6 +67,10 @@ service SandboxService {
 
 // SecretRef references a key in a same-namespace K8s Secret. Values are resolved
 // at exec time only and never stored on the SandboxSession CRD (#505 / KIP-12 B).
+// Name allowlist: the gateway's own credential store is reserved — refs to the
+// sandbox-apikeys Secret (or any Secret's "keys.json" key) are rejected at
+// CreateSession and fail closed at exec time, so the gateway key ring can never
+// be injected into a sandbox environment.
 message SecretRef {
   string secret_name = 1; // K8s Secret name
   string key         = 2; // key within Secret.data
