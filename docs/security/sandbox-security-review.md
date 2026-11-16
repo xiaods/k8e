@@ -20,7 +20,7 @@ a deployment choice are marked as such.
 | F4 | Medium | Rate limiter trusted a client-supplied tenant header | Fixed |
 | F5 | Medium | Warm pods accepted ingress from any pod (policy had no ingress rules) | Fixed |
 | F6 | Medium | Session / sub-agent / run identifiers were predictable timestamps | Fixed |
-| F7 | Medium | `secret_refs` could reference any non-reserved Secret in the namespace | Open |
+| F7 | Medium | `secret_refs` could reference any non-reserved Secret in the namespace | Fixed (tenant label scope) |
 | F8 | Medium | `localAuth` trusts every loopback peer without a client cert | Open (by design) |
 | F9 | Low | Sandbox pod security context lacks seccomp / capability drop | Open (by design) |
 | F10 | Low | `PipInstall` allowed pip option injection | Open (not a privilege gain) |
@@ -187,29 +187,41 @@ parsing (which never depended on the numeric suffix) is unaffected.
 **Test.** `TestCreateSession_GeneratesID` asserts the `sess-` prefix, a 32-char
 hex suffix, and uniqueness.
 
-## F7 — `secret_refs` can read any namespace Secret (Medium, open)
+## F7 — `secret_refs` can read any namespace Secret (Medium, fixed)
 
-**Boundary.** An authenticated caller may create a session with
-`secret_refs` pointing at any Secret in the sandbox namespace except
-`sandbox-apikeys`.
+**Before.** An authenticated caller could create a session with `secret_refs`
+pointing at any Secret in the sandbox namespace except `sandbox-apikeys`.
+`reservedSessionSecretNames` (`pkg/sandboxmatrix/grpc/env.go`) was a two-entry
+deny-list and `isSessionSecretRefAllowed` rejected only those; `readSecretKey`
+read the Secret with the gateway's own RBAC and injected it into the session
+environment, where `Exec` could print it. This was independent of F1: even a
+caller bound to its own tenant could name any non-reserved Secret.
 
-**Evidence.** `reservedSessionSecretNames`
-(`pkg/sandboxmatrix/grpc/env.go:179`) is a two-entry deny-list;
-`isSessionSecretRefAllowed` (`:188`) rejects only those. `readSecretKey`
-(`pkg/sandboxmatrix/grpc/server.go`) reads the Secret with the gateway's own
-RBAC. `resolveSessionEnvFromSession` injects the value into the session
-environment, where `Exec` can print it.
+**Fix.** `secret_refs` is now tenant-scoped at exec resolution:
 
-**Result.** Any API key holder can exfiltrate any other tenant's Secret stored
-in the sandbox namespace (for example a provider key). This is independent of
-F1: even a caller bound to its own tenant can name any non-reserved Secret in
-the namespace, because `secret_refs` is not scoped by tenant.
+- A Secret may carry the label `sandbox.k8e.io/tenant: <tenant>`. A labelled Secret is readable
+  only by a session whose `spec.tenantID` equals that label.
+- An unlabelled Secret is legacy-compatible for the shared `default` tenant only;
+  a non-default tenant cannot reference it (otherwise the label would be
+  advisory).
+- `checkSecretTenantScope` (`pkg/sandboxmatrix/grpc/server.go`) enforces this;
+  `readSecretKey` takes the session's tenant and calls it before returning the
+  value.
+- The gateway-internal deny-list is unchanged and still applies (defence in
+  depth), and the error never includes the Secret value.
 
-**Recommended fix.** Make the reference an allowlist rather than a deny-list:
-require the referenced Secret to carry a tenant label/annotation that matches
-`session.Spec.TenantID` (for example `sandbox.k8e.io/tenant`), and reject
-unlabelled Secrets unless the session is in the `default` tenant. Alternatively,
-add an operator-configured allowlist of referenceable Secret names.
+**Operator action.** Label tenant-owned Secrets:
+
+```bash
+kubectl -n sandbox-matrix label secret my-llm-secret sandbox.k8e.io/tenant=acme
+```
+
+Existing unlabelled Secrets keep working for the `default` tenant; label them
+before moving a tenant off `default`.
+
+**Tests.** `TestCheckSecretTenantScope`, `TestReadSecretKey_TenantScope`,
+`TestResolveSessionEnv_RejectsCrossTenantSecret`
+(`pkg/sandboxmatrix/grpc/secret_scope_test.go`).
 
 ## F8 — `localAuth` trusts every loopback peer (Medium, open, by design)
 
@@ -281,6 +293,7 @@ restart (availability, not confidentiality). Consider documenting a required
 | Area | Change | Tests |
 |------|--------|-------|
 | Tenant isolation | optional `apikey.Record.Tenant`; gateway + E2B control plane enforce it on every session-scoped RPC (NotFound on mismatch), create stamps/rejects it, list filters it | `TestCallerTenantFromCertificate`, `TestGetSessionTenantIsolation`, `TestListSessionsTenantFilter`, `TestCreateSessionTenantBinding`, `TestExposeServiceTenantIsolation`, `TestControlPlaneTenantIsolation`, `TestTenantRoundTripsThroughV2` |
+| Secret refs | `secret_refs` are tenant-scoped: a Secret labelled `sandbox.k8e.io/tenant=<tenant>` is readable only by that tenant; unlabelled Secrets remain legacy-compatible for `default` | `TestCheckSecretTenantScope`, `TestReadSecretKey_TenantScope`, `TestResolveSessionEnv_RejectsCrossTenantSecret` |
 | Rate limiting | bucket key from authenticated identity (cert CN / token hash / loopback), never the client header | `TestExtractTenant` |
 | Certificate revocation | persisted to disk, loaded on start, reconciled on every key load, checked at `Login` | `TestRevocationListPersistsAcrossRestart`, `TestRevokeRemovedKeysReconcilesInactiveKeys`, `TestLoginRejectsRevokedCertificate` |
 | Identifiers | crypto-random session / sub-agent / run / approval IDs | `TestCreateSession_GeneratesID`, `TestConfirmActionApprovalIDIsRandom` |
@@ -299,14 +312,11 @@ All pass.
 
 ## Recommended follow-ups (in priority order)
 
-1. F7: turn `secret_refs` into a tenant-labelled allowlist. (With F1 now
-   enforced, this is the remaining cross-tenant data path: a session can still
-   reference any non-reserved Secret in the namespace.)
-2. F8: require a credential on loopback if the gateway host is shared.
-3. F9: add `AutomountServiceAccountToken: false` to `SandboxPodSpec`.
-4. F10: tighten `sanitizePipPackage` and shell-quote each specifier.
-5. F11: require an explicit `K8E_E2B_SIGNING_SECRET` in production.
-6. Snapshots (`SnapshotPut/Get/List`) are still cluster-global by name; scope
+1. F8: require a credential on loopback if the gateway host is shared.
+2. F9: add `AutomountServiceAccountToken: false` to `SandboxPodSpec`.
+3. F10: tighten `sanitizePipPackage` and shell-quote each specifier.
+4. F11: require an explicit `K8E_E2B_SIGNING_SECRET` in production.
+5. Snapshots (`SnapshotPut/Get/List`) are still cluster-global by name; scope
    them per tenant if snapshot content is sensitive.
 
 ## Operator note

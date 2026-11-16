@@ -150,6 +150,7 @@ exec:    gateway 读取 session 的 env + secret_refs
 - CLI state 文件仅持久化 `session_id`（reconnect 所需），env/secret_refs 由服务端 session 对象保存并在每次 exec 重放。
 - ⚠️ **inline `env` 明文存于 CRD**，凡有 RBAC 读 SandboxSession 者可见 —— 真正敏感的值**必须**用 `--secret`（CRD 只存引用），不可用 `--env`。SKILL.md 需写明这条红线。
 - ⚠️ **`secret_refs` 有名称白名单**：网关自身的凭据存储（`sandbox-matrix/sandbox-apikeys`，及其 `keys.json` 键）被保留，任何 session 皆不可引用。否则调用者可把整个网关 API 密钥环当作普通 secret_ref 注入，再经 `Exec` stdout 全量读出（认证调用者 → 网关凭据存储的越级泄露）。该闸门在 `CreateSession` 校验，并在 exec 解析路径上 fail-closed 兜底（兼容升级前已持久化非法引用的旧 session）。
+- ⚠️ **`secret_refs` 按 tenant 作用域**：Secret 可带 `sandbox.k8e.io/tenant: <tenant>` 标签。**带标签的 Secret 只能被同名 tenant 的 session 引用**；无标签的 Secret 仅对共享的 `default` tenant 兼容（旧单租户部署不受影响），非 default tenant 不可引用。否则任一 tenant 只要知道名字就能把别的 tenant 的 provider key 注入自己的 sandbox 并经 `Exec` 读出。该校验在 exec 解析路径（`readSecretKey`）执行；错误信息不包含 Secret 值。
 
 ### 决策记录（ADR）
 

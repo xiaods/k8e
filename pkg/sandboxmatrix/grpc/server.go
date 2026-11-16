@@ -767,7 +767,7 @@ func (s *Server) resolveSessionEnvFromSession(ctx context.Context, sess *sandbox
 		out = make(map[string]string, len(sess.Spec.SecretRefs))
 	}
 	for _, ref := range sess.Spec.SecretRefs {
-		val, rerr := s.readSecretKey(ctx, ref.SecretName, ref.Key)
+		val, rerr := s.readSecretKey(ctx, ref.SecretName, ref.Key, sess.Spec.TenantID)
 		if rerr != nil {
 			return nil, status.Errorf(codes.FailedPrecondition,
 				"secret_ref %s/%s for env %s: %v", ref.SecretName, ref.Key, ref.EnvVar, rerr)
@@ -786,16 +786,52 @@ func (s *Server) getSessionEnv(ctx context.Context, sessionID string) map[string
 	return env
 }
 
+// secretTenantLabel binds a Secret to a tenant. A session may only resolve
+// secret_refs to Secrets labelled with its own tenant.
+const secretTenantLabel = "sandbox.k8e.io/tenant"
+
+// checkSecretTenantScope enforces that a session in the given tenant may read the
+// named Secret.
+//
+// A labelled Secret is readable only by its own tenant. An unlabelled Secret is
+// legacy-compatible for the shared default tenant (existing single-tenant
+// installs keep working), but a non-default tenant may not reference it —
+// otherwise the label would be advisory and any tenant could read any other
+// tenant's provider key by naming it.
+func checkSecretTenantScope(secretName string, labels map[string]string, tenant string) error {
+	tenant = strings.TrimSpace(tenant)
+	if tenant == "" {
+		tenant = defaultTenantID
+	}
+	owner := strings.TrimSpace(labels[secretTenantLabel])
+	if owner == "" {
+		if tenant == defaultTenantID {
+			return nil
+		}
+		return fmt.Errorf("secret %q has no %q label; a non-default tenant may only reference its own labelled secrets", secretName, secretTenantLabel)
+	}
+	if owner != tenant {
+		return fmt.Errorf("secret %q belongs to tenant %q, not %q", secretName, owner, tenant)
+	}
+	return nil
+}
+
 // readSecretKey reads a single key from a K8s Secret for session env
-// injection. Fails closed: gateway-internal secrets (the gateway's own API key
-// ring) are never resolvable, even for sessions that persisted a forbidden
-// secret_ref before the CreateSession name gate existed.
-func (s *Server) readSecretKey(ctx context.Context, secretName, key string) (string, error) {
+// injection. Fails closed:
+//   - gateway-internal secrets (the gateway's own API key ring) are never
+//     resolvable, even for sessions that persisted a forbidden secret_ref
+//     before the CreateSession name gate existed;
+//   - the Secret must be scoped to the session's tenant (secretTenantLabel),
+//     so one tenant cannot read another tenant's Secret by naming it.
+func (s *Server) readSecretKey(ctx context.Context, secretName, key, tenant string) (string, error) {
 	if !isSessionSecretRefAllowed(secretName, key) {
 		return "", fmt.Errorf("secret_ref %s/%s is not allowed (gateway-internal secret)", secretName, key)
 	}
 	sec, err := s.k8s.CoreV1().Secrets(s.sandboxNamespace()).Get(ctx, secretName, metav1.GetOptions{})
 	if err != nil {
+		return "", err
+	}
+	if err := checkSecretTenantScope(secretName, sec.Labels, tenant); err != nil {
 		return "", err
 	}
 	raw, ok := sec.Data[key]
