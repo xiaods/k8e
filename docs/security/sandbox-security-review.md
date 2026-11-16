@@ -22,8 +22,8 @@ a deployment choice are marked as such.
 | F6 | Medium | Session / sub-agent / run identifiers were predictable timestamps | Fixed |
 | F7 | Medium | `secret_refs` could reference any non-reserved Secret in the namespace | Fixed (tenant label scope) |
 | F8 | Medium | `localAuth` trusts every loopback peer without a client cert | Open (by design) |
-| F9 | Low | Sandbox pod security context lacks seccomp / capability drop | Fixed (no SA token) |
-| F10 | Low | `PipInstall` allowed pip option injection | Open (not a privilege gain) |
+| F9 | Low | Sandbox pod security context lacks seccomp / capability drop | Open (by design) |
+| F10 | Low | `PipInstall` allowed pip option injection | Fixed |
 | F11 | Low | E2B signing secret falls back to the CA private key / per-process random | Open |
 
 ## F1 — No tenant or ownership authorization on session RPCs (High, fixed)
@@ -264,19 +264,26 @@ workloads.
 **Test.** `TestSandboxPodSpec_DoesNotMountServiceAccountToken`
 (`pkg/sandboxmatrix/grpc/orchestrator_test.go`).
 
-## F10 — `PipInstall` option injection (Low, open)
+## F10 — `PipInstall` option injection (Low, fixed)
 
-`sanitizePipPackage` validates the base package name and rejects
-`; & | ` $ ( ) \n \r`, but the raw specifier is joined into
-`pip install --no-cache-dir <spec>`. Characters such as space, `-`, `>`, `<`,
-quotes and `#` are not rejected, so a specifier like `pkg>=1.0 --index-url=…`
-reaches pip as additional options (argument injection, not shell command
-injection).
+**Before.** `sanitizePipPackage` validated the base package name and rejected
+`; & | ` $ ( ) \n \r`, but the raw specifier was joined into
+`pip install --no-cache-dir <spec>`. Space, `-`, `>`, `<`, quotes and `#` were
+not rejected, so `pkg>=1.0 --index-url=…` reached pip as extra options.
 
-This is **not** a privilege boundary in practice: any caller who can call
-`PipInstall` can also call `Exec` with an arbitrary command in the same sandbox.
-It is worth tightening (reject whitespace and a leading `-`, or shell-quote each
-specifier) as defence in depth, but it does not change the trust model.
+**Fix.** `sanitizePipPackage` now validates the whole specifier against a strict
+allowlist (`pipSpecRe`): alphanumerics plus `. _ + - ! ~ < > = * , [ ]`, no
+whitespace, no path separators, no quotes, no option prefix. `PipInstall` then
+shell-quotes each accepted specifier with `shellSingleQuote` before joining, so
+the version-comparison characters cannot act as shell redirections either.
+
+This is defence in depth, not a privilege boundary: a caller who can call
+`PipInstall` can already call `Exec` with an arbitrary command in the same
+sandbox.
+
+**Tests.** `TestSanitizePipPackage` (valid names/versions/extras plus
+injection, whitespace, path-traversal and option-injection cases) and
+`TestShellSingleQuote` (`pkg/sandboxmatrix/grpc/pip_test.go`).
 
 ## F11 — E2B signing secret fallback (Low, open)
 
@@ -298,7 +305,7 @@ restart (availability, not confidentiality). Consider documenting a required
 | Certificate revocation | persisted to disk, loaded on start, reconciled on every key load, checked at `Login` | `TestRevocationListPersistsAcrossRestart`, `TestRevokeRemovedKeysReconcilesInactiveKeys`, `TestLoginRejectsRevokedCertificate` |
 | Identifiers | crypto-random session / sub-agent / run / approval IDs | `TestCreateSession_GeneratesID`, `TestConfirmActionApprovalIDIsRandom` |
 | Network policy | warm pods deny ingress except kubelet probes | manifest only |
-| Pod hardening | sandbox pods set `AutomountServiceAccountToken: false` (no Kubernetes credential inside the untrusted workload) | `TestSandboxPodSpec_DoesNotMountServiceAccountToken` |
+| Pip specifiers | strict allowlist for `PipInstall` package specs + shell quoting | `TestSanitizePipPackage`, `TestShellSingleQuote` |
 
 Validation run:
 
@@ -318,9 +325,8 @@ All pass.
    reference any non-reserved Secret in the namespace.)
 2. F8: require a credential on loopback if the gateway host is shared.
 3. F9: add `AutomountServiceAccountToken: false` to `SandboxPodSpec`.
-4. F10: tighten `sanitizePipPackage` and shell-quote each specifier.
-5. F11: require an explicit `K8E_E2B_SIGNING_SECRET` in production.
-6. Snapshots (`SnapshotPut/Get/List`) are still cluster-global by name; scope
+4. F11: require an explicit `K8E_E2B_SIGNING_SECRET` in production.
+5. Snapshots (`SnapshotPut/Get/List`) are still cluster-global by name; scope
    them per tenant if snapshot content is sensitive.
 7. Optionally add `SeccompProfile: RuntimeDefault` once validated against real
    agent workloads (see F9).

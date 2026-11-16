@@ -94,27 +94,35 @@ func decodeSandboxdResponse(r io.Reader, v any) error {
 // pipPkgNameRe validates Python package names per PEP 508.
 var pipPkgNameRe = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`)
 
+// pipSpecRe is the strict allowlist for one pip requirement specifier: a name,
+// optional extras and optional version specifier(s). It excludes whitespace and
+// every shell metacharacter except the version-comparison characters, which are
+// neutralised by shellSingleQuote before the command is built.
+var pipSpecRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+\-!~<>=*,\[\]]*$`)
+
 // sanitizePipPackage validates a pip package specifier against shell injection.
-// Accepts bare names, version constraints (requests>=2.28), and extras (pkg[extra]).
+// Accepts bare names, version constraints (requests>=2.28), extras
+// (pkg[extra]) and comma-separated specifiers (pkg>=1,<2).
 func sanitizePipPackage(raw string) (string, error) {
-	// Extract the base package name before any version/extras specifiers
+	if !pipSpecRe.MatchString(raw) {
+		return "", fmt.Errorf("invalid package specifier: %q", raw)
+	}
+	// Validate the base name before any extras/version specifier.
 	name := raw
-	for _, sep := range []string{">=", "<=", "!=", "==", "~=", ">", "<", "=", "["} {
-		if idx := strings.Index(name, sep); idx >= 0 {
-			name = name[:idx]
-			break
-		}
+	if idx := strings.IndexAny(name, "[<>=!~"); idx >= 0 {
+		name = name[:idx]
 	}
 	if !pipPkgNameRe.MatchString(name) {
 		return "", fmt.Errorf("invalid package name: %q", raw)
 	}
-	// Also reject shell metacharacters in the version/extras portion
-	for _, ch := range []string{";", "&", "|", "`", "$", "(", ")", "\n", "\r"} {
-		if strings.Contains(raw, ch) {
-			return "", fmt.Errorf("invalid characters in package specifier: %q", raw)
-		}
-	}
 	return raw, nil
+}
+
+// shellSingleQuote wraps s in single quotes for /bin/sh. The pip specifier
+// allowlist excludes single quotes, so no escaping is needed, but the helper
+// keeps the quoting correct if the allowlist is ever widened.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // ServerConfig holds the configuration for a sandbox gRPC Server.
@@ -964,7 +972,7 @@ func (s *Server) PipInstall(ctx context.Context, req *pb.PipInstallRequest) (*pb
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 		}
-		safe = append(safe, validated)
+		safe = append(safe, shellSingleQuote(validated))
 	}
 	cmd := "pip install --no-cache-dir " + strings.Join(safe, " ")
 	execResp, err := s.Exec(ctx, &pb.ExecRequest{SessionId: req.SessionId, Command: cmd, Timeout: 120})
