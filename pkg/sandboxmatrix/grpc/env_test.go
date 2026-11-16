@@ -246,7 +246,7 @@ func TestReadSecretKey_RejectsGatewayInternalSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed api key ring: %v", err)
 	}
-	if _, err := s.readSecretKey(context.Background(), apiKeySecretName, internalAPIKeyRingKey); err == nil {
+	if _, err := s.readSecretKey(context.Background(), apiKeySecretName, internalAPIKeyRingKey, ""); err == nil {
 		t.Fatal("expected readSecretKey to reject the gateway-internal api key ring")
 	}
 	// A caller-managed secret in the same namespace still resolves.
@@ -257,7 +257,7 @@ func TestReadSecretKey_RejectsGatewayInternalSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed caller secret: %v", err)
 	}
-	got, err := s.readSecretKey(context.Background(), "my-llm-secret", "api_key")
+	got, err := s.readSecretKey(context.Background(), "my-llm-secret", "api_key", "")
 	if err != nil || got != "sk-ok" {
 		t.Fatalf("caller-managed secret must still resolve: %v %q", err, got)
 	}
