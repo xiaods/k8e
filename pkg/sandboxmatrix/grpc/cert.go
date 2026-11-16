@@ -372,6 +372,23 @@ func (s *issuedCertStore) FindByKeyName(keyName string) []issuedCertRecord {
 	return out
 }
 
+// KeyNames returns the distinct key names present in the ledger. The gateway
+// uses it to reconcile revocations against the live API key set: any name that
+// is no longer active must have its certificates revoked.
+func (s *issuedCertStore) KeyNames() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := make(map[string]struct{}, len(s.records))
+	for _, r := range s.records {
+		seen[r.KeyName] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for name := range seen {
+		out = append(out, name)
+	}
+	return out
+}
+
 func (s *issuedCertStore) PruneExpired() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -404,27 +421,81 @@ func (s *issuedCertStore) save() {
 	_ = os.Rename(tmp, s.filePath)
 }
 
-// RevocationList is an in-memory list of revoked certificate fingerprints.
+// RevocationList is the set of revoked certificate fingerprints. It is
+// persisted to disk so a revocation survives a gateway restart: an in-memory
+// list would silently make every previously revoked client certificate valid
+// again after a restart (until its 90-day expiry).
 type RevocationList struct {
-	mu      sync.RWMutex
-	entries map[string]time.Time // fingerprint → revokedAt
+	mu       sync.RWMutex
+	entries  map[string]time.Time // fingerprint → revokedAt
+	filePath string
 }
 
-func newRevocationList() *RevocationList {
-	return &RevocationList{entries: make(map[string]time.Time)}
+// newRevocationList loads any previously persisted revocations. An empty
+// filePath (tests) keeps the list memory-only.
+func newRevocationList(filePath string) *RevocationList {
+	rl := &RevocationList{entries: make(map[string]time.Time), filePath: filePath}
+	if filePath == "" {
+		return rl
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return rl
+	}
+	var disk map[string]time.Time
+	if json.Unmarshal(data, &disk) != nil {
+		return rl
+	}
+	for fp, at := range disk {
+		if fp != "" {
+			rl.entries[fp] = at
+		}
+	}
+	return rl
 }
 
 func (rl *RevocationList) Revoke(fingerprint string) {
+	if fingerprint == "" {
+		return
+	}
 	rl.mu.Lock()
+	if _, exists := rl.entries[fingerprint]; exists {
+		// Already revoked (the common case on the periodic key reload): do not
+		// rewrite the file, or every reload would churn it once per cert.
+		rl.mu.Unlock()
+		return
+	}
 	rl.entries[fingerprint] = time.Now()
+	rl.saveLocked()
 	rl.mu.Unlock()
 }
 
 func (rl *RevocationList) IsRevoked(fingerprint string) bool {
+	if fingerprint == "" {
+		return false
+	}
 	rl.mu.RLock()
 	defer rl.mu.RUnlock()
 	_, ok := rl.entries[fingerprint]
 	return ok
+}
+
+// saveLocked persists the revocation set. Callers must hold rl.mu for writing.
+// A failure is deliberately swallowed: revocation must still take effect in
+// memory even if the disk write fails.
+func (rl *RevocationList) saveLocked() {
+	if rl.filePath == "" {
+		return
+	}
+	data, err := json.MarshalIndent(rl.entries, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := rl.filePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, rl.filePath)
 }
 
 func (rl *RevocationList) RevokeByKeyName(store *issuedCertStore, keyName string) {

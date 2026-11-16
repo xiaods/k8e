@@ -96,6 +96,28 @@ func (s SecretKeySet) Active(now time.Time) []string {
 	return normalizeKeyList(keys)
 }
 
+// Tenants returns the tenant binding for each active Secret-backed token, keyed
+// by the same normalized bare token Active returns. Tokens without a tenant are
+// omitted. The E2B control plane uses this to scope sessions and ownership
+// checks to the authenticated key's tenant.
+func (s SecretKeySet) Tenants(now time.Time) map[string]string {
+	out := make(map[string]string)
+	for _, rec := range s.records {
+		if rec.Key == "" || rec.Expired(now) {
+			continue
+		}
+		tenant := strings.TrimSpace(rec.Tenant)
+		if tenant == "" {
+			continue
+		}
+		key := NormalizeE2BAPIKey(rec.Key)
+		if key != "" {
+			out[key] = tenant
+		}
+	}
+	return out
+}
+
 // normalizeKeyList trims, strips the SDK prefix, and de-duplicates while
 // preserving first-seen order.
 func normalizeKeyList(keys []string) []string {

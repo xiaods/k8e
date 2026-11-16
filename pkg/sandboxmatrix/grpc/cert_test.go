@@ -2,13 +2,20 @@ package grpc
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"fmt"
 	"net"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/xiaods/k8e/pkg/daemons/config"
+	pb "github.com/xiaods/k8e/pkg/sandboxmatrix/grpc/pb/sandbox/v1"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -204,5 +211,33 @@ func TestCheckMTLSAuthLoopbackLocalAuth(t *testing.T) {
 		t.Fatal("remote with LocalAuth set must still require mTLS")
 	} else if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("remote with LocalAuth set: got %v, want Unauthenticated", err)
+	}
+}
+
+// TestLoginRejectsRevokedCertificate is the regression for the Login
+// revocation bypass: the mTLS interceptor exempts Login (it is how a client
+// obtains its first certificate), so without an explicit check a holder of a
+// revoked certificate could simply call Login again and mint a fresh 90-day
+// certificate for the same API key.
+func TestLoginRejectsRevokedCertificate(t *testing.T) {
+	raw := []byte("client-cert-der")
+	cert := &x509.Certificate{
+		Raw:       raw,
+		Subject:   pkix.Name{CommonName: "agent-a"},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+	}
+	ai := credentials.TLSInfo{State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}}
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
+		Addr:     &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 50051},
+		AuthInfo: ai,
+	})
+
+	fp := fmt.Sprintf("%x", sha256.Sum256(raw))
+	s := &Server{revocList: newRevocationList("")}
+	s.revocList.Revoke(fp)
+
+	if _, err := s.Login(ctx, &pb.LoginRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("revoked certificate: got %v, want PermissionDenied", err)
 	}
 }

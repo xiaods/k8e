@@ -17,6 +17,21 @@ import (
 	"github.com/xiaods/k8e/pkg/sandbox/client"
 )
 
+// tenantContextKey carries the authenticated E2B API key's tenant binding
+// from the auth wrapper to the control handlers.
+type tenantContextKey struct{}
+
+func contextWithTenant(ctx context.Context, tenant string) context.Context {
+	return context.WithValue(ctx, tenantContextKey{}, tenant)
+}
+
+// tenantFromContext returns the authenticated caller's tenant, or "" when the
+// key is unbound (legacy shared-credential behaviour).
+func tenantFromContext(ctx context.Context) string {
+	t, _ := ctx.Value(tenantContextKey{}).(string)
+	return t
+}
+
 // Server is the E2B-compatible HTTP server (KIP-18). It speaks the E2B
 // protocol on three surfaces and translates to the k8e sandbox gRPC gateway.
 type Server struct {
@@ -27,6 +42,9 @@ type Server struct {
 	signingSecret string
 	apiKeysMu     sync.RWMutex
 	apiKeys       []string
+	// apiKeyTenants maps a normalized bare token to the tenant it is bound to.
+	// Empty for tokens without a tenant (the legacy shared-credential model).
+	apiKeyTenants map[string]string
 
 	defaultCPUs     int
 	defaultMemoryMB int
@@ -230,9 +248,13 @@ func (s *Server) Handle() http.Handler {
 func registerControlRoutes(r *mux.Router, s *Server) {
 	auth := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, req *http.Request) {
-			if !s.acceptKey(credentialFromHeaders(req)) {
+			tenant, ok := s.acceptKey(credentialFromHeaders(req))
+			if !ok {
 				jsonWriter(w, http.StatusUnauthorized, errorBody(apiError(401, "invalid API key")))
 				return
+			}
+			if tenant != "" {
+				req = req.WithContext(contextWithTenant(req.Context(), tenant))
 			}
 			h(w, req)
 		}
@@ -343,27 +365,39 @@ func credentialFromHeaders(r *http.Request) string {
 	return ""
 }
 
-func (s *Server) acceptKey(bare string) bool {
+func (s *Server) acceptKey(bare string) (string, bool) {
 	if bare == "" {
-		return false
+		return "", false
 	}
 	s.apiKeysMu.RLock()
 	defer s.apiKeysMu.RUnlock()
 	for _, k := range s.apiKeys {
 		if constantTimeEqual(k, bare) {
-			return true
+			return s.apiKeyTenants[k], true
 		}
 	}
-	return false
+	return "", false
 }
 
 // ReplaceAPIKeys atomically replaces the accepted control-plane tokens.
 // Each entry is normalized (trim + strip "e2b_"). Empty input means every
 // control-plane request is rejected with 401 — same as an empty Config.APIKey.
 func (s *Server) ReplaceAPIKeys(keys []string) {
+	s.replaceAPIKeys(keys, nil)
+}
+
+// ReplaceAPIKeysWithTenants replaces the accepted tokens and their tenant
+// bindings. The tenant map is keyed by the same normalized bare token; a token
+// absent from the map is unbound (legacy shared-credential behaviour).
+func (s *Server) ReplaceAPIKeysWithTenants(keys []string, tenants map[string]string) {
+	s.replaceAPIKeys(keys, tenants)
+}
+
+func (s *Server) replaceAPIKeys(keys []string, tenants map[string]string) {
 	normalized := normalizeKeyList(keys)
 	s.apiKeysMu.Lock()
 	s.apiKeys = normalized
+	s.apiKeyTenants = tenants
 	s.apiKeysMu.Unlock()
 }
 

@@ -1,6 +1,7 @@
 package apikey
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -82,5 +83,49 @@ func TestNewRecordNever(t *testing.T) {
 	rec := NewRecord("k8e-x", 30, true, time.Now())
 	if rec.ExpiresAt != nil || rec.TTLDays != 0 {
 		t.Fatalf("never should omit expiry: %+v", rec)
+	}
+}
+
+func TestTenantRoundTripsThroughV2(t *testing.T) {
+	now := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
+	rec := NewRecordWithTenant("k8e-key", "acme", DefaultTTLDays, false, now)
+	if rec.Tenant != "acme" {
+		t.Fatalf("NewRecordWithTenant: got tenant %q", rec.Tenant)
+	}
+
+	enc, err := Encode(map[string]Record{"agent-a": rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(enc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back["agent-a"].Tenant != "acme" {
+		t.Fatalf("tenant lost in round-trip: %+v", back["agent-a"])
+	}
+	if back["agent-a"].Key != "k8e-key" {
+		t.Fatalf("key lost in round-trip: %+v", back["agent-a"])
+	}
+}
+
+func TestTenantOmittedWhenEmpty(t *testing.T) {
+	// An unbound key must stay wire-compatible with the pre-tenant format: no
+	// "tenant" key in the JSON at all.
+	rec := NewRecord("k8e-key", DefaultTTLDays, false, time.Now())
+	enc, err := Encode(map[string]Record{"agent-a": rec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(enc, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var keys map[string]map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["keys"], &keys); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := keys["agent-a"]["tenant"]; ok {
+		t.Fatalf("empty tenant must be omitted, got %s", enc)
 	}
 }

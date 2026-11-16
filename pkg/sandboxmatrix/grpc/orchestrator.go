@@ -3,6 +3,8 @@ package grpc
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -99,12 +101,29 @@ var (
 
 type pendingApproval struct {
 	action    string
+	sessionID string
 	approved  chan bool
 	createdAt time.Time
 }
 
 // approvalTTL is how long a pending approval waits before auto-expiry.
 const approvalTTL = 5 * time.Minute
+
+// randomHex returns n cryptographically random bytes, hex-encoded.
+//
+// Session, sub-agent and background-run identifiers are capabilities: they are
+// the only thing a caller presents to reach a session. A timestamp-derived ID
+// (sess-<UnixNano>) is enumerable, so a caller that guesses one can reach a
+// session it does not own. crypto/rand makes enumeration infeasible.
+func randomHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand failing is unrecoverable for an identifier; fall back to
+		// a timestamp so we never mint an empty or duplicate ID.
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(b)
+}
 
 // Orchestrator handles session lifecycle, sub-agent creation, and confirm_action gating.
 type Orchestrator struct {
@@ -480,7 +499,7 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	}
 	sessionID := req.SessionId
 	if sessionID == "" {
-		sessionID = fmt.Sprintf("sess-%d", time.Now().UnixNano())
+		sessionID = "sess-" + randomHex(16)
 	}
 	runtimeClass := req.RuntimeClass
 	if runtimeClass == "" {
@@ -505,6 +524,17 @@ func (o *Orchestrator) createSessionWithTTL(ctx context.Context, req *pb.CreateS
 	tenantID := req.TenantId
 	if tenantID == "" {
 		tenantID = defaultTenantID
+	}
+	// A tenant-bound caller can only create sessions in its own tenant. An
+	// explicit, different tenant is rejected (rather than silently rewritten)
+	// so the caller notices the mismatch instead of filing the session under a
+	// tenant it cannot see. An omitted tenant defaults to the bound one.
+	if bound, ok := callerTenantFromContext(ctx); ok {
+		if req.TenantId != "" && req.TenantId != bound {
+			return nil, status.Errorf(codes.PermissionDenied,
+				"API key is bound to tenant %q; requested tenant %q", bound, req.TenantId)
+		}
+		tenantID = bound
 	}
 
 	session := &sandboxv1.SandboxSession{
@@ -830,9 +860,14 @@ func (o *Orchestrator) listSessions(ctx context.Context, namespace, phase string
 		phase = string(sandboxv1.SandboxPhaseActive)
 	}
 	var result []*sandboxv1.SandboxSession
+	callerTenant, scoped := callerTenantFromContext(ctx)
 	for i := range list.Items {
 		s, err := unstructuredToSession(&list.Items[i])
 		if err != nil {
+			continue
+		}
+		// A tenant-bound caller only sees its own sessions.
+		if scoped && s.Spec.TenantID != callerTenant {
 			continue
 		}
 		if wantAll || string(s.Status.Phase) == phase {
@@ -885,7 +920,7 @@ func (o *Orchestrator) RunSubAgent(ctx context.Context, req *pb.RunSubAgentReque
 			"parent session %s has no shared workspace (legacy EmptyDir pod)", req.ParentSessionId)
 	}
 
-	childID := fmt.Sprintf("%s-sub-%d", req.ParentSessionId, time.Now().UnixNano())
+	childID := fmt.Sprintf("%s-sub-%s", req.ParentSessionId, randomHex(8))
 	child := &sandboxv1.SandboxSession{
 		TypeMeta:   metav1.TypeMeta{APIVersion: sandboxAPIVersion, Kind: "SandboxSession"},
 		ObjectMeta: metav1.ObjectMeta{Name: childID, Namespace: o.namespace},
@@ -927,6 +962,19 @@ func (o *Orchestrator) ConfirmAction(ctx context.Context, req *pb.ConfirmActionR
 		if !ok {
 			return nil, status.Errorf(codes.NotFound, "approval %s not found", req.ApprovalId)
 		}
+		// Authorize the confirm: the approval belongs to a session, and a
+		// tenant-bound caller may only confirm approvals for sessions it can see.
+		// A session that no longer exists is left alone (nothing to isolate).
+		if pa.sessionID != "" {
+			if _, rawErr := o.getSessionRaw(ctx, pa.sessionID); rawErr == nil {
+				if _, err := o.getSession(ctx, pa.sessionID); err != nil {
+					o.mu.Lock()
+					delete(o.approvals, req.ApprovalId)
+					o.mu.Unlock()
+					return nil, status.Errorf(codes.NotFound, "approval %s not found", req.ApprovalId)
+				}
+			}
+		}
 		select {
 		case approved := <-pa.approved:
 			o.mu.Lock()
@@ -946,9 +994,22 @@ func (o *Orchestrator) ConfirmAction(ctx context.Context, req *pb.ConfirmActionR
 		}
 	}
 
-	approvalID := fmt.Sprintf("approval-%s-%d", req.SessionId, time.Now().UnixNano())
+	// A caller may only open an approval for a session it can see. A session
+	// that does not exist yet is left alone: there is nothing to isolate and
+	// the approval is inert until an action consumes it.
+	if req.SessionId != "" {
+		if _, rawErr := o.getSessionRaw(ctx, req.SessionId); rawErr == nil {
+			if _, err := o.getSession(ctx, req.SessionId); err != nil {
+				return nil, status.Errorf(codes.NotFound, "session %s not found", req.SessionId)
+			}
+		}
+	}
+
+	// Approval IDs are bearer capabilities consumed by ApproveAction, so they
+	// must be unpredictable (they used to be approval-<sessionID>-<UnixNano>).
+	approvalID := "approval-" + randomHex(16)
 	o.mu.Lock()
-	o.approvals[approvalID] = &pendingApproval{action: req.Action, approved: make(chan bool, 1), createdAt: time.Now()}
+	o.approvals[approvalID] = &pendingApproval{action: req.Action, sessionID: req.SessionId, approved: make(chan bool, 1), createdAt: time.Now()}
 	o.mu.Unlock()
 	return &pb.ConfirmActionResponse{ApprovalId: approvalID, Approved: false}, nil
 }
@@ -1007,7 +1068,7 @@ func (o *Orchestrator) ExecBackground(ctx context.Context, sessionID, command st
 		return "", err
 	}
 
-	runID := fmt.Sprintf("%s-bg-%d", sessionID, time.Now().UnixNano())
+	runID := sessionID + "-bg-" + randomHex(8)
 	body, _ := json.Marshal(sandboxdBackgroundBody(sessionID, command, runID, timeout, workdir, env))
 
 	url := fmt.Sprintf("http://%s:%d/exec/background", podIP, 2024)
@@ -1140,6 +1201,26 @@ var bgSandboxdClient = &http.Client{Timeout: 10 * time.Second}
 // --- internal helpers ---
 
 func (o *Orchestrator) getSession(ctx context.Context, sessionID string) (*sandboxv1.SandboxSession, error) {
+	sess, err := o.getSessionRaw(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	// Tenant isolation (KIP-30 principle 6): a caller whose API key is bound to
+	// a tenant may only reach sessions in that tenant. A caller without a
+	// binding (loopback, or a key with no tenant) keeps full access, so
+	// single-tenant installs are unaffected.
+	if tenant, bound := callerTenantFromContext(ctx); bound && sess.Spec.TenantID != tenant {
+		// Report NotFound rather than PermissionDenied: a caller from another
+		// tenant must not learn that the session exists.
+		return nil, status.Errorf(codes.NotFound, "session %s not found", sessionID)
+	}
+	return sess, nil
+}
+
+// getSessionRaw fetches a session without tenant enforcement. Internal callers
+// that need the object regardless of the caller's tenant (cleanup, pruning)
+// use this; request-scoped code must use getSession.
+func (o *Orchestrator) getSessionRaw(ctx context.Context, sessionID string) (*sandboxv1.SandboxSession, error) {
 	u, err := o.dynamic.Resource(sessionGVR).Namespace(o.namespace).Get(ctx, sessionID, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
