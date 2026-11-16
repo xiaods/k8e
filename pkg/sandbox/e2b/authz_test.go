@@ -67,7 +67,7 @@ func TestControlPlaneTenantIsolation(t *testing.T) {
 	// An unbound key keeps full access (legacy shared-credential model).
 	legacy := NewServer(Config{SigningSecret: "test-secret"}, gw)
 	legacy.ReplaceAPIKeys([]string{"legacy"})
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/sandboxes/other-sandbox", nil)
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/sandboxes/other-sandbox", http.NoBody)
 	req.Header.Set("X-API-KEY", "legacy")
 	rec = httptest.NewRecorder()
 	legacy.Handle().ServeHTTP(rec, req)
