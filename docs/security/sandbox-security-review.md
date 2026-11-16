@@ -22,7 +22,7 @@ a deployment choice are marked as such.
 | F6 | Medium | Session / sub-agent / run identifiers were predictable timestamps | Fixed |
 | F7 | Medium | `secret_refs` could reference any non-reserved Secret in the namespace | Fixed (tenant label scope) |
 | F8 | Medium | `localAuth` trusts every loopback peer without a client cert | Open (by design) |
-| F9 | Low | Sandbox pod security context lacks seccomp / capability drop | Open (by design) |
+| F9 | Low | Sandbox pod security context lacks seccomp / capability drop | Fixed (no SA token) |
 | F10 | Low | `PipInstall` allowed pip option injection | Open (not a privilege gain) |
 | F11 | Low | E2B signing secret falls back to the CA private key / per-process random | Open |
 
@@ -243,26 +243,26 @@ only a real escalation on a multi-tenant host or a host with untrusted local
 users. Hardening would require the embedded e2b client to present a credential
 on loopback (for example the API key) and `localAuth` to require it.
 
-## F9 — Sandbox pod security context (Low, open, by design)
+## F9 — Sandbox pod security context (Low, fixed for the SA token)
 
-`SandboxPodSpec` (`pkg/sandboxmatrix/grpc/orchestrator.go`) sets only
-`ReadOnlyRootFilesystem: true`. There is no `RunAsNonRoot`, no
-`AllowPrivilegeEscalation: false`, no dropped capabilities, no seccomp profile
-and no `AutomountServiceAccountToken: false`.
+**Before.** `SandboxPodSpec` (`pkg/sandboxmatrix/grpc/orchestrator.go`) set only
+`ReadOnlyRootFilesystem: true`; the pod mounted the default ServiceAccount token.
 
-The sandbox image runs as root by design (`sandbox/Dockerfile`: "Root inside
-the sandbox is safe — isolation is enforced by the RuntimeClass boundary"), and
-agents need to install packages. The cheap, low-risk hardening would be:
+**Fix.** `AutomountServiceAccountToken: false` — sandboxd is a static Zig binary
+that never talks to the Kubernetes API, so the default ServiceAccount token is an
+unnecessary credential inside an untrusted, agent-controlled workload. The
+kubelet TCP probes come from the node and do not need it.
 
-- `AutomountServiceAccountToken: false` — sandboxd does not talk to the
-  Kubernetes API, so the default ServiceAccount token is an unnecessary
-  credential inside the untrusted workload.
-- `SeccompProfile: RuntimeDefault` — standard, but validate against agent
-  workloads first.
+**Still open (deliberately not changed here).** The sandbox image runs as root by
+design (`sandbox/Dockerfile`: "Root inside the sandbox is safe — isolation is
+enforced by the RuntimeClass boundary"), and agents need to install packages.
+`SeccompProfile: RuntimeDefault`, `AllowPrivilegeEscalation: false` and dropping
+capabilities are likely to break real agent workloads (`sudo`, `mount`, package
+managers) and should be a separate, opt-in decision validated against those
+workloads.
 
-`AllowPrivilegeEscalation: false` and dropping capabilities are likely to break
-real agent workloads (package managers, `sudo`, `mount`) and should be a
-separate, opt-in decision.
+**Test.** `TestSandboxPodSpec_DoesNotMountServiceAccountToken`
+(`pkg/sandboxmatrix/grpc/orchestrator_test.go`).
 
 ## F10 — `PipInstall` option injection (Low, open)
 
@@ -298,6 +298,7 @@ restart (availability, not confidentiality). Consider documenting a required
 | Certificate revocation | persisted to disk, loaded on start, reconciled on every key load, checked at `Login` | `TestRevocationListPersistsAcrossRestart`, `TestRevokeRemovedKeysReconcilesInactiveKeys`, `TestLoginRejectsRevokedCertificate` |
 | Identifiers | crypto-random session / sub-agent / run / approval IDs | `TestCreateSession_GeneratesID`, `TestConfirmActionApprovalIDIsRandom` |
 | Network policy | warm pods deny ingress except kubelet probes | manifest only |
+| Pod hardening | sandbox pods set `AutomountServiceAccountToken: false` (no Kubernetes credential inside the untrusted workload) | `TestSandboxPodSpec_DoesNotMountServiceAccountToken` |
 
 Validation run:
 
@@ -312,12 +313,17 @@ All pass.
 
 ## Recommended follow-ups (in priority order)
 
-1. F8: require a credential on loopback if the gateway host is shared.
-2. F9: add `AutomountServiceAccountToken: false` to `SandboxPodSpec`.
-3. F10: tighten `sanitizePipPackage` and shell-quote each specifier.
-4. F11: require an explicit `K8E_E2B_SIGNING_SECRET` in production.
-5. Snapshots (`SnapshotPut/Get/List`) are still cluster-global by name; scope
+1. F7: turn `secret_refs` into a tenant-labelled allowlist. (With F1 now
+   enforced, this is the remaining cross-tenant data path: a session can still
+   reference any non-reserved Secret in the namespace.)
+2. F8: require a credential on loopback if the gateway host is shared.
+3. F9: add `AutomountServiceAccountToken: false` to `SandboxPodSpec`.
+4. F10: tighten `sanitizePipPackage` and shell-quote each specifier.
+5. F11: require an explicit `K8E_E2B_SIGNING_SECRET` in production.
+6. Snapshots (`SnapshotPut/Get/List`) are still cluster-global by name; scope
    them per tenant if snapshot content is sensitive.
+7. Optionally add `SeccompProfile: RuntimeDefault` once validated against real
+   agent workloads (see F9).
 
 ## Operator note
 

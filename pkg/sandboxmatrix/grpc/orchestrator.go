@@ -1402,6 +1402,10 @@ func SandboxPodSpec(runtimeClass, pvcName, cpu, memory, image string) corev1.Pod
 		Volumes:       []corev1.Volume{vol},
 		DNSPolicy:     corev1.DNSDefault,
 		RestartPolicy: corev1.RestartPolicyNever,
+		// sandboxd is a static Zig binary that never talks to the Kubernetes API,
+		// so the default ServiceAccount token is an unnecessary credential
+		// inside an untrusted, agent-controlled workload. Do not mount it.
+		AutomountServiceAccountToken: boolPtr(false),
 	}
 	if runtimeClass != "" {
 		spec.RuntimeClassName = &runtimeClass

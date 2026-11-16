@@ -167,6 +167,20 @@ func TestSandboxPodSpec_IncludesHealthProbes(t *testing.T) {
 	}
 }
 
+// TestSandboxPodSpec_DoesNotMountServiceAccountToken verifies the sandbox pod
+// does not receive a Kubernetes ServiceAccount token. sandboxd never talks to
+// the API server, so the token is an unnecessary credential inside an
+// untrusted, agent-controlled workload.
+func TestSandboxPodSpec_DoesNotMountServiceAccountToken(t *testing.T) {
+	spec := SandboxPodSpec("gvisor", "", "500m", "512Mi", sandboxImage)
+	if spec.AutomountServiceAccountToken == nil {
+		t.Fatal("AutomountServiceAccountToken must be set explicitly")
+	}
+	if *spec.AutomountServiceAccountToken {
+		t.Fatal("the sandbox pod must not mount a ServiceAccount token")
+	}
+}
+
 func TestClaimWarmPod_PrefersReadyPod(t *testing.T) {
 	o := newTestOrchestrator()
 	ctx := context.Background()
