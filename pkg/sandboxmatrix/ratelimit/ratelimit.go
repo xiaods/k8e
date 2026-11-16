@@ -3,13 +3,18 @@ package ratelimit
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"net"
 	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	v1alpha1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
@@ -175,30 +180,62 @@ func (l *Limiter) ReapStale(maxAge time.Duration) {
 	}
 }
 
-// extractTenant extracts the tenant identifier from gRPC metadata or API key.
+// extractTenant derives the rate-limit bucket key from the AUTHENTICATED
+// caller identity.
+//
+// It deliberately ignores any client-supplied tenant metadata. The bucket key
+// is a security control: a value the caller controls would let it pick a fresh
+// bucket per request (evading the limit entirely) or deliberately target
+// another tenant's bucket (denying that tenant service). The identity used
+// here is, in order:
+//
+//  1. the mTLS client certificate's CommonName — the API key name the gateway
+//     signed the cert for, which the caller cannot change without the CA key;
+//  2. a SHA-256 of the bearer token presented to Login (never the raw token,
+//     and never a short prefix of it, which would be collision-prone);
+//  3. "anon" for unauthenticated callers (loopback with no cert).
+//
+// This also fixes the pre-existing behaviour where every mTLS client hashed to
+// "anon" (they send neither the tenant header nor an Authorization header), so
+// all remote clients shared one global bucket and one noisy tenant could starve
+// everyone else.
 func extractTenant(ctx context.Context) string {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return "anon"
-	}
-	// Prefer tenant header
-	if vals := md.Get("x-sandbox-tenant"); len(vals) > 0 {
-		return vals[0]
-	}
-	// Fall back to API key hash prefix
-	if vals := md.Get("authorization"); len(vals) > 0 {
-		token := vals[0]
-		if strings.HasPrefix(token, "Bearer ") && len(token) > 7 {
-			key := token[7:]
-			if len(key) > 8 {
-				key = key[:8]
+	if p, ok := peer.FromContext(ctx); ok {
+		if tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo); ok && len(tlsInfo.State.PeerCertificates) > 0 {
+			if cn := tlsInfo.State.PeerCertificates[0].Subject.CommonName; cn != "" {
+				return "cert:" + cn
 			}
-			return "key:" + key
 		}
-		return "key:anon"
+		// Loopback peers (the embedded e2b server) get their own bucket so a
+		// remote unauthenticated client cannot drain the budget the in-process
+		// data plane depends on.
+		if isLoopbackAddr(p.Addr) {
+			return "local"
+		}
 	}
-	// Last resort: use source IP from peer info
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get("authorization"); len(vals) > 0 {
+			token := strings.TrimPrefix(vals[0], "Bearer ")
+			if token != "" {
+				sum := sha256.Sum256([]byte(token))
+				return "key:" + hex.EncodeToString(sum[:8])
+			}
+		}
+	}
 	return "anon"
+}
+
+// isLoopbackAddr reports whether addr is a loopback TCP address.
+func isLoopbackAddr(addr net.Addr) bool {
+	if addr == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(addr.String())
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // UnaryInterceptor returns a gRPC unary interceptor that enforces rate limits.

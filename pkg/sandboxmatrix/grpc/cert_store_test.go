@@ -66,3 +66,59 @@ func TestIssuedCertStorePruneAndAtomicSave(t *testing.T) {
 		}
 	}
 }
+
+func TestRevocationListPersistsAcrossRestart(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "revoked.json")
+
+	rl := newRevocationList(path)
+	rl.Revoke("fp-1")
+	if !rl.IsRevoked("fp-1") {
+		t.Fatal("fingerprint should be revoked in memory")
+	}
+
+	// A new list (a gateway restart) must load the persisted revocation:
+	// an in-memory-only list would silently make the cert valid again.
+	reloaded := newRevocationList(path)
+	if !reloaded.IsRevoked("fp-1") {
+		t.Fatal("revocation must survive a restart")
+	}
+	if reloaded.IsRevoked("fp-2") {
+		t.Fatal("unknown fingerprint must not be revoked")
+	}
+
+	// A blank fingerprint must not revoke anything (no wildcard).
+	blank := newRevocationList(filepath.Join(dir, "blank.json"))
+	blank.Revoke("")
+	if blank.IsRevoked("") || blank.IsRevoked("anything") {
+		t.Fatal("blank fingerprint must not revoke anything")
+	}
+}
+
+func TestRevokeRemovedKeysReconcilesInactiveKeys(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{}
+	s.issuedStore = newIssuedCertStore(filepath.Join(dir, "issued.json"))
+	s.revocList = newRevocationList(filepath.Join(dir, "revoked.json"))
+
+	now := time.Now()
+	s.issuedStore.Add("deleted-key", "fp-deleted", now, now.Add(24*time.Hour))
+	s.issuedStore.Add("live-key", "fp-live", now, now.Add(24*time.Hour))
+
+	// A load whose active set only contains live-key must revoke the other —
+	// this is the "key deleted while the gateway was down" case, which the old
+	// prev!=nil diff never reached on the first load after a restart.
+	s.revokeRemovedKeys(map[string]string{"live-key": "{{SECRET_orb4cf10}}"})
+
+	if !s.revocList.IsRevoked("fp-deleted") {
+		t.Fatal("certificate of an inactive key must be revoked")
+	}
+	if s.revocList.IsRevoked("fp-live") {
+		t.Fatal("certificate of an active key must not be revoked")
+	}
+
+	// The reconciled revocation is persisted, so a restart keeps it.
+	if !newRevocationList(filepath.Join(dir, "revoked.json")).IsRevoked("fp-deleted") {
+		t.Fatal("reconciled revocation must be persisted")
+	}
+}

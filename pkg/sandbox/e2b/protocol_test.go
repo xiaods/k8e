@@ -221,12 +221,16 @@ func TestConstantTimeEqualIsLengthAgnostic(t *testing.T) {
 func TestAcceptKeyRejectsDifferentLength(t *testing.T) {
 	s := NewServer(Config{APIKey: "0123456789abcdef"}, newFakeGateway())
 
-	if s.acceptKey("0123456789abcdef") != true {
+	if _, ok := s.acceptKey("0123456789abcdef"); !ok {
 		t.Fatalf("the configured key must be accepted")
 	}
 	for _, wrong := range []string{"0123456789abcde", "0123456789abcdef0", "", "short"} {
-		if s.acceptKey(wrong) {
+		if _, ok := s.acceptKey(wrong); ok {
 			t.Fatalf("key %q must be rejected", wrong)
 		}
+	}
+	// An unbound key (the default Config.APIKey) carries no tenant.
+	if tenant, _ := s.acceptKey("0123456789abcdef"); tenant != "" {
+		t.Fatalf("unbound key: got tenant %q, want empty", tenant)
 	}
 }

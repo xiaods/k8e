@@ -2,13 +2,21 @@ package ratelimit
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"net"
 	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	v1alpha1 "github.com/xiaods/k8e/pkg/sandboxmatrix/api/v1alpha1"
@@ -188,48 +196,66 @@ func TestReapStaleRemovesIdleTenants(t *testing.T) {
 }
 
 func TestExtractTenant(t *testing.T) {
-	cases := []struct {
-		name string
-		md   metadata.MD
-		want string
-	}{
-		{
-			name: "tenant header wins",
-			md:   metadata.Pairs("x-sandbox-tenant", "acme", "authorization", "Bearer 0123456789abcdef"),
-			want: "acme",
-		},
-		{
-			name: "api key prefix",
-			md:   metadata.Pairs("authorization", "Bearer 0123456789abcdef"),
-			want: "key:01234567",
-		},
-		{
-			name: "short api key",
-			md:   metadata.Pairs("authorization", "Bearer abc"),
-			want: "key:abc",
-		},
-		{
-			name: "authorization without bearer",
-			md:   metadata.Pairs("authorization", "something"),
-			want: "key:anon",
-		},
-		{
-			name: "no metadata at all",
-			md:   nil,
-			want: "anon",
-		},
+	// The bucket key is derived from the authenticated identity, never from a
+	// client-supplied header: a caller-controlled value would let a client pick
+	// a fresh bucket per request (evading the limit) or target another tenant's
+	// bucket (denying it service).
+	certCtx := func(cn string) context.Context {
+		cert := &x509.Certificate{Subject: pkix.Name{CommonName: cn}}
+		ai := credentials.TLSInfo{State: tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}}
+		return peer.NewContext(context.Background(), &peer.Peer{AuthInfo: ai})
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			if tc.md != nil {
-				ctx = metadata.NewIncomingContext(ctx, tc.md)
-			}
-			if got := extractTenant(ctx); got != tc.want {
-				t.Fatalf("extractTenant = %q, want %q", got, tc.want)
-			}
-		})
-	}
+
+	t.Run("client certificate common name wins", func(t *testing.T) {
+		ctx := metadata.NewIncomingContext(certCtx("agent-a"), metadata.Pairs("x-sandbox-tenant", "victim"))
+		if got := extractTenant(ctx); got != "cert:agent-a" {
+			t.Fatalf("extractTenant = %q, want cert:agent-a", got)
+		}
+	})
+
+	t.Run("loopback gets its own bucket", func(t *testing.T) {
+		ctx := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 50051}})
+		if got := extractTenant(ctx); got != "local" {
+			t.Fatalf("extractTenant = %q, want local", got)
+		}
+		// A remote unauthenticated peer must not share that bucket.
+		remote := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.TCPAddr{IP: net.ParseIP("203.0.113.7"), Port: 50051}})
+		if got := extractTenant(remote); got == "local" {
+			t.Fatalf("remote peer must not use the loopback bucket")
+		}
+	})
+
+	t.Run("client tenant header is ignored", func(t *testing.T) {
+		a := extractTenant(metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-sandbox-tenant", "acme")))
+		b := extractTenant(metadata.NewIncomingContext(context.Background(), metadata.Pairs("x-sandbox-tenant", "other")))
+		if a != b {
+			t.Fatalf("tenant header must not choose the bucket: %q vs %q", a, b)
+		}
+		if a != "anon" {
+			t.Fatalf("no identity and no auth header: got %q, want anon", a)
+		}
+	})
+
+	t.Run("bearer token is hashed, not truncated", func(t *testing.T) {
+		ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer 0123456789abcdef"))
+		got := extractTenant(ctx)
+		sum := sha256.Sum256([]byte("0123456789abcdef"))
+		want := "key:" + hex.EncodeToString(sum[:8])
+		if got != want {
+			t.Fatalf("extractTenant = %q, want %q", got, want)
+		}
+		// Distinct tokens must not share a bucket.
+		other := extractTenant(metadata.NewIncomingContext(context.Background(), metadata.Pairs("authorization", "Bearer fedcba9876543210")))
+		if other == got {
+			t.Fatalf("distinct tokens must not share a bucket")
+		}
+	})
+
+	t.Run("no metadata at all", func(t *testing.T) {
+		if got := extractTenant(context.Background()); got != "anon" {
+			t.Fatalf("extractTenant = %q, want anon", got)
+		}
+	})
 }
 
 func TestIsWriteRPC(t *testing.T) {

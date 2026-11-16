@@ -75,6 +75,7 @@ func (f *fakeGateway) CreateSession(ctx context.Context, req *pb.CreateSessionRe
 		Phase:        "Active",
 		RuntimeClass: req.RuntimeClass,
 		PodIp:        "10.0.0.1",
+		TenantId:     req.TenantId,
 	}
 	f.created = append(f.created, req)
 	return &pb.CreateSessionResponse{SessionId: id}, nil

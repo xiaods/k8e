@@ -134,11 +134,15 @@ func apiKeyCreateCommand() cli.Command {
 				Value: "30d",
 				Usage: "Key lifetime: 30d (default), 90d, 720h, or never",
 			},
+			cli.StringFlag{
+				Name:  "tenant",
+				Usage: "Bind this key to a tenant: the gateway only lets it create and reach sessions in that tenant. Empty (default) keeps the legacy shared-credential behaviour",
+			},
 		},
 		Action: func(ctx *cli.Context) error {
 			name := ctx.Args().First()
 			if name == "" {
-				return printErrorExit("usage: k8e sandbox-apikey create <name> [--ttl 30d|never]", 1)
+				return printErrorExit("usage: k8e sandbox-apikey create <name> [--ttl 30d|never] [--tenant <id>]", 1)
 			}
 			ttlDays, never, err := apikey.ParseTTL(ctx.String("ttl"))
 			if err != nil {
@@ -152,7 +156,7 @@ func apiKeyCreateCommand() cli.Command {
 				return printErrorExit("api-key '"+name+"' already exists", 1)
 			}
 			key := generateAPIKey()
-			rec := apikey.NewRecord(key, ttlDays, never, time.Now())
+			rec := apikey.NewRecordWithTenant(key, strings.TrimSpace(ctx.String("tenant")), ttlDays, never, time.Now())
 			store[name] = rec
 			if err := writeAPIKeys(store); err != nil {
 				return printErrorExit("write api-key: "+err.Error(), 2)
@@ -161,6 +165,7 @@ func apiKeyCreateCommand() cli.Command {
 				"name":       name,
 				"key":        key,
 				"e2b_key":    "e2b_" + key, // official e2b SDK apiKey (validateApiKey /^e2b_[0-9a-f]+$/)
+				"tenant":     rec.Tenant,
 				"ttl_days":   rec.TTLDays,
 				"created_at": rec.CreatedAt.UTC().Format(time.RFC3339),
 			}
@@ -208,6 +213,9 @@ func apiKeyListCommand() cli.Command {
 				item := map[string]any{
 					"name":    name,
 					"expired": rec.Expired(now),
+				}
+				if rec.Tenant != "" {
+					item["tenant"] = rec.Tenant
 				}
 				if !rec.CreatedAt.IsZero() {
 					item["created_at"] = rec.CreatedAt.UTC().Format(time.RFC3339)

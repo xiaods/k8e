@@ -66,6 +66,7 @@ func TestExposeService_RegistersAndReturnsGatewayURL(t *testing.T) {
 // returns the existing URL without touching the CNP.
 func TestExposeService_Idempotent(t *testing.T) {
 	o := newTestOrchestrator()
+	seedSession(t, o, "sess-1")
 	o.exposeMu.Lock()
 	o.exposed["sess-1"] = []*ExposedEntry{
 		{Port: 8080, Host: "127.0.0.1", URL: "http://gw/k8e/expose/sess-1/8080/", StartedAt: time.Now()},

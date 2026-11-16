@@ -16,9 +16,17 @@ const DefaultTTLDays = 30
 // FileVersion is the structured keys.json version.
 const FileVersion = 2
 
-// Record is one named API key with optional expiry.
+// Record is one named API key with optional expiry and optional tenant
+// binding.
+//
+// Tenant is the isolation scope the gateway enforces for this key: when set, a
+// client authenticating with this key may only create and reach sessions whose
+// spec.tenantID equals Tenant. An empty Tenant preserves the legacy behaviour
+// (the key is a shared credential with no tenant scope), so single-tenant
+// installs are unaffected.
 type Record struct {
 	Key       string     `json:"key"`
+	Tenant    string     `json:"tenant,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	TTLDays   int        `json:"ttl_days,omitempty"`
@@ -105,8 +113,16 @@ func ActiveSecrets(keys map[string]Record, now time.Time) map[string]string {
 // NewRecord builds a record with optional TTL.
 // never=true means no expiry; ttlDays is ignored.
 func NewRecord(key string, ttlDays int, never bool, now time.Time) Record {
+	return NewRecordWithTenant(key, "", ttlDays, never, now)
+}
+
+// NewRecordWithTenant builds a record with an optional TTL and tenant binding.
+// A non-empty tenant makes the gateway restrict this key to sessions in that
+// tenant (see Record.Tenant).
+func NewRecordWithTenant(key, tenant string, ttlDays int, never bool, now time.Time) Record {
 	rec := Record{
 		Key:       key,
+		Tenant:    tenant,
 		CreatedAt: now.UTC(),
 	}
 	if never {

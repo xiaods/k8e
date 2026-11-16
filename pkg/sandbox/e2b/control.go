@@ -79,12 +79,20 @@ func (s *Server) reacquireByKey(w http.ResponseWriter, r *http.Request, key stri
 		return false
 	}
 	sess, err := s.gw.GetSession(r.Context(), &pb.GetSessionRequest{SessionId: id})
-	if err == nil && sessionState(sess.Phase) == stateRunning {
-		s.registry.extendDeadline(id, timeoutSeconds)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(s.sessionView(sess))
-		return true
+	if err == nil {
+		// A name that belongs to another tenant must not be reacquired or
+		// destroyed; report a conflict instead.
+		if tenant := tenantFromContext(r.Context()); tenant != "" && sess.TenantId != tenant {
+			s.writeControlError(w, apiError(409, "sandbox name \""+key+"\" is already in use"))
+			return true
+		}
+		if sessionState(sess.Phase) == stateRunning {
+			s.registry.extendDeadline(id, timeoutSeconds)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(s.sessionView(sess))
+			return true
+		}
 	}
 	// Protocol-dead but not yet reaped: E2B semantics say it is gone, so
 	// finish the job and build fresh under the same key.
@@ -129,6 +137,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := s.gw.CreateSession(r.Context(), &pb.CreateSessionRequest{
 		SessionId:    sessionID,
+		TenantId:     tenantFromContext(r.Context()),
 		RuntimeClass: runtimeClass,
 		Env:          normalizeEnvVars(body.EnvVars),
 	})
@@ -179,6 +188,12 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	sess, err := s.gw.GetSession(r.Context(), &pb.GetSessionRequest{SessionId: id})
 	if err != nil {
 		s.writeControlError(w, gwErrorToE2B(err, "sandbox \""+id+"\" not found"))
+		return
+	}
+	// Tenant isolation: a caller bound to a tenant may only reach its own
+	// sandboxes. Report 404, indistinguishable from a missing sandbox.
+	if tenant := tenantFromContext(r.Context()); tenant != "" && sess.TenantId != tenant {
+		s.writeControlError(w, apiError(404, "sandbox \""+id+"\" not found"))
 		return
 	}
 	if sessionState(sess.GetPhase()) == stateDead {
@@ -382,7 +397,12 @@ func (s *Server) listLiveSessions(ctx context.Context, q listQuery) ([]*pb.GetSe
 		return nil, err
 	}
 	var all []*pb.GetSessionResponse
+	tenant := tenantFromContext(ctx)
 	for _, sess := range resp.Sessions {
+		// A tenant-bound caller only sees its own sandboxes.
+		if tenant != "" && sess.TenantId != tenant {
+			continue
+		}
 		st := sessionState(sess.Phase)
 		if st == stateDead {
 			continue
@@ -445,6 +465,12 @@ func (s *Server) findLive(r *http.Request, id string) (*pb.GetSessionResponse, s
 	s.mu.Lock()
 	delete(s.lastErr, id)
 	s.mu.Unlock()
+	// Tenant isolation: a caller bound to a tenant may only reach its own
+	// sandboxes. A mismatch is reported as dead (404) so it is
+	// indistinguishable from a missing sandbox.
+	if tenant := tenantFromContext(r.Context()); tenant != "" && sess.TenantId != tenant {
+		return nil, stateDead, false
+	}
 	st := sessionState(sess.Phase)
 	if st == stateDead {
 		return nil, st, false

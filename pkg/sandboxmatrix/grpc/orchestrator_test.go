@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -339,6 +340,28 @@ func TestCreateSession_GeneratesID(t *testing.T) {
 	}
 	if sess.Name == "" {
 		t.Fatal("expected non-empty session ID")
+	}
+	// The ID is the capability a caller presents to reach the session, so it
+	// must be a random hex suffix, not a timestamp (sess-<UnixNano>).
+	const prefix = "sess-"
+	if !strings.HasPrefix(sess.Name, prefix) {
+		t.Fatalf("session ID %q missing %q prefix", sess.Name, prefix)
+	}
+	suffix := strings.TrimPrefix(sess.Name, prefix)
+	if len(suffix) != 32 {
+		t.Fatalf("session ID %q: expected 32 hex chars, got %d", sess.Name, len(suffix))
+	}
+	if _, err := hex.DecodeString(suffix); err != nil {
+		t.Fatalf("session ID %q is not hex: %v", sess.Name, err)
+	}
+
+	// Two generated IDs must differ.
+	other, err := o.CreateSession(context.Background(), &pb.CreateSessionRequest{})
+	if err != nil {
+		t.Fatalf(msgUnexpected, err)
+	}
+	if other.Name == sess.Name {
+		t.Fatalf("generated session IDs must be unique, both were %q", sess.Name)
 	}
 }
 

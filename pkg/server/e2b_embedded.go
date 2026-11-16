@@ -152,7 +152,7 @@ func applyE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPIK
 		}
 		return
 	}
-	srv.ReplaceAPIKeys(keys)
+	srv.ReplaceAPIKeysWithTenants(keys, cache.snapshot.Tenants(time.Now()))
 	active := cache.snapshot.Active(time.Now())
 	switch {
 	case len(active) == 0 && cache.static == "":
@@ -178,7 +178,7 @@ func reloadE2BAPIKeys(ctx context.Context, srv *sandboxe2b.Server, cache *e2bAPI
 			if droppedSecret {
 				logrus.Warnf("e2b (embedded): sandbox-apikeys Secret unreadable; dropped cached Secret keys so a revoked token cannot stay authorized (static=%t)", cache.static != "")
 			}
-			srv.ReplaceAPIKeys(keys)
+			srv.ReplaceAPIKeysWithTenants(keys, cache.snapshot.Tenants(time.Now()))
 		}
 	}
 }

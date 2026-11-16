@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -174,6 +176,11 @@ type Server struct {
 	apiKeysMu     sync.RWMutex
 	apiKeys       map[string]string // name → key
 	apiKeyByToken map[string]string // key → name (O(1) Login lookup)
+	// apiKeyTenants maps an API key name to the tenant it is bound to. A key
+	// with a tenant may only create and reach sessions in that tenant; keys
+	// without one keep full access (single-tenant installs). Guarded by
+	// apiKeysMu, like apiKeys.
+	apiKeyTenants map[string]string
 	issuedStore   *issuedCertStore
 	revocList     *RevocationList
 	localAuth     bool
@@ -270,13 +277,24 @@ func NewServer(cfg ServerConfig) *Server {
 func (s *Server) loadAPIKeys(ctx context.Context) {
 	secret, err := s.k8s.CoreV1().Secrets(s.sandboxNamespace()).Get(ctx, apiKeySecretName, metav1.GetOptions{})
 	if err != nil {
-		logrus.Debugf("sandbox gRPC: no api-key secret found, all requests allowed")
-		s.replaceAPIKeys(nil)
+		if apierrors.IsNotFound(err) {
+			// The Secret is gone: every previously issued client certificate
+			// must stop working, so reconcile revocations against an empty set.
+			logrus.Warnf("sandbox gRPC: api-key secret %q not found; revoking all issued client certificates", apiKeySecretName)
+			s.revokeRemovedKeys(nil)
+			s.replaceAPIKeysAndTenants(nil, nil)
+			return
+		}
+		// Transient read failure: keep the last known key set. Revoking on a
+		// hiccup would lock every client out, and dropping the keys would
+		// reject every remote Login until the Secret is readable again.
+		logrus.Warnf("sandbox gRPC: api-key secret unreadable; keeping the last known key set: %v", err)
 		return
 	}
 	data, ok := secret.Data["keys.json"]
 	if !ok {
-		s.replaceAPIKeys(nil)
+		s.revokeRemovedKeys(nil)
+		s.replaceAPIKeysAndTenants(nil, nil)
 		return
 	}
 	records, err := apikey.Parse(data)
@@ -285,24 +303,48 @@ func (s *Server) loadAPIKeys(ctx context.Context) {
 		return
 	}
 	store := apikey.ActiveSecrets(records, time.Now())
-	// Detect removed keys and revoke their certificates (snapshot under RLock).
-	s.apiKeysMu.RLock()
-	prev := s.apiKeys
-	s.apiKeysMu.RUnlock()
-	if s.revocList != nil && s.issuedStore != nil && prev != nil {
-		for name := range prev {
-			if _, ok := store[name]; !ok {
-				s.revocList.RevokeByKeyName(s.issuedStore, name)
-				logrus.Infof("sandbox gRPC: revoked certificates for deleted API key %q", name)
+	// Keep the tenant binding for every active key, so the gateway can enforce
+	// tenant isolation per request without re-reading the Secret.
+	tenants := make(map[string]string)
+	for name := range store {
+		if rec, ok := records[name]; ok {
+			if tenant := strings.TrimSpace(rec.Tenant); tenant != "" {
+				tenants[name] = tenant
 			}
 		}
 	}
-	s.replaceAPIKeys(store)
+	s.revokeRemovedKeys(store)
+	s.replaceAPIKeysAndTenants(store, tenants)
 	logrus.Infof("sandbox gRPC: loaded %d active API key(s) (%d total in secret)", len(store), len(records))
+}
+
+// revokeRemovedKeys revokes the client certificates of every issued key name
+// that is not in the active set. It runs on every successful load — not only
+// when the previous in-memory snapshot is known — so a key deleted while the
+// gateway was down is revoked on the next load after restart, and the
+// revocation is persisted so it survives future restarts.
+func (s *Server) revokeRemovedKeys(active map[string]string) {
+	if s.revocList == nil || s.issuedStore == nil {
+		return
+	}
+	for _, name := range s.issuedStore.KeyNames() {
+		if _, ok := active[name]; ok {
+			continue
+		}
+		s.revocList.RevokeByKeyName(s.issuedStore, name)
+		logrus.Infof("sandbox gRPC: revoked certificates for inactive API key %q", name)
+	}
 }
 
 // replaceAPIKeys swaps the name→key map and rebuilds the O(1) reverse index under write lock.
 func (s *Server) replaceAPIKeys(store map[string]string) {
+	s.replaceAPIKeysAndTenants(store, nil)
+}
+
+// replaceAPIKeysAndTenants swaps the name→key map, the key→name reverse index,
+// and the name→tenant binding under a single write lock, so a request can
+// never observe new keys paired with stale tenants.
+func (s *Server) replaceAPIKeysAndTenants(store, tenants map[string]string) {
 	var byToken map[string]string
 	if store != nil {
 		byToken = make(map[string]string, len(store))
@@ -313,6 +355,7 @@ func (s *Server) replaceAPIKeys(store map[string]string) {
 	s.apiKeysMu.Lock()
 	s.apiKeys = store
 	s.apiKeyByToken = byToken
+	s.apiKeyTenants = tenants
 	s.apiKeysMu.Unlock()
 }
 
@@ -386,6 +429,16 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("grpc listen: %w", err)
 	}
 
+	// Initialize the issued-cert ledger and revocation list BEFORE the first
+	// API-key load: loadAPIKeys reconciles revocations against the active key
+	// set and needs both stores (including on the first load after a restart,
+	// so a key deleted while the gateway was down is revoked).
+	if s.caCertFile != "" {
+		tlsDir := filepath.Dir(s.caCertFile)
+		s.issuedStore = newIssuedCertStore(filepath.Join(tlsDir, "sandbox-issued.json"))
+		s.revocList = newRevocationList(filepath.Join(tlsDir, "sandbox-revoked.json"))
+	}
+
 	// Load API keys from Secret for remote client authentication
 	s.loadAPIKeys(ctx)
 	// Reload API keys and rate limits every 30s
@@ -416,9 +469,6 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("grpc mTLS credentials: %w", err)
 	}
-
-	s.issuedStore = newIssuedCertStore(s.caCertFile[:strings.LastIndex(s.caCertFile, "/")] + "/sandbox-issued.json")
-	s.revocList = newRevocationList()
 
 	opts := []grpc.ServerOption{
 		grpc.Creds(creds),
@@ -1115,7 +1165,15 @@ func (s *Server) UpdateAllowedHosts(ctx context.Context, req *pb.UpdateAllowedHo
 
 // Login authenticates the client (via mTLS or API key) and returns a signed client certificate.
 func (s *Server) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
-	keyName, _ := peerIdentity(ctx)
+	keyName, isLocal := peerIdentity(ctx)
+	// A revoked client certificate must not be able to mint a fresh one by
+	// calling Login with the revoked cert: the mTLS interceptor exempts Login
+	// (it is how a client obtains its first cert), so the revocation check has
+	// to happen here too. API-key callers (no cert) are unaffected — the key
+	// itself is the root credential.
+	if !isLocal && keyName != "" && s.revocList != nil && s.revocList.IsRevoked(certFingerprintFromContext(ctx)) {
+		return nil, status.Error(codes.PermissionDenied, "client certificate has been revoked")
+	}
 
 	if keyName == "" {
 		md, ok := metadata.FromIncomingContext(ctx)
@@ -1176,6 +1234,13 @@ func (s *Server) getPodIP(ctx context.Context, sessionID string) (string, error)
 	u, err := s.dyn.Resource(sessionGVR).Namespace(s.sandboxNamespace()).Get(ctx, sessionID, metav1.GetOptions{})
 	if err != nil {
 		return "", status.Errorf(codes.NotFound, "session %s not found", sessionID)
+	}
+	// Tenant isolation: this is the shared lookup for the file, exec, transcript,
+	// events, process and terminal RPCs, so the check here covers all of them.
+	if tenant, bound := callerTenantFromContext(ctx); bound {
+		if got, _, _ := unstructured.NestedString(u.Object, "spec", "tenantID"); got != tenant {
+			return "", status.Errorf(codes.NotFound, "session %s not found", sessionID)
+		}
 	}
 	podIP, _, _ := unstructured.NestedString(u.Object, "status", "podIP")
 	if podIP == "" {
@@ -1274,15 +1339,70 @@ func (s *Server) mTLSAuthInterceptor(ctx context.Context, req any, info *grpc.Un
 	if err := s.checkMTLSAuth(ctx); err != nil {
 		return nil, err
 	}
-	return handler(ctx, req)
+	return handler(s.withCallerTenant(ctx), req)
 }
 
 // mTLSStreamInterceptor enforces mTLS for all streaming RPCs except ExecStream.
 func (s *Server) mTLSStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-	if err := s.checkMTLSAuth(ss.Context()); err != nil {
+	ctx := ss.Context()
+	if err := s.checkMTLSAuth(ctx); err != nil {
 		return err
 	}
-	return handler(srv, ss)
+	return handler(srv, &tenantStream{ServerStream: ss, ctx: s.withCallerTenant(ctx)})
+}
+
+// tenantStream overrides Context so stream handlers observe the authenticated
+// tenant binding. grpc.ServerStream has no SetContext, so wrapping is the only
+// way to thread the value through.
+type tenantStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (t *tenantStream) Context() context.Context { return t.ctx }
+
+// callerTenantContextKey carries the authenticated caller's tenant binding
+// from the auth interceptor to the session-scoped handlers.
+type callerTenantContextKey struct{}
+
+func contextWithCallerTenant(ctx context.Context, tenant string) context.Context {
+	return context.WithValue(ctx, callerTenantContextKey{}, tenant)
+}
+
+// callerTenantFromContext reports the tenant bound to the caller, if any.
+// Orchestrator session lookups use it to enforce tenant isolation. An unbound
+// caller (loopback, or a key without a tenant) returns ok=false.
+func callerTenantFromContext(ctx context.Context) (string, bool) {
+	if ctx == nil {
+		return "", false
+	}
+	t, _ := ctx.Value(callerTenantContextKey{}).(string)
+	t = strings.TrimSpace(t)
+	return t, t != ""
+}
+
+// withCallerTenant returns a context carrying the caller's tenant binding, or
+// ctx unchanged when the caller has none.
+func (s *Server) withCallerTenant(ctx context.Context) context.Context {
+	tenant, ok := s.callerTenant(ctx)
+	if !ok {
+		return ctx
+	}
+	return contextWithCallerTenant(ctx, tenant)
+}
+
+// callerTenant returns the tenant bound to the authenticated caller's API key.
+// Loopback callers (no client certificate) and keys without a tenant binding
+// return ok=false, which preserves full access for single-tenant installs.
+func (s *Server) callerTenant(ctx context.Context) (string, bool) {
+	keyName, isLocal := peerIdentity(ctx)
+	if isLocal || keyName == "" {
+		return "", false
+	}
+	s.apiKeysMu.RLock()
+	tenant := strings.TrimSpace(s.apiKeyTenants[keyName])
+	s.apiKeysMu.RUnlock()
+	return tenant, tenant != ""
 }
 
 func (s *Server) checkMTLSAuth(ctx context.Context) error {
@@ -1293,7 +1413,7 @@ func (s *Server) checkMTLSAuth(ctx context.Context) error {
 	if keyName == "" {
 		return status.Error(codes.Unauthenticated, "client certificate required for mTLS")
 	}
-	if s.revocList.IsRevoked(certFingerprintFromContext(ctx)) {
+	if s.revocList != nil && s.revocList.IsRevoked(certFingerprintFromContext(ctx)) {
 		return status.Error(codes.PermissionDenied, "client certificate has been revoked")
 	}
 	return nil

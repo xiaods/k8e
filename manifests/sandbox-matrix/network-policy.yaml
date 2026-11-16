@@ -7,6 +7,18 @@ spec:
   endpointSelector:
     matchLabels:
       sandbox.k8e.io/state: warm
+  # A selected endpoint's default is deny-all in each direction, but a policy
+  # with only egress rules leaves INGRESS unrestricted. Without this section
+  # every warm pod's unauthenticated sandboxd (:2024) was reachable from any
+  # pod in the cluster. Only the kubelet's TCP readiness/startup probe (which
+  # Cilium attributes to the host entity) may connect.
+  ingress:
+  - fromEntities:
+    - host
+    toPorts:
+    - ports:
+      - port: "2024"
+        protocol: TCP
   egress:
   - toEndpoints:
     - matchLabels:

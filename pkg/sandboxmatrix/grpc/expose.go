@@ -58,6 +58,15 @@ func (o *Orchestrator) ExposeService(ctx context.Context, sessionID string, port
 		host = "127.0.0.1"
 	}
 
+	// Authorize before the idempotent fast path: without this, a caller from
+	// another tenant could retrieve an existing exposure URL by session ID and
+	// port. getSession enforces the tenant binding (and returns NotFound for a
+	// session the caller may not see).
+	session, err := o.getSession(ctx, sessionID)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "session %s not found", sessionID)
+	}
+
 	// Idempotent fast path: the port is already exposed for this session.
 	o.exposeMu.Lock()
 	for _, e := range o.exposed[sessionID] {
@@ -68,12 +77,6 @@ func (o *Orchestrator) ExposeService(ctx context.Context, sessionID string, port
 		}
 	}
 	o.exposeMu.Unlock()
-
-	// The session must exist (and its pod must be reachable for the proxy).
-	session, err := o.getSession(ctx, sessionID)
-	if err != nil {
-		return nil, status.Errorf(codes.NotFound, "session %s not found", sessionID)
-	}
 
 	url := fmt.Sprintf("%s%s", baseURL, fmt.Sprintf(exposeURLPath, sessionID, port))
 	entry := &ExposedEntry{Port: int(port), Host: host, URL: url, StartedAt: time.Now()}
@@ -114,6 +117,12 @@ func (o *Orchestrator) removeExposed(sessionID string, port int) {
 // re-applies the CNP without it. Idempotent: unexposing a port that is not
 // exposed returns ok=false without error.
 func (o *Orchestrator) UnexposeService(ctx context.Context, sessionID string, port int32) (*pb.UnexposeServiceResponse, error) {
+	// Authorize before touching the registry: a caller from another tenant must
+	// not be able to clear that tenant's exposure. A session the caller may not
+	// see reports ok=false, indistinguishable from "not exposed".
+	if _, err := o.getSession(ctx, sessionID); err != nil {
+		return &pb.UnexposeServiceResponse{Ok: false}, nil
+	}
 	o.exposeMu.Lock()
 	_, found := o.findExposedLocked(sessionID, int(port))
 	o.exposeMu.Unlock()
@@ -143,17 +152,23 @@ func (o *Orchestrator) findExposedLocked(sessionID string, port int) (*ExposedEn
 // ListExposed returns the current exposures for a session. Entries whose
 // session is gone are pruned.
 func (o *Orchestrator) ListExposed(ctx context.Context, sessionID string) (*pb.ListExposedResponse, error) {
+	// Authorize before reading the registry: a caller from another tenant must
+	// not be able to observe (or clear) that tenant's exposures.
+	if _, err := o.getSession(ctx, sessionID); err != nil {
+		// Prune only when the session is truly gone. A cross-tenant caller must
+		// not be able to clear another tenant's exposure, so check existence
+		// without the tenant gate before deleting.
+		if _, rawErr := o.getSessionRaw(ctx, sessionID); rawErr != nil {
+			o.exposeMu.Lock()
+			delete(o.exposed, sessionID)
+			o.exposeMu.Unlock()
+		}
+		return &pb.ListExposedResponse{}, nil
+	}
+
 	o.exposeMu.Lock()
 	entries := append([]*ExposedEntry(nil), o.exposed[sessionID]...)
 	o.exposeMu.Unlock()
-
-	// Prune entries for sessions that no longer exist.
-	if _, err := o.getSession(ctx, sessionID); err != nil {
-		o.exposeMu.Lock()
-		delete(o.exposed, sessionID)
-		o.exposeMu.Unlock()
-		entries = nil
-	}
 
 	services := make([]*pb.ExposedService, 0, len(entries))
 	for _, e := range entries {

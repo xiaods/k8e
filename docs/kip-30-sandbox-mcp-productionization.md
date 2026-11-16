@@ -397,6 +397,17 @@ Single node `203.0.113.5`-style public IP install, upgraded
 - Per-API-key isolation. The key is a credential, not a scope; tenants are the
   isolation boundary (design principle 6).
 
+> **Amendment (2026-11): per-key tenant binding is now implemented, opt-in.**
+> `apikey.Record` carries an optional `tenant`. When set, the sandbox gRPC
+> gateway derives the caller's tenant from the client-certificate CommonName
+> (the API key name) and enforces it on every session-scoped RPC: `getSession`
+> /`getPodIP` return NotFound for a session in another tenant, `listSessions`
+> filters, and `createSession` stamps the bound tenant (rejecting an explicit
+> mismatch). The E2B control plane enforces the same binding. Keys with no
+> tenant keep the shared-credential behaviour described above, so existing
+> single-tenant installs are unaffected. The binding is carried in the request
+> context by the auth interceptor; no client-supplied tenant header is trusted.
+
 ## References
 
 - `pkg/server/server.go` — `stageFiles()` M0 skip
