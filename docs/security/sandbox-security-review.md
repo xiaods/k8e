@@ -320,15 +320,15 @@ All pass.
 
 ## Recommended follow-ups (in priority order)
 
-1. F7: turn `secret_refs` into a tenant-labelled allowlist. (With F1 now
-   enforced, this is the remaining cross-tenant data path: a session can still
-   reference any non-reserved Secret in the namespace.)
-2. F8: require a credential on loopback if the gateway host is shared.
-3. F9: add `AutomountServiceAccountToken: false` to `SandboxPodSpec`.
-4. F11: require an explicit `K8E_E2B_SIGNING_SECRET` in production.
-5. Snapshots (`SnapshotPut/Get/List`) are still cluster-global by name; scope
+Remaining items as of #679 (2026-11-16). F7 (tenant-labelled `secret_refs`,
+fixed in #677) and the F9 service-account-token fix (#678) are done and
+removed from this list.
+
+1. F8: require a credential on loopback if the gateway host is shared.
+2. F11: require an explicit `K8E_E2B_SIGNING_SECRET` in production.
+3. Snapshots (`SnapshotPut/Get/List`) are still cluster-global by name; scope
    them per tenant if snapshot content is sensitive.
-7. Optionally add `SeccompProfile: RuntimeDefault` once validated against real
+4. Optionally add `SeccompProfile: RuntimeDefault` once validated against real
    agent workloads (see F9).
 
 ## Operator note
